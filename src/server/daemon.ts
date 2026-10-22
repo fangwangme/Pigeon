@@ -58,6 +58,7 @@ export class PigeonDaemon {
     this.herdrClient = new HerdrClient({
       socketPath: this.config.herdrSocketPath,
     });
+    this.herdrClient.on("error", () => {});
 
     this.pairingManager = new PairingManager({
       publicBaseUrl: this.config.publicBaseUrl,

@@ -187,6 +187,7 @@ export class PairingManager {
         }
 
         this.adminServer = createServer((socket: Socket) => {
+          socket.on("error", () => {});
           let buffer = "";
           socket.on("data", (chunk) => {
             buffer += chunk.toString("utf-8");

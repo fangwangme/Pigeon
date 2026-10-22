@@ -11,17 +11,16 @@ export interface HerdrClientOptions {
 
 export class HerdrClient extends EventEmitter {
   private socketPath: string;
-  private socket: Socket | null = null;
+  private subSocket: Socket | null = null;
   private connected = false;
   private requestId = 0;
-  private pendingRequests = new Map<string, { resolve: (val: any) => void; reject: (err: any) => void; timer: NodeJS.Timeout }>();
   private classifier: CardClassifier;
   private debounceMs: number;
+  private reconnectTimer: any = null;
 
   // Cache
   private paneStates = new Map<string, PaneStatePayload>();
   private paneDebounceTimers = new Map<string, NodeJS.Timeout>();
-  private paneScreenHashes = new Map<string, string>();
   private currentSnapshot: SnapshotPayload = { workspaces: [], workingAgents: [] };
   private focusedPaneId: string | null = null;
 
@@ -35,50 +34,18 @@ export class HerdrClient extends EventEmitter {
   }
 
   public async connect(): Promise<void> {
-    return new Promise((resolve, reject) => {
-      try {
-        this.socket = connect(this.socketPath, async () => {
-          this.connected = true;
-          this.emit("connected");
-          try {
-            await this.initSubscriptions();
-            await this.refreshSnapshot();
-            resolve();
-          } catch (e) {
-            resolve(); // Don't block startup if initial Herdr calls error
-          }
-        });
+    try {
+      // 1. Initial snapshot check
+      await this.refreshSnapshot();
+      this.connected = true;
+      this.emit("connected");
+    } catch {
+      // Allow proceeding even if Herdr is offline initially
+      this.connected = false;
+    }
 
-        let buffer = "";
-        this.socket.on("data", (chunk) => {
-          buffer += chunk.toString("utf-8");
-          let newlineIdx: number;
-          while ((newlineIdx = buffer.indexOf("\n")) !== -1) {
-            const line = buffer.slice(0, newlineIdx).trim();
-            buffer = buffer.slice(newlineIdx + 1);
-            if (line) {
-              this.handleLine(line);
-            }
-          }
-        });
-
-        this.socket.on("error", (err) => {
-          if (!this.connected) {
-            reject(err);
-          } else {
-            this.emit("error", err);
-          }
-        });
-
-        this.socket.on("close", () => {
-          this.connected = false;
-          this.socket = null;
-          this.emit("disconnected");
-        });
-      } catch (err) {
-        reject(err);
-      }
-    });
+    // 2. Start persistent event stream
+    this.startSubscription();
   }
 
   public isConnected(): boolean {
@@ -86,70 +53,151 @@ export class HerdrClient extends EventEmitter {
   }
 
   public disconnect(): void {
-    if (this.socket) {
-      this.socket.end();
-      this.socket = null;
+    clearTimeout(this.reconnectTimer);
+    if (this.subSocket) {
+      try {
+        this.subSocket.end();
+        this.subSocket.destroy();
+      } catch {}
+      this.subSocket = null;
     }
     this.connected = false;
   }
 
+  /**
+   * Herdr RPC request. Opens a one-shot connection per command,
+   * matching Herdr 0.9.5 server lifecycle.
+   */
   public request<T = any>(method: string, params: Record<string, any> = {}): Promise<T> {
     return new Promise((resolve, reject) => {
-      if (!this.socket || !this.connected) {
-        return reject(new Error("Herdr socket not connected"));
+      const id = `req_${++this.requestId}`;
+      let socket: Socket;
+
+      try {
+        socket = connect(this.socketPath, () => {
+          socket.write(JSON.stringify({ method, params, id }) + "\n");
+        });
+      } catch (err) {
+        return reject(err);
       }
 
-      const id = `req_${++this.requestId}`;
+      let buffer = "";
       const timer = setTimeout(() => {
-        this.pendingRequests.delete(id);
+        try {
+          socket.destroy();
+        } catch {}
         reject(new Error(`Herdr request ${method} timed out`));
-      }, 10000);
+      }, 8000);
 
-      this.pendingRequests.set(id, { resolve, reject, timer });
-      const payload = JSON.stringify({ method, params, id }) + "\n";
-      this.socket.write(payload);
+      socket.on("data", (chunk) => {
+        buffer += chunk.toString("utf-8");
+        // Herdr responds with a single JSON line
+        if (buffer.includes("\n")) {
+          clearTimeout(timer);
+          try {
+            socket.end();
+          } catch {}
+          try {
+            const res = JSON.parse(buffer.trim());
+            if (res.error) {
+              reject(new Error(res.error.message || res.error.code));
+            } else {
+              this.connected = true;
+              resolve(res.result);
+            }
+          } catch (e) {
+            reject(e);
+          }
+        }
+      });
+
+      socket.on("end", () => {
+        clearTimeout(timer);
+        if (buffer.trim()) {
+          try {
+            const res = JSON.parse(buffer.trim());
+            if (res.error) {
+              reject(new Error(res.error.message || res.error.code));
+            } else {
+              this.connected = true;
+              resolve(res.result);
+            }
+          } catch (e) {
+            reject(e);
+          }
+        }
+      });
+
+      socket.on("error", (err) => {
+        clearTimeout(timer);
+        reject(err);
+      });
     });
+  }
+
+  private startSubscription(): void {
+    try {
+      this.subSocket = connect(this.socketPath, () => {
+        this.connected = true;
+        this.subSocket?.write(
+          JSON.stringify({
+            method: "events.subscribe",
+            params: {
+              subscriptions: [
+                { type: "tab.created" },
+                { type: "tab.closed" },
+                { type: "tab.focused" },
+                { type: "pane.created" },
+                { type: "pane.closed" },
+                { type: "pane.focused" },
+              ],
+            },
+            id: "sub-pigeon",
+          }) + "\n"
+        );
+      });
+
+      let buffer = "";
+      this.subSocket.on("data", (chunk) => {
+        buffer += chunk.toString("utf-8");
+        let newlineIdx: number;
+        while ((newlineIdx = buffer.indexOf("\n")) !== -1) {
+          const line = buffer.slice(0, newlineIdx).trim();
+          buffer = buffer.slice(newlineIdx + 1);
+          if (line) {
+            this.handleLine(line);
+          }
+        }
+      });
+
+      this.subSocket.on("error", () => {
+        // Handled silently to avoid unhandled exception crash
+      });
+
+      this.subSocket.on("close", () => {
+        this.subSocket = null;
+        // Reconnect after 3s
+        clearTimeout(this.reconnectTimer);
+        this.reconnectTimer = setTimeout(() => {
+          this.startSubscription();
+        }, 3000);
+      });
+    } catch {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = setTimeout(() => {
+        this.startSubscription();
+      }, 3000);
+    }
   }
 
   private handleLine(line: string): void {
     try {
       const msg = JSON.parse(line);
-
-      // Handle RPC response
-      if (msg.id && this.pendingRequests.has(msg.id)) {
-        const { resolve, reject, timer } = this.pendingRequests.get(msg.id)!;
-        clearTimeout(timer);
-        this.pendingRequests.delete(msg.id);
-
-        if (msg.error) {
-          reject(new Error(msg.error.message || msg.error.code));
-        } else {
-          resolve(msg.result);
-        }
-        return;
-      }
-
-      // Handle push events
       if (msg.event) {
-        this.handleHerdrEvent(msg.event, msg.params);
+        this.handleHerdrEvent(msg.event, msg.params || msg.data);
       } else if (msg.type === "event" || msg.type === "notification") {
         this.handleHerdrEvent(msg.event || msg.name, msg.params || msg.data);
       }
-    } catch {}
-  }
-
-  private async initSubscriptions(): Promise<void> {
-    try {
-      await this.request("events.subscribe", {
-        subscriptions: [
-          { type: "tab.created" },
-          { type: "tab.closed" },
-          { type: "tab.focused" },
-          { type: "pane.created" },
-          { type: "pane.closed" },
-          { type: "pane.focused" },
-        ],
-      });
     } catch {}
   }
 
