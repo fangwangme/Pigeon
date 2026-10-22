@@ -1,0 +1,13 @@
+.worktrees/
+.local/
+.agents
+.agents/
+.claude
+.claude/
+.antigravitycli/
+.pi-subagents/
+node_modules/
+.next/
+.vite/
+.turbo/
+coverage/
