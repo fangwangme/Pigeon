@@ -69,7 +69,14 @@ export class PairingManager {
   }
 
   public getCookieName(): string {
-    return this.insecureDev ? "pigeon_session" : "__Host-pigeon_session";
+    const isHttps = this.publicBaseUrl.startsWith("https://");
+    return !this.insecureDev && isHttps ? "__Host-pigeon_session" : "pigeon_session";
+  }
+
+  public getActiveToken(): { token: string; expiresAt: number } | null {
+    if (!this.activeToken) return null;
+    if (Date.now() > this.activeToken.expiresAt) return null;
+    return { token: this.activeToken.token, expiresAt: this.activeToken.expiresAt };
   }
 
   public createPairingToken(): { token: string; url: string; expiresAt: number } {

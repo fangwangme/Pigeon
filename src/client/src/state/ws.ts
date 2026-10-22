@@ -17,26 +17,48 @@ function nextId(): string {
 
 export async function checkPairingFromUrlHash(): Promise<boolean> {
   const hash = window.location.hash;
+  let code = "";
   if (hash.startsWith("#code=")) {
-    const code = hash.replace("#code=", "").trim();
-    if (code) {
-      try {
-        const res = await fetch("/api/pair", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ code, deviceName: "Chrome Mobile" }),
-        });
-        const data = await res.json();
-        if (data.success) {
-          // Clear token from browser URL history per security spec
-          window.history.replaceState(null, "", window.location.pathname);
-          return true;
+    code = hash.replace("#code=", "").trim();
+  }
+
+  // If on localhost and no code in hash, auto-fetch active pairing code
+  if (
+    !code &&
+    (window.location.hostname === "localhost" ||
+      window.location.hostname === "127.0.0.1" ||
+      window.location.hostname === "::1" ||
+      window.location.hostname === "[::1]")
+  ) {
+    try {
+      const activeRes = await fetch("/api/pair/active-code");
+      if (activeRes.ok) {
+        const activeData = await activeRes.json();
+        if (activeData.code) {
+          code = activeData.code;
         }
-      } catch {}
-    }
+      }
+    } catch {}
+  }
+
+  if (code) {
+    try {
+      const res = await fetch("/api/pair", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ code, deviceName: "Chromium Browser" }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        // Clear token from browser URL history per security spec
+        window.history.replaceState(null, "", window.location.pathname);
+        return true;
+      }
+    } catch {}
   }
   return false;
 }
+
 
 export function initWebSocket(): void {
   if (socket && (socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CONNECTING)) {

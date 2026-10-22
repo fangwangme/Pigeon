@@ -1,5 +1,6 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { networkInterfaces } from "node:os";
 import type { Server, ServerWebSocket } from "bun";
 import { HerdrClient } from "./herdr-client";
 import { PairingManager } from "./pairing";
@@ -17,6 +18,46 @@ export interface DaemonConfig {
   embeddedHtml?: string;
 }
 
+export function detectLocalIp(): string | null {
+  const ifaces = networkInterfaces();
+  for (const list of Object.values(ifaces)) {
+    if (!list) continue;
+    for (const iface of list) {
+      if (iface.family === "IPv4" && !iface.internal) {
+        if (
+          iface.address.startsWith("192.168.") ||
+          iface.address.startsWith("10.") ||
+          iface.address.startsWith("172.")
+        ) {
+          return iface.address;
+        }
+      }
+    }
+  }
+  for (const list of Object.values(ifaces)) {
+    if (!list) continue;
+    for (const iface of list) {
+      if (iface.family === "IPv4" && !iface.internal) {
+        return iface.address;
+      }
+    }
+  }
+  return null;
+}
+
+export function detectTailscaleDns(): string | null {
+  try {
+    const proc = Bun.spawnSync(["tailscale", "status", "--json"]);
+    if (proc.exitCode === 0) {
+      const data = JSON.parse(proc.stdout.toString());
+      if (data.Self?.DNSName) {
+        return data.Self.DNSName.replace(/\.+$/, "");
+      }
+    }
+  } catch {}
+  return null;
+}
+
 export class PigeonDaemon {
   public config: Required<DaemonConfig>;
   public herdrClient: HerdrClient;
@@ -28,11 +69,22 @@ export class PigeonDaemon {
 
   constructor(config: DaemonConfig = {}) {
     const port = config.port || 4100;
-    const host = config.host || (config.insecureDev ? "0.0.0.0" : "127.0.0.1");
     const insecureDev = !!config.insecureDev;
-    const publicBaseUrl =
-      config.publicBaseUrl ||
-      (insecureDev ? `http://localhost:${port}` : `https://localhost:${port}`);
+    const host = config.host || ""; // empty / undefined binds dual-stack IPv4 and IPv6
+
+    let publicBaseUrl = config.publicBaseUrl;
+    if (!publicBaseUrl) {
+      if (!insecureDev) {
+        const tsDns = detectTailscaleDns();
+        if (tsDns) {
+          publicBaseUrl = `https://${tsDns}`;
+        }
+      }
+      if (!publicBaseUrl) {
+        const localIp = detectLocalIp() || "localhost";
+        publicBaseUrl = `http://${localIp}:${port}`;
+      }
+    }
 
     this.config = {
       port,
@@ -90,7 +142,6 @@ export class PigeonDaemon {
       } catch {}
     }
 
-    // Fallback minimal responsive HTML shell
     return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -124,28 +175,24 @@ export class PigeonDaemon {
   }
 
   public async start(): Promise<void> {
-    // 1. Connect to Herdr socket (optional failure: continues if Herdr isn't up immediately)
     try {
       await this.herdrClient.connect();
     } catch {}
 
-    // 2. Start Admin Socket
     try {
       await this.pairingManager.startAdminSocket();
     } catch {}
 
-    // 3. Start Bun HTTP & WebSocket server
     const self = this;
     const cookieName = this.pairingManager.getCookieName();
 
     this.bunServer = Bun.serve<ClientConnectionData>({
       port: this.config.port,
-      hostname: this.config.host,
+      hostname: this.config.host || undefined,
 
       async fetch(req, server) {
         const url = new URL(req.url);
 
-        // Security Headers
         const csp =
           "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' ws: wss:; frame-ancestors 'none'; base-uri 'none'; object-src 'none';";
 
@@ -154,7 +201,6 @@ export class PigeonDaemon {
           const cookies = self.parseCookie(req);
           let sessionToken = cookies[cookieName];
 
-          // Allow token query param for initial pair/test handshake
           if (!sessionToken && url.searchParams.has("token")) {
             sessionToken = url.searchParams.get("token")!;
           }
@@ -180,6 +226,21 @@ export class PigeonDaemon {
           return new Response("WebSocket upgrade failed", { status: 400 });
         }
 
+        // GET /api/pair/active-code (convenience for localhost)
+        if (url.pathname === "/api/pair/active-code" && req.method === "GET") {
+          const isLocalhost =
+            url.hostname === "localhost" ||
+            url.hostname === "127.0.0.1" ||
+            url.hostname === "::1" ||
+            url.hostname === "[::1]";
+
+          if (!isLocalhost) {
+            return Response.json({ error: "Only accessible from localhost" }, { status: 403 });
+          }
+          const active = self.pairingManager.getActiveToken();
+          return Response.json({ code: active?.token || null });
+        }
+
         // POST /api/pair
         if (url.pathname === "/api/pair" && req.method === "POST") {
           try {
@@ -194,7 +255,8 @@ export class PigeonDaemon {
               );
             }
 
-            const secureFlag = self.config.insecureDev ? "" : "; Secure";
+            const isHttps = self.config.publicBaseUrl.startsWith("https://");
+            const secureFlag = isHttps ? "; Secure" : "";
             const setCookie = `${cookieName}=${res.sessionToken}; HttpOnly; SameSite=Strict; Path=/; Max-Age=2592000${secureFlag}`;
 
             return Response.json(

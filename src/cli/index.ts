@@ -49,6 +49,7 @@ async function main() {
     let port = 4100;
     let insecureDev = false;
     let herdrSocketPath: string | undefined;
+    let publicUrl: string | undefined;
 
     for (let i = 1; i < args.length; i++) {
       if (args[i] === "--port" && args[i + 1]) {
@@ -57,6 +58,8 @@ async function main() {
         insecureDev = true;
       } else if (args[i] === "--herdr-sock" && args[i + 1]) {
         herdrSocketPath = args[++i];
+      } else if (args[i] === "--public-url" && args[i + 1]) {
+        publicUrl = args[++i];
       }
     }
 
@@ -66,13 +69,17 @@ async function main() {
       port,
       insecureDev,
       herdrSocketPath,
+      publicBaseUrl: publicUrl,
     });
 
     await daemon.start();
 
     // Print initial pairing QR code
-    daemon.pairingManager.printTerminalQrCode();
-    console.log(`Pigeon Daemon running at ${daemon.config.publicBaseUrl}`);
+    const tokenInfo = daemon.pairingManager.createPairingToken();
+    daemon.pairingManager.printTerminalQrCode(tokenInfo);
+    console.log(`Pigeon Daemon running at:`);
+    console.log(`  - Local:          http://localhost:${daemon.config.port}/#code=${tokenInfo.token}`);
+    console.log(`  - Network/Mobile: ${tokenInfo.url}\n`);
 
     process.on("SIGINT", () => {
       console.log("\nShutting down Pigeon daemon...");
