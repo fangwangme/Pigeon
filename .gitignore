@@ -1,4 +1,5 @@
 .worktrees/
+.local
 .local/
 .agents
 .agents/

@@ -1,0 +1,110 @@
+# System Architecture Specification
+
+## 1. Overview and Purpose
+
+Pigeon is a mobile-first remote control and mirror client for developers who run AI coding agents inside [Herdr](https://herdr.dev).
+
+Rather than exposing a raw VT100 character-grid terminal over SSH/Mosh—which suffers from severe keyboard overlap, lack of semantic state awareness, and IME/speech-to-text conflicts on mobile devices—Pigeon operates as an intelligent local bridge daemon (`pigeon`) that connects to Herdr's local IPC interface and serves a structured, touch- and voice-optimized Progressive Web App (PWA) to mobile phones.
+
+## 2. Target Platform and Browser Support
+
+- **Primary Target**: **Chrome / modern Chromium-based mobile browsers** (Android Chrome, Chromium web engines, desktop Chrome mobile simulation).
+- **iOS Safari Policy**: Explicitly **out of scope for v1**. Pigeon will not introduce complex workarounds (such as manual `visualViewport` height tracking, iOS PWA Cookie partition mitigations, or iOS edge-swipe gesture bypasses). Modern mobile Chrome supports standard `interactive-widget=resizes-content`, standard Cookie handling, and standard Web Push without proprietary platform workarounds.
+
+## 3. System Topology
+
+```
+┌─────────────────────────────────────────────────────────┐
+│              Mobile Client (Chrome Mobile PWA)          │
+│  - Solid.js Reactive UI                                 │
+│  - Native Voice-Ready Textarea (IME Composition Safe)   │
+│  - Contextual Safeguards (Double-tap Ctrl+C)            │
+│  - Sub-pane Pill Chips for Split Tabs                   │
+└────────────────────────────┬────────────────────────────┘
+                             │ HTTPS + WSS (Tailscale Serve / Insecure Dev)
+                             │ Wire Protocol: Typed JSON Message Protocol
+┌────────────────────────────▼────────────────────────────┐
+│                  Pigeon Bridge Daemon                   │
+│  - Runtime: Bun                                         │
+│  - Herdr Event-Driven Adapter (events.subscribe)        │
+│  - Line Pattern Card Classifier (150-250ms Debounce)   │
+│  - Pairing & Security Guard (QR Code Only)              │
+│  - Web Push Notification Subsystem                      │
+│  - Local Admin Socket ($XDG_RUNTIME_DIR/pigeon.sock)    │
+└─────────────▲──────────────────────────────┬────────────┘
+              │ Admin IPC (0600)             │ Unix Domain Socket (~/.config/herdr/herdr.sock)
+┌─────────────▼─────────────┐                │ Events: events.subscribe (with revisions)
+│     Pigeon CLI Admin      │ ┌──────────────▼─────────────┐
+│ (pigeon pair/devices/...) │ │    Herdr Runtime Server    │
+└───────────────────────────┘ │    Workspaces, Tabs, Panes │
+                              └────────────────────────────┘
+```
+
+## 4. Core Architectural Decisions
+
+### 4.1 Single Binary Distribution and Build Pipeline
+The entire application (daemon + embedded PWA static assets) compiles into a single executable binary via `bun build --compile`:
+1. **Frontend Build**: The Solid.js PWA located in `src/web/` is compiled using Vite with `vite-plugin-singlefile`, producing a single self-contained HTML asset (`dist/index.html`) containing all scripts, styles, and SVG icons inlined.
+2. **Daemon Build**: Bun compiles `src/cli/index.ts` with the bundled HTML asset embedded into the executable binary:
+   ```bash
+   bun build --compile --minify ./src/cli/index.ts --outfile dist/pigeon
+   ```
+3. **Execution**: Running `pigeon start` immediately serves the PWA and API without external `node_modules` or runtime filesystem dependencies.
+4. **PWA Cache Invalidation**: The PWA registers a Service Worker that uses `skipWaiting()` and `clients.claim()` upon detecting a new server version (`/api/version`), preventing stale cache loops.
+
+### 4.2 Access Layer & Networking
+- **Primary Deployment Mode**: **Tailscale Serve** (`tailscale serve https / http://127.0.0.1:4100`).
+  - Provides an automated, trusted `.ts.net` HTTPS certificate.
+  - Grants instant mobile access both on local Wi-Fi and remotely on mobile cellular networks.
+  - Satisfies the browser's **Secure Context (`window.isSecureContext`)** prerequisite, enabling Service Worker registration, PWA installation, and Web Push notifications.
+  - Automatically derives `publicBaseUrl` from `tailscale status --json` (using `.Self.DNSName`).
+- **Development Mode (`--insecure-dev`)**:
+  - Explicit flag required for non-Tailscale local network testing (`http://192.168.x.x:4100`).
+  - Binds to `0.0.0.0`, displays a prominent terminal security warning, issues non-Secure session cookies, and explicitly disables Web Push (as browsers reject Service Worker push on non-localhost HTTP).
+
+### 4.3 Event-Driven Herdr Adapter
+Instead of continuous snapshot polling:
+1. **Event Subscription**: Pigeon connects to Herdr's Unix domain socket (`~/.config/herdr/herdr.sock`, configurable for named sessions) and issues `events.subscribe`.
+2. **Tracked Events**: Listens for `pane_agent_status_changed`, `pane_output_changed` (with `revision`), `tab_created`, `tab_closed`, `pane_closed`, and `pane_moved`.
+3. **Reconciliation**: Queries `herdr api snapshot` only once during initial startup or upon reconnection after a socket disconnect.
+
+### 4.4 Terminal Stream Classification vs Virtual Buffer
+Pigeon **does NOT reimplement a VT100 terminal emulator** (like xterm.js or xterm-headless):
+1. **Pre-rendered Text Input**: Herdr's `herdr agent read <target> --source recent-unwrapped` already provides clean, soft-wrap-joined text.
+2. **Card Classification**: Pigeon's backend classifies pre-rendered line chunks into structured cards:
+   - `thought`: Folded thought blocks (`+ Thought`).
+   - `tool_call`: Command invocations (`$ ...`) and results with exit codes.
+   - `diff`: File edit summaries and unified line diffs (collapsed by default).
+   - `markdown`: Assistant natural language responses.
+   - `interaction`: Interactive questions or permission prompts requiring user action.
+   - `text`: Fallback unclassified text block.
+3. **Card Stability & Deduplication**:
+   - Card IDs are derived from content anchors: `hash(cardKind + startLineContent + turnNumber)`.
+   - Screen reading is throttled with a 150–250ms debounce window. If the SHA-256 hash of the cleaned screen buffer has not changed, no `cards_upsert` is dispatched.
+4. **Raw Terminal Fallback**: The raw cleaned terminal screen is retained and served via `pane_screen` for the mobile client's slide-up inspection sheet.
+
+### 4.5 Mobile Presence and Push Suppression
+To prevent missed push notifications due to half-open mobile WebSockets:
+1. Mobile clients send application-level heartbeats (`ping` every 15s; server replies `pong`).
+2. Client visibility (`document.visibilityState`) and focused pane ID are reported to the daemon.
+3. The daemon tracks presence: `{ isVisible: boolean, viewingPaneId: string | null, lastSeenAt: number }`.
+4. A Web Push notification for a `blocked` agent is dispatched **only** if no active client currently has `isVisible === true` and `viewingPaneId === targetPaneId`.
+
+### 4.6 Local CLI Admin Channel
+Pigeon daemon listens on an isolated local Unix socket:
+- Path: `$XDG_RUNTIME_DIR/pigeon.sock` (mode `0600`, or fallback `~/.local/state/pigeon/admin.sock`).
+- CLI subcommands (`pigeon pair`, `pigeon devices`, `pigeon devices revoke <id>`, `pigeon status`) talk directly to the running daemon over this socket to query pairing tokens and instantly sever revoked connections.
+
+## 5. Trust Boundaries and Error Semantics
+
+- **Client Inputs (Untrusted)**: Every WebSocket frame and HTTP request received from the mobile client is strictly validated against schemas defined in `src/protocol/`. Malformed payloads are rejected with explicit error codes.
+- **Terminal & Agent Output (Untrusted)**: Text emitted by coding agents and CLI commands is untrusted content.
+  - HTML tags are stripped and sanitized via a strict sanitizer (e.g. DOMPurify).
+  - URL schemes are restricted to a whitelist (`https:`, `http:`, `mailto:`). Schemes like `javascript:`, `data:`, `blob:`, `file:` are strictly blocked.
+  - Terminal OSC 8/52 sequences and window title escape sequences are stripped prior to card parsing.
+  - Markdown links must include `rel="noopener noreferrer" target="_blank"`.
+- **Content Security Policy (CSP)**:
+  ```http
+  default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' wss:; frame-ancestors 'none'; base-uri 'none'; object-src 'none';
+  ```
+- **Herdr Socket (Trusted Internal)**: Communication with the local Herdr daemon is considered internal and trusted, but Pigeon parses all Herdr responses defensively, ignoring unknown fields to ensure forward compatibility.

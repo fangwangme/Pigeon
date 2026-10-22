@@ -1,0 +1,13 @@
+{
+  "name": "pigeon",
+  "version": "0.1.0",
+  "description": "Mobile-first voice-driven remote control and mirror client for Herdr",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "test": "bun test"
+  },
+  "devDependencies": {
+    "@types/bun": "latest"
+  }
+}
