@@ -10,6 +10,7 @@ Specs describe what the system does and why. They are the authoritative standard
 4. [`security-and-pairing.md`](security-and-pairing.md) — Security model: QR-code-only pairing via URL fragment (`#code=...`), Base32 token, HttpOnly cookies, Origin/Host validation, and local admin IPC socket.
 5. [`mobile-ui-and-themes.md`](mobile-ui-and-themes.md) — Mobile UX on Chromium (sub-pane chips, double-tap `Ctrl+C` safeguard, IME composition safety, 44px hit targets, semantic tokens, and 6 preset theme packs).
 6. [`push.md`](push.md) — Web Push notification subsystem (VAPID keypair, presence-based push suppression, and privacy-preserving alerts).
+7. [`agent-session-normalization.md`](agent-session-normalization.md) — Agent session normalization & dual-track rendering (OpenCode, AGY, Claude Code, Codex, Pi local schemas, NormalizedTurn, table horizontal overflow, and native question Action Sheet).
 
 ## Core Rules for Spec Integrity
 - **Spec Lead**: Any behavior change updates the spec first in the change's own branch.
