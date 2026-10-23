@@ -222,7 +222,7 @@ export const Header: Component = () => {
                     t.panes?.find((p) => p.agentStatus === "working" || p.agentStatus === "blocked") ||
                     t.panes?.[0];
                   if (targetPane?.id) {
-                    selectPane(targetPane.id);
+                    selectPane(targetPane.id, state.activeWorkspaceId || undefined, t.id);
                   }
                 }}
                 style={{

@@ -30,6 +30,7 @@ export class HerdrClient extends EventEmitter {
 
   // Cache
   private paneStates = new Map<string, PaneStatePayload>();
+  private paneLocations = new Map<string, { workspaceId: string; tabId: string }>();
   private paneDebounceTimers = new Map<string, NodeJS.Timeout>();
   private currentSnapshot: SnapshotPayload = { workspaces: [], workingAgents: [] };
   private focusedPaneId: string | null = null;
@@ -239,6 +240,14 @@ export class HerdrClient extends EventEmitter {
           const list = panesByTab.get(p.tab_id) || [];
           list.push(p);
           panesByTab.set(p.tab_id, list);
+
+          if (p.pane_id) {
+            this.paneLocations.set(p.pane_id, {
+              workspaceId:
+                p.workspace_id || (p.pane_id.includes(":") ? p.pane_id.split(":")[0] : "w1"),
+              tabId: p.tab_id || "t1",
+            });
+          }
         }
 
         const tabsByWs = new Map<string, any[]>();
@@ -404,12 +413,16 @@ export class HerdrClient extends EventEmitter {
   public async readAndClassifyPane(paneId: string): Promise<PaneStatePayload | null> {
     try {
       let rawScreen = "";
+      let readWsId: string | undefined;
+      let readTabId: string | undefined;
       try {
         const readRes = await this.request("pane.read", {
           pane_id: paneId,
           source: "recent_unwrapped",
         });
         rawScreen = readRes?.read?.text || readRes?.text || readRes?.data || "";
+        readWsId = readRes?.read?.workspace_id;
+        readTabId = readRes?.read?.tab_id;
       } catch {
         // Fallback to visible
         const readRes = await this.request("pane.read", {
@@ -417,6 +430,12 @@ export class HerdrClient extends EventEmitter {
           source: "visible",
         });
         rawScreen = readRes?.read?.text || readRes?.text || readRes?.data || "";
+        readWsId = readRes?.read?.workspace_id;
+        readTabId = readRes?.read?.tab_id;
+      }
+
+      if (readWsId && readTabId) {
+        this.paneLocations.set(paneId, { workspaceId: readWsId, tabId: readTabId });
       }
 
       const { cards, pendingInteraction } = this.classifier.classifyScreen(rawScreen);
@@ -428,10 +447,18 @@ export class HerdrClient extends EventEmitter {
         agentStatus = "blocked";
       }
 
+      const loc = this.paneLocations.get(paneId);
+      const workspaceId =
+        readWsId ||
+        loc?.workspaceId ||
+        existing?.workspaceId ||
+        (paneId.includes(":") ? paneId.split(":")[0] : "w1");
+      const tabId = readTabId || loc?.tabId || existing?.tabId || "t1";
+
       const payload: PaneStatePayload = {
         paneId,
-        workspaceId: existing?.workspaceId || "w1",
-        tabId: existing?.tabId || "t1",
+        workspaceId,
+        tabId,
         agentStatus,
         cards,
         pendingInteraction,
@@ -452,10 +479,12 @@ export class HerdrClient extends EventEmitter {
     const existing = this.paneStates.get(paneId);
     if (existing) return existing;
 
+    const loc = this.paneLocations.get(paneId);
     const initial: PaneStatePayload = {
       paneId,
-      workspaceId: "w1",
-      tabId: "t1",
+      workspaceId:
+        loc?.workspaceId || (paneId.includes(":") ? paneId.split(":")[0] : "w1"),
+      tabId: loc?.tabId || "t1",
       agentStatus: "idle",
       cards: [],
       pendingInteraction: null,

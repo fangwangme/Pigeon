@@ -170,10 +170,13 @@ function handleServerMessage(msg: ServerMessage): void {
     case "pane_state": {
       const p: PaneStatePayload = msg.payload;
       if (!state.activePaneId || state.activePaneId === p.paneId) {
+        const matchingWs = state.workspaces.find((w) => w.id === p.workspaceId);
+        const matchingTab = matchingWs?.tabs.find((t) => t.id === p.tabId);
+
         setState({
           activePaneId: p.paneId,
-          activeWorkspaceId: p.workspaceId,
-          activeTabId: p.tabId,
+          activeWorkspaceId: matchingWs ? p.workspaceId : (state.activeWorkspaceId || p.workspaceId),
+          activeTabId: matchingTab ? p.tabId : (state.activeTabId || p.tabId),
           agentStatus: p.agentStatus,
           cards: p.cards || [],
           pendingInteraction: p.pendingInteraction || null,
@@ -273,8 +276,24 @@ export function respondInteraction(
   setState("pendingInteraction", null);
 }
 
-export function selectPane(paneId: string): void {
+export function selectPane(paneId: string, workspaceId?: string, tabId?: string): void {
   setState("activePaneId", paneId);
+  if (workspaceId) {
+    setState("activeWorkspaceId", workspaceId);
+  }
+  if (tabId) {
+    setState("activeTabId", tabId);
+  } else {
+    for (const w of state.workspaces) {
+      for (const t of w.tabs) {
+        if (t.panes?.some((p) => p.id === paneId)) {
+          setState("activeWorkspaceId", w.id);
+          setState("activeTabId", t.id);
+          break;
+        }
+      }
+    }
+  }
   sendMessage({
     type: "select_view",
     id: nextId(),

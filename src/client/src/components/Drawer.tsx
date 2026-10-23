@@ -184,7 +184,7 @@ export const Drawer: Component = () => {
                               (p) => p.agentStatus === "working" || p.agentStatus === "blocked"
                             ) || targetTab.panes?.[0];
                           if (targetPane?.id) {
-                            selectPane(targetPane.id);
+                            selectPane(targetPane.id, w.id, targetTab.id);
                           }
                         }
                         closeDrawer();
@@ -289,7 +289,7 @@ export const Drawer: Component = () => {
                       onClick={() => {
                         setState("activeWorkspaceId", a.workspaceId);
                         setState("activeTabId", a.tabId);
-                        selectPane(a.paneId);
+                        selectPane(a.paneId, a.workspaceId, a.tabId);
                         closeDrawer();
                       }}
                       style={{

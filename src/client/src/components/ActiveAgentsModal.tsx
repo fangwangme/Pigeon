@@ -14,7 +14,7 @@ export const ActiveAgentsModal: Component = () => {
   const handleSelectAgent = (agent: { workspaceId: string; tabId: string; paneId: string }) => {
     setState("activeWorkspaceId", agent.workspaceId);
     setState("activeTabId", agent.tabId);
-    selectPane(agent.paneId);
+    selectPane(agent.paneId, agent.workspaceId, agent.tabId);
     closeActiveAgentsModal();
   };
 
