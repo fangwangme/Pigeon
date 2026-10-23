@@ -81,11 +81,14 @@ export class CardClassifier {
           i++;
         }
 
+        // Antigravity/Claude style tool lines look like `Bash(cd /path && ...)`.
+        // Keep the tool name as the heading and the inner text as the command.
+        const callMatch = /^([A-Za-z_][A-Za-z0-9_.-]*)\((.*)\)$/.exec(cmd.trim());
         cards.push({
           id: computeCardId("tool_call", startLine, cardIdx++),
           kind: "tool_call",
-          title: cmd.split(" ")[0] || "Command",
-          command: cmd,
+          title: callMatch ? callMatch[1] : cmd.split(" ")[0] || "Command",
+          command: callMatch ? callMatch[2].trim() : cmd,
           status: exitCode !== undefined && exitCode !== 0 ? "error" : "done",
           exitCode: exitCode ?? 0,
           output: outputLines.join("\n").trim(),

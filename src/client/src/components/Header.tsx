@@ -359,7 +359,7 @@ export const Header: Component = () => {
                       background: getStatusDotColor(p.agentStatus),
                     }}
                   />
-                  {p.name || p.id}
+                  {p.name || (p.id.includes(":") ? p.id.split(":").pop() : p.id)}
                 </button>
               );
             }}
