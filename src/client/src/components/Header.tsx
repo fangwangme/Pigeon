@@ -40,6 +40,19 @@ export const Header: Component = () => {
     return p.id.includes(":") ? p.id.split(":").pop()! : p.id;
   };
 
+  const resolveTabLabel = (t: { id: string; label: string; panes?: any[] }) => {
+    const raw = (t.label || "").trim();
+    if (raw && !/^\d+$/.test(raw) && !raw.startsWith("Tab ")) return raw;
+    const p = t.panes?.[0];
+    if (p) {
+      if (p.agent === "opencode") return "OpenCode";
+      if (p.agent === "agy") return "Antigravity";
+      if (p.agent === "claude") return "Claude Code";
+      if (p.name && !p.name.includes(":p")) return p.name;
+    }
+    return raw || `Tab ${t.id.split(":").pop() || 1}`;
+  };
+
   return (
     <>
       <header
@@ -310,7 +323,7 @@ export const Header: Component = () => {
                     background: tabDotColor(),
                   }}
                 />
-                {t.label}
+                {resolveTabLabel(t)}
               </button>
             );
           }}

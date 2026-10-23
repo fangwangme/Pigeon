@@ -167,10 +167,10 @@ export const CardFeed: Component = () => {
   const tab = getActiveTab;
 
   const getStatusText = () => {
-    if (state.pendingInteraction || state.agentStatus === "blocked") return "待确认 · 等待授权";
-    if (state.agentStatus === "working") return "工作中 · 正在执行任务";
-    if (state.agentStatus === "done") return "已完成 · 等待输入";
-    return "就绪 · 等待输入";
+    if (state.pendingInteraction || state.agentStatus === "blocked") return "待确认";
+    if (state.agentStatus === "working") return "工作中";
+    if (state.agentStatus === "done") return "已完成";
+    return "就绪";
   };
 
   const getStatusDotColor = () => {
@@ -360,27 +360,40 @@ export const CardFeed: Component = () => {
         color: "var(--fg)",
       }}
     >
-      {/* 1. Compact session strip: workspace › tab › agent, status, model */}
+      {/* 1. Ultra-Compact Session Bar: Workspace · Session · Status · Model */}
       <section
         aria-label="当前会话信息"
         style={{
           background: "var(--surface)",
           border: "1px solid var(--border)",
-          "border-radius": "14px",
-          padding: "9px 12px",
+          "border-radius": "10px",
+          padding: "7px 10px",
           display: "flex",
-          "flex-direction": "column",
-          gap: "6px",
-          "box-shadow": "0 1px 2px rgba(0, 0, 0, 0.06)",
+          "align-items": "center",
+          "justify-content": "space-between",
+          gap: "8px",
+          "box-shadow": "0 1px 2px rgba(0, 0, 0, 0.04)",
+          "min-height": "36px",
           "max-width": "100%",
           "box-sizing": "border-box",
         }}
       >
-        <div style={{ display: "flex", "align-items": "center", gap: "7px", width: "100%" }}>
-          <div
+        {/* Left: Status dot + Workspace · Session Name · Status */}
+        <div
+          style={{
+            display: "flex",
+            "align-items": "center",
+            gap: "7px",
+            flex: 1,
+            "min-width": 0,
+            overflow: "hidden",
+            "white-space": "nowrap",
+          }}
+        >
+          <span
             style={{
-              width: "8px",
-              height: "8px",
+              width: "7px",
+              height: "7px",
               "border-radius": "4px",
               background: getStatusDotColor(),
               "box-shadow":
@@ -393,117 +406,93 @@ export const CardFeed: Component = () => {
             }}
           />
 
-          {/* Breadcrumb hierarchy, single line with graceful truncation */}
-          <div
+          <span
             style={{
-              flex: 1,
-              "min-width": 0,
-              display: "flex",
-              "align-items": "baseline",
-              gap: "5px",
+              "font-size": "13px",
+              "font-weight": 650,
+              color: "var(--fg)",
               overflow: "hidden",
-              "white-space": "nowrap",
-            }}
-          >
-            <span
-              style={{
-                "font-size": "13.5px",
-                "font-weight": 650,
-                color: "var(--fg)",
-                overflow: "hidden",
-                "text-overflow": "ellipsis",
-                "flex-shrink": 1,
-              }}
-            >
-              {ws()?.label || "工作区"}
-            </span>
-            <span style={{ color: "var(--faint)", "font-size": "11px", "flex-shrink": 0 }}>›</span>
-            <span
-              style={{
-                "font-size": "12px",
-                "font-weight": 600,
-                color: "var(--muted)",
-                "font-family": "'JetBrains Mono', ui-monospace, monospace",
-                "flex-shrink": 0,
-              }}
-            >
-              {tab()?.label || "Tab 1"}
-            </span>
-            <span style={{ color: "var(--faint)", "font-size": "11px", "flex-shrink": 0 }}>›</span>
-            <span
-              style={{
-                "font-size": "12.5px",
-                "font-weight": 600,
-                color: "var(--accent)",
-                overflow: "hidden",
-                "text-overflow": "ellipsis",
-                "flex-shrink": 1,
-              }}
-            >
-              {agentBadgeInfo().name}
-            </span>
-          </div>
-
-          <button
-            class="touch-target"
-            onClick={toggleTerminalSheet}
-            aria-label="展开终端输出"
-            title="展开终端输出"
-            style={{
-              width: "32px",
-              height: "32px",
-              padding: 0,
-              "border-radius": "9px",
-              border: "1px solid var(--border)",
-              background: "var(--inset)",
-              color: "var(--muted)",
-              display: "flex",
-              "align-items": "center",
-              "justify-content": "center",
-              cursor: "pointer",
+              "text-overflow": "ellipsis",
               "flex-shrink": 0,
+              "max-width": "110px",
             }}
           >
-            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <polyline points="15 3 21 3 21 9" />
-              <polyline points="9 21 3 21 3 15" />
-              <line x1="21" y1="3" x2="14" y2="10" />
-              <line x1="3" y1="21" x2="10" y2="14" />
-            </svg>
-          </button>
-        </div>
+            {ws()?.label || "工作区"}
+          </span>
 
-        <div style={{ display: "flex", "align-items": "center", "justify-content": "space-between", gap: "8px", "min-width": 0 }}>
+          <span style={{ color: "var(--faint)", "font-size": "11px", "flex-shrink": 0 }}>·</span>
+
+          <span
+            style={{
+              "font-size": "12.5px",
+              "font-weight": 600,
+              color: "var(--accent)",
+              overflow: "hidden",
+              "text-overflow": "ellipsis",
+              "flex-shrink": 1,
+            }}
+          >
+            {tab()?.label || agentBadgeInfo().name}
+          </span>
+
+          <span style={{ color: "var(--faint)", "font-size": "11px", "flex-shrink": 0 }}>·</span>
+
           <span
             style={{
               "font-size": "11.5px",
-              "font-weight": 500,
-              color: "var(--muted)",
-              overflow: "hidden",
-              "text-overflow": "ellipsis",
-              "white-space": "nowrap",
+              "font-weight": 600,
+              color: getStatusDotColor(),
+              "flex-shrink": 0,
             }}
           >
-            <span style={{ color: getStatusDotColor(), "font-weight": 650 }}>{getStatusText()}</span>
+            {getStatusText()}
           </span>
+        </div>
 
+        {/* Right: Model badge + Small Terminal Sheet button */}
+        <div style={{ display: "flex", "align-items": "center", gap: "6px", "flex-shrink": 0 }}>
           <Show when={agentBadgeInfo().model}>
             <span
               style={{
                 "font-size": "10.5px",
                 "font-weight": 600,
-                padding: "2px 7px",
-                "border-radius": "6px",
+                padding: "2px 6px",
+                "border-radius": "5px",
                 background: "var(--accentbg)",
                 color: "var(--accentt)",
                 "font-family": "'JetBrains Mono', ui-monospace, monospace",
                 "white-space": "nowrap",
-                "flex-shrink": 0,
               }}
             >
               {agentBadgeInfo().model}
             </span>
           </Show>
+
+          <button
+            onClick={toggleTerminalSheet}
+            aria-label="查看终端输出"
+            title={`查看终端输出 (${cleanedScreenLines().length} 行)`}
+            style={{
+              height: "26px",
+              padding: "0 6px",
+              "border-radius": "6px",
+              border: "1px solid var(--border)",
+              background: "var(--inset)",
+              color: "var(--muted)",
+              display: "flex",
+              "align-items": "center",
+              gap: "3px",
+              cursor: "pointer",
+              "font-size": "10.5px",
+              "font-family": "'JetBrains Mono', monospace",
+            }}
+          >
+            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <polyline points="4 17 10 11 4 5" />
+              <line x1="12" y1="19" x2="20" y2="19" />
+            </svg>
+            <span>{cleanedScreenLines().length}行</span>
+          </button>
         </div>
       </section>
 
@@ -565,53 +554,8 @@ export const CardFeed: Component = () => {
         </section>
       </Show>
 
-      {/* 4. Terminal output: full panel when there are no cards or turns, compact strip otherwise */}
-      <Show
-        when={state.normalizedTurns.length === 0 && state.cards.length === 0}
-        fallback={
-          <button
-            class="touch-target"
-            onClick={toggleTerminalSheet}
-            aria-label="查看完整终端输出"
-            style={{
-              display: "flex",
-              "align-items": "center",
-              gap: "8px",
-              width: "100%",
-              padding: "10px 12px",
-              "border-radius": "12px",
-              border: "1px solid var(--border)",
-              background: "var(--surface)",
-              color: "var(--muted)",
-              "font-size": "11.5px",
-              "text-align": "left",
-              cursor: "pointer",
-            }}
-          >
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style={{ "flex-shrink": 0 }}>
-              <polyline points="4 17 10 11 4 5" />
-              <line x1="12" y1="19" x2="20" y2="19" />
-            </svg>
-            <span style={{ "font-weight": 600, color: "var(--fg)", "flex-shrink": 0 }}>终端</span>
-            <span
-              style={{
-                flex: 1,
-                "min-width": 0,
-                overflow: "hidden",
-                "text-overflow": "ellipsis",
-                "white-space": "nowrap",
-                "font-family": "'JetBrains Mono', ui-monospace, monospace",
-                opacity: 0.85,
-              }}
-            >
-              {cleanedScreenLines().slice(-1)[0]?.trim() || "暂无输出"}
-            </span>
-            <span style={{ "flex-shrink": 0, color: "var(--faint)" }}>
-              {cleanedScreenLines().length} 行 ›
-            </span>
-          </button>
-        }
-      >
+      {/* 4. Terminal output: full panel only when there are no cards or turns */}
+      <Show when={state.normalizedTurns.length === 0 && state.cards.length === 0}>
         <section
           aria-label="终端会话窗口"
           style={{

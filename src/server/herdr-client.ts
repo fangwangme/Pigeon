@@ -369,9 +369,23 @@ export class HerdrClient extends EventEmitter {
               };
             });
 
+            let tabLabel = t.label;
+            // If tab label is missing or just a raw digit like "1", resolve friendly name from primary pane
+            if (!tabLabel || /^\d+$/.test(tabLabel.trim())) {
+              const primaryPane = panes[0];
+              if (primaryPane?.agent === "opencode") tabLabel = "OpenCode";
+              else if (primaryPane?.agent === "agy") tabLabel = "Antigravity";
+              else if (primaryPane?.agent === "claude") tabLabel = "Claude Code";
+              else if (primaryPane?.name && !primaryPane.name.startsWith(primaryPane.id) && !primaryPane.name.includes(":p")) {
+                tabLabel = primaryPane.name;
+              } else {
+                tabLabel = `Tab ${t.number || 1}`;
+              }
+            }
+
             return {
               id: t.tab_id,
-              label: t.label || `Tab ${t.number || 1}`,
+              label: tabLabel,
               paneCount: panes.length,
               panes,
             };
