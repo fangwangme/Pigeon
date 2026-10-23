@@ -266,6 +266,23 @@ export const SettingsModal: Component = () => {
             >
               设备与配对
             </button>
+            <button
+              class="touch-target"
+              onClick={() => setSettingsTab("pwa")}
+              style={{
+                height: "36px",
+                "border-radius": "8px",
+                border: 0,
+                background: state.settingsTab === "pwa" ? "var(--accent)" : "transparent",
+                color: state.settingsTab === "pwa" ? "var(--onaccent)" : "var(--muted)",
+                "font-size": "13px",
+                "font-weight": state.settingsTab === "pwa" ? 600 : 500,
+                cursor: "pointer",
+                transition: "all 0.15s ease",
+              }}
+            >
+              全屏应用
+            </button>
           </div>
         </nav>
 
@@ -786,6 +803,119 @@ export const SettingsModal: Component = () => {
               >
                 <div style={{ "font-weight": 600, color: "var(--fg)", "margin-bottom": "4px" }}>如何在电脑上为新设备生成配对码？</div>
                 在电脑终端运行：<code style={{ color: "var(--accent)", background: "var(--surface)", padding: "2px 6px", "border-radius": "4px" }}>./dist/pigeon pair</code> 即可生成新二维码与专属配对码。
+              </div>
+            </section>
+          </Show>
+
+          {/* TAB 4: 全屏应用 PWA (Standalone App & Auto Update) */}
+          <Show when={state.settingsTab === "pwa"}>
+            <section style={{ display: "flex", "flex-direction": "column", gap: "20px" }}>
+              <div>
+                <h3 style={{ "font-size": "15px", "font-weight": 700, margin: "0 0 4px" }}>
+                  添加到主屏幕（全屏 App 模式）
+                </h3>
+                <p style={{ "font-size": "12.5px", color: "var(--muted)", margin: 0, "line-height": 1.5 }}>
+                  普通网页模式下，浏览器顶部地址栏和底部操作栏会侵占手机屏幕空间。将 Pigeon 添加到手机主屏幕后，将以纯粹的全屏独立 App 运行，彻底移除浏览器工具栏！
+                </p>
+              </div>
+
+              {/* Install button if browser triggers beforeinstallprompt */}
+              <Show when={state.canInstallPWA}>
+                <button
+                  class="touch-target"
+                  onClick={async () => {
+                    const prompt = (window as any).__pigeonDeferredPrompt;
+                    if (prompt) {
+                      prompt.prompt();
+                      const choice = await prompt.userChoice;
+                      if (choice.outcome === "accepted") {
+                        setState("canInstallPWA", false);
+                      }
+                    }
+                  }}
+                  style={{
+                    width: "100%",
+                    height: "46px",
+                    background: "var(--accent)",
+                    color: "var(--onaccent)",
+                    border: 0,
+                    "border-radius": "10px",
+                    "font-size": "14px",
+                    "font-weight": 650,
+                    cursor: "pointer",
+                    display: "flex",
+                    "align-items": "center",
+                    "justify-content": "center",
+                    gap: "8px",
+                    "box-shadow": "0 2px 8px rgba(0, 0, 0, 0.2)",
+                  }}
+                >
+                  <span>📥</span>
+                  <span>立即安装 Pigeon 到手机桌面</span>
+                </button>
+              </Show>
+
+              {/* Step by Step Guide Card */}
+              <div
+                style={{
+                  background: "var(--inset)",
+                  border: "1px solid var(--border)",
+                  "border-radius": "12px",
+                  padding: "16px",
+                  display: "flex",
+                  "flex-direction": "column",
+                  gap: "14px",
+                  "font-size": "13px",
+                  "line-height": 1.6,
+                }}
+              >
+                <div style={{ "font-weight": 650, color: "var(--fg)", "font-size": "14px" }}>
+                  📱 手动添加方式（推荐）：
+                </div>
+
+                <div style={{ display: "flex", "flex-direction": "column", gap: "10px" }}>
+                  <div style={{ background: "var(--surface)", padding: "10px 12px", "border-radius": "8px", border: "1px solid var(--border)" }}>
+                    <div style={{ "font-weight": 600, color: "var(--accent)", "margin-bottom": "2px" }}>
+                      🤖 Chrome / Android
+                    </div>
+                    <div style={{ color: "var(--muted)", "font-size": "12.5px" }}>
+                      点击浏览器右上角菜单 <strong>⋮</strong> ➔ 选择<strong>「添加到主屏幕」</strong>或<strong>「安装应用」</strong>。
+                    </div>
+                  </div>
+
+                  <div style={{ background: "var(--surface)", padding: "10px 12px", "border-radius": "8px", border: "1px solid var(--border)" }}>
+                    <div style={{ "font-weight": 600, color: "var(--accent)", "margin-bottom": "2px" }}>
+                      🍏 Safari / iOS
+                    </div>
+                    <div style={{ color: "var(--muted)", "font-size": "12.5px" }}>
+                      点击 Safari 底部分享按钮 <strong>⎋</strong> ➔ 向下滑动并选择<strong>「添加到主屏幕」</strong>。
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Automatic Update Mechanism explanation */}
+              <div
+                style={{
+                  background: "var(--surface)",
+                  border: "1px solid var(--border)",
+                  "border-radius": "12px",
+                  padding: "14px",
+                  display: "flex",
+                  "flex-direction": "column",
+                  gap: "6px",
+                  "font-size": "12.5px",
+                  color: "var(--muted)",
+                  "line-height": 1.5,
+                }}
+              >
+                <div style={{ "font-weight": 650, color: "var(--fg)", display: "flex", "align-items": "center", gap: "6px" }}>
+                  <span>🔄</span>
+                  <span>PWA 自动热更新机制</span>
+                </div>
+                <div>
+                  Pigeon 采用 <strong>Network-First + 智能版本探测</strong>。当服务端更新或重启后，PWA 每次打开或切换回前台时会自动拉取最新版本并在后台无缝热替换，无需重新添加或清理缓存！
+                </div>
               </div>
             </section>
           </Show>

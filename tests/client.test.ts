@@ -47,6 +47,26 @@ describe("Pigeon Mobile Client UI & Contract Suite", () => {
     expect(content).toContain("min-width: 44px");
   });
 
+  test("PWA manifest, service worker, and standalone mobile tags exist", () => {
+    const htmlPath = join(rootDir, "index.html");
+    const content = readFileSync(htmlPath, "utf-8");
+    expect(content).toContain("manifest.webmanifest");
+    expect(content).toContain("apple-mobile-web-app-capable");
+    expect(content).toContain("apple-mobile-web-app-status-bar-style");
+
+    const manifestPath = join(rootDir, "public", "manifest.webmanifest");
+    expect(existsSync(manifestPath)).toBe(true);
+    const manifest = JSON.parse(readFileSync(manifestPath, "utf-8"));
+    expect(manifest.display).toBe("standalone");
+    expect(manifest.start_url).toBe("/");
+
+    const swPath = join(rootDir, "public", "sw.js");
+    expect(existsSync(swPath)).toBe(true);
+    const swContent = readFileSync(swPath, "utf-8");
+    expect(swContent).toContain("skipWaiting");
+    expect(swContent).toContain("clients.claim");
+  });
+
   test("All 6 theme presets exist and Pigeon Light passes WCAG AA contrast (>= 4.5:1)", () => {
     const expectedThemes = [
       "pigeon-dark",

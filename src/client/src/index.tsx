@@ -46,6 +46,54 @@ function App() {
 
     // 4. Connect WebSocket
     initWebSocket();
+
+    // 5. Register PWA Service Worker with auto-update detection
+    if (typeof window !== "undefined" && "serviceWorker" in navigator) {
+      navigator.serviceWorker
+        .register("/sw.js")
+        .then((registration) => {
+          // Whenever user brings PWA back to foreground, check for server updates
+          document.addEventListener("visibilitychange", () => {
+            if (document.visibilityState === "visible") {
+              registration.update().catch(() => {});
+            }
+          });
+
+          // Check if a new version is installed
+          registration.addEventListener("updatefound", () => {
+            const installing = registration.installing;
+            if (installing) {
+              installing.addEventListener("statechange", () => {
+                if (installing.state === "installed" && navigator.serviceWorker.controller) {
+                  console.log("[PWA] New version installed, refreshing...");
+                  window.location.reload();
+                }
+              });
+            }
+          });
+        })
+        .catch((err) => {
+          console.warn("[PWA] Service worker registration error:", err);
+        });
+
+      // Reload when the controller changes
+      let refreshing = false;
+      navigator.serviceWorker.addEventListener("controllerchange", () => {
+        if (!refreshing) {
+          refreshing = true;
+          window.location.reload();
+        }
+      });
+    }
+
+    // 6. Capture beforeinstallprompt for one-tap home screen install
+    if (typeof window !== "undefined") {
+      window.addEventListener("beforeinstallprompt", (e) => {
+        e.preventDefault();
+        (window as any).__pigeonDeferredPrompt = e;
+        setState("canInstallPWA", true);
+      });
+    }
   });
 
   return (

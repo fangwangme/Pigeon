@@ -39,7 +39,8 @@ export interface AppState {
   pairingModalOpen: boolean;
   activeAgentsModalOpen: boolean;
   settingsModalOpen: boolean;
-  settingsTab: "appearance" | "macros" | "pairing";
+  settingsTab: "appearance" | "macros" | "pairing" | "pwa";
+  canInstallPWA: boolean;
   themeId: string;
   themeKey: string;
   themeMode: "system" | "light" | "dark";
@@ -83,6 +84,7 @@ const [state, setState] = createStore<AppState>({
   activeAgentsModalOpen: false,
   settingsModalOpen: false,
   settingsTab: "appearance",
+  canInstallPWA: false,
   themeId: "gruvbox",
   themeKey: "gruvbox",
   themeMode: "system",
@@ -202,7 +204,7 @@ export function closeTerminalSheet() {
   setState("terminalSheetOpen", false);
 }
 
-export function openSettingsModal(tab: "appearance" | "macros" | "pairing" = "appearance") {
+export function openSettingsModal(tab: "appearance" | "macros" | "pairing" | "pwa" = "appearance") {
   closeDrawer();
   setState("settingsTab", tab);
   setState("settingsModalOpen", true);
@@ -212,7 +214,7 @@ export function closeSettingsModal() {
   setState("settingsModalOpen", false);
 }
 
-export function setSettingsTab(tab: "appearance" | "macros" | "pairing") {
+export function setSettingsTab(tab: "appearance" | "macros" | "pairing" | "pwa") {
   setState("settingsTab", tab);
 }
 

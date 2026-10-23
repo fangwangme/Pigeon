@@ -8,6 +8,13 @@ import { PushManager } from "./push";
 import { WsServer, type ClientConnectionData } from "./ws-server";
 import { EMBEDDED_HTML } from "./embedded-html";
 import { ConfigManager } from "./config-manager";
+import {
+  PWA_MANIFEST,
+  PWA_SW_SCRIPT,
+  PWA_ICON_SVG,
+  PWA_ICON_192_BASE64,
+  PWA_ICON_512_BASE64,
+} from "./pwa-assets";
 
 export interface DaemonConfig {
   port?: number;
@@ -307,6 +314,56 @@ export class PigeonDaemon {
           } catch (e: any) {
             return Response.json({ success: false, error: e.message }, { status: 400 });
           }
+        }
+
+        // PWA Web App Manifest
+        if (url.pathname === "/manifest.webmanifest" || url.pathname === "/manifest.json") {
+          return Response.json(PWA_MANIFEST, {
+            headers: {
+              "Content-Type": "application/manifest+json; charset=utf-8",
+              "Cache-Control": "public, max-age=3600",
+            },
+          });
+        }
+
+        // PWA Service Worker
+        if (url.pathname === "/sw.js") {
+          return new Response(PWA_SW_SCRIPT, {
+            headers: {
+              "Content-Type": "application/javascript; charset=utf-8",
+              "Cache-Control": "no-cache, no-store, must-revalidate",
+            },
+          });
+        }
+
+        // PWA Icons
+        if (url.pathname === "/icon.svg") {
+          return new Response(PWA_ICON_SVG, {
+            headers: {
+              "Content-Type": "image/svg+xml; charset=utf-8",
+              "Cache-Control": "public, max-age=86400",
+            },
+          });
+        }
+
+        if (url.pathname === "/icon-192.png") {
+          const buf = Buffer.from(PWA_ICON_192_BASE64, "base64");
+          return new Response(buf, {
+            headers: {
+              "Content-Type": "image/png",
+              "Cache-Control": "public, max-age=86400",
+            },
+          });
+        }
+
+        if (url.pathname === "/icon-512.png") {
+          const buf = Buffer.from(PWA_ICON_512_BASE64, "base64");
+          return new Response(buf, {
+            headers: {
+              "Content-Type": "image/png",
+              "Cache-Control": "public, max-age=86400",
+            },
+          });
         }
 
         // Serve PWA SPA html
