@@ -439,9 +439,9 @@ export const CardFeed: Component = () => {
           </span>
         </div>
 
-        {/* Right: Model badge + Compact Terminal button */}
-        <div style={{ display: "flex", "align-items": "center", gap: "6px", "flex-shrink": 0 }}>
-          <Show when={agentBadgeInfo().model}>
+        {/* Right: Model badge */}
+        <Show when={agentBadgeInfo().model}>
+          <div style={{ display: "flex", "align-items": "center", "flex-shrink": 0 }}>
             <span
               style={{
                 "font-size": "10.5px",
@@ -456,33 +456,8 @@ export const CardFeed: Component = () => {
             >
               {agentBadgeInfo().model}
             </span>
-          </Show>
-
-          <button
-            onClick={toggleTerminalSheet}
-            class="touch-target"
-            aria-label="查看终端输出"
-            title={`查看终端输出 (${cleanedScreenLines().length} 行)`}
-            style={{
-              height: "26px",
-              width: "28px",
-              padding: "0",
-              "border-radius": "6px",
-              border: "1px solid var(--border)",
-              background: "var(--inset)",
-              color: "var(--muted)",
-              display: "flex",
-              "align-items": "center",
-              "justify-content": "center",
-              cursor: "pointer",
-              "font-size": "11px",
-              "font-family": "'JetBrains Mono', monospace",
-              "font-weight": 700,
-            }}
-          >
-            <span style={{ "line-height": 1 }}>&gt;_</span>
-          </button>
-        </div>
+          </div>
+        </Show>
       </section>
 
       {/* 2. Prominent Interactive Confirmation Card (当检测到待确认交互时优先置顶展示) */}

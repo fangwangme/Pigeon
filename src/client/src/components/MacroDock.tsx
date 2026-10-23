@@ -77,7 +77,7 @@ export const MacroDock: Component = () => {
         onClick={() => handleMacroClick(macro)}
         style={{
           height: `${CHIP_HEIGHT}px`,
-          padding: "0 10px",
+          padding: "0 11px",
           "flex-shrink": 0,
           "border-radius": "9px",
           border: isConfirming()
@@ -88,9 +88,10 @@ export const MacroDock: Component = () => {
             : "var(--surface)",
           color: isConfirming() ? "var(--delfg)" : "var(--fg)",
           "font-size": "12px",
-          "font-weight": 550,
+          "font-weight": 600,
           cursor: "pointer",
           "white-space": "nowrap",
+          "box-shadow": "0 1px 3px rgba(0, 0, 0, 0.16)",
           transition: "background 0.15s ease, color 0.15s ease, opacity 0.15s ease, transform 0.15s ease",
         }}
       >
@@ -106,6 +107,7 @@ export const MacroDock: Component = () => {
         background: "var(--bg)",
         color: "var(--fg)",
         "border-top": "1px solid var(--line)",
+        padding: "4px 0 0",
       }}
     >
       {/* Strictly Single-Row Macro Bar with Lateral Slide Drawer */}
@@ -114,7 +116,7 @@ export const MacroDock: Component = () => {
         aria-label="快捷操作栏"
         style={{
           position: "relative",
-          height: "42px",
+          height: "40px",
           display: "flex",
           "align-items": "center",
           overflow: "hidden",
@@ -158,6 +160,7 @@ export const MacroDock: Component = () => {
               "justify-content": "center",
               cursor: "pointer",
               "margin-left": "auto",
+              "box-shadow": "0 1px 3px rgba(0, 0, 0, 0.16)",
             }}
           >
             <svg
@@ -187,7 +190,7 @@ export const MacroDock: Component = () => {
             "align-items": "center",
             gap: "6px",
             padding: "0 10px",
-            background: "var(--surface)",
+            background: "var(--bg)",
             transition: "transform 0.24s cubic-bezier(0.16, 1, 0.3, 1), opacity 0.2s ease",
             transform: showMore() ? "translateX(0)" : "translateX(100%)",
             opacity: showMore() ? 1 : 0,
@@ -211,12 +214,13 @@ export const MacroDock: Component = () => {
               "flex-shrink": 0,
               "border-radius": "9px",
               border: "1px solid var(--border)",
-              background: "var(--inset)",
+              background: "var(--surface)",
               color: "var(--fg)",
               display: "flex",
               "align-items": "center",
               "justify-content": "center",
               cursor: "pointer",
+              "box-shadow": "0 1px 3px rgba(0, 0, 0, 0.16)",
             }}
           >
             <svg
@@ -275,7 +279,7 @@ export const MacroDock: Component = () => {
       {/* Composer Input Area */}
       <div
         style={{
-          padding: "6px 10px calc(8px + env(safe-area-inset-bottom))",
+          padding: "8px 10px calc(10px + env(safe-area-inset-bottom))",
           display: "flex",
           gap: "8px",
           "align-items": "flex-end",
@@ -285,7 +289,7 @@ export const MacroDock: Component = () => {
           id="pigeon-input"
           aria-label={`发给 ${tab()?.label || "Agent"}`}
           rows={1}
-          placeholder="输入"
+          placeholder="输入消息或指令..."
           value={inputText()}
           onInput={(e) => setInputText(e.currentTarget.value)}
           onKeyDown={handleKeyDown}
@@ -293,19 +297,20 @@ export const MacroDock: Component = () => {
           onCompositionEnd={() => setIsComposing(false)}
           style={{
             flex: 1,
-            "min-height": "40px",
+            "min-height": "42px",
             "max-height": "110px",
             "box-sizing": "border-box",
             resize: "none",
             background: "var(--surface)",
-            border: "1px solid var(--border)",
+            border: "1.5px solid var(--border)",
             "border-radius": "12px",
             color: "var(--fg)",
             "font-family": "inherit",
-            "font-size": "14.5px",
-            "line-height": "19px",
+            "font-size": "14px",
+            "line-height": "20px",
             padding: "10px 12px",
             "field-sizing": "content",
+            "box-shadow": "0 1px 3px rgba(0, 0, 0, 0.12)",
           }}
         />
 
@@ -315,8 +320,8 @@ export const MacroDock: Component = () => {
           onClick={handleSend}
           title={inputText().trim() ? "发送并回车" : "回车 (Enter)"}
           style={{
-            width: "40px",
-            height: "40px",
+            width: "42px",
+            height: "42px",
             "flex-shrink": 0,
             "border-radius": "12px",
             border: 0,
@@ -324,6 +329,12 @@ export const MacroDock: Component = () => {
             color: inputText().trim() ? "var(--onaccent)" : "var(--accent)",
             display: "flex",
             "align-items": "center",
+            "justify-content": "center",
+            cursor: "pointer",
+            "box-shadow": "0 1px 3px rgba(0, 0, 0, 0.15)",
+            transition: "background 0.15s ease, color 0.15s ease, transform 0.1s ease",
+          }}
+        >
             "justify-content": "center",
             cursor: "pointer",
             transition: "background 0.15s ease, color 0.15s ease, transform 0.1s ease",
