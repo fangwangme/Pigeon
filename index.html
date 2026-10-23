@@ -70,6 +70,17 @@
       .pigeon-scroll {
         scrollbar-width: none;
       }
+      /* Single-row macro bar hover & transition */
+      .macro-more-btn {
+        transition: all 0.18s cubic-bezier(0.16, 1, 0.3, 1);
+      }
+      .macro-more-btn:hover {
+        background: var(--accentbg) !important;
+        color: var(--accentt) !important;
+        border-color: var(--accent) !important;
+        transform: scale(1.05);
+        box-shadow: 0 2px 10px rgba(0, 0, 0, 0.12);
+      }
       button {
         font-family: inherit;
       }

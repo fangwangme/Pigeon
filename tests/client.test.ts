@@ -108,8 +108,8 @@ describe("Pigeon Mobile Client UI & Contract Suite", () => {
     expect(feed).toContain('class="pigeon-feed"');
 
     const dock = readFileSync(join(rootDir, "src", "client", "src", "components", "MacroDock.tsx"), "utf-8");
-    expect(dock).toContain('"flex-wrap": "wrap"');
-    expect(dock).not.toContain('"overflow-x": "auto"');
+    expect(dock).toContain("macro-more-btn");
+    expect(dock).not.toContain('"flex-wrap": "wrap"');
   });
 
   test("Single-file production bundle dist/index.html is built and inlines assets", () => {

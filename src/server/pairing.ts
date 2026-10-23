@@ -45,12 +45,20 @@ export interface PairingOptions {
   adminSocketPath?: string;
 }
 
+export interface PairingTokenOptions {
+  permanent?: boolean;
+  singleUse?: boolean;
+  ttlMs?: number;
+}
+
 export class PairingManager extends EventEmitter {
   private activeToken: {
     token: string;
     createdAt: number;
-    expiresAt: number;
+    expiresAt: number; // 0 = never expires
     failedAttempts: number;
+    permanent: boolean;
+    singleUse: boolean;
   } | null = null;
 
   private sessions = new Map<string, DeviceSession>(); // tokenHash -> DeviceSession
@@ -75,29 +83,48 @@ export class PairingManager extends EventEmitter {
     return !this.insecureDev && isHttps ? "__Host-pigeon_session" : "pigeon_session";
   }
 
-  public getActiveToken(): { token: string; expiresAt: number } | null {
+  public getActiveToken(): { token: string; expiresAt: number; permanent: boolean } | null {
     if (!this.activeToken) return null;
-    if (Date.now() > this.activeToken.expiresAt) return null;
-    return { token: this.activeToken.token, expiresAt: this.activeToken.expiresAt };
+    if (this.activeToken.expiresAt > 0 && Date.now() > this.activeToken.expiresAt) return null;
+    return {
+      token: this.activeToken.token,
+      expiresAt: this.activeToken.expiresAt,
+      permanent: this.activeToken.permanent,
+    };
   }
 
-  public createPairingToken(): { token: string; url: string; expiresAt: number } {
+  public createPairingToken(options?: PairingTokenOptions): {
+    token: string;
+    url: string;
+    expiresAt: number;
+    permanent: boolean;
+  } {
     const token = generateBase32Token(16);
     const now = Date.now();
-    const expiresAt = now + 10 * 60 * 1000; // 10 minutes
+    // Default to permanent (never expires) per user requirement
+    const isExplicitEphemeral =
+      options?.permanent === false ||
+      options?.singleUse === true ||
+      (options?.ttlMs !== undefined && options.ttlMs > 0);
+    const permanent = options?.permanent ?? !isExplicitEphemeral;
+    const ttl = options?.ttlMs ?? (permanent ? 0 : 10 * 60 * 1000);
+    const expiresAt = ttl > 0 ? now + ttl : 0;
+    const singleUse = options?.singleUse ?? (permanent ? false : true);
 
     this.activeToken = {
       token,
       createdAt: now,
       expiresAt,
       failedAttempts: 0,
+      permanent,
+      singleUse,
     };
 
     const url = `${this.publicBaseUrl}/#code=${token}`;
-    return { token, url, expiresAt };
+    return { token, url, expiresAt, permanent };
   }
 
-  public printTerminalQrCode(tokenInfo?: { token: string; url: string }): void {
+  public printTerminalQrCode(tokenInfo?: { token: string; url: string; permanent?: boolean }): void {
     const info = tokenInfo || this.createPairingToken();
     console.log("\n=======================================================");
     console.log("             PIGEON TERMINAL PAIRING QR CODE           ");
@@ -105,7 +132,11 @@ export class PairingManager extends EventEmitter {
     console.log(`Pairing URL: ${info.url}\n`);
     qrcode.generate(info.url, { small: true });
     console.log("\nScan the QR code above with your mobile Chromium browser.");
-    console.log("This pairing link will expire in 10 minutes.");
+    if (info.permanent) {
+      console.log("This pairing link is permanent (does not expire).");
+    } else {
+      console.log("This pairing link will expire in 10 minutes.");
+    }
     console.log("=======================================================\n");
   }
 
@@ -119,7 +150,7 @@ export class PairingManager extends EventEmitter {
       return { success: false, error: "No active pairing token. Run 'pigeon pair' to generate one." };
     }
 
-    if (now > this.activeToken.expiresAt) {
+    if (this.activeToken.expiresAt > 0 && now > this.activeToken.expiresAt) {
       this.activeToken = null;
       return { success: false, error: "Pairing token has expired. Please generate a new one." };
     }
@@ -134,8 +165,10 @@ export class PairingManager extends EventEmitter {
       return { success: false, error: "Invalid pairing code." };
     }
 
-    // Success: consume token
-    this.activeToken = null;
+    // If single-use, consume token; if permanent/reusable, keep active
+    if (this.activeToken.singleUse) {
+      this.activeToken = null;
+    }
 
     const sessionToken = generateBase32Token(32);
     const tokenHash = hashToken(sessionToken);

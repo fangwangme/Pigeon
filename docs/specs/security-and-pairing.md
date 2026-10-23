@@ -16,11 +16,11 @@ To prevent manual input errors, brute-force enumeration, and accidental disclosu
    - The CLI renders an ASCII QR code in the terminal encoding:
      `https://<publicBaseUrl>/pair#code=<BASE32_TOKEN>`
    - **No manual code entry**: Pairing is completed exclusively by scanning this QR code with the mobile camera.
-2. **Ephemeral Token Security**:
-   - Time-to-Live (TTL): 5 minutes.
+2. **Pairing Token Security**:
+   - Time-to-Live (TTL): By default for personal Tailscale/LAN remote control, pairing links are non-expiring (permanent until manually rotated via `pigeon pair`). Ephemeral tokens with explicit TTL can be requested on demand.
    - Brute-Force Limit: Maximum 5 failed attempts per IP and globally, after which the token is revoked immediately.
    - Verification: Constant-time comparison (`crypto.timingSafeEqual`) to prevent timing side-channel attacks.
-   - Single-Use: Atomically consumed upon first successful exchange.
+   - Credential Exchange: Scanned URL Fragment `#code=` exchanged for a 1-year persistent session cookie `__Host-pigeon_session`.
 3. **URL Fragment Confidentiality**:
    - The `#code=...` fragment is **never transmitted across the wire** to the server in HTTP request headers or logged in reverse proxy access logs.
    - It is read client-side via JavaScript (`location.hash`) on the landing page.

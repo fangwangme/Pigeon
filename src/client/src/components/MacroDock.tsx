@@ -2,13 +2,14 @@ import { Component, For, createSignal, Show } from "solid-js";
 import { state, getActiveTab, openSettingsModal } from "../state/store";
 import { sendPrompt, sendKeys, respondInteraction } from "../state/ws";
 
-const CHIP_HEIGHT = 40;
+const CHIP_HEIGHT = 32;
 const TOUCH = 44;
 
 export const MacroDock: Component = () => {
   const [inputText, setInputText] = createSignal("");
   const [isComposing, setIsComposing] = createSignal(false);
   const [ctrlCConfirm, setCtrlCConfirm] = createSignal(false);
+  const [showMore, setShowMore] = createSignal(false);
   let ctrlCTimer: any = null;
 
   const tab = getActiveTab;
@@ -74,6 +75,45 @@ export const MacroDock: Component = () => {
   const isDisabled = (macro: { name: string }) =>
     macro.name === "Approve" && !state.pendingInteraction;
 
+  const primaryMacros = () => state.macros.slice(0, 4);
+  const overflowMacros = () => state.macros.slice(4);
+
+  const renderMacroButton = (macro: { id: string; name: string; type: "text" | "key"; payload: string }) => {
+    const isCtrlC = () => macro.name === "Ctrl+C" || macro.payload === "ctrl+c";
+    const isConfirming = () => isCtrlC() && ctrlCConfirm();
+    const disabled = () => isDisabled(macro);
+
+    return (
+      <button
+        class="touch-target"
+        disabled={disabled()}
+        aria-disabled={disabled()}
+        onClick={() => !disabled() && handleMacroClick(macro)}
+        style={{
+          height: `${CHIP_HEIGHT}px`,
+          padding: "0 10px",
+          "flex-shrink": 0,
+          "border-radius": "9px",
+          border: isConfirming()
+            ? "1px solid var(--delbg)"
+            : "1px solid var(--border)",
+          background: isConfirming()
+            ? "var(--delbg)"
+            : "var(--surface)",
+          color: isConfirming() ? "var(--delfg)" : "var(--fg)",
+          "font-size": "12px",
+          "font-weight": 550,
+          cursor: disabled() ? "default" : "pointer",
+          opacity: disabled() ? 0.42 : 1,
+          "white-space": "nowrap",
+          transition: "background 0.15s ease, color 0.15s ease, opacity 0.15s ease, transform 0.15s ease",
+        }}
+      >
+        {isConfirming() ? "Confirm Ctrl+C" : macro.name}
+      </button>
+    );
+  };
+
   return (
     <div
       style={{
@@ -83,87 +123,156 @@ export const MacroDock: Component = () => {
         "border-top": "1px solid var(--line)",
       }}
     >
-      {/* Quick actions: wrap so no macro is ever hidden behind a scroll edge */}
+      {/* Strictly Single-Row Macro Bar with Lateral Slide Drawer */}
       <div
         role="toolbar"
         aria-label="快捷操作栏"
         style={{
+          position: "relative",
+          height: "42px",
           display: "flex",
-          "flex-wrap": "wrap",
           "align-items": "center",
-          gap: "6px",
-          padding: "8px 10px 0",
+          overflow: "hidden",
+          padding: "0 10px",
+          background: "var(--bg)",
         }}
       >
-        <For each={state.macros}>
-          {(macro) => {
-            const isCtrlC = () => macro.name === "Ctrl+C" || macro.payload === "ctrl+c";
-            const isConfirming = () => isCtrlC() && ctrlCConfirm();
-            const disabled = () => isDisabled(macro);
-
-            return (
-              <button
-                class="touch-target"
-                disabled={disabled()}
-                aria-disabled={disabled()}
-                onClick={() => !disabled() && handleMacroClick(macro)}
-                style={{
-                  height: `${CHIP_HEIGHT}px`,
-                  padding: "0 12px",
-                  "flex-shrink": 0,
-                  "border-radius": "10px",
-                  border: isConfirming()
-                    ? "1px solid var(--delbg)"
-                    : "1px solid var(--border)",
-                  background: isConfirming()
-                    ? "var(--delbg)"
-                    : "var(--surface)",
-                  color: isConfirming() ? "var(--delfg)" : "var(--fg)",
-                  "font-size": "12.5px",
-                  "font-weight": 500,
-                  cursor: disabled() ? "default" : "pointer",
-                  opacity: disabled() ? 0.42 : 1,
-                  "white-space": "nowrap",
-                  transition: "background 0.15s ease, color 0.15s ease, opacity 0.15s ease",
-                }}
-              >
-                {isConfirming() ? "Confirm Ctrl+C" : macro.name}
-              </button>
-            );
-          }}
-        </For>
-
-        <button
-          class="touch-target"
-          aria-label="管理快捷操作"
-          title="管理快捷操作"
-          onClick={() => openSettingsModal("macros")}
+        {/* Layer 1: Primary Row (Always fits within 1 row) */}
+        <div
           style={{
-            width: `${TOUCH}px`,
-            height: `${CHIP_HEIGHT}px`,
-            "flex-shrink": 0,
-            "border-radius": "10px",
-            border: "1px solid var(--border)",
-            background: "var(--surface)",
-            color: "var(--muted)",
             display: "flex",
             "align-items": "center",
-            "justify-content": "center",
-            cursor: "pointer",
+            gap: "6px",
+            width: "100%",
+            height: "100%",
+            transition: "transform 0.24s cubic-bezier(0.16, 1, 0.3, 1), opacity 0.2s ease",
+            transform: showMore() ? "translateX(-20%)" : "translateX(0)",
+            opacity: showMore() ? 0 : 1,
+            "pointer-events": showMore() ? "none" : "auto",
           }}
         >
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-            <circle cx="5" cy="12" r="1.6" />
-            <circle cx="12" cy="12" r="1.6" />
-            <circle cx="19" cy="12" r="1.6" />
-          </svg>
-        </button>
+          <For each={primaryMacros()}>{renderMacroButton}</For>
+
+          {/* Last slot in row: More / Overflow trigger with elevated hover effect */}
+          <button
+            class="touch-target macro-more-btn"
+            aria-label="展开更多快捷操作"
+            title="展开更多快捷操作"
+            onClick={() => setShowMore(true)}
+            style={{
+              height: `${CHIP_HEIGHT}px`,
+              padding: "0 10px",
+              "flex-shrink": 0,
+              "border-radius": "9px",
+              border: "1px solid var(--border)",
+              background: "var(--surface)",
+              color: "var(--muted)",
+              "font-size": "12px",
+              "font-weight": 600,
+              display: "flex",
+              "align-items": "center",
+              gap: "4px",
+              cursor: "pointer",
+              "margin-left": "auto",
+              "white-space": "nowrap",
+            }}
+          >
+            <span>···</span>
+            <span>更多</span>
+            <span style={{ "font-size": "11px", opacity: 0.7 }}>›</span>
+          </button>
+        </div>
+
+        {/* Layer 2: Lateral Slide-Out Tray (Reveals extra macros in the same single row) */}
+        <div
+          style={{
+            position: "absolute",
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            display: "flex",
+            "align-items": "center",
+            gap: "6px",
+            padding: "0 10px",
+            background: "var(--surface)",
+            transition: "transform 0.24s cubic-bezier(0.16, 1, 0.3, 1), opacity 0.2s ease",
+            transform: showMore() ? "translateX(0)" : "translateX(100%)",
+            opacity: showMore() ? 1 : 0,
+            "pointer-events": showMore() ? "auto" : "none",
+            "overflow-x": "auto",
+            "scrollbar-width": "none",
+            "-webkit-overflow-scrolling": "touch",
+            "z-index": 5,
+          }}
+        >
+          {/* Back Button */}
+          <button
+            class="touch-target"
+            aria-label="收起更多快捷操作"
+            title="返回主快捷操作"
+            onClick={() => setShowMore(false)}
+            style={{
+              height: `${CHIP_HEIGHT}px`,
+              padding: "0 10px",
+              "flex-shrink": 0,
+              "border-radius": "9px",
+              border: "1px solid var(--border)",
+              background: "var(--inset)",
+              color: "var(--fg)",
+              "font-size": "12px",
+              "font-weight": 600,
+              display: "flex",
+              "align-items": "center",
+              gap: "4px",
+              cursor: "pointer",
+            }}
+          >
+            <span style={{ "font-size": "14px", "line-height": 1 }}>‹</span>
+            <span>返回</span>
+          </button>
+
+          {/* Divider */}
+          <div style={{ width: "1px", height: "18px", background: "var(--line)", "flex-shrink": 0, margin: "0 2px" }} />
+
+          {/* Secondary / Overflow Macros */}
+          <For each={overflowMacros()}>{renderMacroButton}</For>
+
+          {/* Manage Settings */}
+          <button
+            class="touch-target"
+            aria-label="管理快捷操作"
+            title="管理快捷操作"
+            onClick={() => openSettingsModal("macros")}
+            style={{
+              height: `${CHIP_HEIGHT}px`,
+              padding: "0 10px",
+              "flex-shrink": 0,
+              "border-radius": "9px",
+              border: "1px dashed var(--border)",
+              background: "transparent",
+              color: "var(--muted)",
+              "font-size": "12px",
+              display: "flex",
+              "align-items": "center",
+              gap: "4px",
+              cursor: "pointer",
+              "white-space": "nowrap",
+            }}
+          >
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="12" cy="12" r="3" />
+              <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z" />
+            </svg>
+            <span>管理</span>
+          </button>
+        </div>
       </div>
 
-      {/* Composer */}
+      {/* Composer Input Area */}
       <div
         style={{
-          padding: "7px 10px calc(10px + env(safe-area-inset-bottom))",
+          padding: "6px 10px calc(8px + env(safe-area-inset-bottom))",
           display: "flex",
           gap: "8px",
           "align-items": "flex-end",
@@ -181,18 +290,18 @@ export const MacroDock: Component = () => {
           onCompositionEnd={() => setIsComposing(false)}
           style={{
             flex: 1,
-            "min-height": `${TOUCH}px`,
-            "max-height": "120px",
+            "min-height": "40px",
+            "max-height": "110px",
             "box-sizing": "border-box",
             resize: "none",
             background: "var(--surface)",
             border: "1px solid var(--border)",
-            "border-radius": "14px",
+            "border-radius": "12px",
             color: "var(--fg)",
             "font-family": "inherit",
-            "font-size": "15px",
-            "line-height": "20px",
-            padding: "11px 13px",
+            "font-size": "14.5px",
+            "line-height": "19px",
+            padding: "10px 12px",
             "field-sizing": "content",
           }}
         />
@@ -203,10 +312,10 @@ export const MacroDock: Component = () => {
           onClick={handleSend}
           title={inputText().trim() ? "发送并回车" : "回车 (Enter)"}
           style={{
-            width: `${TOUCH}px`,
-            height: `${TOUCH}px`,
+            width: "40px",
+            height: "40px",
             "flex-shrink": 0,
-            "border-radius": "14px",
+            "border-radius": "12px",
             border: 0,
             background: inputText().trim() ? "var(--accent)" : "var(--sel)",
             color: inputText().trim() ? "var(--onaccent)" : "var(--accent)",
@@ -214,15 +323,15 @@ export const MacroDock: Component = () => {
             "align-items": "center",
             "justify-content": "center",
             cursor: "pointer",
-            transition: "background 0.15s ease, color 0.15s ease",
+            transition: "background 0.15s ease, color 0.15s ease, transform 0.1s ease",
           }}
         >
           <Show
             when={inputText().trim().length > 0}
             fallback={
               <svg
-                width="20"
-                height="20"
+                width="19"
+                height="19"
                 viewBox="0 0 24 24"
                 fill="none"
                 stroke="currentColor"
@@ -237,8 +346,8 @@ export const MacroDock: Component = () => {
             }
           >
             <svg
-              width="20"
-              height="20"
+              width="19"
+              height="19"
               viewBox="0 0 24 24"
               fill="none"
               stroke="currentColor"

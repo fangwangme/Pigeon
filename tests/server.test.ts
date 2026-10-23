@@ -32,7 +32,7 @@ describe("Pigeon Server Implementation Suite", () => {
     });
 
     test("Token exchange succeeds and enforces 5-attempt rate limit lockout", () => {
-      const { token, url } = pairing.createPairingToken();
+      const { token, url } = pairing.createPairingToken({ singleUse: true });
       expect(url).toContain("#code=" + token);
 
       // Invalid code attempts
@@ -52,9 +52,21 @@ describe("Pigeon Server Implementation Suite", () => {
       expect(session).not.toBeNull();
       expect(session?.deviceName).toBe("Android Chrome");
 
-      // Verify token is consumed
+      // Verify single-use token is consumed
       const replay = pairing.exchangeToken(token);
       expect(replay.success).toBe(false);
+    });
+
+    test("Permanent pairing token never expires and allows multiple device pairings", () => {
+      const { token, url, expiresAt, permanent } = pairing.createPairingToken({ permanent: true });
+      expect(permanent).toBe(true);
+      expect(expiresAt).toBe(0);
+
+      const d1 = pairing.exchangeToken(token, "Phone");
+      expect(d1.success).toBe(true);
+
+      const d2 = pairing.exchangeToken(token, "Tablet");
+      expect(d2.success).toBe(true);
     });
 
     test("Cookie name uses __Host- prefix in secure mode", () => {
