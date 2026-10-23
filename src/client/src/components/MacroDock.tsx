@@ -2,7 +2,7 @@ import { Component, For, createSignal, Show } from "solid-js";
 import { state, getActiveTab, openSettingsModal } from "../state/store";
 import { sendPrompt, sendKeys, respondInteraction } from "../state/ws";
 
-const CHIP_HEIGHT = 32;
+const CHIP_HEIGHT = 36;
 const TOUCH = 44;
 
 export const MacroDock: Component = () => {
@@ -87,25 +87,28 @@ export const MacroDock: Component = () => {
         onClick={() => handleMacroClick(macro)}
         style={{
           height: `${CHIP_HEIGHT}px`,
-          padding: "0 6px",
+          "min-height": `${CHIP_HEIGHT}px`,
+          "max-height": `${CHIP_HEIGHT}px`,
+          padding: "0 8px",
           flex: 1,
           "min-width": 0,
           "border-radius": "9px",
           border: isConfirming()
-            ? "1px solid var(--delbg)"
-            : "1px solid var(--border)",
+            ? "1.5px solid var(--delbg)"
+            : "1.5px solid var(--border)",
           background: isConfirming()
             ? "var(--delbg)"
             : "var(--surface)",
           color: isConfirming() ? "var(--delfg)" : "var(--fg)",
-          "font-size": "12px",
+          "font-size": "13px",
           "font-weight": 600,
           display: "flex",
           "align-items": "center",
           "justify-content": "center",
           cursor: "pointer",
           "white-space": "nowrap",
-          "box-shadow": "0 1px 3px rgba(0, 0, 0, 0.16)",
+          "box-shadow": "0 1px 3px rgba(0, 0, 0, 0.2)",
+          "box-sizing": "border-box",
           transition: "background 0.15s ease, color 0.15s ease, opacity 0.15s ease, transform 0.15s ease",
         }}
       >
@@ -122,6 +125,7 @@ export const MacroDock: Component = () => {
         color: "var(--fg)",
         "border-top": "1px solid var(--line)",
         padding: "4px 0 0",
+        "box-sizing": "border-box",
       }}
     >
       {/* Strictly Single-Row Macro Bar with Lateral Slide Drawer (Hideable via settings) */}
@@ -131,12 +135,14 @@ export const MacroDock: Component = () => {
           aria-label="快捷操作栏"
           style={{
             position: "relative",
-            height: "40px",
+            height: "46px",
+            "min-height": "46px",
             display: "flex",
             "align-items": "center",
             overflow: "hidden",
             padding: "0 10px",
             background: "var(--bg)",
+            "box-sizing": "border-box",
           }}
         >
           {/* Layer 1: Primary Row (Always fits within 1 row, equal flex distribution) */}
@@ -151,6 +157,7 @@ export const MacroDock: Component = () => {
               transform: showMore() ? "translateX(-20%)" : "translateX(0)",
               opacity: showMore() ? 0 : 1,
               "pointer-events": showMore() ? "none" : "auto",
+              "box-sizing": "border-box",
             }}
           >
             <For each={primaryMacros()}>{renderMacroButton}</For>
@@ -163,11 +170,14 @@ export const MacroDock: Component = () => {
               onClick={() => setShowMore(true)}
               style={{
                 height: `${CHIP_HEIGHT}px`,
-                width: "34px",
+                "min-height": `${CHIP_HEIGHT}px`,
+                "max-height": `${CHIP_HEIGHT}px`,
+                width: "36px",
+                "min-width": "36px",
                 padding: "0",
                 "flex-shrink": 0,
                 "border-radius": "9px",
-                border: "1px solid var(--border)",
+                border: "1.5px solid var(--border)",
                 background: "var(--surface)",
                 color: "var(--muted)",
                 display: "flex",
@@ -175,7 +185,8 @@ export const MacroDock: Component = () => {
                 "justify-content": "center",
                 cursor: "pointer",
                 "margin-left": "2px",
-                "box-shadow": "0 1px 3px rgba(0, 0, 0, 0.16)",
+                "box-shadow": "0 1px 3px rgba(0, 0, 0, 0.2)",
+                "box-sizing": "border-box",
               }}
             >
               <svg
@@ -214,6 +225,7 @@ export const MacroDock: Component = () => {
               "scrollbar-width": "none",
               "-webkit-overflow-scrolling": "touch",
               "z-index": 5,
+              "box-sizing": "border-box",
             }}
           >
             {/* Back Button */}
@@ -224,18 +236,22 @@ export const MacroDock: Component = () => {
               onClick={() => setShowMore(false)}
               style={{
                 height: `${CHIP_HEIGHT}px`,
-                width: "34px",
+                "min-height": `${CHIP_HEIGHT}px`,
+                "max-height": `${CHIP_HEIGHT}px`,
+                width: "36px",
+                "min-width": "36px",
                 padding: "0",
                 "flex-shrink": 0,
                 "border-radius": "9px",
-                border: "1px solid var(--border)",
+                border: "1.5px solid var(--border)",
                 background: "var(--surface)",
                 color: "var(--fg)",
                 display: "flex",
                 "align-items": "center",
                 "justify-content": "center",
                 cursor: "pointer",
-                "box-shadow": "0 1px 3px rgba(0, 0, 0, 0.16)",
+                "box-shadow": "0 1px 3px rgba(0, 0, 0, 0.2)",
+                "box-sizing": "border-box",
               }}
             >
               <svg
@@ -255,7 +271,7 @@ export const MacroDock: Component = () => {
             </button>
 
             {/* Divider */}
-            <div style={{ width: "1px", height: "18px", background: "var(--line)", "flex-shrink": 0, margin: "0 2px" }} />
+            <div style={{ width: "1px", height: "20px", background: "var(--line)", "flex-shrink": 0, margin: "0 2px" }} />
 
             {/* Secondary / Overflow Macros */}
             <For each={overflowMacros()}>{renderMacroButton}</For>
@@ -268,10 +284,12 @@ export const MacroDock: Component = () => {
               onClick={() => openSettingsModal("macros")}
               style={{
                 height: `${CHIP_HEIGHT}px`,
+                "min-height": `${CHIP_HEIGHT}px`,
+                "max-height": `${CHIP_HEIGHT}px`,
                 padding: "0 10px",
                 "flex-shrink": 0,
                 "border-radius": "9px",
-                border: "1px dashed var(--border)",
+                border: "1.5px dashed var(--border)",
                 background: "transparent",
                 color: "var(--muted)",
                 "font-size": "12px",
@@ -280,6 +298,7 @@ export const MacroDock: Component = () => {
                 gap: "4px",
                 cursor: "pointer",
                 "white-space": "nowrap",
+                "box-sizing": "border-box",
               }}
             >
               <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -295,10 +314,12 @@ export const MacroDock: Component = () => {
       {/* Composer Input Area */}
       <div
         style={{
-          padding: "8px 10px calc(10px + env(safe-area-inset-bottom))",
+          padding: "6px 10px calc(12px + env(safe-area-inset-bottom))",
           display: "flex",
           gap: "8px",
-          "align-items": "flex-end",
+          "align-items": "center",
+          background: "var(--bg)",
+          "box-sizing": "border-box",
         }}
       >
         <textarea
@@ -313,7 +334,8 @@ export const MacroDock: Component = () => {
           onCompositionEnd={() => setIsComposing(false)}
           style={{
             flex: 1,
-            "min-height": "42px",
+            height: "44px",
+            "min-height": "44px",
             "max-height": "110px",
             "box-sizing": "border-box",
             resize: "none",
@@ -324,9 +346,9 @@ export const MacroDock: Component = () => {
             "font-family": "inherit",
             "font-size": "14px",
             "line-height": "20px",
-            padding: "10px 12px",
+            padding: "11px 12px",
             "field-sizing": "content",
-            "box-shadow": "0 1px 3px rgba(0, 0, 0, 0.12)",
+            "box-shadow": "0 1px 3px rgba(0, 0, 0, 0.15)",
           }}
         />
 
@@ -336,19 +358,23 @@ export const MacroDock: Component = () => {
           onClick={handleSend}
           title={inputText().trim() ? "发送并回车" : "回车 (Enter)"}
           style={{
-            width: "42px",
-            height: "42px",
+            width: "44px",
+            height: "44px",
+            "min-width": "44px",
+            "min-height": "44px",
+            "max-height": "44px",
             "flex-shrink": 0,
             "border-radius": "12px",
-            border: 0,
-            background: inputText().trim() ? "var(--accent)" : "var(--sel)",
+            border: "1.5px solid " + (inputText().trim() ? "var(--accent)" : "var(--border)"),
+            background: inputText().trim() ? "var(--accent)" : "var(--surface)",
             color: inputText().trim() ? "var(--onaccent)" : "var(--accent)",
             display: "flex",
             "align-items": "center",
             "justify-content": "center",
             cursor: "pointer",
             "box-shadow": "0 1px 3px rgba(0, 0, 0, 0.15)",
-            transition: "background 0.15s ease, color 0.15s ease, transform 0.1s ease",
+            "box-sizing": "border-box",
+            transition: "background 0.15s ease, color 0.15s ease, border-color 0.15s ease",
           }}
         >
           <Show
