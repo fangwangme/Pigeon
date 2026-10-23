@@ -24,8 +24,8 @@ function App() {
     // 1. Check for token exchange from URL hash (#code=...)
     await checkPairingFromUrlHash();
 
-    // 2. Load stored theme or default (Tokyo Night with system auto light/dark)
-    const savedThemeKey = localStorage.getItem("pigeon_theme_key") || "tokyo-night";
+    // 2. Load stored theme or default (Gruvbox with system auto light/dark)
+    const savedThemeKey = localStorage.getItem("pigeon_theme_key") || "gruvbox";
     const savedThemeMode = (localStorage.getItem("pigeon_theme_mode") as any) || "system";
     setPaletteTheme(savedThemeKey, savedThemeMode);
 

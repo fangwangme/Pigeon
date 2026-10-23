@@ -9,7 +9,8 @@ import { PALETTES } from "../themes";
 
 export const AppearanceModal: Component = () => {
   const themesList = [
-    { key: "pigeon", name: "Pigeon", subtitle: "默认" },
+    { key: "gruvbox", name: "Gruvbox", subtitle: "默认 · 复古经典" },
+    { key: "pigeon", name: "Pigeon", subtitle: "冷灰现代" },
     { key: "github", name: "GitHub", subtitle: "Light / Dark" },
     { key: "tokyo-night", name: "Tokyo Night", subtitle: "Day / Night" },
     { key: "catppuccin", name: "Catppuccin", subtitle: "Latte / Mocha" },

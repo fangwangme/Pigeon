@@ -81,9 +81,9 @@ const [state, setState] = createStore<AppState>({
   activeAgentsModalOpen: false,
   settingsModalOpen: false,
   settingsTab: "appearance",
-  themeId: "tokyo-night",
-  themeKey: "tokyo-night",
-  themeMode: "dark",
+  themeId: "gruvbox",
+  themeKey: "gruvbox",
+  themeMode: "system",
   displayDensity:
     typeof localStorage !== "undefined" && localStorage.getItem("pigeon_density")
       ? (localStorage.getItem("pigeon_density") as any)

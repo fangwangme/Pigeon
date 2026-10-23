@@ -320,7 +320,7 @@ describe("Pigeon Server Implementation Suite", () => {
       expect(cfg.server).toBeDefined();
       expect(cfg.server.port).toBe(4100);
       expect(cfg.client).toBeDefined();
-      expect(cfg.client.themeKey).toBe("tokyo-night");
+      expect(cfg.client.themeKey).toBe("gruvbox");
       expect(cfg.client.themeMode).toBe("system");
       expect(cfg.client.macros).toHaveLength(5);
     });

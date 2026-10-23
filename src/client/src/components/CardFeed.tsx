@@ -378,34 +378,50 @@ export const CardFeed: Component = () => {
           "box-sizing": "border-box",
         }}
       >
-        {/* Left: Status dot + Workspace · Session Name · Status */}
+        {/* Left: Status beacon + Flexible Session Title */}
         <div
           style={{
             display: "flex",
             "align-items": "center",
-            gap: "7px",
+            gap: "8px",
             flex: 1,
             "min-width": 0,
             overflow: "hidden",
             "white-space": "nowrap",
           }}
         >
-          <span
+          {/* Status Indicator Animated Beacon */}
+          <div
+            title={`状态: ${getStatusText()}`}
             style={{
-              width: "7px",
-              height: "7px",
-              "border-radius": "4px",
-              background: getStatusDotColor(),
-              "box-shadow":
-                state.agentStatus === "working"
-                  ? "0 0 6px var(--accent)"
-                  : state.agentStatus === "blocked"
-                  ? "0 0 6px var(--warn)"
-                  : "none",
+              position: "relative",
+              display: "flex",
+              "align-items": "center",
+              "justify-content": "center",
+              width: "12px",
+              height: "12px",
               "flex-shrink": 0,
             }}
-          />
+          >
+            <div
+              class={
+                state.agentStatus === "working"
+                  ? "status-dot-working"
+                  : state.agentStatus === "blocked"
+                  ? "status-dot-blocked"
+                  : ""
+              }
+              style={{
+                width: "7.5px",
+                height: "7.5px",
+                "border-radius": "50%",
+                background: getStatusDotColor(),
+                "flex-shrink": 0,
+              }}
+            />
+          </div>
 
+          {/* Flexible Session Title (No redundant workspace prefix, auto stretch) */}
           <span
             style={{
               "font-size": "13px",
@@ -413,43 +429,17 @@ export const CardFeed: Component = () => {
               color: "var(--fg)",
               overflow: "hidden",
               "text-overflow": "ellipsis",
-              "flex-shrink": 0,
-              "max-width": "110px",
+              "white-space": "nowrap",
+              flex: "1 1 auto",
+              "min-width": 0,
             }}
-          >
-            {ws()?.label || "工作区"}
-          </span>
-
-          <span style={{ color: "var(--faint)", "font-size": "11px", "flex-shrink": 0 }}>·</span>
-
-          <span
-            style={{
-              "font-size": "12.5px",
-              "font-weight": 600,
-              color: "var(--accent)",
-              overflow: "hidden",
-              "text-overflow": "ellipsis",
-              "flex-shrink": 1,
-            }}
+            title={tab()?.label || agentBadgeInfo().name}
           >
             {tab()?.label || agentBadgeInfo().name}
           </span>
-
-          <span style={{ color: "var(--faint)", "font-size": "11px", "flex-shrink": 0 }}>·</span>
-
-          <span
-            style={{
-              "font-size": "11.5px",
-              "font-weight": 600,
-              color: getStatusDotColor(),
-              "flex-shrink": 0,
-            }}
-          >
-            {getStatusText()}
-          </span>
         </div>
 
-        {/* Right: Model badge + Small Terminal Sheet button */}
+        {/* Right: Model badge + Compact Terminal button */}
         <div style={{ display: "flex", "align-items": "center", gap: "6px", "flex-shrink": 0 }}>
           <Show when={agentBadgeInfo().model}>
             <span
@@ -470,28 +460,27 @@ export const CardFeed: Component = () => {
 
           <button
             onClick={toggleTerminalSheet}
+            class="touch-target"
             aria-label="查看终端输出"
             title={`查看终端输出 (${cleanedScreenLines().length} 行)`}
             style={{
               height: "26px",
-              padding: "0 6px",
+              width: "28px",
+              padding: "0",
               "border-radius": "6px",
               border: "1px solid var(--border)",
               background: "var(--inset)",
               color: "var(--muted)",
               display: "flex",
               "align-items": "center",
-              gap: "3px",
+              "justify-content": "center",
               cursor: "pointer",
-              "font-size": "10.5px",
+              "font-size": "11px",
               "font-family": "'JetBrains Mono', monospace",
+              "font-weight": 700,
             }}
           >
-            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <polyline points="4 17 10 11 4 5" />
-              <line x1="12" y1="19" x2="20" y2="19" />
-            </svg>
-            <span>{cleanedScreenLines().length}行</span>
+            <span style={{ "line-height": 1 }}>&gt;_</span>
           </button>
         </div>
       </section>

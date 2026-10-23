@@ -16,9 +16,9 @@ export const DEFAULT_MACROS: MacroItem[] = [
 ];
 
 export const DEFAULT_CLIENT_CONFIG: ClientConfig = {
-  themeKey: "tokyo-night",
+  themeKey: "gruvbox",
   themeMode: "system",
-  themeId: "tokyo-night",
+  themeId: "gruvbox",
   confirmCtrlC: true,
   defaultView: "cards",
   macros: DEFAULT_MACROS,

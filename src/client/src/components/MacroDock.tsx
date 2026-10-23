@@ -138,33 +138,40 @@ export const MacroDock: Component = () => {
         >
           <For each={primaryMacros()}>{renderMacroButton}</For>
 
-          {/* Last slot in row: More / Overflow trigger with elevated hover effect */}
+          {/* Last slot in row: More / Overflow trigger (Icon-only 3-dots, no text, clean & internationalized) */}
           <button
             class="touch-target macro-more-btn"
-            aria-label="展开更多快捷操作"
-            title="展开更多快捷操作"
+            aria-label="更多操作"
+            title="更多操作"
             onClick={() => setShowMore(true)}
             style={{
               height: `${CHIP_HEIGHT}px`,
-              padding: "0 10px",
+              width: "34px",
+              padding: "0",
               "flex-shrink": 0,
               "border-radius": "9px",
               border: "1px solid var(--border)",
               background: "var(--surface)",
               color: "var(--muted)",
-              "font-size": "12px",
-              "font-weight": 600,
               display: "flex",
               "align-items": "center",
-              gap: "4px",
+              "justify-content": "center",
               cursor: "pointer",
               "margin-left": "auto",
-              "white-space": "nowrap",
             }}
           >
-            <span>···</span>
-            <span>更多</span>
-            <span style={{ "font-size": "11px", opacity: 0.7 }}>›</span>
+            <svg
+              width="18"
+              height="18"
+              viewBox="0 0 24 24"
+              fill="currentColor"
+              aria-hidden="true"
+              style={{ display: "block" }}
+            >
+              <circle cx="5" cy="12" r="2" />
+              <circle cx="12" cy="12" r="2" />
+              <circle cx="19" cy="12" r="2" />
+            </svg>
           </button>
         </div>
 
@@ -194,27 +201,38 @@ export const MacroDock: Component = () => {
           {/* Back Button */}
           <button
             class="touch-target"
-            aria-label="收起更多快捷操作"
+            aria-label="返回"
             title="返回主快捷操作"
             onClick={() => setShowMore(false)}
             style={{
               height: `${CHIP_HEIGHT}px`,
-              padding: "0 10px",
+              width: "34px",
+              padding: "0",
               "flex-shrink": 0,
               "border-radius": "9px",
               border: "1px solid var(--border)",
               background: "var(--inset)",
               color: "var(--fg)",
-              "font-size": "12px",
-              "font-weight": 600,
               display: "flex",
               "align-items": "center",
-              gap: "4px",
+              "justify-content": "center",
               cursor: "pointer",
             }}
           >
-            <span style={{ "font-size": "14px", "line-height": 1 }}>‹</span>
-            <span>返回</span>
+            <svg
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2.5"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+              style={{ display: "block" }}
+            >
+              <path d="M15 18l-6-6 6-6" />
+            </svg>
           </button>
 
           {/* Divider */}
