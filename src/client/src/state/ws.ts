@@ -21,6 +21,11 @@ export async function checkPairingFromUrlHash(): Promise<boolean> {
   let code = "";
   if (hash.startsWith("#code=")) {
     code = hash.replace("#code=", "").trim();
+  } else if (window.location.search) {
+    const params = new URLSearchParams(window.location.search);
+    if (params.has("code")) {
+      code = params.get("code")!.trim();
+    }
   }
 
   if (code) {
@@ -226,6 +231,9 @@ function handleServerMessage(msg: ServerMessage): void {
         setState("normalizedTurns", msg.payload.turns || []);
         if (msg.payload.sessionStats) {
           setState("sessionStats", msg.payload.sessionStats);
+        }
+        if (msg.payload.sessionTitle) {
+          setState("sessionTitle", msg.payload.sessionTitle);
         }
       }
       break;

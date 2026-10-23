@@ -1,4 +1,4 @@
-import { existsSync, openSync, readSync, closeSync, statSync } from "node:fs";
+import { existsSync, openSync, readSync, closeSync, statSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import type {
@@ -37,13 +37,34 @@ export class AgyAdapter {
     return existsSync(this.getSessionLogPath(sessionId));
   }
 
+  public getSessionTitle(sessionId: string): string | null {
+    try {
+      const annotPath = join(
+        homedir(),
+        ".gemini",
+        "antigravity-cli",
+        "annotations",
+        `${sessionId}.pbtxt`
+      );
+      if (existsSync(annotPath)) {
+        const content = readFileSync(annotPath, "utf-8");
+        const match = content.match(/title:\s*"([^"]+)"/);
+        if (match && match[1]) {
+          return match[1];
+        }
+      }
+    } catch {}
+    return null;
+  }
+
   public getTurns(
     sessionId: string,
     incremental = false
-  ): { turns: NormalizedTurn[]; stats?: SessionStats } {
+  ): { turns: NormalizedTurn[]; stats?: SessionStats; sessionTitle?: string } {
+    const title = this.getSessionTitle(sessionId) || undefined;
     const logPath = this.getSessionLogPath(sessionId);
     if (!existsSync(logPath)) {
-      return { turns: [] };
+      return { turns: [], sessionTitle: title };
     }
 
     let fd: number | null = null;
@@ -187,9 +208,9 @@ export class AgyAdapter {
       }
 
       this.cachedTurns.set(sessionId, turns);
-      return { turns };
+      return { turns, sessionTitle: title };
     } catch {
-      return { turns: [] };
+      return { turns: [], sessionTitle: title };
     } finally {
       if (fd !== null) {
         try {

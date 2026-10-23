@@ -47,6 +47,17 @@ function App() {
     // 4. Connect WebSocket
     initWebSocket();
 
+    // Foreground wake-up: auto reconnect WebSocket instantly when app returns to view
+    if (typeof document !== "undefined") {
+      document.addEventListener("visibilitychange", () => {
+        if (document.visibilityState === "visible") {
+          if (!state.connected) {
+            initWebSocket();
+          }
+        }
+      });
+    }
+
     // 5. Register PWA Service Worker with auto-update detection
     if (typeof window !== "undefined" && "serviceWorker" in navigator) {
       navigator.serviceWorker

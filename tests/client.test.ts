@@ -143,7 +143,7 @@ describe("Pigeon Mobile Client UI & Contract Suite", () => {
     expect(content.length).toBeGreaterThan(10000);
   });
 
-  test("CardFeed integrates marked for full GFM markdown rendering", async () => {
+  test("CardFeed integrates marked and DOMPurify for secure markdown rendering (P0-1)", async () => {
     const { marked } = await import("marked");
     expect(typeof marked.parse).toBe("function");
 
@@ -155,9 +155,23 @@ describe("Pigeon Mobile Client UI & Contract Suite", () => {
     expect(parsed).toContain("<code");
 
     const feedCode = readFileSync(join(rootDir, "src", "client", "src", "components", "CardFeed.tsx"), "utf-8");
-    expect(feedCode).toContain('import { marked } from "marked"');
+    expect(feedCode).toContain('import { renderMarkdown } from "../utils/markdown"');
     expect(feedCode).toContain("renderMarkdown");
     expect(feedCode).toContain('class="markdown-body"');
+
+    const { renderMarkdown } = await import("../src/client/src/utils/markdown");
+    const maliciousImg = '<img src="x" onerror="alert(1)">';
+    const sanitizedImg = renderMarkdown(maliciousImg);
+    expect(sanitizedImg).not.toContain("onerror");
+
+    const maliciousScript = '<script>window.pwned = true;</script><b>Hello</b>';
+    const sanitizedScript = renderMarkdown(maliciousScript);
+    expect(sanitizedScript).not.toContain("<script>");
+    expect(sanitizedScript).toContain("Hello");
+
+    const maliciousLink = '[Click me](javascript:alert(1))';
+    const sanitizedLink = renderMarkdown(maliciousLink);
+    expect(sanitizedLink).not.toContain("javascript:");
   });
 
   test("CardFeed supports Antigravity compact single-line tools and OpenCode aggregation", () => {

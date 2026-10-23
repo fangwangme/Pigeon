@@ -1,5 +1,4 @@
 import { Component, For, Show, createSignal, createMemo } from "solid-js";
-import { marked } from "marked";
 import {
   state,
   setState,
@@ -12,6 +11,7 @@ import {
 } from "../state/store";
 import { InteractionCard } from "./InteractionCard";
 import { sendPrompt, sendKeys } from "../state/ws";
+import { renderMarkdown } from "../utils/markdown";
 import type {
   Card,
   DiffCard,
@@ -21,20 +21,6 @@ import type {
   NormalizedTurn,
   NormalizedToolCall,
 } from "../../types/protocol";
-
-marked.use({
-  gfm: true,
-  breaks: true,
-});
-
-function renderMarkdown(content: string): string {
-  if (!content) return "";
-  try {
-    return marked.parse(content) as string;
-  } catch {
-    return content;
-  }
-}
 
 function cleanPath(p: string): string {
   if (!p) return "";
@@ -339,6 +325,11 @@ export const CardFeed: Component = () => {
 
   // Summarized conversation topic
   const conversationTopic = createMemo(() => {
+    if (state.sessionTitle) {
+      const t = state.sessionTitle.trim();
+      return t.length > 42 ? t.slice(0, 42) + "…" : t;
+    }
+
     const isGeneric = (s?: string) => {
       if (!s) return true;
       const lower = s.trim().toLowerCase();
@@ -352,6 +343,10 @@ export const CardFeed: Component = () => {
         lower === "sh" ||
         lower === "agent" ||
         lower.startsWith("tab ") ||
+        lower.startsWith("运行 ") ||
+        lower.includes("ctrl+o") ||
+        lower.includes("to expand") ||
+        lower.includes("list)") ||
         /^[a-z0-9]+:p\d+$/i.test(lower)
       );
     };
@@ -360,14 +355,14 @@ export const CardFeed: Component = () => {
     const currentAgent = state.workingAgents?.find((a) => a.paneId === paneId);
     if (currentAgent?.summary && !isGeneric(currentAgent.summary)) {
       const s = currentAgent.summary.trim();
-      return s.length > 28 ? s.slice(0, 28) + "…" : s;
+      return s.length > 36 ? s.slice(0, 36) + "…" : s;
     }
 
     if (state.normalizedTurns && state.normalizedTurns.length > 0) {
       for (const t of state.normalizedTurns) {
         const text = t.userPrompt?.text?.trim() || "";
         if (text && !isGeneric(text)) {
-          return text.length > 28 ? text.slice(0, 28) + "…" : text;
+          return text.length > 36 ? text.slice(0, 36) + "…" : text;
         }
       }
     }
@@ -375,7 +370,7 @@ export const CardFeed: Component = () => {
     const tabLabel = (tab()?.label || "").trim();
     if (tabLabel && !isGeneric(tabLabel)) return tabLabel;
 
-    return "会话";
+    return "Mobile Voice Development Bridge Architecture";
   });
 
   return (
@@ -404,11 +399,13 @@ export const CardFeed: Component = () => {
         color: "var(--fg)",
       }}
     >
-      {/* 1. Streamlined Session Bar (Model Badge + Dot + Summarized Topic + Options menu) */}
+      {/* 1. Streamlined Session Bar (Sticky Sub-header: Model Badge + Dot + Summarized Topic + Options menu) */}
       <section
         aria-label="当前会话信息"
         style={{
-          position: "relative",
+          position: "sticky",
+          top: "0px",
+          "z-index": 25,
           display: "flex",
           "align-items": "center",
           "justify-content": "space-between",
@@ -420,7 +417,7 @@ export const CardFeed: Component = () => {
           "min-height": "42px",
           "max-width": "100%",
           "box-sizing": "border-box",
-          "box-shadow": "0 1px 3px rgba(0, 0, 0, 0.12)",
+          "box-shadow": "0 2px 8px rgba(0, 0, 0, 0.16)",
         }}
       >
         {/* Left: Two-line stack (Line 1: Status beacon + Model badge; Line 2: Divider dot + Summarized Topic) */}

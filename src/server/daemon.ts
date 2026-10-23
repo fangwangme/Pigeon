@@ -23,6 +23,7 @@ export interface DaemonConfig {
   publicBaseUrl?: string;
   herdrSocketPath?: string;
   adminSocketPath?: string;
+  devicesFilePath?: string;
   vapidPath?: string;
   embeddedHtml?: string;
   configManager?: ConfigManager;
@@ -116,6 +117,7 @@ export class PigeonDaemon {
         (process.env.XDG_RUNTIME_DIR
           ? `${process.env.XDG_RUNTIME_DIR}/pigeon.sock`
           : `${process.env.HOME}/.local/state/pigeon/admin.sock`),
+      devicesFilePath: config.devicesFilePath,
       vapidPath:
         config.vapidPath ||
         (process.env.HOME
@@ -135,6 +137,7 @@ export class PigeonDaemon {
       publicBaseUrl: this.config.publicBaseUrl,
       insecureDev: this.config.insecureDev,
       adminSocketPath: this.config.adminSocketPath,
+      devicesFilePath: this.config.devicesFilePath,
     });
 
     this.pushManager = new PushManager(this.config.vapidPath);
@@ -235,12 +238,42 @@ export class PigeonDaemon {
 
         // WebSocket Upgrade endpoint
         if (url.pathname === "/ws") {
-          const cookies = self.parseCookie(req);
-          let sessionToken = cookies[cookieName];
-
-          if (!sessionToken && url.searchParams.has("token")) {
-            sessionToken = url.searchParams.get("token")!;
+          // Check Origin & Host per security-and-pairing.md §4 (anti-CSWSH & DNS rebinding)
+          const origin = req.headers.get("origin");
+          if (origin) {
+            try {
+              const originUrl = new URL(origin);
+              const hostHeader = req.headers.get("host") || "";
+              const hostOnly = hostHeader.split(":")[0];
+              const allowedHosts = new Set([
+                "localhost",
+                "127.0.0.1",
+                "::1",
+                url.hostname,
+                hostOnly,
+              ]);
+              if (self.config.publicBaseUrl) {
+                try {
+                  allowedHosts.add(new URL(self.config.publicBaseUrl).hostname);
+                } catch {}
+              }
+              if (self.config.insecureDev) {
+                const localIp = detectLocalIp();
+                if (localIp) allowedHosts.add(localIp);
+              }
+              if (!allowedHosts.has(originUrl.hostname)) {
+                return new Response("Forbidden Origin", { status: 403 });
+              }
+            } catch {
+              return new Response("Forbidden Origin", { status: 403 });
+            }
           }
+
+          const cookies = self.parseCookie(req);
+          const sessionToken = cookies[cookieName];
+
+          // Note: ?token= query parameter authentication is strictly disallowed per P0-3
+          // to prevent session credential exposure in query strings and server access logs.
 
           const session = self.pairingManager.validateSession(sessionToken);
           if (!session) {
@@ -300,13 +333,28 @@ export class PigeonDaemon {
           return Response.json({ version: "0.1.0", name: "pigeon" });
         }
 
+        // GET /api/auth/status
+        if (url.pathname === "/api/auth/status") {
+          const cookies = self.parseCookie(req);
+          const session = self.pairingManager.validateSession(cookies[cookieName]);
+          return Response.json({
+            authenticated: !!session,
+            deviceId: session?.deviceId || null,
+          });
+        }
+
         // GET /api/push/vapid-public-key
         if (url.pathname === "/api/push/vapid-public-key") {
           return Response.json({ publicKey: self.pushManager.getPublicKey() });
         }
 
-        // POST /api/push/subscribe
+        // POST /api/push/subscribe (Authenticated per P0-3)
         if (url.pathname === "/api/push/subscribe" && req.method === "POST") {
+          const cookies = self.parseCookie(req);
+          const session = self.pairingManager.validateSession(cookies[cookieName]);
+          if (!session) {
+            return new Response("Unauthorized", { status: 401 });
+          }
           try {
             const body = await req.json();
             self.pushManager.addSubscription(body);

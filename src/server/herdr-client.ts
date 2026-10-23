@@ -37,7 +37,7 @@ export class HerdrClient extends EventEmitter {
   private paneContentHashes = new Map<string, string>();
   private currentSnapshot: SnapshotPayload = { workspaces: [], workingAgents: [] };
   private focusedPaneId: string | null = null;
-  private monitoredPaneId: string | null = null;
+  private monitoredPaneIds = new Set<string>();
   private snapshotPollTimer: any = null;
   private activePanePollTimer: any = null;
 
@@ -77,11 +77,13 @@ export class HerdrClient extends EventEmitter {
       }
     }, 30000);
 
-    // Active pane reading: only if a mobile client explicitly requested monitoredPaneId,
+    // Active pane reading: iterates over all panes actively monitored by any connected mobile client,
     // using a gentle fallback interval (3s) rather than hammering Herdr's pty
     this.activePanePollTimer = setInterval(() => {
-      if (this.monitoredPaneId && this.connected) {
-        this.readAndClassifyPane(this.monitoredPaneId).catch(() => {});
+      if (this.connected && this.monitoredPaneIds.size > 0) {
+        for (const paneId of this.monitoredPaneIds) {
+          this.readAndClassifyPane(paneId).catch(() => {});
+        }
       }
     }, 3000);
   }
@@ -97,8 +99,23 @@ export class HerdrClient extends EventEmitter {
     }
   }
 
+  public addMonitoredPane(paneId: string): void {
+    if (paneId) this.monitoredPaneIds.add(paneId);
+  }
+
+  public removeMonitoredPane(paneId: string): void {
+    if (paneId) this.monitoredPaneIds.delete(paneId);
+  }
+
+  public getMonitoredPaneIds(): string[] {
+    return Array.from(this.monitoredPaneIds);
+  }
+
   public setMonitoredPaneId(paneId: string | null): void {
-    this.monitoredPaneId = paneId;
+    this.monitoredPaneIds.clear();
+    if (paneId) {
+      this.monitoredPaneIds.add(paneId);
+    }
   }
 
   public getPaneAgentSession(paneId: string): { agent: string; sessionId: string } | null {
@@ -615,12 +632,17 @@ export class HerdrClient extends EventEmitter {
     try {
       await this.request("agent.prompt", { pane_id: paneId, text });
     } catch (err: any) {
-      const msg = err?.message || String(err);
-      if (msg.includes("agent_blocked") || msg.includes("blocked")) {
+      const msg = (err?.message || String(err)).toLowerCase();
+      // If agent is blocked or request timed out, fail loudly per AGENTS.md rather than double-sending
+      if (msg.includes("blocked") || msg.includes("timeout")) {
         throw err;
       }
-      await this.sendInput(paneId, text);
-      return;
+      // Only fallback to sendInput if the agent.prompt method is unsupported by Herdr / agent
+      if (msg.includes("not found") || msg.includes("not recognized") || msg.includes("unknown_method")) {
+        await this.sendInput(paneId, text);
+        return;
+      }
+      throw err;
     }
     this.scheduleDebouncedRead(paneId);
   }

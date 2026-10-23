@@ -1,6 +1,6 @@
-import { randomBytes, createHash } from "node:crypto";
+import { randomBytes, createHash, timingSafeEqual } from "node:crypto";
 import { createServer, type Server as NetServer, type Socket } from "node:net";
-import { existsSync, unlinkSync, mkdirSync, chmodSync } from "node:fs";
+import { existsSync, unlinkSync, mkdirSync, chmodSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { EventEmitter } from "node:events";
 import qrcode from "qrcode-terminal";
@@ -43,6 +43,7 @@ export interface PairingOptions {
   publicBaseUrl: string;
   insecureDev?: boolean;
   adminSocketPath?: string;
+  devicesFilePath?: string;
 }
 
 export interface PairingTokenOptions {
@@ -65,6 +66,7 @@ export class PairingManager extends EventEmitter {
   private publicBaseUrl: string;
   private insecureDev: boolean;
   private adminSocketPath: string;
+  private devicesFilePath: string;
   private adminServer: NetServer | null = null;
 
   constructor(options: PairingOptions) {
@@ -76,6 +78,57 @@ export class PairingManager extends EventEmitter {
       (process.env.XDG_RUNTIME_DIR
         ? `${process.env.XDG_RUNTIME_DIR}/pigeon.sock`
         : `${process.env.HOME}/.local/state/pigeon/admin.sock`);
+    this.devicesFilePath =
+      options.devicesFilePath ||
+      (process.env.XDG_STATE_HOME
+        ? `${process.env.XDG_STATE_HOME}/pigeon/devices.json`
+        : `${process.env.HOME || "/tmp"}/.local/state/pigeon/devices.json`);
+
+    this.loadDevices();
+  }
+
+  private loadDevices(): void {
+    if (!existsSync(this.devicesFilePath)) return;
+    try {
+      const raw = readFileSync(this.devicesFilePath, "utf-8");
+      const parsed = JSON.parse(raw);
+      if (parsed.activeToken) {
+        const at = parsed.activeToken;
+        if (at.permanent || !at.expiresAt || at.expiresAt > Date.now()) {
+          this.activeToken = at;
+        }
+      }
+      if (Array.isArray(parsed.sessions)) {
+        this.sessions.clear();
+        for (const s of parsed.sessions) {
+          if (s.tokenHash && s.deviceId) {
+            this.sessions.set(s.tokenHash, s);
+          }
+        }
+      }
+    } catch {}
+  }
+
+  private saveDevices(): void {
+    try {
+      const dir = dirname(this.devicesFilePath);
+      if (!existsSync(dir)) {
+        mkdirSync(dir, { recursive: true, mode: 0o700 });
+      }
+      const data = {
+        version: "1.0.0",
+        updatedAt: Date.now(),
+        activeToken: this.activeToken,
+        sessions: Array.from(this.sessions.values()),
+      };
+      writeFileSync(this.devicesFilePath, JSON.stringify(data, null, 2), {
+        encoding: "utf-8",
+        mode: 0o600,
+      });
+      try {
+        chmodSync(this.devicesFilePath, 0o600);
+      } catch {}
+    } catch {}
   }
 
   public getCookieName(): string {
@@ -119,6 +172,7 @@ export class PairingManager extends EventEmitter {
       permanent,
       singleUse,
     };
+    this.saveDevices();
 
     const url = `${this.publicBaseUrl}/#code=${token}`;
     return { token, url, expiresAt, permanent };
@@ -152,16 +206,23 @@ export class PairingManager extends EventEmitter {
 
     if (this.activeToken.expiresAt > 0 && now > this.activeToken.expiresAt) {
       this.activeToken = null;
+      this.saveDevices();
       return { success: false, error: "Pairing token has expired. Please generate a new one." };
     }
 
     if (this.activeToken.failedAttempts >= 5) {
       this.activeToken = null;
+      this.saveDevices();
       return { success: false, error: "Too many failed attempts. Pairing token revoked." };
     }
 
-    if (code !== this.activeToken.token) {
+    const codeBuf = Buffer.from(code.trim().toUpperCase());
+    const tokenBuf = Buffer.from(this.activeToken.token.trim().toUpperCase());
+    const match = codeBuf.length === tokenBuf.length && timingSafeEqual(codeBuf, tokenBuf);
+
+    if (!match) {
       this.activeToken.failedAttempts++;
+      this.saveDevices();
       return { success: false, error: "Invalid pairing code." };
     }
 
@@ -184,6 +245,7 @@ export class PairingManager extends EventEmitter {
     };
 
     this.sessions.set(tokenHash, session);
+    this.saveDevices();
 
     return {
       success: true,
@@ -215,6 +277,7 @@ export class PairingManager extends EventEmitter {
       }
     }
     if (found) {
+      this.saveDevices();
       this.emit("device_revoked", deviceId);
     }
     return found;

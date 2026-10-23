@@ -61,7 +61,7 @@ export class WsServer extends EventEmitter {
       const session = this.herdrClient.getPaneAgentSession(update.paneId);
       let structuredTurnsPayload: any = null;
       if (session && this.agentAdapters.isSupported(session.agent)) {
-        const { turns, stats } = this.agentAdapters.getTurns(session.agent, session.sessionId, true);
+        const { turns, stats, sessionTitle } = this.agentAdapters.getTurns(session.agent, session.sessionId, true);
         if (turns && turns.length > 0) {
           structuredTurnsPayload = {
             type: "normalized_turns",
@@ -69,6 +69,7 @@ export class WsServer extends EventEmitter {
               paneId: update.paneId,
               turns,
               sessionStats: stats,
+              sessionTitle,
             },
           };
         }
@@ -137,9 +138,26 @@ export class WsServer extends EventEmitter {
   public handleClose(ws: ServerWebSocket<ClientConnectionData>): void {
     const data = ws.data;
     this.clients.delete(ws);
+    this.syncMonitoredPanes();
     if (data?.session?.deviceId) {
       this.pushManager.removePresence(data.session.deviceId);
       this.emit("client_disconnected", data.session.deviceId);
+    }
+  }
+
+  private syncMonitoredPanes(): void {
+    const activePanes = new Set<string>();
+    for (const client of this.clients.keys()) {
+      const p = client.data?.subscribedPaneId;
+      if (p) activePanes.add(p);
+    }
+    for (const p of this.herdrClient.getMonitoredPaneIds()) {
+      if (!activePanes.has(p)) {
+        this.herdrClient.removeMonitoredPane(p);
+      }
+    }
+    for (const p of activePanes) {
+      this.herdrClient.addMonitoredPane(p);
     }
   }
 
@@ -164,6 +182,8 @@ export class WsServer extends EventEmitter {
           "w1:p1";
 
         data.subscribedPaneId = paneId;
+        this.herdrClient.addMonitoredPane(paneId);
+        this.syncMonitoredPanes();
 
         const clientCfg = this.configManager.getClientConfig();
 
@@ -199,7 +219,7 @@ export class WsServer extends EventEmitter {
         this.herdrClient.setMonitoredPaneId(paneId);
         const session = this.herdrClient.getPaneAgentSession(paneId);
         if (session && this.agentAdapters.isSupported(session.agent)) {
-          const { turns, stats } = this.agentAdapters.getTurns(session.agent, session.sessionId);
+          const { turns, stats, sessionTitle } = this.agentAdapters.getTurns(session.agent, session.sessionId);
           if (turns && turns.length > 0) {
             ws.send(
               JSON.stringify({
@@ -208,6 +228,7 @@ export class WsServer extends EventEmitter {
                   paneId,
                   turns,
                   sessionStats: stats,
+                  sessionTitle,
                 },
               })
             );
@@ -246,11 +267,12 @@ export class WsServer extends EventEmitter {
 
       case "subscribe_pane": {
         data.subscribedPaneId = msg.paneId;
-        this.herdrClient.setMonitoredPaneId(msg.paneId);
+        this.herdrClient.addMonitoredPane(msg.paneId);
+        this.syncMonitoredPanes();
 
         const subSession = this.herdrClient.getPaneAgentSession(msg.paneId);
         if (subSession && this.agentAdapters.isSupported(subSession.agent)) {
-          const { turns, stats } = this.agentAdapters.getTurns(subSession.agent, subSession.sessionId);
+          const { turns, stats, sessionTitle } = this.agentAdapters.getTurns(subSession.agent, subSession.sessionId);
           if (turns && turns.length > 0) {
             ws.send(
               JSON.stringify({
@@ -259,6 +281,7 @@ export class WsServer extends EventEmitter {
                   paneId: msg.paneId,
                   turns,
                   sessionStats: stats,
+                  sessionTitle,
                 },
               })
             );
@@ -280,11 +303,12 @@ export class WsServer extends EventEmitter {
         const paneId = msg.payload?.paneId;
         if (paneId) {
           data.subscribedPaneId = paneId;
-          this.herdrClient.setMonitoredPaneId(paneId);
+          this.herdrClient.addMonitoredPane(paneId);
+          this.syncMonitoredPanes();
 
           const selSession = this.herdrClient.getPaneAgentSession(paneId);
           if (selSession && this.agentAdapters.isSupported(selSession.agent)) {
-            const { turns, stats } = this.agentAdapters.getTurns(selSession.agent, selSession.sessionId);
+            const { turns, stats, sessionTitle } = this.agentAdapters.getTurns(selSession.agent, selSession.sessionId);
             if (turns && turns.length > 0) {
               ws.send(
                 JSON.stringify({
@@ -293,6 +317,7 @@ export class WsServer extends EventEmitter {
                     paneId,
                     turns,
                     sessionStats: stats,
+                    sessionTitle,
                   },
                 })
               );
@@ -404,14 +429,69 @@ export class WsServer extends EventEmitter {
         }
 
         try {
+          let approved = true;
           if (shortcut === "enter") {
-            await this.herdrClient.sendKeys(target, ["enter"]);
+            approved = await this.herdrClient.sendInteractionApproval(target, ["enter"]);
           } else if (shortcut === "ctrl+c") {
-            await this.herdrClient.sendKeys(target, ["ctrl+c"]);
+            approved = await this.herdrClient.sendInteractionApproval(target, ["ctrl+c"]);
           } else {
             await this.herdrClient.sendInput(target, keyToSend);
           }
           state.pendingInteraction = null;
+          this.sendAck(ws, msg.id, { approved });
+        } catch (err: any) {
+          this.sendError(ws, msg.id, ProtocolErrors.ERR_INTERNAL, err.message);
+        }
+        break;
+      }
+
+      case "ghost_execute": {
+        const target = msg.payload?.targetPaneId || data.subscribedPaneId;
+        const paneRevision = msg.payload?.paneRevision;
+        if (!target) {
+          this.sendError(ws, msg.id, ProtocolErrors.ERR_INVALID_PAYLOAD, "Missing targetPaneId");
+          break;
+        }
+        const state = this.herdrClient.getPaneState(target);
+        if (!state.activeGhost) {
+          this.sendError(ws, msg.id, ProtocolErrors.ERR_INTERACTION_STALE, "No active ghost suggestion");
+          break;
+        }
+        if (paneRevision !== undefined && state.revision !== paneRevision) {
+          this.sendError(ws, msg.id, ProtocolErrors.ERR_INTERACTION_STALE, "Screen revision mismatch");
+          break;
+        }
+        const suggestion = state.activeGhost.suggestion;
+        state.activeGhost = null;
+        try {
+          await this.herdrClient.sendAgentPrompt(target, suggestion);
+          this.sendAck(ws, msg.id);
+        } catch (err: any) {
+          this.sendError(ws, msg.id, ProtocolErrors.ERR_INTERNAL, err.message);
+        }
+        break;
+      }
+
+      case "open_agent_menu": {
+        const target = msg.payload?.targetPaneId || data.subscribedPaneId;
+        const menu = msg.payload?.menu || "model";
+        if (!target) {
+          this.sendError(ws, msg.id, ProtocolErrors.ERR_INVALID_PAYLOAD, "Missing targetPaneId");
+          break;
+        }
+        const state = this.herdrClient.getPaneState(target);
+        if (state.agentStatus !== "idle" && state.agentStatus !== "done") {
+          this.sendError(
+            ws,
+            msg.id,
+            ProtocolErrors.ERR_AGENT_NOT_READY,
+            `Cannot open menu while agent status is '${state.agentStatus}'`
+          );
+          break;
+        }
+        try {
+          const cmd = menu === "model" ? "/model" : `/${menu}`;
+          await this.herdrClient.sendInput(target, cmd);
           this.sendAck(ws, msg.id);
         } catch (err: any) {
           this.sendError(ws, msg.id, ProtocolErrors.ERR_INTERNAL, err.message);
@@ -469,7 +549,12 @@ export class WsServer extends EventEmitter {
       }
 
       default:
-        this.sendAck(ws, (msg as any).id || "ack");
+        this.sendError(
+          ws,
+          (msg as any).id || "err",
+          ProtocolErrors.ERR_INVALID_PAYLOAD,
+          `Unsupported or unhandled message type '${(msg as any).type}'`
+        );
         break;
     }
   }

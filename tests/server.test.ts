@@ -1,11 +1,12 @@
 import { describe, expect, test, afterAll, beforeAll } from "bun:test";
-import { existsSync, readFileSync, unlinkSync } from "node:fs";
+import { existsSync, readFileSync, unlinkSync, statSync } from "node:fs";
 import { PairingManager, generateBase32Token } from "../src/server/pairing";
 import { CardClassifier, computeInteractionFingerprint } from "../src/server/card-classifier";
 import { PushManager } from "../src/server/push";
 import { HerdrClient } from "../src/server/herdr-client";
 import { WsServer } from "../src/server/ws-server";
 import { ConfigManager } from "../src/server/config-manager";
+import { PigeonDaemon } from "../src/server/daemon";
 import { ProtocolErrors } from "../src/types/protocol";
 
 describe("Pigeon Server Implementation Suite", () => {
@@ -67,6 +68,46 @@ describe("Pigeon Server Implementation Suite", () => {
 
       const d2 = pairing.exchangeToken(token, "Tablet");
       expect(d2.success).toBe(true);
+    });
+
+    test("Persists permanent token and sessions to devices.json across restarts (P0-2)", () => {
+      const testDevicesPath = `/tmp/test-pigeon-devices-${Date.now()}.json`;
+      try {
+        const pm1 = new PairingManager({
+          publicBaseUrl: "https://pigeon.local",
+          devicesFilePath: testDevicesPath,
+        });
+
+        const { token } = pm1.createPairingToken({ permanent: true });
+        const ex = pm1.exchangeToken(token, "Persistent Phone");
+        expect(ex.success).toBe(true);
+        expect(ex.sessionToken).toBeDefined();
+
+        expect(existsSync(testDevicesPath)).toBe(true);
+        const stat = statSync(testDevicesPath);
+        // Verify 0600 file mode
+        expect(stat.mode & 0o777).toBe(0o600);
+
+        // Instantiate second manager pointing to the exact same file (simulating daemon restart)
+        const pm2 = new PairingManager({
+          publicBaseUrl: "https://pigeon.local",
+          devicesFilePath: testDevicesPath,
+        });
+
+        // Token should be recovered
+        const activeToken = pm2.getActiveToken();
+        expect(activeToken).not.toBeNull();
+        expect(activeToken?.token).toBe(token);
+
+        // Session should be valid on the new manager instance without re-pairing
+        const recoveredSession = pm2.validateSession(ex.sessionToken);
+        expect(recoveredSession).not.toBeNull();
+        expect(recoveredSession?.deviceName).toBe("Persistent Phone");
+      } finally {
+        try {
+          unlinkSync(testDevicesPath);
+        } catch {}
+      }
     });
 
     test("Cookie name uses __Host- prefix in secure mode", () => {
@@ -301,6 +342,52 @@ describe("Pigeon Server Implementation Suite", () => {
       expect(closeCode).toBe(1008);
       expect(wsServer.getConnectedClientsCount()).toBe(0);
     });
+
+    test("Rejects unknown message types with ERR_INVALID_PAYLOAD loudly (P0-5)", async () => {
+      let sentMessage: any = null;
+      const fakeWs: any = {
+        data: {
+          session: { deviceId: "dev_mock" },
+          subscribedPaneId: "w1:p1",
+          lastPingTime: Date.now(),
+        },
+        send: (str: string) => {
+          sentMessage = JSON.parse(str);
+        },
+      };
+
+      await wsServer.handleMessage(
+        fakeWs,
+        JSON.stringify({
+          type: "nonexistent_command_type",
+          id: "cmd_bad_99",
+        })
+      );
+
+      expect(sentMessage).not.toBeNull();
+      expect(sentMessage.type).toBe("error");
+      expect(sentMessage.replyTo).toBe("cmd_bad_99");
+      expect(sentMessage.error.code).toBe(ProtocolErrors.ERR_INVALID_PAYLOAD);
+      expect(sentMessage.error.message).toContain("Unsupported or unhandled message type");
+    });
+
+    test("Multi-device multi-pane monitoring maintains active pane set concurrently (P0-4)", () => {
+      herdr.addMonitoredPane("w1:p1");
+      herdr.addMonitoredPane("w1:p2");
+      herdr.addMonitoredPane("w2:p1");
+
+      const monitored = herdr.getMonitoredPaneIds();
+      expect(monitored).toContain("w1:p1");
+      expect(monitored).toContain("w1:p2");
+      expect(monitored).toContain("w2:p1");
+
+      // Removing one device's pane doesn't affect other devices
+      herdr.removeMonitoredPane("w1:p1");
+      const remaining = herdr.getMonitoredPaneIds();
+      expect(remaining).not.toContain("w1:p1");
+      expect(remaining).toContain("w1:p2");
+      expect(remaining).toContain("w2:p1");
+    });
   });
 
   describe("Configuration Management & Persistence Subsystem", () => {
@@ -426,6 +513,88 @@ describe("Pigeon Server Implementation Suite", () => {
       // Verify Client 2 received broadcast
       expect(client2Updated).not.toBeNull();
       expect(client2Updated.payload.client.themeKey).toBe("catppuccin");
+    });
+  });
+
+  describe("Daemon Security & WebSocket Origin Safeguards (P0-3)", () => {
+    const testPort = 4195;
+    const testAdminSock = `/tmp/pigeon_sec_test_${Date.now()}.sock`;
+    const testDevicesPath = `/tmp/pigeon_sec_devices_${Date.now()}.json`;
+    let daemon: PigeonDaemon;
+
+    beforeAll(async () => {
+      daemon = new PigeonDaemon({
+        port: testPort,
+        insecureDev: true,
+        adminSocketPath: testAdminSock,
+        devicesFilePath: testDevicesPath,
+        publicBaseUrl: `http://localhost:${testPort}`,
+      });
+      await daemon.start();
+    });
+
+    afterAll(() => {
+      daemon.stop();
+      try {
+        if (existsSync(testAdminSock)) unlinkSync(testAdminSock);
+        if (existsSync(testDevicesPath)) unlinkSync(testDevicesPath);
+      } catch {}
+    });
+
+    const testWsKey = Buffer.from("pigeon_test_nonce_key").toString("base64");
+
+    test("Rejects WebSocket upgrade without session cookie with 401 Unauthorized", async () => {
+      const res = await fetch(`http://localhost:${testPort}/ws`, {
+        headers: {
+          Connection: "Upgrade",
+          Upgrade: "websocket",
+          "Sec-WebSocket-Key": testWsKey,
+          "Sec-WebSocket-Version": "13",
+        },
+      });
+      expect(res.status).toBe(401);
+    });
+
+    test("Rejects WebSocket ?token= query parameter bypass per P0-3", async () => {
+      // Create a valid pairing token and exchange for session
+      const { token } = daemon.pairingManager.createPairingToken();
+      const exchangeRes = daemon.pairingManager.exchangeToken(token, "Test Device");
+      expect(exchangeRes.success).toBe(true);
+      const sessionToken = exchangeRes.sessionToken!;
+
+      // Attempt using ?token= query param without cookie
+      const res = await fetch(`http://localhost:${testPort}/ws?token=${sessionToken}`, {
+        headers: {
+          Connection: "Upgrade",
+          Upgrade: "websocket",
+          "Sec-WebSocket-Key": testWsKey,
+          "Sec-WebSocket-Version": "13",
+        },
+      });
+      // Must be rejected with 401 (no query param bypass allowed)
+      expect(res.status).toBe(401);
+    });
+
+    test("Rejects cross-origin WebSocket requests from malicious Origin with 403 Forbidden", async () => {
+      const res = await fetch(`http://localhost:${testPort}/ws`, {
+        headers: {
+          Connection: "Upgrade",
+          Upgrade: "websocket",
+          "Sec-WebSocket-Key": testWsKey,
+          "Sec-WebSocket-Version": "13",
+          Origin: "http://malicious-attacker.com",
+        },
+      });
+      expect(res.status).toBe(403);
+    });
+
+    test("Rejects unauthenticated push subscription POST requests with 401", async () => {
+      const res = await fetch(`http://localhost:${testPort}/api/push/subscribe`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ endpoint: "https://fcm.googleapis.com/fcm/send/xyz" }),
+      });
+      expect(res.status).toBe(401);
     });
   });
 });

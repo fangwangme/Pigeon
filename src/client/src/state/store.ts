@@ -27,6 +27,7 @@ export interface AppState {
   cards: Card[];
   normalizedTurns: NormalizedTurn[];
   sessionStats: SessionStats | null;
+  sessionTitle: string | null;
   pendingInteraction: InteractionCardData | null;
   rawScreen: string;
   activeGhost: { suggestion: string; actionText: string } | null;
@@ -71,6 +72,7 @@ const [state, setState] = createStore<AppState>({
   cards: [],
   normalizedTurns: [],
   sessionStats: null,
+  sessionTitle: null,
   pendingInteraction: null,
   rawScreen: "",
   activeGhost: null,

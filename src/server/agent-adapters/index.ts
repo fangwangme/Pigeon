@@ -25,7 +25,7 @@ export class AgentAdapterManager {
     agent: string,
     sessionId: string,
     incremental = false
-  ): { turns: NormalizedTurn[]; stats?: SessionStats } {
+  ): { turns: NormalizedTurn[]; stats?: SessionStats; sessionTitle?: string } {
     const a = agent.toLowerCase();
     if (a === "opencode") {
       return this.opencode.getTurns(sessionId);
