@@ -83,62 +83,55 @@ export const MacroDock: Component = () => {
         "border-top": "1px solid var(--line)",
       }}
     >
-      {/* Quick actions: scrollable chips with a pinned "more" affordance */}
-      <div style={{ display: "flex", "align-items": "center", gap: "6px", padding: "7px 10px 0 10px" }}>
-        <div
-          class="pigeon-scroll"
-          aria-label="快捷操作栏"
-          style={{
-            flex: 1,
-            "min-width": 0,
-            display: "flex",
-            gap: "6px",
-            "overflow-x": "auto",
-            "scroll-snap-type": "x proximity",
-            "padding-right": "4px",
-            "mask-image": "linear-gradient(to right, #000 calc(100% - 18px), transparent)",
-            "-webkit-mask-image": "linear-gradient(to right, #000 calc(100% - 18px), transparent)",
-          }}
-        >
-          <For each={state.macros}>
-            {(macro) => {
-              const isCtrlC = () => macro.name === "Ctrl+C" || macro.payload === "ctrl+c";
-              const isConfirming = () => isCtrlC() && ctrlCConfirm();
-              const disabled = () => isDisabled(macro);
+      {/* Quick actions: wrap so no macro is ever hidden behind a scroll edge */}
+      <div
+        role="toolbar"
+        aria-label="快捷操作栏"
+        style={{
+          display: "flex",
+          "flex-wrap": "wrap",
+          "align-items": "center",
+          gap: "6px",
+          padding: "8px 10px 0",
+        }}
+      >
+        <For each={state.macros}>
+          {(macro) => {
+            const isCtrlC = () => macro.name === "Ctrl+C" || macro.payload === "ctrl+c";
+            const isConfirming = () => isCtrlC() && ctrlCConfirm();
+            const disabled = () => isDisabled(macro);
 
-              return (
-                <button
-                  class="touch-target"
-                  disabled={disabled()}
-                  aria-disabled={disabled()}
-                  onClick={() => !disabled() && handleMacroClick(macro)}
-                  style={{
-                    height: `${CHIP_HEIGHT}px`,
-                    padding: "0 12px",
-                    "flex-shrink": 0,
-                    "scroll-snap-align": "start",
-                    "border-radius": "10px",
-                    border: isConfirming()
-                      ? "1px solid var(--delbg)"
-                      : "1px solid var(--border)",
-                    background: isConfirming()
-                      ? "var(--delbg)"
-                      : "var(--surface)",
-                    color: isConfirming() ? "var(--delfg)" : "var(--fg)",
-                    "font-size": "12.5px",
-                    "font-weight": 500,
-                    cursor: disabled() ? "default" : "pointer",
-                    opacity: disabled() ? 0.42 : 1,
-                    "white-space": "nowrap",
-                    transition: "background 0.15s ease, color 0.15s ease, opacity 0.15s ease",
-                  }}
-                >
-                  {isConfirming() ? "Confirm Ctrl+C" : macro.name}
-                </button>
-              );
-            }}
-          </For>
-        </div>
+            return (
+              <button
+                class="touch-target"
+                disabled={disabled()}
+                aria-disabled={disabled()}
+                onClick={() => !disabled() && handleMacroClick(macro)}
+                style={{
+                  height: `${CHIP_HEIGHT}px`,
+                  padding: "0 12px",
+                  "flex-shrink": 0,
+                  "border-radius": "10px",
+                  border: isConfirming()
+                    ? "1px solid var(--delbg)"
+                    : "1px solid var(--border)",
+                  background: isConfirming()
+                    ? "var(--delbg)"
+                    : "var(--surface)",
+                  color: isConfirming() ? "var(--delfg)" : "var(--fg)",
+                  "font-size": "12.5px",
+                  "font-weight": 500,
+                  cursor: disabled() ? "default" : "pointer",
+                  opacity: disabled() ? 0.42 : 1,
+                  "white-space": "nowrap",
+                  transition: "background 0.15s ease, color 0.15s ease, opacity 0.15s ease",
+                }}
+              >
+                {isConfirming() ? "Confirm Ctrl+C" : macro.name}
+              </button>
+            );
+          }}
+        </For>
 
         <button
           class="touch-target"

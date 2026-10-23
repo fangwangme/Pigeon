@@ -62,33 +62,25 @@ The entire application (daemon + embedded PWA static assets) compiles into a sin
   - Explicit flag required for non-Tailscale local network testing (`http://192.168.x.x:4100`).
   - Binds to `0.0.0.0`, displays a prominent terminal security warning, issues non-Secure session cookies, and explicitly disables Web Push (as browsers reject Service Worker push on non-localhost HTTP).
 
-### 4.3 Event-Driven Herdr Adapter
-Instead of continuous snapshot polling:
-1. **Event Subscription**: Pigeon connects to Herdr's Unix domain socket (`~/.config/herdr/herdr.sock`, configurable for named sessions) and issues `events.subscribe`.
-2. **Tracked Events**: Listens for `pane_agent_status_changed`, `pane_output_changed` (with `revision`), `tab_created`, `tab_closed`, `pane_closed`, and `pane_moved`.
-3. **Reconciliation**: Queries `herdr api snapshot` only once during initial startup or upon reconnection after a socket disconnect.
+### 4.3 Robust Herdr Adapter Strategy
+Herdr 0.9.5 socket events do not expose a global output change event without per-pane filters. Pigeon adopts a reliable, battle-tested hybrid strategy:
+1. **Global Topology**: Queries `session.snapshot` every 1–2 seconds to maintain workspace, tab, and pane hierarchy and detect newly spawned panes.
+2. **Active Pane Reading**: For the currently focused pane, Pigeon executes `pane.read` with `source: "recent_unwrapped"` every 200–300ms. If the SHA-256 hash of the cleaned screen buffer has not changed, no push is dispatched.
+3. **Targeted Agent Status**: Subscribes to `pane.agent_status_changed` explicitly referencing active `pane_id`s to receive immediate notifications when an agent transitions into `blocked`, `working`, or `done`.
 
-### 4.4 Terminal Stream Classification vs Virtual Buffer
-Pigeon **does NOT reimplement a VT100 terminal emulator** (like xterm.js or xterm-headless):
-1. **Pre-rendered Text Input**: Herdr's `herdr agent read <target> --source recent-unwrapped` already provides clean, soft-wrap-joined text.
-2. **Card Classification**: Pigeon's backend classifies pre-rendered line chunks into structured cards:
-   - `thought`: Folded thought blocks (`+ Thought`).
-   - `tool_call`: Command invocations (`$ ...`) and results with exit codes.
-   - `diff`: File edit summaries and unified line diffs (collapsed by default).
-   - `markdown`: Assistant natural language responses.
-   - `interaction`: Interactive questions or permission prompts requiring user action.
-   - `text`: Fallback unclassified text block.
-3. **Card Stability & Deduplication**:
-   - Card IDs are derived from content anchors: `hash(cardKind + startLineContent + turnNumber)`.
-   - Screen reading is throttled with a 150–250ms debounce window. If the SHA-256 hash of the cleaned screen buffer has not changed, no `cards_upsert` is dispatched.
-4. **Raw Terminal Fallback**: The raw cleaned terminal screen is retained and served via `pane_screen` for the mobile client's slide-up inspection sheet.
+### 4.4 Dual-Track Session Rendering (Structured Stream vs Terminal Fallback)
+Pigeon implements a **Dual-Track Architecture** (detailed in `agent-session-normalization.md`):
+1. **Track 1 (Structured Agent Stream)**:
+   - When a Herdr pane contains a recognized `agent_session` (OpenCode, AGY, Claude Code, Codex, Pi), Pigeon's `AgentSessionAdapter` reads the agent's native local storage (SQLite or JSONL) incrementally.
+   - Pushes standardized `NormalizedTurn` streams to the mobile client with accordion folding for reasoning/thinking, structured tool call cards, and table horizontal overflow protection.
+2. **Track 2 (PTY Raw Terminal Fallback)**:
+   - When a pane runs a generic CLI shell (`bash`, `zsh`, `htop`, `vim`, etc.), Pigeon falls back smoothly to its streaming PTY terminal view (`pane_screen`).
+3. **Voice Input Policy**:
+   - In-app microphone audio recording is deliberately avoided. Pigeon relies 100% on the mobile device's system keyboard voice input (Gboard, WeChat input method, iOS Dictation). The composer enforces strict IME composition protection (`isComposing`) to prevent accidental submission while voice candidate text is streaming.
 
-### 4.5 Mobile Presence and Push Suppression
-To prevent missed push notifications due to half-open mobile WebSockets:
-1. Mobile clients send application-level heartbeats (`ping` every 15s; server replies `pong`).
-2. Client visibility (`document.visibilityState`) and focused pane ID are reported to the daemon.
-3. The daemon tracks presence: `{ isVisible: boolean, viewingPaneId: string | null, lastSeenAt: number }`.
-4. A Web Push notification for a `blocked` agent is dispatched **only** if no active client currently has `isVisible === true` and `viewingPaneId === targetPaneId`.
+### 4.5 Mobile Presence and Notification Milestone
+- Application-level heartbeats (`ping` every 15s; server replies `pong`).
+- Full Web Push notification infrastructure (RFC 8291 encryption and VAPID JWT) is scheduled for the M3 milestone. For v1, remote presence tracking monitors active viewing state to prioritize mobile alerts.
 
 ### 4.6 Local CLI Admin Channel
 Pigeon daemon listens on an isolated local Unix socket:

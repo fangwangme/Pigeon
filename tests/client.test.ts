@@ -99,6 +99,19 @@ describe("Pigeon Mobile Client UI & Contract Suite", () => {
     expect(code).toContain('class="touch-target"');
   });
 
+  test("Feed children opt out of flex shrinking so cards never collapse (spec 3.4)", () => {
+    const html = readFileSync(join(rootDir, "index.html"), "utf-8");
+    expect(html).toContain(".pigeon-feed > *");
+    expect(html).toContain("flex: 0 0 auto");
+
+    const feed = readFileSync(join(rootDir, "src", "client", "src", "components", "CardFeed.tsx"), "utf-8");
+    expect(feed).toContain('class="pigeon-feed"');
+
+    const dock = readFileSync(join(rootDir, "src", "client", "src", "components", "MacroDock.tsx"), "utf-8");
+    expect(dock).toContain('"flex-wrap": "wrap"');
+    expect(dock).not.toContain('"overflow-x": "auto"');
+  });
+
   test("Single-file production bundle dist/index.html is built and inlines assets", () => {
     const distHtmlPath = join(rootDir, "dist", "index.html");
     expect(existsSync(distHtmlPath)).toBe(true);

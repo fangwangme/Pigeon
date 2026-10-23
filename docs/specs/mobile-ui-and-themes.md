@@ -47,13 +47,14 @@ Pigeon is designed explicitly for single-handed mobile thumb usage on Chrome/Chr
 
 ## 3. Card Stream & Interactive Controls
 
-### 3.1 Card Types
-1. **Thought Card**: Displays agent internal thinking (`+ Thought`). Collapsed by default.
-2. **Tool Execution Card**: Displays Bash command invocations with exit codes and monospaced output.
-3. **Diff Card**: Displays file modifications (e.g. `src/auth.ts +1 -1`). Collapsed by default. When expanded, renders unified line-by-line diffs with full-width coloring.
-4. **Assistant Response**: Streamed Markdown with code syntax highlighting.
-5. **Interactive Question Card**: Highlighted in warning borders (`--warn`), featuring large touch buttons for each option, supplemented by fallback physical keys (`Enter`, `Esc`, `↑`, `↓`) and a "查看原始终端画面" (View Raw Terminal) sheet link.
-6. **Ghost Prediction Banner**: Renders predicted next commands with `[ ⇥ 填入 ]` (populate input textarea) and `[ ⚡ 执行 ]` (direct execute).
+### 3.1 Card Types and Turn-Based Flow
+1. **Thought / Reasoning Block**: Displays agent internal thinking (`▸ Thought for Xs`). Collapsed by default via an accordion toggle, expanding to show full reasoning text.
+2. **Tool Execution Block**: Displays Bash command invocations with exit codes, tool input parameters, and monospaced output (collapsed by default if > 5 lines).
+3. **Table Anti-Wrap Standard**: To prevent Markdown tables from breaking on narrow 360–412px mobile screens, tables must use `display: block; overflow-x: auto; white-space: nowrap; -webkit-overflow-scrolling: touch;`. Table columns maintain natural widths and scroll smoothly horizontally without vertical character folding.
+4. **Session Diff Drawer**: A top navigation badge `[ 📝 N files · +X -Y ]` opens a dedicated slide-out drawer showing per-file change statistics and unified line diffs with red/green syntax highlighting.
+5. **Assistant Response**: Streamed Markdown text with code syntax highlighting and touch-friendly copy buttons.
+6. **Interactive Question Action Sheet**: When an agent transitions to `blocked` awaiting user input or permission, Pigeon elevates an Action Sheet highlighted with `--warn` borders, offering touch buttons (>= 44px) for each option plus fallback keys (`Enter`, `Esc`, `↑`, `↓`) and a "查看原始终端画面" (View Raw Terminal) sheet link.
+7. **Ghost Prediction Banner**: Renders predicted next commands with `[ ⇥ 填入 ]` (populate input textarea) and `[ ⚡ 执行 ]` (direct execute).
 
 ### 3.2 Scroll Anchoring
 - When new stream chunks arrive, the viewport auto-scrolls to the bottom **only if** the user is already within 40px of the bottom.
@@ -62,6 +63,15 @@ Pigeon is designed explicitly for single-handed mobile thumb usage on Chrome/Chr
 ### 3.3 Contextual Safeguards for Destructive Actions
 - **`Approve` / `Reject` Macros**: Automatically disabled and dimmed when no interaction prompt is currently pending.
 - **Terminating Action (`Ctrl+C`)**: **Double-tap protection**. Tapping once displays a temporary confirmation tooltip: *"再次点击确认中断 (Ctrl+C)"*; only a second tap within 0.8 seconds dispatches the termination signal.
+
+### 3.4 Mobile Shell Layout Invariants
+- **Feed must scroll, never compress**: the card feed is a fixed-height flex column with `overflow-y: auto`. Its direct children are scroll content, so they must not participate in flex shrinking (`flex: 0 0 auto`). Cards with `overflow: hidden` otherwise collapse to a few pixels and overlap.
+- **One status, one place**: agent status is shown once, in the session strip (workspace › tab › agent + status + model). The feed footer must not repeat it.
+- **Top chrome budget**: header (52px) + tab bar (46px) + optional split-pane row (44px). Session strip stays under 92px so the feed keeps the majority of an 844px-tall viewport.
+- **Terminal output**: rendered as a panel with a mobile header (title, line count, copy, expand). macOS traffic lights are not used. When structured cards exist, the raw screen collapses to a single-line "终端 · 最近一行 · N 行" row that opens the full-screen terminal sheet.
+- **Tool cards**: header shows the tool name and exit status; the command renders on its own mono line; output is capped at five lines with an explicit expand control.
+- **Bottom dock**: macro chips wrap onto multiple rows rather than scrolling horizontally, so no action is ever cut off at the viewport edge. The composer stays pinned above the keyboard and respects `env(safe-area-inset-bottom)`.
+- **Truncation**: workspace names, server host and long card titles use ellipsis, never hard clipping without an indication.
 
 ## 4. Theming and Color Tokens
 
@@ -80,13 +90,13 @@ All UI components reference semantic CSS variables exclusively. Hardcoded hex co
 In the Pigeon Light theme variant, `--faint` is calibrated to `#5C6675` against `--bg` (`#F6F7F9`), producing a contrast ratio of **5.2:1**, strictly satisfying the WCAG AA 4.5:1 threshold.
 
 ### 4.3 Preset Theme Packs
-The system includes 6 curated theme packs, each providing paired Light and Dark variants:
-1. **Pigeon** (Default modern slate/blue)
-2. **GitHub** (GitHub Light / GitHub Dark)
-3. **Tokyo Night** (Tokyo Night Day / Tokyo Night)
-4. **Catppuccin** (Latte / Mocha)
-5. **Claude** (Warm terracotta light / deep ember dark)
-6. **Solarized** (Solarized Light / Solarized Dark)
+The system supports 6 curated theme packs, each providing paired Light and Dark variants:
+1. **Tokyo Night** (Tokyo Night / Tokyo Night Day)
+2. **Claude** (Claude Slate Dark / Claude Ivory Light)
+3. **GitHub** (GitHub Dark / GitHub Light)
+4. **Gruvbox** (Gruvbox Dark / Gruvbox Light)
+5. **Catppuccin** (Mocha Dark / Latte Light)
+6. **Pigeon** (Default Slate Dark / Pigeon Light)
 
 ### 4.4 Prevent Theme Flash on Load
 The HTML header embeds an inline render-blocking script that reads `localStorage.getItem('pigeon_theme')` and immediately sets CSS root attributes before body rendering:

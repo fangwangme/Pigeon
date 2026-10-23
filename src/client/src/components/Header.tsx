@@ -32,6 +32,13 @@ export const Header: Component = () => {
     return "var(--faint)";
   };
 
+  // Herdr pane names are often raw ids like "wJ:p1"; show something human instead.
+  const paneLabel = (p: { id: string; name?: string; agent?: string | null }) => {
+    const rawName = p.name?.trim();
+    if (rawName && !/^[A-Za-z0-9]+:p\d+$/.test(rawName)) return rawName;
+    return p.id.includes(":") ? p.id.split(":").pop()! : p.id;
+  };
+
   return (
     <>
       <header
@@ -195,7 +202,9 @@ export const Header: Component = () => {
                   />
                   {hasBlocked()
                     ? `${blockedCount()} 待确认`
-                    : `${workingCount()} 工作中`}
+                    : workingCount() > 0
+                    ? `${workingCount()} 工作中`
+                    : "空闲"}
                 </button>
               );
             })()}
@@ -317,15 +326,16 @@ export const Header: Component = () => {
       <Show when={subPanes().length > 1}>
         <div
           style={{
-            height: "40px",
+            height: "44px",
             "flex-shrink": 0,
             display: "flex",
             "align-items": "center",
             gap: "6px",
-            padding: "0 12px",
+            padding: "0 10px",
             background: "var(--inset)",
             "border-bottom": "1px solid var(--line)",
             "overflow-x": "auto",
+            "scrollbar-width": "none",
           }}
         >
           <For each={subPanes()}>
@@ -359,7 +369,7 @@ export const Header: Component = () => {
                       background: getStatusDotColor(p.agentStatus),
                     }}
                   />
-                  {p.name || (p.id.includes(":") ? p.id.split(":").pop() : p.id)}
+                  {paneLabel(p)}
                 </button>
               );
             }}
