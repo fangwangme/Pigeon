@@ -320,7 +320,11 @@ export class WsServer extends EventEmitter {
         const { workspaceId, agentKind, cwd } = msg.payload || {};
         try {
           const res = await this.herdrClient.createTabAndAgent(workspaceId, agentKind, cwd);
-          this.sendAck(ws, msg.id);
+          this.sendAck(ws, msg.id, {
+            workspaceId,
+            tabId: res?.tabId,
+            paneId: res?.paneId,
+          });
         } catch (err: any) {
           this.sendError(ws, msg.id, ProtocolErrors.ERR_INVALID_PAYLOAD, err.message);
         }
@@ -338,11 +342,15 @@ export class WsServer extends EventEmitter {
     }
   }
 
-  private sendAck(ws: ServerWebSocket<ClientConnectionData>, replyTo: string): void {
+  private sendAck(
+    ws: ServerWebSocket<ClientConnectionData>,
+    replyTo: string,
+    payload?: Record<string, any>
+  ): void {
     const ack: ServerMessage = {
       type: "ack",
       replyTo,
-      payload: { status: "ok" },
+      payload: { status: "ok", ...(payload || {}) },
     };
     ws.send(JSON.stringify(ack));
   }

@@ -34,6 +34,7 @@ export interface AppState {
   macrosModalOpen: boolean;
   newTabModalOpen: boolean;
   pairingModalOpen: boolean;
+  activeAgentsModalOpen: boolean;
   themeId: string;
   themeKey: string;
   themeMode: "system" | "light" | "dark";
@@ -68,6 +69,7 @@ const [state, setState] = createStore<AppState>({
   macrosModalOpen: false,
   newTabModalOpen: false,
   pairingModalOpen: false,
+  activeAgentsModalOpen: false,
   themeId: "pigeon-dark",
   themeKey: "pigeon",
   themeMode: "dark",
@@ -141,6 +143,18 @@ export function openPairingModal() {
 
 export function closePairingModal() {
   setState("pairingModalOpen", false);
+}
+
+export function openActiveAgentsModal() {
+  setState("activeAgentsModalOpen", true);
+}
+
+export function closeActiveAgentsModal() {
+  setState("activeAgentsModalOpen", false);
+}
+
+export function toggleActiveAgentsModal() {
+  setState("activeAgentsModalOpen", (open) => !open);
 }
 
 export function getActiveWorkspace(): WorkspaceSummary | undefined {

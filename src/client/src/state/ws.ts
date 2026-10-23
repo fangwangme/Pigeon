@@ -174,6 +174,19 @@ function handleServerMessage(msg: ServerMessage): void {
       break;
     }
 
+    case "ack": {
+      if (msg.payload?.workspaceId) {
+        setState("activeWorkspaceId", msg.payload.workspaceId);
+      }
+      if (msg.payload?.tabId) {
+        setState("activeTabId", msg.payload.tabId);
+      }
+      if (msg.payload?.paneId) {
+        selectPane(msg.payload.paneId);
+      }
+      break;
+    }
+
     case "pong":
       break;
   }

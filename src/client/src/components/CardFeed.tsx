@@ -1,5 +1,5 @@
 import { Component, For, Show, createSignal } from "solid-js";
-import { state, setState } from "../state/store";
+import { state, setState, getActiveWorkspace, getActiveTab, toggleTerminalSheet } from "../state/store";
 import { InteractionCard } from "./InteractionCard";
 import { sendPrompt } from "../state/ws";
 import type { Card, DiffCard, ThoughtCard, ToolCallCard, MarkdownCard } from "../../types/protocol";
@@ -29,6 +29,9 @@ export const CardFeed: Component = () => {
     return "var(--faint)";
   };
 
+  const ws = getActiveWorkspace;
+  const tab = getActiveTab;
+
   return (
     <main
       style={{
@@ -44,6 +47,87 @@ export const CardFeed: Component = () => {
         color: "var(--fg)",
       }}
     >
+      {/* Workspace & Tab Context Info Banner */}
+      <div
+        style={{
+          display: "flex",
+          "align-items": "center",
+          gap: "8px",
+          "font-size": "12px",
+          color: "var(--faint)",
+          padding: "0 4px",
+        }}
+      >
+        <span style={{ flex: 1, height: "1px", background: "var(--line)" }} />
+        <span>
+          {ws()?.label || "工作区"} ·{" "}
+          <code style={{ "font-family": "'JetBrains Mono', monospace", color: "var(--muted)" }}>
+            {tab()?.label || "tab"}
+          </code>
+        </span>
+        <span style={{ flex: 1, height: "1px", background: "var(--line)" }} />
+      </div>
+
+      {/* When no cards are present, display the terminal output screen */}
+      <Show when={state.cards.length === 0}>
+        <div
+          style={{
+            background: "var(--code)",
+            border: "1px solid var(--codeb)",
+            "border-radius": "10px",
+            overflow: "hidden",
+          }}
+        >
+          <div
+            style={{
+              display: "flex",
+              "align-items": "center",
+              gap: "8px",
+              padding: "8px 12px",
+              "border-bottom": "1px solid var(--codeb)",
+              "font-size": "12px",
+              color: "var(--muted)",
+            }}
+          >
+            <svg
+              width="14"
+              height="14"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+            >
+              <path d="M5 8l4 4-4 4M12 16h7" />
+            </svg>
+            <span style={{ flex: 1 }}>{tab()?.label || "Terminal"}</span>
+            <span style={{ color: "var(--faint)" }}>
+              {state.agentStatus === "working"
+                ? "工作中"
+                : state.agentStatus === "blocked"
+                ? "待确认"
+                : "就绪"}
+            </span>
+          </div>
+          <pre
+            style={{
+              margin: 0,
+              padding: "10px 12px",
+              "font-family": "'JetBrains Mono', ui-monospace, monospace",
+              "font-size": "12px",
+              "line-height": 1.7,
+              color: "var(--codefg)",
+              "white-space": "pre-wrap",
+              "word-break": "break-all",
+            }}
+          >
+            {state.rawScreen || `Agent [${tab()?.label || "agent"}] 已就绪，等待输入指令...`}
+          </pre>
+        </div>
+      </Show>
+
       <For each={state.cards}>
         {(card: Card) => {
           if (card.kind === "thought") {

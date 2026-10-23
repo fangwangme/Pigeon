@@ -9,6 +9,7 @@ import { AppearanceModal } from "./components/AppearanceModal";
 import { MacrosModal } from "./components/MacrosModal";
 import { NewTabModal } from "./components/NewTabModal";
 import { PairingModal } from "./components/PairingModal";
+import { ActiveAgentsModal } from "./components/ActiveAgentsModal";
 import { state, setPaletteTheme } from "./state/store";
 import { initWebSocket, checkPairingFromUrlHash } from "./state/ws";
 
@@ -48,6 +49,7 @@ function App() {
       <MacrosModal />
       <NewTabModal />
       <PairingModal />
+      <ActiveAgentsModal />
     </div>
   );
 }

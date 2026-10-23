@@ -8,6 +8,7 @@ import {
   getSubPanes,
   getBlockedAgentsCount,
   openNewTabModal,
+  openActiveAgentsModal,
 } from "../state/store";
 import { selectPane } from "../state/ws";
 
@@ -100,37 +101,89 @@ export const Header: Component = () => {
           </div>
         </div>
 
-        <Show when={getBlockedAgentsCount() > 0}>
-          <button
-            aria-label={`${getBlockedAgentsCount()} 个 Agent 等待确认，点击跳转`}
-            class="touch-target"
-            onClick={jumpToBlockedAgent}
-            style={{
-              height: "32px",
-              padding: "0 12px",
-              "border-radius": "16px",
-              border: "1px solid var(--warnb)",
-              background: "var(--warnbg)",
-              color: "var(--warnt)",
-              "font-size": "12px",
-              "font-weight": 600,
-              display: "flex",
-              "align-items": "center",
-              gap: "6px",
-              cursor: "pointer",
-            }}
+        {/* Quick Access to Active Agents */}
+        <div style={{ display: "flex", "align-items": "center", gap: "6px" }}>
+          <Show
+            when={state.workingAgents.length > 0}
+            fallback={
+              <button
+                aria-label="查看活动 Agent 列表"
+                class="touch-target"
+                onClick={openActiveAgentsModal}
+                style={{
+                  height: "32px",
+                  padding: "0 10px",
+                  "border-radius": "16px",
+                  border: "1px solid var(--border)",
+                  background: "transparent",
+                  color: "var(--muted)",
+                  "font-size": "12px",
+                  display: "flex",
+                  "align-items": "center",
+                  gap: "6px",
+                  cursor: "pointer",
+                }}
+              >
+                <svg
+                  width="14"
+                  height="14"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  aria-hidden="true"
+                >
+                  <rect x="2" y="3" width="20" height="14" rx="2" ry="2" />
+                  <line x1="8" y1="21" x2="16" y2="21" />
+                  <line x1="12" y1="17" x2="12" y2="21" />
+                </svg>
+                <span>Agent</span>
+              </button>
+            }
           >
-            <span
-              style={{
-                width: "6px",
-                height: "6px",
-                "border-radius": "3px",
-                background: "var(--warn)",
-              }}
-            />
-            {getBlockedAgentsCount()} 待确认
-          </button>
-        </Show>
+            {(() => {
+              const blockedCount = () => getBlockedAgentsCount();
+              const workingCount = () => state.workingAgents.filter((a) => a.status === "working").length;
+              const hasBlocked = () => blockedCount() > 0;
+
+              return (
+                <button
+                  aria-label={`${state.workingAgents.length} 个活动 Agent，点击查看列表`}
+                  class="touch-target"
+                  onClick={openActiveAgentsModal}
+                  style={{
+                    height: "32px",
+                    padding: "0 12px",
+                    "border-radius": "16px",
+                    border: hasBlocked() ? "1px solid var(--warnb)" : "1px solid var(--selb)",
+                    background: hasBlocked() ? "var(--warnbg)" : "var(--sel)",
+                    color: hasBlocked() ? "var(--warnt)" : "var(--fg)",
+                    "font-size": "12px",
+                    "font-weight": 600,
+                    display: "flex",
+                    "align-items": "center",
+                    gap: "6px",
+                    cursor: "pointer",
+                  }}
+                >
+                  <span
+                    style={{
+                      width: "6px",
+                      height: "6px",
+                      "border-radius": "3px",
+                      background: hasBlocked() ? "var(--warn)" : "var(--accent)",
+                    }}
+                  />
+                  {hasBlocked()
+                    ? `${blockedCount()} 待确认`
+                    : `${workingCount()} 工作中`}
+                </button>
+              );
+            })()}
+          </Show>
+        </div>
       </header>
 
       {/* Tabs bar */}
