@@ -3,11 +3,13 @@ import type { ServerWebSocket } from "bun";
 import type { HerdrClient } from "./herdr-client";
 import type { PairingManager, DeviceSession } from "./pairing";
 import type { PushManager } from "./push";
+import { ConfigManager } from "./config-manager";
 import {
   type ClientMessage,
   type ServerMessage,
   ProtocolErrors,
   type PaneStatePayload,
+  type ClientConfig,
 } from "../types/protocol";
 
 export interface WsServerOptions {
@@ -16,6 +18,7 @@ export interface WsServerOptions {
   pushManager: PushManager;
   allowedOrigins?: string[];
   insecureDev?: boolean;
+  configManager?: ConfigManager;
 }
 
 export interface ClientConnectionData {
@@ -30,6 +33,7 @@ export class WsServer extends EventEmitter {
   private pushManager: PushManager;
   private allowedOrigins: string[];
   private insecureDev: boolean;
+  public configManager: ConfigManager;
   private clients = new Map<ServerWebSocket<ClientConnectionData>, ClientConnectionData>();
 
   constructor(options: WsServerOptions) {
@@ -39,6 +43,7 @@ export class WsServer extends EventEmitter {
     this.pushManager = options.pushManager;
     this.allowedOrigins = options.allowedOrigins || [];
     this.insecureDev = !!options.insecureDev;
+    this.configManager = options.configManager || new ConfigManager();
 
     // Listen to Herdr updates to broadcast
     this.herdrClient.on("snapshot_updated", (snapshot) => {
@@ -136,6 +141,8 @@ export class WsServer extends EventEmitter {
 
         data.subscribedPaneId = paneId;
 
+        const clientCfg = this.configManager.getClientConfig();
+
         // Reply welcome
         const welcomeMsg: ServerMessage = {
           type: "welcome",
@@ -145,11 +152,12 @@ export class WsServer extends EventEmitter {
             serverVersion: "0.1.0",
             deviceId: data.session.deviceId,
             preferences: {
-              themeId: "pigeon",
-              mode: "dark",
+              themeId: clientCfg.themeId,
+              mode: clientCfg.themeMode,
               locale: "zh-CN",
               macrosVersion: 1,
             },
+            clientConfig: clientCfg,
           },
         };
         ws.send(JSON.stringify(welcomeMsg));
@@ -339,9 +347,51 @@ export class WsServer extends EventEmitter {
         break;
       }
 
+      case "config_get": {
+        const clientCfg = this.configManager.getClientConfig();
+        const syncMsg: ServerMessage = {
+          type: "config_sync",
+          replyTo: msg.id,
+          payload: {
+            version: 1,
+            client: clientCfg,
+          },
+        };
+        ws.send(JSON.stringify(syncMsg));
+        break;
+      }
+
+      case "config_patch": {
+        const clientPatch =
+          (msg.payload as any)?.client !== undefined
+            ? (msg.payload as any).client
+            : (msg.payload || {});
+        try {
+          const updatedClient = this.configManager.patchClientConfig(clientPatch);
+          this.sendAck(ws, msg.id, { client: updatedClient });
+          this.broadcastConfigUpdated(updatedClient);
+        } catch (err: any) {
+          this.sendError(ws, msg.id, ProtocolErrors.ERR_INVALID_PAYLOAD, err.message);
+        }
+        break;
+      }
+
       default:
         this.sendAck(ws, (msg as any).id || "ack");
         break;
+    }
+  }
+
+  public broadcastConfigUpdated(client: ClientConfig): void {
+    const updateMsg: ServerMessage = {
+      type: "config_updated",
+      payload: { client },
+    };
+    const serialized = JSON.stringify(updateMsg);
+    for (const clientWs of this.clients.keys()) {
+      try {
+        clientWs.send(serialized);
+      } catch {}
     }
   }
 

@@ -1,9 +1,11 @@
 import { describe, expect, test, afterAll, beforeAll } from "bun:test";
+import { existsSync, readFileSync, unlinkSync } from "node:fs";
 import { PairingManager, generateBase32Token } from "../src/server/pairing";
 import { CardClassifier, computeInteractionFingerprint } from "../src/server/card-classifier";
 import { PushManager } from "../src/server/push";
 import { HerdrClient } from "../src/server/herdr-client";
 import { WsServer } from "../src/server/ws-server";
+import { ConfigManager } from "../src/server/config-manager";
 import { ProtocolErrors } from "../src/types/protocol";
 
 describe("Pigeon Server Implementation Suite", () => {
@@ -286,6 +288,132 @@ describe("Pigeon Server Implementation Suite", () => {
       expect(closed).toBe(true);
       expect(closeCode).toBe(1008);
       expect(wsServer.getConnectedClientsCount()).toBe(0);
+    });
+  });
+
+  describe("Configuration Management & Persistence Subsystem", () => {
+    const testConfigPath = `/tmp/test_pigeon_cfg_${Date.now()}.json`;
+
+    afterAll(() => {
+      try {
+        if (existsSync(testConfigPath)) unlinkSync(testConfigPath);
+      } catch {}
+    });
+
+    test("ConfigManager initializes default config file on startup", () => {
+      const cfgMgr = new ConfigManager(testConfigPath, 50);
+      expect(existsSync(testConfigPath)).toBe(true);
+
+      const cfg = cfgMgr.getConfig();
+      expect(cfg.server).toBeDefined();
+      expect(cfg.server.port).toBe(4100);
+      expect(cfg.client).toBeDefined();
+      expect(cfg.client.themeKey).toBe("tokyo-night");
+      expect(cfg.client.themeMode).toBe("system");
+      expect(cfg.client.macros).toHaveLength(6);
+    });
+
+    test("Deep merge retains unmodified server and client configurations", () => {
+      const cfgMgr = new ConfigManager(testConfigPath, 50);
+      const originalServerPort = cfgMgr.getServerConfig().port;
+      const originalMacrosCount = cfgMgr.getClientConfig().macros.length;
+
+      // Patch theme only
+      cfgMgr.patchClientConfig({ themeKey: "solarized", themeMode: "light" });
+      cfgMgr.flush();
+
+      // Verify in memory
+      expect(cfgMgr.getClientConfig().themeKey).toBe("solarized");
+      expect(cfgMgr.getClientConfig().themeMode).toBe("light");
+      expect(cfgMgr.getClientConfig().macros).toHaveLength(originalMacrosCount);
+      expect(cfgMgr.getServerConfig().port).toBe(originalServerPort);
+
+      // Verify from disk file
+      const raw = JSON.parse(readFileSync(testConfigPath, "utf-8"));
+      expect(raw.client.themeKey).toBe("solarized");
+      expect(raw.client.themeMode).toBe("light");
+      expect(raw.client.macros).toHaveLength(originalMacrosCount);
+      expect(raw.server.port).toBe(originalServerPort);
+    });
+
+    test("WebSocket config_get and config_patch with broadcast synchronization", async () => {
+      const cfgMgr = new ConfigManager(testConfigPath, 50);
+      const herdr = new HerdrClient();
+      const pairing = new PairingManager({ publicBaseUrl: "http://localhost:4100", insecureDev: true });
+      const push = new PushManager();
+      const wsServer = new WsServer({
+        herdrClient: herdr,
+        pairingManager: pairing,
+        pushManager: push,
+        configManager: cfgMgr,
+        insecureDev: true,
+      });
+
+      // 1. Client 1 connects and sends hello
+      let client1Welcome: any = null;
+      const client1: any = {
+        data: {
+          session: { deviceId: "dev_c1" },
+          subscribedPaneId: "w1:p1",
+          lastPingTime: Date.now(),
+        },
+        send: (str: string) => {
+          const msg = JSON.parse(str);
+          if (msg.type === "welcome") client1Welcome = msg;
+        },
+      };
+      wsServer.handleOpen(client1);
+      await wsServer.handleMessage(client1, JSON.stringify({ type: "hello", id: "h1" }));
+      expect(client1Welcome).not.toBeNull();
+      expect(client1Welcome.payload.clientConfig.themeKey).toBe("solarized");
+
+      // 2. Client 2 connects
+      let client2Updated: any = null;
+      const client2: any = {
+        data: {
+          session: { deviceId: "dev_c2" },
+          subscribedPaneId: "w1:p1",
+          lastPingTime: Date.now(),
+        },
+        send: (str: string) => {
+          const msg = JSON.parse(str);
+          if (msg.type === "config_updated") client2Updated = msg;
+        },
+      };
+      wsServer.handleOpen(client2);
+
+      // 3. Client 1 sends config_get
+      let client1Sync: any = null;
+      client1.send = (str: string) => {
+        const msg = JSON.parse(str);
+        if (msg.type === "config_sync") client1Sync = msg;
+      };
+      await wsServer.handleMessage(client1, JSON.stringify({ type: "config_get", id: "cg1" }));
+      expect(client1Sync).not.toBeNull();
+      expect(client1Sync.payload.client.themeKey).toBe("solarized");
+
+      // 4. Client 1 sends config_patch to change theme
+      let client1Ack: any = null;
+      client1.send = (str: string) => {
+        const msg = JSON.parse(str);
+        if (msg.type === "ack") client1Ack = msg;
+      };
+      await wsServer.handleMessage(
+        client1,
+        JSON.stringify({
+          type: "config_patch",
+          id: "cp1",
+          payload: { client: { themeKey: "catppuccin", themeId: "catppuccin" } },
+        })
+      );
+
+      expect(client1Ack).not.toBeNull();
+      expect(client1Ack.replyTo).toBe("cp1");
+      expect(cfgMgr.getClientConfig().themeKey).toBe("catppuccin");
+
+      // Verify Client 2 received broadcast
+      expect(client2Updated).not.toBeNull();
+      expect(client2Updated.payload.client.themeKey).toBe("catppuccin");
     });
   });
 });

@@ -7,6 +7,7 @@ import { PairingManager } from "./pairing";
 import { PushManager } from "./push";
 import { WsServer, type ClientConnectionData } from "./ws-server";
 import { EMBEDDED_HTML } from "./embedded-html";
+import { ConfigManager } from "./config-manager";
 
 export interface DaemonConfig {
   port?: number;
@@ -17,6 +18,8 @@ export interface DaemonConfig {
   adminSocketPath?: string;
   vapidPath?: string;
   embeddedHtml?: string;
+  configManager?: ConfigManager;
+  configPath?: string;
 }
 
 export function detectLocalIp(): string | null {
@@ -61,6 +64,7 @@ export function detectTailscaleDns(): string | null {
 
 export class PigeonDaemon {
   public config: Required<DaemonConfig>;
+  public configManager: ConfigManager;
   public herdrClient: HerdrClient;
   public pairingManager: PairingManager;
   public pushManager: PushManager;
@@ -69,11 +73,14 @@ export class PigeonDaemon {
   private htmlContent: string;
 
   constructor(config: DaemonConfig = {}) {
-    const port = config.port || 4100;
-    const insecureDev = !!config.insecureDev;
-    const host = config.host || ""; // empty / undefined binds dual-stack IPv4 and IPv6
+    this.configManager = config.configManager || new ConfigManager(config.configPath);
+    const serverCfg = this.configManager.getServerConfig();
 
-    let publicBaseUrl = config.publicBaseUrl;
+    const port = config.port !== undefined ? config.port : (serverCfg.port || 4100);
+    const insecureDev = config.insecureDev !== undefined ? config.insecureDev : (serverCfg.insecureDev || false);
+    const host = config.host !== undefined ? config.host : (serverCfg.host || "");
+
+    let publicBaseUrl = config.publicBaseUrl || serverCfg.publicBaseUrl;
     if (!publicBaseUrl) {
       if (!insecureDev) {
         const tsDns = detectTailscaleDns();
@@ -94,9 +101,11 @@ export class PigeonDaemon {
       publicBaseUrl,
       herdrSocketPath:
         config.herdrSocketPath ||
+        serverCfg.herdrSocketPath ||
         (process.env.HOME ? `${process.env.HOME}/.config/herdr/herdr.sock` : "/tmp/herdr.sock"),
       adminSocketPath:
         config.adminSocketPath ||
+        serverCfg.adminSocketPath ||
         (process.env.XDG_RUNTIME_DIR
           ? `${process.env.XDG_RUNTIME_DIR}/pigeon.sock`
           : `${process.env.HOME}/.local/state/pigeon/admin.sock`),
@@ -106,6 +115,8 @@ export class PigeonDaemon {
           ? `${process.env.HOME}/.local/state/pigeon/vapid.json`
           : "/tmp/pigeon_vapid.json"),
       embeddedHtml: config.embeddedHtml || "",
+      configManager: this.configManager,
+      configPath: this.configManager.getConfigPath(),
     };
 
     this.herdrClient = new HerdrClient({
@@ -126,6 +137,7 @@ export class PigeonDaemon {
       pairingManager: this.pairingManager,
       pushManager: this.pushManager,
       insecureDev: this.config.insecureDev,
+      configManager: this.configManager,
     });
 
     this.pairingManager.on("device_revoked", (deviceId) => {
@@ -327,5 +339,6 @@ export class PigeonDaemon {
     }
     this.herdrClient.disconnect();
     this.pairingManager.stopAdminSocket();
+    this.configManager.destroy();
   }
 }

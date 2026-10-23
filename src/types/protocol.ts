@@ -113,6 +113,36 @@ export interface PaneStatePayload {
   revision: number;
 }
 
+export interface MacroItem {
+  id: string;
+  name: string;
+  type: "text" | "key";
+  payload: string;
+}
+
+export interface ClientConfig {
+  themeKey: string;
+  themeMode: "system" | "light" | "dark";
+  themeId: string;
+  confirmCtrlC: boolean;
+  defaultView: string;
+  macros: MacroItem[];
+}
+
+export interface ServerConfig {
+  port: number;
+  host: string;
+  insecureDev: boolean;
+  publicBaseUrl: string;
+  herdrSocketPath: string;
+  adminSocketPath: string;
+}
+
+export interface PigeonConfig {
+  server: ServerConfig;
+  client: ClientConfig;
+}
+
 // Client -> Server messages
 export type ClientMessage =
   | { type: "hello"; id: string; payload: { protocolVersion: string; subscribePaneId?: string } }
@@ -128,16 +158,20 @@ export type ClientMessage =
   | { type: "open_agent_menu"; id: string; payload: { targetPaneId: string; menu: string } }
   | { type: "create_tab_and_agent"; id: string; payload: { workspaceId: string; agentKind: string; cwd?: string } }
   | { type: "push_subscribe"; subscription: any }
+  | { type: "config_get"; id: string }
+  | { type: "config_patch"; id: string; payload: { client?: Partial<ClientConfig> } | Partial<ClientConfig> }
   | { type: "preferences_set"; id: string; payload: any };
 
 // Server -> Client messages
 export type ServerMessage =
-  | { type: "welcome"; replyTo: string; payload: { protocolVersion: string; serverVersion: string; deviceId: string; preferences: any } }
+  | { type: "welcome"; replyTo: string; payload: { protocolVersion: string; serverVersion: string; deviceId: string; preferences?: any; clientConfig?: ClientConfig } }
   | { type: "pong"; timestamp: number }
-  | { type: "ack"; replyTo: string; payload: { status: "ok" | string } }
+  | { type: "ack"; replyTo: string; payload: { status: "ok" | string; [key: string]: any } }
   | { type: "error"; replyTo?: string; error: { code: string; message: string; details?: any } }
   | { type: "pane_state"; payload: PaneStatePayload }
   | { type: "snapshot_update"; payload: SnapshotPayload }
+  | { type: "config_sync"; replyTo?: string; payload: { version?: number; client: ClientConfig } }
+  | { type: "config_updated"; payload: { client: ClientConfig } }
   | { type: "cards_upsert"; payload: { paneId: string; cards: Card[]; revision: number } }
   | { type: "cards_remove"; payload: { paneId: string; cardIds: string[] } }
   | { type: "interaction_required"; payload: InteractionCardData & { paneId: string } }

@@ -5,15 +5,12 @@ import type {
   WorkspaceSummary,
   WorkingAgentSummary,
   AgentStatus,
+  ClientConfig,
+  MacroItem,
 } from "../../types/protocol";
 import { THEMES, applyTheme, applyFullTheme, type ThemeTokens } from "../themes";
 
-export interface MacroItem {
-  id: string;
-  name: string;
-  type: "text" | "key";
-  payload: string;
-}
+export type { MacroItem };
 
 export interface AppState {
   connected: boolean;
@@ -92,6 +89,25 @@ export function setPaletteTheme(themeKey: string, mode: "system" | "light" | "da
   applyFullTheme(themeKey, mode);
   localStorage.setItem("pigeon_theme_key", themeKey);
   localStorage.setItem("pigeon_theme_mode", mode);
+}
+
+export function applySyncedClientConfig(config: Partial<ClientConfig>): void {
+  if (!config) return;
+  if (config.themeKey || config.themeMode) {
+    const key = config.themeKey || state.themeKey;
+    const mode = config.themeMode || state.themeMode;
+    setState("themeKey", key);
+    setState("themeMode", mode);
+    applyFullTheme(key, mode);
+    localStorage.setItem("pigeon_theme_key", key);
+    localStorage.setItem("pigeon_theme_mode", mode);
+  }
+  if (config.themeId) {
+    setState("themeId", config.themeId);
+  }
+  if (Array.isArray(config.macros)) {
+    setState("macros", config.macros);
+  }
 }
 
 export function toggleDrawer() {

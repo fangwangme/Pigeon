@@ -4,6 +4,7 @@ import {
   closeAppearanceModal,
   setPaletteTheme,
 } from "../state/store";
+import { sendConfigPatch } from "../state/ws";
 import { PALETTES } from "../themes";
 
 export const AppearanceModal: Component = () => {
@@ -111,7 +112,10 @@ export const AppearanceModal: Component = () => {
                   <button
                     aria-pressed={isSelected()}
                     class="touch-target"
-                    onClick={() => setPaletteTheme(state.themeKey, mode)}
+                    onClick={() => {
+                      setPaletteTheme(state.themeKey, mode);
+                      sendConfigPatch({ themeMode: mode });
+                    }}
                     style={{
                       height: "40px",
                       "border-radius": "8px",
@@ -148,7 +152,10 @@ export const AppearanceModal: Component = () => {
                     <button
                       aria-pressed={isSelected()}
                       class="touch-target"
-                      onClick={() => setPaletteTheme(t.key, state.themeMode)}
+                      onClick={() => {
+                        setPaletteTheme(t.key, state.themeMode);
+                        sendConfigPatch({ themeKey: t.key, themeId: t.key });
+                      }}
                       style={{
                         "min-height": "60px",
                         display: "flex",

@@ -2,6 +2,7 @@ import { connect } from "node:net";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { PigeonDaemon } from "../server/daemon";
+import { ConfigManager } from "../server/config-manager";
 import qrcode from "qrcode-terminal";
 
 function sendAdminCommand(method: string, params: Record<string, any> = {}): Promise<any> {
@@ -46,8 +47,11 @@ async function main() {
   const command = args[0] || "start";
 
   if (command === "start") {
-    let port = 4100;
-    let insecureDev = false;
+    const configManager = new ConfigManager();
+    const serverCfg = configManager.getServerConfig();
+
+    let port: number | undefined;
+    let insecureDev: boolean | undefined;
     let herdrSocketPath: string | undefined;
     let publicUrl: string | undefined;
 
@@ -63,13 +67,17 @@ async function main() {
       }
     }
 
-    console.log(`Starting Pigeon Daemon on port ${port}... (insecureDev=${insecureDev})`);
+    const effectivePort = port !== undefined ? port : serverCfg.port;
+    const effectiveInsecure = insecureDev !== undefined ? insecureDev : serverCfg.insecureDev;
+
+    console.log(`Starting Pigeon Daemon on port ${effectivePort}... (insecureDev=${effectiveInsecure})`);
 
     const daemon = new PigeonDaemon({
       port,
       insecureDev,
       herdrSocketPath,
       publicBaseUrl: publicUrl,
+      configManager,
     });
 
     await daemon.start();

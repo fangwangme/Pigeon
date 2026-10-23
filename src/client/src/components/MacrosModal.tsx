@@ -5,6 +5,16 @@ import {
   closeMacrosModal,
   type MacroItem,
 } from "../state/store";
+import { sendConfigPatch } from "../state/ws";
+
+const DEFAULT_MACROS: MacroItem[] = [
+  { id: "m_model", name: "模型", type: "key", payload: "model" },
+  { id: "m_tab", name: "Tab", type: "key", payload: "tab" },
+  { id: "m_continue", name: "Continue", type: "text", payload: "continue" },
+  { id: "m_approve", name: "Approve", type: "key", payload: "enter" },
+  { id: "m_enter", name: "Enter", type: "key", payload: "enter" },
+  { id: "m_ctrlc", name: "Ctrl+C", type: "key", payload: "ctrl+c" },
+];
 
 export const MacrosModal: Component = () => {
   const [editingId, setEditingId] = createSignal<string | null>(null);
@@ -28,28 +38,39 @@ export const MacrosModal: Component = () => {
 
   const handleSaveEdit = () => {
     if (!editingId()) return;
-    setState("macros", (m) => m.id === editingId(), "name", nameInput());
-    setState("macros", (m) => m.id === editingId(), "type", typeInput());
-    setState("macros", (m) => m.id === editingId(), "payload", payloadInput());
+    const updated = state.macros.map((m) =>
+      m.id === editingId()
+        ? { ...m, name: nameInput(), type: typeInput(), payload: payloadInput() }
+        : m
+    );
+    setState("macros", updated);
     setEditingId(null);
+    sendConfigPatch({ macros: updated });
   };
 
   const handleDelete = (id: string) => {
-    setState("macros", (prev) => prev.filter((m) => m.id !== id));
+    const updated = state.macros.filter((m) => m.id !== id);
+    setState("macros", updated);
     if (editingId() === id) {
       setEditingId(null);
     }
+    sendConfigPatch({ macros: updated });
   };
 
   const moveUp = (idx: number) => {
     if (idx <= 0) return;
-    setState("macros", (prev) => {
-      const next = [...prev];
-      const temp = next[idx];
-      next[idx] = next[idx - 1];
-      next[idx - 1] = temp;
-      return next;
-    });
+    const next = [...state.macros];
+    const temp = next[idx];
+    next[idx] = next[idx - 1];
+    next[idx - 1] = temp;
+    setState("macros", next);
+    sendConfigPatch({ macros: next });
+  };
+
+  const handleReset = () => {
+    setState("macros", DEFAULT_MACROS);
+    setEditingId(null);
+    sendConfigPatch({ macros: DEFAULT_MACROS });
   };
 
   return (
@@ -464,6 +485,26 @@ export const MacrosModal: Component = () => {
               <path d="M12 5v14M5 12h14" />
             </svg>
             添加快捷操作
+          </button>
+
+          <button
+            class="touch-target"
+            onClick={handleReset}
+            style={{
+              height: "40px",
+              "flex-shrink": 0,
+              border: 0,
+              background: "transparent",
+              color: "var(--faint)",
+              "font-size": "13px",
+              display: "flex",
+              "align-items": "center",
+              "justify-content": "center",
+              cursor: "pointer",
+              "margin-bottom": "24px",
+            }}
+          >
+            恢复默认宏
           </button>
         </div>
       </div>

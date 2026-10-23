@@ -1,9 +1,10 @@
-import { state, setState } from "./store";
+import { state, setState, applySyncedClientConfig } from "./store";
 import type {
   ClientMessage,
   ServerMessage,
   SnapshotPayload,
   PaneStatePayload,
+  ClientConfig,
 } from "../../types/protocol";
 
 let socket: WebSocket | null = null;
@@ -115,7 +116,24 @@ function handleServerMessage(msg: ServerMessage): void {
   switch (msg.type) {
     case "welcome":
       setState("connected", true);
+      if (msg.payload?.clientConfig) {
+        applySyncedClientConfig(msg.payload.clientConfig);
+      }
       break;
+
+    case "config_sync": {
+      if (msg.payload?.client) {
+        applySyncedClientConfig(msg.payload.client);
+      }
+      break;
+    }
+
+    case "config_updated": {
+      if (msg.payload?.client) {
+        applySyncedClientConfig(msg.payload.client);
+      }
+      break;
+    }
 
     case "snapshot_update": {
       const snap: SnapshotPayload = msg.payload;
@@ -270,6 +288,21 @@ export function createTab(workspaceId: string, agentKind: string): void {
     type: "create_tab_and_agent",
     id: nextId(),
     payload: { workspaceId, agentKind },
+  });
+}
+
+export function sendConfigPatch(patch: Partial<ClientConfig>): void {
+  sendMessage({
+    type: "config_patch",
+    id: nextId(),
+    payload: { client: patch },
+  });
+}
+
+export function fetchConfig(): void {
+  sendMessage({
+    type: "config_get",
+    id: nextId(),
   });
 }
 
