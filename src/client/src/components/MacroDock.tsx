@@ -351,11 +351,6 @@ export const MacroDock: Component = () => {
             transition: "background 0.15s ease, color 0.15s ease, transform 0.1s ease",
           }}
         >
-            "justify-content": "center",
-            cursor: "pointer",
-            transition: "background 0.15s ease, color 0.15s ease, transform 0.1s ease",
-          }}
-        >
           <Show
             when={inputText().trim().length > 0}
             fallback={

@@ -339,13 +339,14 @@ export const CardFeed: Component = () => {
 
   // Summarized conversation topic
   const conversationTopic = createMemo(() => {
-    const agent = activeAgent();
-    if (agent?.summary) return agent.summary;
-    if (state.normalizedTurns.length > 0) {
-      const text = state.normalizedTurns[0].userPrompt.text.trim();
-      return text.length > 28 ? text.slice(0, 28) + "…" : text;
+    const paneId = state.activePaneId;
+    const currentAgent = state.workingAgents?.find((a) => a.paneId === paneId);
+    if (currentAgent?.summary) return currentAgent.summary;
+    if (state.normalizedTurns && state.normalizedTurns.length > 0) {
+      const text = state.normalizedTurns[0].userPrompt?.text?.trim() || "";
+      if (text) return text.length > 28 ? text.slice(0, 28) + "…" : text;
     }
-    return tab()?.label || "会话";
+    return tab()?.label || agentBadgeInfo().name || "会话";
   });
 
   return (
