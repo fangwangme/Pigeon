@@ -141,9 +141,12 @@ function handleServerMessage(msg: ServerMessage): void {
       setState("workingAgents", snap.workingAgents || []);
 
       if (!state.activeWorkspaceId && snap.workspaces?.length > 0) {
-        // Prioritize workspace with active/blocked agents, else first workspace
+        // Prioritize workspace with blocked agent, working agent, or currently focused workspace
         const targetWs =
-          snap.workspaces.find((w) => w.hasWarn || w.hasWorking) || snap.workspaces[0];
+          snap.workspaces.find((w) => w.hasWarn) ||
+          snap.workspaces.find((w) => w.hasWorking) ||
+          snap.workspaces.find((w) => w.isFocused) ||
+          snap.workspaces[0];
         setState("activeWorkspaceId", targetWs.id);
 
         const targetTab =
@@ -170,13 +173,23 @@ function handleServerMessage(msg: ServerMessage): void {
     case "pane_state": {
       const p: PaneStatePayload = msg.payload;
       if (!state.activePaneId || state.activePaneId === p.paneId) {
-        const matchingWs = state.workspaces.find((w) => w.id === p.workspaceId);
-        const matchingTab = matchingWs?.tabs.find((t) => t.id === p.tabId);
+        let foundWsId: string | null = null;
+        let foundTabId: string | null = null;
+        for (const w of state.workspaces) {
+          for (const t of w.tabs) {
+            if (t.panes?.some((pane) => pane.id === p.paneId) || t.id === p.tabId) {
+              foundWsId = w.id;
+              foundTabId = t.id;
+              break;
+            }
+          }
+          if (foundWsId) break;
+        }
 
         setState({
           activePaneId: p.paneId,
-          activeWorkspaceId: matchingWs ? p.workspaceId : (state.activeWorkspaceId || p.workspaceId),
-          activeTabId: matchingTab ? p.tabId : (state.activeTabId || p.tabId),
+          activeWorkspaceId: foundWsId || state.activeWorkspaceId || p.workspaceId,
+          activeTabId: foundTabId || state.activeTabId || p.tabId,
           agentStatus: p.agentStatus,
           cards: p.cards || [],
           pendingInteraction: p.pendingInteraction || null,

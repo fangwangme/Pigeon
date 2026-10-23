@@ -328,6 +328,7 @@ export class HerdrClient extends EventEmitter {
             activeTabId: w.active_tab_id || (tabs[0]?.id ?? null),
             hasWarn: wsHasWarn,
             hasWorking: wsHasWorking,
+            isFocused: !!w.focused,
             tabs,
           };
         });
@@ -449,7 +450,20 @@ export class HerdrClient extends EventEmitter {
         agentStatus = "blocked";
       }
 
-      const loc = this.paneLocations.get(paneId);
+      let loc = this.paneLocations.get(paneId);
+      if (!loc && this.currentSnapshot) {
+        for (const w of this.currentSnapshot.workspaces) {
+          for (const t of w.tabs) {
+            if (t.panes?.some((p) => p.id === paneId)) {
+              loc = { workspaceId: w.id, tabId: t.id };
+              this.paneLocations.set(paneId, loc);
+              break;
+            }
+          }
+          if (loc) break;
+        }
+      }
+
       const workspaceId =
         readWsId ||
         loc?.workspaceId ||
@@ -481,7 +495,20 @@ export class HerdrClient extends EventEmitter {
     const existing = this.paneStates.get(paneId);
     if (existing) return existing;
 
-    const loc = this.paneLocations.get(paneId);
+    let loc = this.paneLocations.get(paneId);
+    if (!loc && this.currentSnapshot) {
+      for (const w of this.currentSnapshot.workspaces) {
+        for (const t of w.tabs) {
+          if (t.panes?.some((p) => p.id === paneId)) {
+            loc = { workspaceId: w.id, tabId: t.id };
+            this.paneLocations.set(paneId, loc);
+            break;
+          }
+        }
+        if (loc) break;
+      }
+    }
+
     const initial: PaneStatePayload = {
       paneId,
       workspaceId:

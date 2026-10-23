@@ -19,6 +19,7 @@ import type {
 export const CardFeed: Component = () => {
   const [expandedThoughts, setExpandedThoughts] = createSignal<Record<string, boolean>>({});
   const [expandedDiffs, setExpandedDiffs] = createSignal<Record<string, boolean>>({});
+  const [expandedTools, setExpandedTools] = createSignal<Record<string, boolean>>({});
   const [showFullTerminalHistory, setShowFullTerminalHistory] = createSignal(false);
   const [copiedNotification, setCopiedNotification] = createSignal(false);
 
@@ -46,17 +47,75 @@ export const CardFeed: Component = () => {
     return "var(--faint)";
   };
 
-  // Clean raw screen output: remove empty terminal padding rows
+  // Clean raw screen output: remove terminal padding, strip ASCII banner art & clamp rules
   const cleanedScreenLines = createMemo(() => {
     const raw = state.rawScreen || "";
     if (!raw.trim()) return [];
     const lines = raw.split("\n");
+
+    // 1. Process and clean each line: filter pure block banners, strip decorative side logos
+    const processedLines: string[] = [];
+    for (const rawLine of lines) {
+      const trimmed = rawLine.trim();
+      if (!trimmed) {
+        processedLines.push("");
+        continue;
+      }
+
+      const blockChars = (trimmed.match(/[\u2580-\u259F\u25A0-\u25FF]/g) || []).length;
+      const words = trimmed.match(/[a-zA-Z0-9_\u4e00-\u9fa5]{3,}/g) || [];
+
+      // If line is pure block/box drawing art with no meaningful words, drop it
+      if (blockChars > 0 && words.length === 0) {
+        continue;
+      }
+
+      // If line has block characters mixed with text (e.g. Antigravity ASCII logo beside text), strip the logo
+      let cleaned = trimmed;
+      if (blockChars > 0) {
+        cleaned = trimmed.replace(/^[\s\u2580-\u259F\u25A0-\u25FF╹╻]+/, "").trim();
+      }
+
+      processedLines.push(cleaned);
+    }
+
+    // 2. Normalize, dedent and clamp horizontal divider rules
+    const clampedLines: string[] = [];
+    let prevWasDivider = false;
+    let prevWasEmpty = false;
+
+    for (const line of processedLines) {
+      const trimmed = line.trimEnd();
+      const isDivider = /^[─━\-_=~]{4,}$/.test(trimmed.trim());
+      const isEmpty = trimmed.trim().length === 0;
+
+      if (isDivider) {
+        if (!prevWasDivider) {
+          // Clamp divider to 28 characters so it never wraps on any mobile screen!
+          clampedLines.push("────────────────────────────");
+          prevWasDivider = true;
+          prevWasEmpty = false;
+        }
+      } else if (isEmpty) {
+        if (!prevWasEmpty && clampedLines.length > 0) {
+          clampedLines.push("");
+          prevWasEmpty = true;
+          prevWasDivider = false;
+        }
+      } else {
+        clampedLines.push(trimmed);
+        prevWasDivider = false;
+        prevWasEmpty = false;
+      }
+    }
+
+    // Trim leading and trailing empty lines
     let start = 0;
-    while (start < lines.length && !lines[start].trim()) start++;
-    let end = lines.length - 1;
-    while (end >= start && !lines[end].trim()) end--;
+    while (start < clampedLines.length && !clampedLines[start].trim()) start++;
+    let end = clampedLines.length - 1;
+    while (end >= start && !clampedLines[end].trim()) end--;
     if (start > end) return [];
-    return lines.slice(start, end + 1);
+    return clampedLines.slice(start, end + 1);
   });
 
   const displayedScreenText = createMemo(() => {
@@ -119,21 +178,25 @@ export const CardFeed: Component = () => {
   const agentBadgeInfo = createMemo(() => {
     const raw = state.rawScreen || "";
     const activeTab = tab();
-    const label = activeTab?.label || "";
+    const primaryPane = activeTab?.panes?.[0];
+    const paneAgent = primaryPane?.agent?.toLowerCase() || "";
+    const paneName = primaryPane?.name?.toLowerCase() || "";
+    const label = (activeTab?.label || "").toLowerCase();
+
     let name = "Agent";
     let model = "";
 
-    if (raw.includes("DeepSeek") || label.toLowerCase().includes("opencode")) {
+    if (paneAgent === "opencode" || paneName.includes("opencode") || label.includes("opencode") || raw.includes("DeepSeek") || raw.includes("OpenCode")) {
       name = "OpenCode";
       model = "DeepSeek V4.1 Flash";
-    } else if (raw.includes("Antigravity") || raw.includes("Gemini") || label.toLowerCase().includes("agy")) {
+    } else if (paneAgent === "agy" || paneName.includes("agy") || label.includes("agy") || raw.includes("Antigravity") || raw.includes("Gemini")) {
       name = "Antigravity";
       model = "Gemini 3.8 Flash";
-    } else if (raw.includes("Claude") || label.toLowerCase().includes("claude")) {
+    } else if (paneAgent === "claude" || paneName.includes("claude") || label.includes("claude") || raw.includes("Claude")) {
       name = "Claude Code";
       model = "Claude 3.7 Sonnet";
     } else {
-      name = label || "终端";
+      name = activeTab?.label || "终端";
     }
 
     return { name, model };
@@ -141,6 +204,7 @@ export const CardFeed: Component = () => {
 
   return (
     <main
+      class="pigeon-feed"
       role="feed"
       aria-label="Agent 交互与卡片流"
       style={{
@@ -154,118 +218,153 @@ export const CardFeed: Component = () => {
         width: "100%",
         "max-width": "100vw",
         "box-sizing": "border-box",
-        padding: "12px 12px 24px",
+        padding: "10px 12px 18px",
         display: "flex",
         "flex-direction": "column",
-        gap: "12px",
+        gap: "10px",
         background: "var(--bg)",
         color: "var(--fg)",
       }}
     >
-      {/* 1. Layered Context & Agent Header Card (层次感与信息结构强化) */}
+      {/* 1. Compact session strip: workspace › tab › agent, status, model */}
       <section
         aria-label="当前会话信息"
         style={{
           background: "var(--surface)",
           border: "1px solid var(--border)",
           "border-radius": "14px",
-          padding: "10px 14px",
+          padding: "9px 12px",
           display: "flex",
           "flex-direction": "column",
-          gap: "8px",
-          "box-shadow": "0 2px 8px rgba(0, 0, 0, 0.08)",
+          gap: "6px",
+          "box-shadow": "0 1px 2px rgba(0, 0, 0, 0.06)",
           "max-width": "100%",
           "box-sizing": "border-box",
         }}
       >
-        <div style={{ display: "flex", "align-items": "center", gap: "8px", width: "100%" }}>
-          {/* Status Dot with pulse effect */}
+        <div style={{ display: "flex", "align-items": "center", gap: "7px", width: "100%" }}>
           <div
             style={{
-              width: "10px",
-              height: "10px",
-              "border-radius": "5px",
+              width: "8px",
+              height: "8px",
+              "border-radius": "4px",
               background: getStatusDotColor(),
               "box-shadow":
                 state.agentStatus === "working"
-                  ? "0 0 8px var(--accent)"
+                  ? "0 0 6px var(--accent)"
                   : state.agentStatus === "blocked"
-                  ? "0 0 8px var(--warn)"
+                  ? "0 0 6px var(--warn)"
                   : "none",
               "flex-shrink": 0,
             }}
           />
 
-          {/* Breadcrumb Hierarchy */}
-          <div style={{ flex: 1, "min-width": 0, display: "flex", "align-items": "baseline", gap: "6px" }}>
-            <span style={{ "font-size": "14px", "font-weight": 700, color: "var(--fg)" }}>
-              {ws()?.label || "工作区"}
-            </span>
-            <span style={{ color: "var(--faint)", "font-size": "12px" }}>›</span>
+          {/* Breadcrumb hierarchy, single line with graceful truncation */}
+          <div
+            style={{
+              flex: 1,
+              "min-width": 0,
+              display: "flex",
+              "align-items": "baseline",
+              gap: "5px",
+              overflow: "hidden",
+              "white-space": "nowrap",
+            }}
+          >
             <span
               style={{
-                "font-size": "13px",
-                "font-weight": 600,
-                color: "var(--muted)",
-                "font-family": "'JetBrains Mono', monospace",
+                "font-size": "13.5px",
+                "font-weight": 650,
+                color: "var(--fg)",
+                overflow: "hidden",
+                "text-overflow": "ellipsis",
+                "flex-shrink": 1,
               }}
             >
-              Tab {tab()?.label || "1"}
+              {ws()?.label || "工作区"}
             </span>
-            <span style={{ color: "var(--faint)", "font-size": "12px" }}>›</span>
-            <span style={{ "font-size": "13px", "font-weight": 600, color: "var(--accent)" }}>
+            <span style={{ color: "var(--faint)", "font-size": "11px", "flex-shrink": 0 }}>›</span>
+            <span
+              style={{
+                "font-size": "12px",
+                "font-weight": 600,
+                color: "var(--muted)",
+                "font-family": "'JetBrains Mono', ui-monospace, monospace",
+                "flex-shrink": 0,
+              }}
+            >
+              {tab()?.label || "Tab 1"}
+            </span>
+            <span style={{ color: "var(--faint)", "font-size": "11px", "flex-shrink": 0 }}>›</span>
+            <span
+              style={{
+                "font-size": "12.5px",
+                "font-weight": 600,
+                color: "var(--accent)",
+                overflow: "hidden",
+                "text-overflow": "ellipsis",
+                "flex-shrink": 1,
+              }}
+            >
               {agentBadgeInfo().name}
             </span>
           </div>
 
-          {/* View Toggle & Full Terminal Button */}
-          <div style={{ display: "flex", "align-items": "center", gap: "6px" }}>
-            <button
-              class="touch-target"
-              onClick={toggleTerminalSheet}
-              aria-label="展开全屏终端"
-              title="切换全屏终端"
-              style={{
-                height: "32px",
-                padding: "0 10px",
-                "border-radius": "8px",
-                border: "1px solid var(--border)",
-                background: "var(--inset)",
-                color: "var(--muted)",
-                "font-size": "12px",
-                display: "flex",
-                "align-items": "center",
-                gap: "4px",
-                cursor: "pointer",
-              }}
-            >
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <polyline points="15 3 21 3 21 9" />
-                <polyline points="9 21 3 21 3 15" />
-                <line x1="21" y1="3" x2="14" y2="10" />
-                <line x1="3" y1="21" x2="10" y2="14" />
-              </svg>
-              <span>终端视窗</span>
-            </button>
-          </div>
+          <button
+            class="touch-target"
+            onClick={toggleTerminalSheet}
+            aria-label="展开终端输出"
+            title="展开终端输出"
+            style={{
+              width: "32px",
+              height: "32px",
+              padding: 0,
+              "border-radius": "9px",
+              border: "1px solid var(--border)",
+              background: "var(--inset)",
+              color: "var(--muted)",
+              display: "flex",
+              "align-items": "center",
+              "justify-content": "center",
+              cursor: "pointer",
+              "flex-shrink": 0,
+            }}
+          >
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <polyline points="15 3 21 3 21 9" />
+              <polyline points="9 21 3 21 3 15" />
+              <line x1="21" y1="3" x2="14" y2="10" />
+              <line x1="3" y1="21" x2="10" y2="14" />
+            </svg>
+          </button>
         </div>
 
-        {/* Sub-row: Model info badge and active status description */}
-        <div style={{ display: "flex", "align-items": "center", "justify-content": "space-between", gap: "8px" }}>
-          <div style={{ display: "flex", "align-items": "center", gap: "6px", "font-size": "12px", color: "var(--muted)" }}>
-            <span style={{ color: getStatusDotColor(), "font-weight": 600 }}>{getStatusText()}</span>
-          </div>
+        <div style={{ display: "flex", "align-items": "center", "justify-content": "space-between", gap: "8px", "min-width": 0 }}>
+          <span
+            style={{
+              "font-size": "11.5px",
+              "font-weight": 500,
+              color: "var(--muted)",
+              overflow: "hidden",
+              "text-overflow": "ellipsis",
+              "white-space": "nowrap",
+            }}
+          >
+            <span style={{ color: getStatusDotColor(), "font-weight": 650 }}>{getStatusText()}</span>
+          </span>
 
           <Show when={agentBadgeInfo().model}>
             <span
               style={{
-                "font-size": "11px",
+                "font-size": "10.5px",
                 "font-weight": 600,
-                padding: "2px 8px",
+                padding: "2px 7px",
                 "border-radius": "6px",
                 background: "var(--accentbg)",
                 color: "var(--accentt)",
-                "font-family": "'JetBrains Mono', monospace",
+                "font-family": "'JetBrains Mono', ui-monospace, monospace",
+                "white-space": "nowrap",
+                "flex-shrink": 0,
               }}
             >
               {agentBadgeInfo().model}
@@ -332,8 +431,53 @@ export const CardFeed: Component = () => {
         </section>
       </Show>
 
-      {/* 4. Structured Terminal Window Output (去噪与层次化终端视窗) */}
-      <Show when={state.cards.length === 0}>
+      {/* 4. Terminal output: full panel when there are no cards, compact strip otherwise */}
+      <Show
+        when={state.cards.length === 0}
+        fallback={
+          <button
+            class="touch-target"
+            onClick={toggleTerminalSheet}
+            aria-label="查看完整终端输出"
+            style={{
+              display: "flex",
+              "align-items": "center",
+              gap: "8px",
+              width: "100%",
+              padding: "10px 12px",
+              "border-radius": "12px",
+              border: "1px solid var(--border)",
+              background: "var(--surface)",
+              color: "var(--muted)",
+              "font-size": "11.5px",
+              "text-align": "left",
+              cursor: "pointer",
+            }}
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style={{ "flex-shrink": 0 }}>
+              <polyline points="4 17 10 11 4 5" />
+              <line x1="12" y1="19" x2="20" y2="19" />
+            </svg>
+            <span style={{ "font-weight": 600, color: "var(--fg)", "flex-shrink": 0 }}>终端</span>
+            <span
+              style={{
+                flex: 1,
+                "min-width": 0,
+                overflow: "hidden",
+                "text-overflow": "ellipsis",
+                "white-space": "nowrap",
+                "font-family": "'JetBrains Mono', ui-monospace, monospace",
+                opacity: 0.85,
+              }}
+            >
+              {cleanedScreenLines().slice(-1)[0]?.trim() || "暂无输出"}
+            </span>
+            <span style={{ "flex-shrink": 0, color: "var(--faint)" }}>
+              {cleanedScreenLines().length} 行 ›
+            </span>
+          </button>
+        }
+      >
         <section
           aria-label="终端会话窗口"
           style={{
@@ -343,54 +487,52 @@ export const CardFeed: Component = () => {
             overflow: "hidden",
             display: "flex",
             "flex-direction": "column",
-            "box-shadow": "0 4px 16px rgba(0, 0, 0, 0.12)",
+            "box-shadow": "0 1px 2px rgba(0, 0, 0, 0.08)",
             "max-width": "100%",
             "box-sizing": "border-box",
           }}
         >
-          {/* macOS Style Terminal Window Header */}
+          {/* Terminal panel header */}
           <div
             style={{
               display: "flex",
               "align-items": "center",
               gap: "8px",
-              padding: "10px 14px",
+              padding: "8px 10px 8px 12px",
               background: "var(--surface)",
               "border-bottom": "1px solid var(--border)",
               "font-size": "12px",
             }}
           >
-            {/* Window Traffic Dots */}
-            <div style={{ display: "flex", gap: "6px", "align-items": "center" }}>
-              <span style={{ width: "10px", height: "10px", "border-radius": "5px", background: "#FF5F56" }} />
-              <span style={{ width: "10px", height: "10px", "border-radius": "5px", background: "#FFBD2E" }} />
-              <span style={{ width: "10px", height: "10px", "border-radius": "5px", background: "#27C93F" }} />
-            </div>
-
-            <div
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style={{ color: "var(--muted)", "flex-shrink": 0 }}>
+              <polyline points="4 17 10 11 4 5" />
+              <line x1="12" y1="19" x2="20" y2="19" />
+            </svg>
+            <span style={{ "font-weight": 600, color: "var(--fg)" }}>终端</span>
+            <span
               style={{
                 flex: 1,
-                "text-align": "center",
-                color: "var(--muted)",
-                "font-size": "12px",
-                "font-family": "'JetBrains Mono', monospace",
+                "min-width": 0,
+                color: "var(--faint)",
+                "font-size": "11px",
+                "font-family": "'JetBrains Mono', ui-monospace, monospace",
                 overflow: "hidden",
                 "text-overflow": "ellipsis",
                 "white-space": "nowrap",
               }}
             >
               {tab()?.label || "term"} · {cleanedScreenLines().length} 行
-            </div>
+            </span>
 
-            {/* Quick Copy Output Button */}
             <button
               class="touch-target"
               onClick={copyScreenToClipboard}
               aria-label="复制终端输出"
+              title="复制终端输出"
               style={{
                 height: "28px",
                 padding: "0 8px",
-                "border-radius": "6px",
+                "border-radius": "7px",
                 border: "1px solid var(--border)",
                 background: "transparent",
                 color: copiedNotification() ? "var(--accent)" : "var(--muted)",
@@ -399,6 +541,7 @@ export const CardFeed: Component = () => {
                 display: "flex",
                 "align-items": "center",
                 gap: "4px",
+                "flex-shrink": 0,
               }}
             >
               <Show
@@ -416,6 +559,34 @@ export const CardFeed: Component = () => {
                 <span>已复制 ✓</span>
               </Show>
             </button>
+
+            <button
+              class="touch-target"
+              onClick={toggleTerminalSheet}
+              aria-label="全屏查看终端"
+              title="全屏查看终端"
+              style={{
+                height: "28px",
+                width: "28px",
+                padding: 0,
+                "border-radius": "7px",
+                border: "1px solid var(--border)",
+                background: "transparent",
+                color: "var(--muted)",
+                cursor: "pointer",
+                display: "flex",
+                "align-items": "center",
+                "justify-content": "center",
+                "flex-shrink": 0,
+              }}
+            >
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <polyline points="15 3 21 3 21 9" />
+                <polyline points="9 21 3 21 3 15" />
+                <line x1="21" y1="3" x2="14" y2="10" />
+                <line x1="3" y1="21" x2="10" y2="14" />
+              </svg>
+            </button>
           </div>
 
           {/* Omitted History Indicator */}
@@ -423,7 +594,7 @@ export const CardFeed: Component = () => {
             <div
               onClick={() => setShowFullTerminalHistory(true)}
               style={{
-                padding: "8px 14px",
+                padding: "8px 12px",
                 background: "var(--inset)",
                 "border-bottom": "1px solid var(--codeb)",
                 "font-size": "11px",
@@ -442,14 +613,14 @@ export const CardFeed: Component = () => {
             </div>
           </Show>
 
-          {/* Cleaned Preformatted Content */}
+          {/* Cleaned preformatted content */}
           <pre
             style={{
               margin: 0,
-              padding: "12px 14px",
+              padding: "12px 12px 14px",
               "font-family": "'JetBrains Mono', ui-monospace, monospace",
               "font-size": "12px",
-              "line-height": 1.6,
+              "line-height": 1.55,
               color: "var(--codefg)",
               "white-space": "pre-wrap",
               "word-break": "break-word",
@@ -642,64 +813,124 @@ export const CardFeed: Component = () => {
 
           if (card.kind === "tool_call") {
             const tool = card as ToolCallCard;
+            const outputLines = () => (tool.output || "").split("\n").filter((l) => l.trim().length > 0);
+            const isLongOutput = () => outputLines().length > 5;
+            const isExpanded = () => !!expandedTools()[tool.id];
+            const shownOutput = () => {
+              const lines = outputLines();
+              if (isExpanded() || !isLongOutput()) return lines.join("\n");
+              return lines.slice(0, 5).join("\n");
+            };
+            const toggle = () =>
+              setExpandedTools((prev) => ({ ...prev, [tool.id]: !prev[tool.id] }));
+
             return (
               <div
                 style={{
-                  background: "var(--code)",
-                  border: "1px solid var(--codeb)",
+                  background: "var(--surface)",
+                  border: "1px solid var(--border)",
                   "border-radius": "12px",
                   overflow: "hidden",
-                  "box-shadow": "0 2px 6px rgba(0, 0, 0, 0.05)",
                   "max-width": "100%",
                   "box-sizing": "border-box",
                 }}
               >
+                {/* Tool header: name + exit status */}
                 <div
                   style={{
                     display: "flex",
                     "align-items": "center",
-                    gap: "8px",
-                    padding: "8px 12px",
-                    background: "var(--surface)",
-                    "border-bottom": "1px solid var(--border)",
+                    gap: "7px",
+                    padding: "8px 12px 6px",
                     "font-size": "12px",
                     color: "var(--muted)",
                   }}
                 >
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style={{ "flex-shrink": 0 }}>
                     <path d="M5 8l4 4-4 4M12 16h7" />
                   </svg>
-                  <span style={{ flex: 1, "font-weight": 600 }}>{tool.title || "Bash"}</span>
-                  <span style={{ color: tool.status === "running" ? "var(--accent)" : "var(--faint)" }}>
-                    {tool.status === "running" ? "执行中..." : `退出码 ${tool.exitCode ?? 0}`}
+                  <span
+                    style={{
+                      flex: 1,
+                      "min-width": 0,
+                      "font-weight": 650,
+                      color: "var(--fg)",
+                      overflow: "hidden",
+                      "text-overflow": "ellipsis",
+                      "white-space": "nowrap",
+                    }}
+                  >
+                    {tool.title || "Command"}
+                  </span>
+                  <span
+                    style={{
+                      "flex-shrink": 0,
+                      "font-size": "10.5px",
+                      "font-weight": 600,
+                      color: tool.status === "running" ? "var(--accentt)" : tool.exitCode ? "var(--delfg)" : "var(--faint)",
+                      background: tool.status === "running" ? "var(--accentbg)" : "transparent",
+                      padding: tool.status === "running" ? "1px 6px" : 0,
+                      "border-radius": "4px",
+                    }}
+                  >
+                    {tool.status === "running" ? "执行中" : tool.exitCode ? `退出码 ${tool.exitCode}` : "完成"}
                   </span>
                 </div>
+
+                {/* Command */}
                 <div
                   style={{
-                    padding: "8px 12px",
+                    padding: "0 12px 10px",
                     "font-family": "'JetBrains Mono', ui-monospace, monospace",
                     "font-size": "12px",
-                    "line-height": 1.6,
+                    "line-height": 1.5,
                     color: "var(--codefg)",
                     "overflow-x": "hidden",
                   }}
                 >
-                  <div style={{ color: "var(--fg)", "font-weight": 600 }}>$ {tool.command}</div>
-                  <Show when={tool.output}>
+                  <div style={{ "word-break": "break-word", "white-space": "pre-wrap" }}>
+                    <span style={{ color: "var(--faint)", "user-select": "none" }}>$ </span>
+                    {tool.command}
+                  </div>
+
+                  <Show when={shownOutput()}>
                     <pre
                       style={{
-                        margin: "4px 0 0",
-                        padding: 0,
+                        margin: "6px 0 0",
+                        padding: "7px 9px",
+                        background: "var(--code)",
+                        border: "1px solid var(--codeb)",
+                        "border-radius": "8px",
                         "font-family": "inherit",
-                        "font-size": "inherit",
+                        "font-size": "11.5px",
+                        "line-height": 1.5,
                         "white-space": "pre-wrap",
                         "word-break": "break-word",
                         color: "var(--muted)",
                         "overflow-x": "hidden",
                       }}
                     >
-                      {tool.output}
+                      {shownOutput()}
                     </pre>
+                  </Show>
+
+                  <Show when={isLongOutput()}>
+                    <button
+                      onClick={toggle}
+                      aria-expanded={isExpanded()}
+                      style={{
+                        margin: "6px 0 0",
+                        padding: "5px 9px",
+                        "border-radius": "7px",
+                        border: "1px solid var(--border)",
+                        background: "transparent",
+                        color: "var(--muted)",
+                        "font-size": "11px",
+                        cursor: "pointer",
+                      }}
+                    >
+                      {isExpanded() ? "收起输出" : `展开 ${outputLines().length - 5} 行输出`}
+                    </button>
                   </Show>
                 </div>
               </div>
@@ -708,6 +939,21 @@ export const CardFeed: Component = () => {
 
           if (card.kind === "markdown") {
             const md = card as MarkdownCard;
+            const cleanedContent = (md.content || "")
+              .split("\n")
+              .filter((l) => {
+                const t = l.trim();
+                if (!t) return false;
+                const blockChars = (t.match(/[\u2580-\u259F\u25A0-\u25FF]/g) || []).length;
+                const words = t.match(/[a-zA-Z0-9_\u4e00-\u9fa5]{3,}/g) || [];
+                return !(blockChars > 0 && words.length === 0);
+              })
+              .map((l) => l.replace(/^[\s\u2580-\u259F\u25A0-\u25FF╹╻]+/, "").trim())
+              .filter((l) => l.length > 0)
+              .join("\n");
+
+            if (!cleanedContent) return null;
+
             return (
               <div
                 style={{
@@ -724,7 +970,7 @@ export const CardFeed: Component = () => {
                   "box-shadow": "0 2px 6px rgba(0, 0, 0, 0.05)",
                 }}
               >
-                {md.content}
+                {cleanedContent}
               </div>
             );
           }
@@ -813,27 +1059,7 @@ export const CardFeed: Component = () => {
         </section>
       </Show>
 
-      {/* 7. Bottom Status line */}
-      <div
-        style={{
-          display: "flex",
-          "align-items": "center",
-          gap: "8px",
-          "font-size": "12px",
-          color: "var(--faint)",
-          padding: "4px 0",
-        }}
-      >
-        <span
-          style={{
-            width: "7px",
-            height: "7px",
-            "border-radius": "4px",
-            background: getStatusDotColor(),
-          }}
-        />
-        {getStatusText()}
-      </div>
+      {/* 7. Bottom spacing is provided by the feed padding; status lives in the session strip. */}
     </main>
   );
 };

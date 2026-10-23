@@ -148,10 +148,6 @@ export class PigeonDaemon {
   }
 
   private resolveHtml(): string {
-    if (this.config.embeddedHtml) {
-      return this.config.embeddedHtml;
-    }
-
     const candidatePaths = [
       join(process.cwd(), "dist", "index.html"),
       join(dirname(Bun.main), "dist", "index.html"),
@@ -166,6 +162,10 @@ export class PigeonDaemon {
           if (content.length > 1000) return content;
         } catch {}
       }
+    }
+
+    if (this.config.embeddedHtml) {
+      return this.config.embeddedHtml;
     }
 
     if (EMBEDDED_HTML && EMBEDDED_HTML.length > 1000) {
@@ -310,7 +310,7 @@ export class PigeonDaemon {
         }
 
         // Serve PWA SPA html
-        return new Response(self.htmlContent, {
+        return new Response(self.resolveHtml(), {
           headers: {
             "Content-Type": "text/html; charset=utf-8",
             "Content-Security-Policy": csp,

@@ -82,6 +82,7 @@ export interface WorkspaceSummary {
   activeTabId: string | null;
   hasWarn?: boolean;
   hasWorking?: boolean;
+  isFocused?: boolean;
   tabs: TabSummary[];
 }
 

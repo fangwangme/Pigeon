@@ -73,7 +73,7 @@ const [state, setState] = createStore<AppState>({
   settingsTab: "appearance",
   themeId: "tokyo-night",
   themeKey: "tokyo-night",
-  themeMode: "system",
+  themeMode: "dark",
   macros: DEFAULT_MACROS,
 });
 

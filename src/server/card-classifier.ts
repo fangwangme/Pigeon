@@ -315,7 +315,18 @@ export class CardClassifier {
         i++;
       }
 
-      const content = mdLines.join("\n").trim();
+      const cleanedMdLines = mdLines
+        .filter((l) => {
+          const t = l.trim();
+          if (!t) return false;
+          const blockChars = (t.match(/[\u2580-\u259F\u25A0-\u25FF]/g) || []).length;
+          const words = t.match(/[a-zA-Z0-9_\u4e00-\u9fa5]{3,}/g) || [];
+          return !(blockChars > 0 && words.length === 0);
+        })
+        .map((l) => l.trim().replace(/^[\s\u2580-\u259F\u25A0-\u25FF╹╻]+/, "").trim())
+        .filter((l) => l.length > 0);
+
+      const content = cleanedMdLines.join("\n").trim();
       if (content) {
         cards.push({
           id: computeCardId("markdown", startLine, cardIdx++),

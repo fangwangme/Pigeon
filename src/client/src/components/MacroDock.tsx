@@ -1,6 +1,9 @@
 import { Component, For, createSignal, Show } from "solid-js";
-import { state, getActiveTab } from "../state/store";
+import { state, getActiveTab, openSettingsModal } from "../state/store";
 import { sendPrompt, sendKeys, respondInteraction } from "../state/ws";
+
+const CHIP_HEIGHT = 40;
+const TOUCH = 44;
 
 export const MacroDock: Component = () => {
   const [inputText, setInputText] = createSignal("");
@@ -68,65 +71,106 @@ export const MacroDock: Component = () => {
     }
   };
 
+  const isDisabled = (macro: { name: string }) =>
+    macro.name === "Approve" && !state.pendingInteraction;
+
   return (
     <div
       style={{
         "flex-shrink": 0,
         background: "var(--bg)",
         color: "var(--fg)",
+        "border-top": "1px solid var(--line)",
       }}
     >
-      {/* Horizontal Scrollable Macro Dock */}
-      <div
-        aria-label="快捷操作栏"
-        style={{
-          display: "flex",
-          gap: "8px",
-          padding: "0 12px 8px",
-          "overflow-x": "auto",
-          "scrollbar-width": "none",
-        }}
-      >
-        <For each={state.macros}>
-          {(macro) => {
-            const isCtrlC = () => macro.name === "Ctrl+C" || macro.payload === "ctrl+c";
-            const isConfirming = () => isCtrlC() && ctrlCConfirm();
-
-            return (
-              <button
-                class="touch-target"
-                onClick={() => handleMacroClick(macro)}
-                style={{
-                  height: "44px",
-                  padding: "0 14px",
-                  "flex-shrink": 0,
-                  "border-radius": "10px",
-                  border: isConfirming()
-                    ? "1px solid var(--delbg)"
-                    : "1px solid var(--border)",
-                  background: isConfirming()
-                    ? "var(--delbg)"
-                    : "var(--surface)",
-                  color: isConfirming() ? "var(--delfg)" : "var(--fg)",
-                  "font-size": "13px",
-                  "font-weight": 500,
-                  cursor: "pointer",
-                  "white-space": "nowrap",
-                  transition: "all 0.15s ease",
-                }}
-              >
-                {isConfirming() ? "Confirm Ctrl+C" : macro.name}
-              </button>
-            );
+      {/* Quick actions: scrollable chips with a pinned "more" affordance */}
+      <div style={{ display: "flex", "align-items": "center", gap: "6px", padding: "7px 10px 0 10px" }}>
+        <div
+          class="pigeon-scroll"
+          aria-label="快捷操作栏"
+          style={{
+            flex: 1,
+            "min-width": 0,
+            display: "flex",
+            gap: "6px",
+            "overflow-x": "auto",
+            "scroll-snap-type": "x proximity",
+            "padding-right": "4px",
+            "mask-image": "linear-gradient(to right, #000 calc(100% - 18px), transparent)",
+            "-webkit-mask-image": "linear-gradient(to right, #000 calc(100% - 18px), transparent)",
           }}
-        </For>
+        >
+          <For each={state.macros}>
+            {(macro) => {
+              const isCtrlC = () => macro.name === "Ctrl+C" || macro.payload === "ctrl+c";
+              const isConfirming = () => isCtrlC() && ctrlCConfirm();
+              const disabled = () => isDisabled(macro);
+
+              return (
+                <button
+                  class="touch-target"
+                  disabled={disabled()}
+                  aria-disabled={disabled()}
+                  onClick={() => !disabled() && handleMacroClick(macro)}
+                  style={{
+                    height: `${CHIP_HEIGHT}px`,
+                    padding: "0 12px",
+                    "flex-shrink": 0,
+                    "scroll-snap-align": "start",
+                    "border-radius": "10px",
+                    border: isConfirming()
+                      ? "1px solid var(--delbg)"
+                      : "1px solid var(--border)",
+                    background: isConfirming()
+                      ? "var(--delbg)"
+                      : "var(--surface)",
+                    color: isConfirming() ? "var(--delfg)" : "var(--fg)",
+                    "font-size": "12.5px",
+                    "font-weight": 500,
+                    cursor: disabled() ? "default" : "pointer",
+                    opacity: disabled() ? 0.42 : 1,
+                    "white-space": "nowrap",
+                    transition: "background 0.15s ease, color 0.15s ease, opacity 0.15s ease",
+                  }}
+                >
+                  {isConfirming() ? "Confirm Ctrl+C" : macro.name}
+                </button>
+              );
+            }}
+          </For>
+        </div>
+
+        <button
+          class="touch-target"
+          aria-label="管理快捷操作"
+          title="管理快捷操作"
+          onClick={() => openSettingsModal("macros")}
+          style={{
+            width: `${TOUCH}px`,
+            height: `${CHIP_HEIGHT}px`,
+            "flex-shrink": 0,
+            "border-radius": "10px",
+            border: "1px solid var(--border)",
+            background: "var(--surface)",
+            color: "var(--muted)",
+            display: "flex",
+            "align-items": "center",
+            "justify-content": "center",
+            cursor: "pointer",
+          }}
+        >
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+            <circle cx="5" cy="12" r="1.6" />
+            <circle cx="12" cy="12" r="1.6" />
+            <circle cx="19" cy="12" r="1.6" />
+          </svg>
+        </button>
       </div>
 
-      {/* Input bar */}
+      {/* Composer */}
       <div
         style={{
-          padding: "8px 12px 20px",
-          "border-top": "1px solid var(--line)",
+          padding: "7px 10px calc(10px + env(safe-area-inset-bottom))",
           display: "flex",
           gap: "8px",
           "align-items": "flex-end",
@@ -136,7 +180,7 @@ export const MacroDock: Component = () => {
           id="pigeon-input"
           aria-label={`发给 ${tab()?.label || "Agent"}`}
           rows={1}
-          placeholder="输入，或点键盘上的麦克风说话…"
+          placeholder="输入"
           value={inputText()}
           onInput={(e) => setInputText(e.currentTarget.value)}
           onKeyDown={handleKeyDown}
@@ -144,17 +188,19 @@ export const MacroDock: Component = () => {
           onCompositionEnd={() => setIsComposing(false)}
           style={{
             flex: 1,
-            "min-height": "44px",
+            "min-height": `${TOUCH}px`,
+            "max-height": "120px",
             "box-sizing": "border-box",
             resize: "none",
             background: "var(--surface)",
             border: "1px solid var(--border)",
-            "border-radius": "12px",
+            "border-radius": "14px",
             color: "var(--fg)",
             "font-family": "inherit",
             "font-size": "15px",
             "line-height": "20px",
-            padding: "11px 12px",
+            padding: "11px 13px",
+            "field-sizing": "content",
           }}
         />
 
@@ -164,10 +210,10 @@ export const MacroDock: Component = () => {
           onClick={handleSend}
           title={inputText().trim() ? "发送并回车" : "回车 (Enter)"}
           style={{
-            width: "44px",
-            height: "44px",
+            width: `${TOUCH}px`,
+            height: `${TOUCH}px`,
             "flex-shrink": 0,
-            "border-radius": "12px",
+            "border-radius": "14px",
             border: 0,
             background: inputText().trim() ? "var(--accent)" : "var(--sel)",
             color: inputText().trim() ? "var(--onaccent)" : "var(--accent)",
@@ -175,7 +221,7 @@ export const MacroDock: Component = () => {
             "align-items": "center",
             "justify-content": "center",
             cursor: "pointer",
-            transition: "all 0.15s ease",
+            transition: "background 0.15s ease, color 0.15s ease",
           }}
         >
           <Show

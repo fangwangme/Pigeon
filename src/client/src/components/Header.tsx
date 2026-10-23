@@ -36,12 +36,12 @@ export const Header: Component = () => {
     <>
       <header
         style={{
-          height: "56px",
+          height: "52px",
           "flex-shrink": 0,
           display: "flex",
           "align-items": "center",
-          gap: "4px",
-          padding: "0 12px 0 4px",
+          gap: "2px",
+          padding: "0 10px 0 2px",
           "border-bottom": "1px solid var(--line)",
           background: "var(--bg)",
           color: "var(--fg)",
@@ -78,15 +78,29 @@ export const Header: Component = () => {
           </svg>
         </button>
 
-        <div style={{ flex: 1, "min-width": 0, display: "flex", "flex-direction": "column", gap: "2px" }}>
-          <div style={{ "font-size": "16px", "font-weight": 600 }}>{ws()?.label || "Pigeon"}</div>
+        <div style={{ flex: 1, "min-width": 0, display: "flex", "flex-direction": "column", gap: "1px" }}>
           <div
             style={{
-              "font-size": "12px",
+              "font-size": "15px",
+              "font-weight": 650,
+              "line-height": "19px",
+              overflow: "hidden",
+              "text-overflow": "ellipsis",
+              "white-space": "nowrap",
+            }}
+          >
+            {ws()?.label || "Pigeon"}
+          </div>
+          <div
+            style={{
+              "font-size": "11px",
+              "line-height": "14px",
               color: "var(--muted)",
               display: "flex",
               "align-items": "center",
-              gap: "6px",
+              gap: "5px",
+              overflow: "hidden",
+              "white-space": "nowrap",
             }}
           >
             <span
@@ -94,10 +108,13 @@ export const Header: Component = () => {
                 width: "6px",
                 height: "6px",
                 "border-radius": "3px",
+                "flex-shrink": 0,
                 background: state.connected ? "var(--accent)" : "var(--warn)",
               }}
             />
-            {state.serverHost} · {state.connected ? "已连接" : "连接中..."}
+            <span style={{ overflow: "hidden", "text-overflow": "ellipsis" }}>
+              {state.serverHost} · {state.connected ? "已连接" : "连接中..."}
+            </span>
           </div>
         </div>
 
@@ -111,16 +128,16 @@ export const Header: Component = () => {
                 class="touch-target"
                 onClick={openActiveAgentsModal}
                 style={{
-                  height: "32px",
-                  padding: "0 10px",
-                  "border-radius": "16px",
+                  height: "30px",
+                  padding: "0 9px",
+                  "border-radius": "15px",
                   border: "1px solid var(--border)",
                   background: "transparent",
                   color: "var(--muted)",
-                  "font-size": "12px",
+                  "font-size": "11.5px",
                   display: "flex",
                   "align-items": "center",
-                  gap: "6px",
+                  gap: "5px",
                   cursor: "pointer",
                 }}
               >
@@ -154,17 +171,17 @@ export const Header: Component = () => {
                   class="touch-target"
                   onClick={openActiveAgentsModal}
                   style={{
-                    height: "32px",
-                    padding: "0 12px",
-                    "border-radius": "16px",
+                    height: "30px",
+                    padding: "0 10px",
+                    "border-radius": "15px",
                     border: hasBlocked() ? "1px solid var(--warnb)" : "1px solid var(--selb)",
                     background: hasBlocked() ? "var(--warnbg)" : "var(--sel)",
                     color: hasBlocked() ? "var(--warnt)" : "var(--fg)",
-                    "font-size": "12px",
+                    "font-size": "11.5px",
                     "font-weight": 600,
                     display: "flex",
                     "align-items": "center",
-                    gap: "6px",
+                    gap: "5px",
                     cursor: "pointer",
                   }}
                 >
@@ -190,12 +207,12 @@ export const Header: Component = () => {
       <nav
         aria-label="当前工作区的 Tab"
         style={{
-          height: "52px",
+          height: "46px",
           "flex-shrink": 0,
           display: "flex",
           "align-items": "center",
-          gap: "8px",
-          padding: "0 12px",
+          gap: "6px",
+          padding: "0 10px",
           "border-bottom": "1px solid var(--line)",
           "overflow-x": "auto",
           "scrollbar-width": "none",
@@ -226,9 +243,9 @@ export const Header: Component = () => {
                   }
                 }}
                 style={{
-                  height: "36px",
-                  padding: "0 12px",
-                  "border-radius": "8px",
+                  height: "34px",
+                  padding: "0 11px",
+                  "border-radius": "9px",
                   border: isTabActive()
                     ? hasBlocked()
                       ? "1px solid var(--warnb)"
@@ -240,20 +257,20 @@ export const Header: Component = () => {
                       : "var(--sel)"
                     : "transparent",
                   color: isTabActive() ? "var(--fg)" : "var(--muted)",
-                  "font-size": "13px",
+                  "font-size": "12.5px",
                   "font-weight": isTabActive() ? 600 : 500,
                   display: "flex",
                   "align-items": "center",
-                  gap: "6px",
+                  gap: "5px",
                   "white-space": "nowrap",
                   cursor: "pointer",
                 }}
               >
                 <span
                   style={{
-                    width: "7px",
-                    height: "7px",
-                    "border-radius": "4px",
+                    width: "6px",
+                    height: "6px",
+                    "border-radius": "3px",
                     background: tabDotColor(),
                   }}
                 />
