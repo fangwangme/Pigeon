@@ -22,25 +22,6 @@ export async function checkPairingFromUrlHash(): Promise<boolean> {
     code = hash.replace("#code=", "").trim();
   }
 
-  // If on localhost and no code in hash, auto-fetch active pairing code
-  if (
-    !code &&
-    (window.location.hostname === "localhost" ||
-      window.location.hostname === "127.0.0.1" ||
-      window.location.hostname === "::1" ||
-      window.location.hostname === "[::1]")
-  ) {
-    try {
-      const activeRes = await fetch("/api/pair/active-code");
-      if (activeRes.ok) {
-        const activeData = await activeRes.json();
-        if (activeData.code) {
-          code = activeData.code;
-        }
-      }
-    } catch {}
-  }
-
   if (code) {
     try {
       const res = await fetch("/api/pair", {
@@ -56,6 +37,22 @@ export async function checkPairingFromUrlHash(): Promise<boolean> {
       }
     } catch {}
   }
+  return false;
+}
+
+export async function pairWithCode(host: string, code: string): Promise<boolean> {
+  try {
+    const targetUrl = host ? `${host.replace(/\/+$/, "")}/api/pair` : "/api/pair";
+    const res = await fetch(targetUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ code, deviceName: "Chromium Browser" }),
+    });
+    const data = await res.json();
+    if (data.success) {
+      return true;
+    }
+  } catch {}
   return false;
 }
 
@@ -122,15 +119,16 @@ function handleServerMessage(msg: ServerMessage): void {
 
     case "snapshot_update": {
       const snap: SnapshotPayload = msg.payload;
-      setState("workspaces", snap.workspaces);
+      setState("workspaces", snap.workspaces || []);
+      setState("workingAgents", snap.workingAgents || []);
 
-      if (!state.activeWorkspaceId && snap.workspaces.length > 0) {
+      if (!state.activeWorkspaceId && snap.workspaces?.length > 0) {
         const firstWs = snap.workspaces[0];
         setState("activeWorkspaceId", firstWs.id);
-        if (firstWs.tabs.length > 0) {
+        if (firstWs.tabs?.length > 0) {
           const firstTab = firstWs.tabs[0];
           setState("activeTabId", firstTab.id);
-          if (firstTab.panes.length > 0) {
+          if (firstTab.panes?.length > 0) {
             setState("activePaneId", firstTab.panes[0].id);
           }
         }
@@ -146,9 +144,10 @@ function handleServerMessage(msg: ServerMessage): void {
           activeWorkspaceId: p.workspaceId,
           activeTabId: p.tabId,
           agentStatus: p.agentStatus,
-          cards: p.cards,
-          pendingInteraction: p.pendingInteraction,
-          rawScreen: p.rawScreen,
+          cards: p.cards || [],
+          pendingInteraction: p.pendingInteraction || null,
+          activeGhost: p.activeGhost || null,
+          rawScreen: p.rawScreen || "",
         });
       }
       break;

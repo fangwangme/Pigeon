@@ -159,11 +159,28 @@ export class CardClassifier {
       }
 
       // 4. Interaction Prompt: e.g. "Allow Claude to execute this command?", "(y/n)", "[1] ... [2] ..."
-      const isInteractionQuestion =
-        trimmed.endsWith("?") ||
+      const hasExplicitChoiceMarker =
         trimmed.includes("(y/n)") ||
         trimmed.includes("[y/N]") ||
-        trimmed.match(/^(Allow|Do you want to|Select|Choose)/i);
+        trimmed.includes("[Y/n]") ||
+        /^(Allow|Do you want to|Would you like to|Select|Choose|Approve|Permission)/i.test(trimmed);
+
+      // Check if subsequent lines contain structured options like [1], 1., 1)
+      let lookaheadHasOptions = false;
+      let nextIdx = i + 1;
+      while (nextIdx < Math.min(lines.length, i + 6)) {
+        const checkLine = lines[nextIdx].trim();
+        if (/^(\[?\d+\]?|\(?\d+\)?|[1-9]\.)\s+/.test(checkLine)) {
+          lookaheadHasOptions = true;
+          break;
+        }
+        if (checkLine.startsWith("$ ") || checkLine.startsWith("❯ ")) break;
+        nextIdx++;
+      }
+
+      const isInteractionQuestion =
+        hasExplicitChoiceMarker ||
+        (trimmed.endsWith("?") && lookaheadHasOptions);
 
       if (isInteractionQuestion) {
         const question = trimmed;
@@ -176,7 +193,8 @@ export class CardClassifier {
           if (
             nextTrimmed.startsWith("$ ") ||
             nextTrimmed.startsWith("❯ ") ||
-            nextTrimmed.startsWith("+ Thought")
+            nextTrimmed.startsWith("+ Thought") ||
+            nextTrimmed.startsWith("Thinking...")
           ) {
             break;
           }
@@ -187,25 +205,27 @@ export class CardClassifier {
         }
 
         const options = [];
-        if (optionLines.some((l) => l.match(/^\[?\d+\]?/))) {
-          // Parse numbered options
-          for (let optIdx = 0; optIdx < optionLines.length; optIdx++) {
-            const optLine = optionLines[optIdx];
-            const match = optLine.match(/^\[?(\d+)\]?[.\s:]+(.+)$/);
-            if (match) {
-              options.push({
-                id: `opt_${match[1]}`,
-                label: match[2].trim(),
-                keyShortcut: match[1],
-              });
-            }
+        let cmdPayload = "";
+
+        // Separate possible command block from options
+        for (const optLine of optionLines) {
+          const match = optLine.match(/^(\[?\d+\]?|\(?\d+\)?|[1-9]\.)[.\s:]+(.+)$/);
+          if (match) {
+            const num = match[1].replace(/\D/g, "");
+            options.push({
+              id: `opt_${num}`,
+              label: match[2].trim(),
+              keyShortcut: num,
+            });
+          } else if (!cmdPayload && !optLine.startsWith("[")) {
+            cmdPayload = optLine;
           }
         }
 
         if (options.length === 0) {
           options.push(
-            { id: "opt_yes", label: "Yes, approve", keyShortcut: "y" },
-            { id: "opt_no", label: "No, reject", keyShortcut: "n" }
+            { id: "opt_yes", label: "是，执行", keyShortcut: "y" },
+            { id: "opt_no", label: "否，拒绝", keyShortcut: "n" }
           );
         }
 
@@ -216,9 +236,9 @@ export class CardClassifier {
           id: computeCardId("interaction", startLine, cardIdx++),
           kind: "interaction",
           interactionId,
-          title: "Agent Interaction Prompt",
+          title: "需要授权",
           question,
-          payload: optionLines.join("\n"),
+          payload: cmdPayload || optionLines.join("\n"),
           fingerprint,
           options,
           fallbackKeys: ["enter", "esc", "up", "down"],

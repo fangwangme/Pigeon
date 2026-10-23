@@ -1,26 +1,51 @@
-import { Component, createSignal, Show } from "solid-js";
-import { state } from "../state/store";
+import { Component, For, createSignal } from "solid-js";
+import { state, openMacrosModal, getActiveTab } from "../state/store";
 import { sendPrompt, sendKeys, respondInteraction } from "../state/ws";
 
 export const MacroDock: Component = () => {
   const [inputText, setInputText] = createSignal("");
   const [isComposing, setIsComposing] = createSignal(false);
-  const [ctrlCTapPending, setCtrlCTapPending] = createSignal(false);
-  const [showKeypad, setShowKeypad] = createSignal(false);
+  const [ctrlCConfirm, setCtrlCConfirm] = createSignal(false);
   let ctrlCTimer: any = null;
 
+  const tab = getActiveTab;
+
   const handleCtrlC = () => {
-    if (ctrlCTapPending()) {
-      // Second tap within 800ms: dispatch Ctrl+C
+    if (ctrlCConfirm()) {
       clearTimeout(ctrlCTimer);
-      setCtrlCTapPending(false);
+      setCtrlCConfirm(false);
       sendKeys(["ctrl+c"]);
     } else {
-      // First tap: set confirmation window for 800ms
-      setCtrlCTapPending(true);
+      setCtrlCConfirm(true);
       ctrlCTimer = setTimeout(() => {
-        setCtrlCTapPending(false);
+        setCtrlCConfirm(false);
       }, 800);
+    }
+  };
+
+  const handleMacroClick = (macro: { id: string; name: string; type: "text" | "key"; payload: string }) => {
+    if (macro.name === "Ctrl+C" || macro.payload === "ctrl+c") {
+      handleCtrlC();
+      return;
+    }
+
+    if (macro.name === "Approve" && state.pendingInteraction) {
+      const yesOpt = state.pendingInteraction.options.find(
+        (o) => o.id === "opt_yes" || o.id === "opt_1" || o.label.includes("是") || o.label.toLowerCase().includes("yes")
+      );
+      respondInteraction(state.pendingInteraction.interactionId, yesOpt?.id, state.pendingInteraction.fingerprint);
+      return;
+    }
+
+    if (macro.name === "模型" || macro.payload === "model") {
+      sendPrompt("/model");
+      return;
+    }
+
+    if (macro.type === "key") {
+      sendKeys([macro.payload]);
+    } else {
+      sendPrompt(macro.payload);
     }
   };
 
@@ -32,223 +57,171 @@ export const MacroDock: Component = () => {
   };
 
   const handleKeyDown = (e: KeyboardEvent) => {
-    // Chinese/Japanese IME composition check
-    if (isComposing() || e.isComposing) {
-      return;
-    }
-
+    if (isComposing() || (e as any).isComposing) return;
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
       handleSend();
     }
   };
 
-  const handleApprove = () => {
-    if (state.pendingInteraction) {
-      const opt = state.pendingInteraction.options.find(
-        (o) => o.id === "opt_yes" || o.label.toLowerCase().includes("yes") || o.label.toLowerCase().includes("approve")
-      );
-      respondInteraction(
-        state.pendingInteraction.interactionId,
-        opt?.id,
-        state.pendingInteraction.fingerprint
-      );
-    }
-  };
-
-  const handleReject = () => {
-    if (state.pendingInteraction) {
-      const opt = state.pendingInteraction.options.find(
-        (o) => o.id === "opt_no" || o.label.toLowerCase().includes("no") || o.label.toLowerCase().includes("reject")
-      );
-      respondInteraction(
-        state.pendingInteraction.interactionId,
-        opt?.id,
-        state.pendingInteraction.fingerprint
-      );
-    }
-  };
-
   return (
-    <footer
+    <div
       style={{
-        background: "var(--color-surface)",
-        "border-top": "1px solid var(--color-border)",
-        display: "flex",
-        "flex-direction": "column",
         "flex-shrink": 0,
-        padding: "6px 8px 8px 8px",
-        gap: "6px",
+        background: "var(--bg)",
+        color: "var(--fg)",
       }}
     >
-      {/* Quick Action Macro Bar */}
-      <div style={{ display: "flex", "align-items": "center", gap: "6px" }}>
-        {/* Double-tap Ctrl+C button */}
-        <button
-          class="touch-target"
-          onClick={handleCtrlC}
-          title="Interrupt running command"
-          style={{
-            background: ctrlCTapPending() ? "var(--color-danger)" : "var(--color-bg)",
-            color: ctrlCTapPending() ? "#ffffff" : "var(--color-danger)",
-            border: `1px solid ${ctrlCTapPending() ? "var(--color-danger)" : "var(--color-border)"}`,
-            "border-radius": "8px",
-            padding: "0 10px",
-            height: "44px",
-            "font-size": "13px",
-            "font-weight": "700",
-            cursor: "pointer",
-            transition: "all 0.15s ease",
-            "white-space": "nowrap",
-          }}
-        >
-          {ctrlCTapPending() ? "Confirm Ctrl+C" : "Ctrl+C"}
-        </button>
+      {/* Horizontal Scrollable Macro Dock */}
+      <div
+        aria-label="快捷操作栏"
+        style={{
+          display: "flex",
+          gap: "8px",
+          padding: "0 12px 8px",
+          "overflow-x": "auto",
+          "scrollbar-width": "none",
+        }}
+      >
+        <For each={state.macros}>
+          {(macro) => {
+            const isCtrlC = () => macro.name === "Ctrl+C" || macro.payload === "ctrl+c";
+            const isConfirming = () => isCtrlC() && ctrlCConfirm();
 
-        {/* Quick Approve button */}
-        <button
-          class="touch-target"
-          disabled={!state.pendingInteraction}
-          onClick={handleApprove}
-          style={{
-            background: state.pendingInteraction ? "var(--color-success)" : "var(--color-bg)",
-            color: state.pendingInteraction ? "#ffffff" : "var(--color-faint)",
-            border: "1px solid var(--color-border)",
-            "border-radius": "8px",
-            padding: "0 12px",
-            height: "44px",
-            "font-size": "13px",
-            "font-weight": "600",
-            cursor: state.pendingInteraction ? "pointer" : "not-allowed",
-            opacity: state.pendingInteraction ? "1" : "0.5",
+            return (
+              <button
+                class="touch-target"
+                onClick={() => handleMacroClick(macro)}
+                style={{
+                  height: "44px",
+                  padding: "0 14px",
+                  "flex-shrink": 0,
+                  "border-radius": "10px",
+                  border: isConfirming()
+                    ? "1px solid var(--delbg)"
+                    : "1px solid var(--border)",
+                  background: isConfirming()
+                    ? "var(--delbg)"
+                    : "var(--surface)",
+                  color: isConfirming() ? "var(--delfg)" : "var(--fg)",
+                  "font-size": "13px",
+                  "font-weight": 500,
+                  cursor: "pointer",
+                  "white-space": "nowrap",
+                  transition: "all 0.15s ease",
+                }}
+              >
+                {isConfirming() ? "Confirm Ctrl+C" : macro.name}
+              </button>
+            );
           }}
-        >
-          ✓ Approve
-        </button>
-
-        {/* Quick Reject button */}
-        <button
-          class="touch-target"
-          disabled={!state.pendingInteraction}
-          onClick={handleReject}
-          style={{
-            background: state.pendingInteraction ? "var(--color-danger)" : "var(--color-bg)",
-            color: state.pendingInteraction ? "#ffffff" : "var(--color-faint)",
-            border: "1px solid var(--color-border)",
-            "border-radius": "8px",
-            padding: "0 12px",
-            height: "44px",
-            "font-size": "13px",
-            "font-weight": "600",
-            cursor: state.pendingInteraction ? "pointer" : "not-allowed",
-            opacity: state.pendingInteraction ? "1" : "0.5",
-          }}
-        >
-          ✕ Reject
-        </button>
-
-        {/* Keyboard Drawer Toggle */}
-        <button
-          class="touch-target"
-          onClick={() => setShowKeypad(!showKeypad())}
-          title="Terminal Navigation Keys"
-          style={{
-            background: showKeypad() ? "var(--color-accent)" : "var(--color-bg)",
-            color: showKeypad() ? "#ffffff" : "var(--color-fg)",
-            border: "1px solid var(--color-border)",
-            "border-radius": "8px",
-            padding: "0 10px",
-            height: "44px",
-            "font-size": "13px",
-            cursor: "pointer",
-            "margin-left": "auto",
-          }}
-        >
-          ⌨
-        </button>
+        </For>
       </div>
 
-      {/* Expandable Navigation Keypad */}
-      <Show when={showKeypad()}>
-        <div
+      {/* Input bar */}
+      <div
+        style={{
+          padding: "8px 12px 20px",
+          "border-top": "1px solid var(--line)",
+          display: "flex",
+          gap: "8px",
+          "align-items": "flex-end",
+        }}
+      >
+        <button
+          aria-label="编辑快捷操作栏"
+          class="touch-target"
+          onClick={openMacrosModal}
           style={{
+            width: "44px",
+            height: "44px",
+            "flex-shrink": 0,
+            "border-radius": "12px",
+            border: "1px solid var(--border)",
+            background: "transparent",
+            color: "var(--muted)",
             display: "flex",
-            gap: "6px",
-            "overflow-x": "auto",
-            padding: "4px 0",
+            "align-items": "center",
+            "justify-content": "center",
+            cursor: "pointer",
           }}
         >
-          {["Esc", "Tab", "Up", "Down", "Left", "Right"].map((key) => (
-            <button
-              class="touch-target"
-              onClick={() => sendKeys([key])}
-              style={{
-                background: "var(--color-bg)",
-                border: "1px solid var(--color-border)",
-                color: "var(--color-fg)",
-                "border-radius": "6px",
-                padding: "0 12px",
-                height: "36px",
-                "font-size": "12px",
-                "font-family": "monospace",
-                cursor: "pointer",
-              }}
-            >
-              {key}
-            </button>
-          ))}
-        </div>
-      </Show>
+          <svg
+            width="20"
+            height="20"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            aria-hidden="true"
+          >
+            <path d="M4 6h9M17 6h3M4 12h3M11 12h9M4 18h11M19 18h1" />
+            <circle cx="15" cy="6" r="2" />
+            <circle cx="9" cy="12" r="2" />
+            <circle cx="17" cy="18" r="2" />
+          </svg>
+        </button>
 
-      {/* Text / Voice Input Row */}
-      <div style={{ display: "flex", "align-items": "flex-end", gap: "6px" }}>
         <textarea
+          id="pigeon-input"
+          aria-label={`发给 ${tab()?.label || "Agent"}`}
           rows={1}
+          placeholder="输入，或点键盘上的麦克风说话…"
           value={inputText()}
           onInput={(e) => setInputText(e.currentTarget.value)}
           onKeyDown={handleKeyDown}
           onCompositionStart={() => setIsComposing(true)}
           onCompositionEnd={() => setIsComposing(false)}
-          placeholder="Send prompt or command to agent..."
           style={{
             flex: 1,
-            background: "var(--color-bg)",
-            color: "var(--color-fg)",
-            border: "1px solid var(--color-border)",
-            "border-radius": "8px",
-            padding: "10px 12px",
-            "font-size": "14px",
-            "font-family": "inherit",
-            resize: "none",
             "min-height": "44px",
-            "max-height": "100px",
-            outline: "none",
+            "box-sizing": "border-box",
+            resize: "none",
+            background: "var(--surface)",
+            border: "1px solid var(--border)",
+            "border-radius": "12px",
+            color: "var(--fg)",
+            "font-family": "inherit",
+            "font-size": "15px",
+            "line-height": "20px",
+            padding: "11px 12px",
           }}
         />
 
-        {/* Send Button */}
         <button
+          aria-label="发送"
           class="touch-target"
           onClick={handleSend}
-          title="Send"
           style={{
-            background: "var(--color-accent)",
-            color: "#ffffff",
-            border: "none",
-            "border-radius": "8px",
-            padding: "0 16px",
+            width: "44px",
             height: "44px",
-            "font-size": "14px",
-            "font-weight": "600",
-            cursor: "pointer",
+            "flex-shrink": 0,
+            "border-radius": "12px",
+            border: 0,
+            background: "var(--accent)",
+            color: "var(--onaccent)",
             display: "flex",
             "align-items": "center",
             "justify-content": "center",
+            cursor: "pointer",
           }}
         >
-          ➤
+          <svg
+            width="20"
+            height="20"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2.2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            aria-hidden="true"
+          >
+            <path d="M12 19V5M5 12l7-7 7 7" />
+          </svg>
         </button>
       </div>
-    </footer>
+    </div>
   );
 };

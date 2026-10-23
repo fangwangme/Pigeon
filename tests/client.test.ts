@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, test, beforeAll } from "bun:test";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { THEMES } from "../src/client/src/themes";
@@ -28,6 +28,13 @@ function contrastRatio(hex1: string, hex2: string): number {
 
 describe("Pigeon Mobile Client UI & Contract Suite", () => {
   const rootDir = join(import.meta.dir, "..");
+
+  beforeAll(() => {
+    const distHtmlPath = join(rootDir, "dist", "index.html");
+    if (!existsSync(distHtmlPath)) {
+      Bun.spawnSync(["bun", "run", "build:client"], { cwd: rootDir });
+    }
+  });
 
   test("HTML entry point declares interactive-widget=resizes-content for modern Chromium", () => {
     const htmlPath = join(rootDir, "index.html");

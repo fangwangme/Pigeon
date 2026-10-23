@@ -8,9 +8,9 @@
     "pigeon": "./dist/pigeon"
   },
   "scripts": {
-    "build:client": "vite build",
+    "build:client": "vite build && bun run scripts/embed-html.ts",
     "build:daemon": "bun build --compile --minify ./src/cli/index.ts --outfile dist/pigeon",
-    "build": "vite build && bun build --compile --minify ./src/cli/index.ts --outfile dist/pigeon",
+    "build": "vite build && bun run scripts/embed-html.ts && bun build --compile --minify ./src/cli/index.ts --outfile dist/pigeon",
     "test": "bun test"
   },
   "dependencies": {

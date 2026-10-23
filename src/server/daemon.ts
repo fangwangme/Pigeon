@@ -1,11 +1,12 @@
 import { existsSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+import { join, dirname } from "node:path";
 import { networkInterfaces } from "node:os";
 import type { Server, ServerWebSocket } from "bun";
 import { HerdrClient } from "./herdr-client";
 import { PairingManager } from "./pairing";
 import { PushManager } from "./push";
 import { WsServer, type ClientConnectionData } from "./ws-server";
+import { EMBEDDED_HTML } from "./embedded-html";
 
 export interface DaemonConfig {
   port?: number;
@@ -127,6 +128,10 @@ export class PigeonDaemon {
       insecureDev: this.config.insecureDev,
     });
 
+    this.pairingManager.on("device_revoked", (deviceId) => {
+      this.wsServer.closeDevice(deviceId);
+    });
+
     this.htmlContent = this.resolveHtml();
   }
 
@@ -135,11 +140,24 @@ export class PigeonDaemon {
       return this.config.embeddedHtml;
     }
 
-    const distPath = join(process.cwd(), "dist", "index.html");
-    if (existsSync(distPath)) {
-      try {
-        return readFileSync(distPath, "utf-8");
-      } catch {}
+    const candidatePaths = [
+      join(process.cwd(), "dist", "index.html"),
+      join(dirname(Bun.main), "dist", "index.html"),
+      join(dirname(Bun.main), "index.html"),
+      join(dirname(dirname(Bun.main)), "dist", "index.html"),
+    ];
+
+    for (const p of candidatePaths) {
+      if (existsSync(p)) {
+        try {
+          const content = readFileSync(p, "utf-8");
+          if (content.length > 1000) return content;
+        } catch {}
+      }
+    }
+
+    if (EMBEDDED_HTML && EMBEDDED_HTML.length > 1000) {
+      return EMBEDDED_HTML;
     }
 
     return `<!DOCTYPE html>
@@ -224,21 +242,6 @@ export class PigeonDaemon {
 
           if (upgraded) return undefined;
           return new Response("WebSocket upgrade failed", { status: 400 });
-        }
-
-        // GET /api/pair/active-code (convenience for localhost)
-        if (url.pathname === "/api/pair/active-code" && req.method === "GET") {
-          const isLocalhost =
-            url.hostname === "localhost" ||
-            url.hostname === "127.0.0.1" ||
-            url.hostname === "::1" ||
-            url.hostname === "[::1]";
-
-          if (!isLocalhost) {
-            return Response.json({ error: "Only accessible from localhost" }, { status: 403 });
-          }
-          const active = self.pairingManager.getActiveToken();
-          return Response.json({ code: active?.token || null });
         }
 
         // POST /api/pair

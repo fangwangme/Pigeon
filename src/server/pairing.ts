@@ -2,6 +2,7 @@ import { randomBytes, createHash } from "node:crypto";
 import { createServer, type Server as NetServer, type Socket } from "node:net";
 import { existsSync, unlinkSync, mkdirSync, chmodSync } from "node:fs";
 import { dirname } from "node:path";
+import { EventEmitter } from "node:events";
 import qrcode from "qrcode-terminal";
 
 const BASE32_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
@@ -44,7 +45,7 @@ export interface PairingOptions {
   adminSocketPath?: string;
 }
 
-export class PairingManager {
+export class PairingManager extends EventEmitter {
   private activeToken: {
     token: string;
     createdAt: number;
@@ -59,6 +60,7 @@ export class PairingManager {
   private adminServer: NetServer | null = null;
 
   constructor(options: PairingOptions) {
+    super();
     this.publicBaseUrl = options.publicBaseUrl.replace(/\/+$/, "");
     this.insecureDev = !!options.insecureDev;
     this.adminSocketPath =
@@ -178,6 +180,9 @@ export class PairingManager {
         this.sessions.delete(hash);
         found = true;
       }
+    }
+    if (found) {
+      this.emit("device_revoked", deviceId);
     }
     return found;
   }

@@ -216,5 +216,76 @@ describe("Pigeon Server Implementation Suite", () => {
       expect(sentMessage.type).toBe("error");
       expect(sentMessage.error.code).toBe(ProtocolErrors.ERR_INTERACTION_STALE);
     });
+
+    test("Rejects unknown optionId with ERR_INVALID_PAYLOAD", async () => {
+      const paneId = "w1:p1";
+      const state = herdr.getPaneState(paneId);
+      state.pendingInteraction = {
+        id: "card_int",
+        kind: "interaction",
+        interactionId: "int_valid",
+        title: "Test",
+        question: "Approve?",
+        fingerprint: "fp_CORRECT",
+        options: [{ id: "opt_yes", label: "Yes" }],
+        fallbackKeys: ["enter"],
+      };
+
+      let sentMessage: any = null;
+      const fakeWs: any = {
+        data: {
+          session: { deviceId: "dev_mock" },
+          subscribedPaneId: paneId,
+          lastPingTime: Date.now(),
+        },
+        send: (str: string) => {
+          sentMessage = JSON.parse(str);
+        },
+      };
+
+      await wsServer.handleMessage(
+        fakeWs,
+        JSON.stringify({
+          type: "interaction_respond",
+          id: "cmd_2",
+          payload: {
+            targetPaneId: paneId,
+            interactionId: "int_valid",
+            fingerprint: "fp_CORRECT",
+            optionId: "opt_NONEXISTENT",
+          },
+        })
+      );
+
+      expect(sentMessage).not.toBeNull();
+      expect(sentMessage.type).toBe("error");
+      expect(sentMessage.error.code).toBe(ProtocolErrors.ERR_INVALID_PAYLOAD);
+    });
+
+    test("Revoking device disconnects active WebSocket session immediately", () => {
+      let closed = false;
+      let closeCode: number | undefined;
+
+      const fakeWs: any = {
+        data: {
+          session: { deviceId: "dev_to_revoke" },
+          subscribedPaneId: "w1:p1",
+          lastPingTime: Date.now(),
+        },
+        send: () => {},
+        close: (code: number) => {
+          closed = true;
+          closeCode = code;
+        },
+      };
+
+      wsServer.handleOpen(fakeWs);
+      expect(wsServer.getConnectedClientsCount()).toBe(1);
+
+      wsServer.closeDevice("dev_to_revoke");
+      expect(closed).toBe(true);
+      expect(closeCode).toBe(1008);
+      expect(wsServer.getConnectedClientsCount()).toBe(0);
+    });
   });
 });

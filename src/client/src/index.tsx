@@ -5,9 +5,12 @@ import { Drawer } from "./components/Drawer";
 import { CardFeed } from "./components/CardFeed";
 import { MacroDock } from "./components/MacroDock";
 import { TerminalSheet } from "./components/TerminalSheet";
-import { state, setTheme } from "./state/store";
+import { AppearanceModal } from "./components/AppearanceModal";
+import { MacrosModal } from "./components/MacrosModal";
+import { NewTabModal } from "./components/NewTabModal";
+import { PairingModal } from "./components/PairingModal";
+import { state, setPaletteTheme } from "./state/store";
 import { initWebSocket, checkPairingFromUrlHash } from "./state/ws";
-import { THEMES, applyTheme } from "./themes";
 
 function App() {
   onMount(async () => {
@@ -15,12 +18,9 @@ function App() {
     await checkPairingFromUrlHash();
 
     // 2. Load stored theme or default
-    const savedTheme = localStorage.getItem("pigeon_theme") || "pigeon-dark";
-    if (THEMES[savedTheme]) {
-      setTheme(savedTheme);
-    } else {
-      applyTheme(THEMES["pigeon-dark"]);
-    }
+    const savedThemeKey = localStorage.getItem("pigeon_theme_key") || "pigeon";
+    const savedThemeMode = (localStorage.getItem("pigeon_theme_mode") as any) || "dark";
+    setPaletteTheme(savedThemeKey, savedThemeMode);
 
     // 3. Connect WebSocket
     initWebSocket();
@@ -34,8 +34,9 @@ function App() {
         height: "100%",
         width: "100%",
         overflow: "hidden",
-        background: "var(--color-bg)",
-        color: "var(--color-fg)",
+        background: "var(--bg)",
+        color: "var(--fg)",
+        "font-family": "Inter, 'PingFang SC', 'Noto Sans SC', system-ui, sans-serif",
       }}
     >
       <Header />
@@ -43,6 +44,10 @@ function App() {
       <CardFeed />
       <MacroDock />
       <TerminalSheet />
+      <AppearanceModal />
+      <MacrosModal />
+      <NewTabModal />
+      <PairingModal />
     </div>
   );
 }

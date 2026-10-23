@@ -1,14 +1,13 @@
-import { Component, For } from "solid-js";
+import { Component, For, Show } from "solid-js";
 import type { InteractionCardData } from "../../types/protocol";
 import { respondInteraction, sendKeys } from "../state/ws";
+import { toggleTerminalSheet } from "../state/store";
 
-export interface InteractionCardProps {
-  interaction: InteractionCardData;
-}
+export const InteractionCard: Component<{ data: InteractionCardData }> = (props) => {
+  const item = () => props.data;
 
-export const InteractionCard: Component<InteractionCardProps> = (props) => {
-  const handleOption = (optId: string) => {
-    respondInteraction(props.interaction.interactionId, optId, props.interaction.fingerprint);
+  const handleSelect = (optionId: string) => {
+    respondInteraction(item().interactionId, optionId, item().fingerprint);
   };
 
   const handleKey = (key: string) => {
@@ -16,184 +15,250 @@ export const InteractionCard: Component<InteractionCardProps> = (props) => {
   };
 
   return (
-    <div
+    <section
+      aria-label="Agent 请求授权"
       style={{
-        background: "var(--color-surface)",
-        border: "2px solid var(--color-warning)",
-        "border-radius": "12px",
-        padding: "16px",
-        margin: "12px 0",
-        "box-shadow": "0 4px 12px rgba(0,0,0,0.15)",
+        border: "1.5px solid var(--warn)",
+        background: "var(--warns)",
+        "border-radius": "14px",
+        padding: "14px",
+        display: "flex",
+        "flex-direction": "column",
+        gap: "12px",
+        "margin-top": "8px",
+        color: "var(--fg)",
       }}
     >
-      {/* Title */}
-      <div style={{ display: "flex", "align-items": "center", gap: "8px", "margin-bottom": "8px" }}>
-        <span style={{ color: "var(--color-warning)", "font-size": "18px" }}>⚡</span>
-        <span style={{ "font-size": "14px", "font-weight": "700", color: "var(--color-fg)" }}>
-          {props.interaction.title || "Agent Needs Action"}
-        </span>
+      {/* Top Banner */}
+      <div
+        style={{
+          display: "flex",
+          "align-items": "center",
+          gap: "8px",
+          color: "var(--warnt)",
+          "font-size": "12px",
+          "font-weight": 600,
+        }}
+      >
+        <svg
+          width="16"
+          height="16"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+          aria-hidden="true"
+        >
+          <path d="M12 3l8 4v5c0 5-3.5 8-8 9-4.5-1-8-4-8-9V7z" />
+        </svg>
+        <span style={{ flex: 1 }}>{item().title || "需要授权 · 交互确认"}</span>
+        <span style={{ "font-weight": 500, color: "var(--muted)" }}>等待回应</span>
       </div>
 
       {/* Question */}
-      <div
-        style={{
-          "font-size": "15px",
-          "font-weight": "600",
-          color: "var(--color-fg)",
-          "margin-bottom": "8px",
-          "line-height": "1.4",
-        }}
-      >
-        {props.interaction.question}
+      <div style={{ "font-size": "16px", "font-weight": 600, "line-height": 1.4 }}>
+        {item().question}
       </div>
 
-      {/* Payload */}
-      {props.interaction.payload && (
-        <pre
+      {/* Command/Payload Preview */}
+      <Show when={item().payload}>
+        <div
           style={{
-            background: "var(--color-bg)",
-            border: "1px solid var(--color-border)",
-            padding: "8px 12px",
-            "border-radius": "6px",
-            "font-size": "12px",
-            "font-family": "monospace",
-            color: "var(--color-fg)",
-            "white-space": "pre-wrap",
+            background: "var(--code)",
+            border: "1px solid var(--warnl)",
+            "border-radius": "8px",
+            padding: "10px 12px",
+            "font-family": "'JetBrains Mono', ui-monospace, monospace",
+            "font-size": "13px",
+            color: "var(--fg)",
             "word-break": "break-all",
-            "margin-bottom": "12px",
-            "max-height": "120px",
-            overflow: "y-auto",
           }}
         >
-          {props.interaction.payload}
-        </pre>
-      )}
+          {item().payload}
+        </div>
+      </Show>
 
-      {/* Options grid */}
-      <div style={{ display: "flex", "flex-direction": "column", gap: "8px", "margin-bottom": "12px" }}>
-        <For each={props.interaction.options}>
+      {/* Choice Buttons */}
+      <div style={{ display: "flex", "flex-direction": "column", gap: "8px" }}>
+        <For each={item().options}>
           {(opt, idx) => {
-            const isDanger = opt.id === "opt_no" || opt.label.toLowerCase().includes("no") || opt.label.toLowerCase().includes("reject");
-            const isSuccess = opt.id === "opt_yes" || opt.label.toLowerCase().includes("yes") || opt.label.toLowerCase().includes("approve");
-
+            const isPrimary = idx() === 0;
             return (
               <button
                 class="touch-target"
-                onClick={() => handleOption(opt.id)}
+                onClick={() => handleSelect(opt.id)}
                 style={{
-                  background: isSuccess
-                    ? "var(--color-success)"
-                    : isDanger
-                    ? "var(--color-danger)"
-                    : "var(--color-accent)",
-                  color: "#ffffff",
-                  border: "none",
-                  "border-radius": "8px",
-                  padding: "10px 16px",
-                  "font-size": "14px",
-                  "font-weight": "600",
-                  cursor: "pointer",
+                  "min-height": "52px",
                   display: "flex",
                   "align-items": "center",
-                  "justify-content": "space-between",
-                  width: "100%",
+                  gap: "10px",
+                  padding: "0 14px",
+                  border: isPrimary ? 0 : "1px solid var(--warnl)",
+                  "border-radius": "12px",
+                  background: isPrimary ? "var(--warn)" : "transparent",
+                  color: isPrimary ? "var(--onwarn)" : "var(--fg)",
+                  "font-size": "15px",
+                  "font-weight": isPrimary ? 600 : 500,
+                  "text-align": "left",
+                  cursor: "pointer",
                 }}
               >
-                <span>{opt.label}</span>
-                {opt.keyShortcut && (
-                  <span
-                    style={{
-                      background: "rgba(0,0,0,0.2)",
-                      padding: "2px 6px",
-                      "border-radius": "4px",
-                      "font-size": "11px",
-                    }}
-                  >
-                    [{opt.keyShortcut}]
-                  </span>
-                )}
+                <span style={{ flex: 1 }}>{opt.label}</span>
+                <span
+                  style={{
+                    "font-size": "11px",
+                    "font-weight": 500,
+                    color: isPrimary ? "inherit" : "var(--faint)",
+                  }}
+                >
+                  {opt.keyShortcut || idx() + 1}
+                </span>
               </button>
             );
           }}
         </For>
       </div>
 
-      {/* Fallback directional keypad */}
-      <div
-        style={{
-          display: "flex",
-          "align-items": "center",
-          "justify-content": "center",
-          gap: "8px",
-          "border-top": "1px solid var(--color-border)",
-          "padding-top": "10px",
-        }}
-      >
+      {/* Fallback Keys Divider & Row */}
+      <div style={{ height: "1px", background: "var(--warnl)" }} />
+
+      <div style={{ display: "flex", "align-items": "center", gap: "6px" }}>
+        <span style={{ flex: 1, "font-size": "12px", color: "var(--muted)" }}>
+          识别不准？直接发按键
+        </span>
         <button
           class="touch-target"
-          onClick={() => handleKey("Up")}
+          onClick={() => handleKey("enter")}
           style={{
-            background: "var(--color-bg)",
-            border: "1px solid var(--color-border)",
-            color: "var(--color-fg)",
-            "border-radius": "6px",
-            padding: "0 12px",
-            height: "36px",
+            width: "52px",
+            height: "44px",
+            "border-radius": "10px",
+            border: "1px solid var(--warnl)",
+            background: "var(--warnk)",
+            color: "var(--fg)",
+            "font-size": "12px",
+            "font-weight": 500,
             cursor: "pointer",
-            "font-weight": "600",
           }}
         >
-          ↑ Up
+          Enter
         </button>
         <button
           class="touch-target"
-          onClick={() => handleKey("Down")}
+          onClick={() => handleKey("esc")}
           style={{
-            background: "var(--color-bg)",
-            border: "1px solid var(--color-border)",
-            color: "var(--color-fg)",
-            "border-radius": "6px",
-            padding: "0 12px",
-            height: "36px",
+            width: "44px",
+            height: "44px",
+            "border-radius": "10px",
+            border: "1px solid var(--warnl)",
+            background: "var(--warnk)",
+            color: "var(--fg)",
+            "font-size": "12px",
+            "font-weight": 500,
             cursor: "pointer",
-            "font-weight": "600",
-          }}
-        >
-          ↓ Down
-        </button>
-        <button
-          class="touch-target"
-          onClick={() => handleKey("Enter")}
-          style={{
-            background: "var(--color-bg)",
-            border: "1px solid var(--color-border)",
-            color: "var(--color-fg)",
-            "border-radius": "6px",
-            padding: "0 12px",
-            height: "36px",
-            cursor: "pointer",
-            "font-weight": "600",
-          }}
-        >
-          ↵ Enter
-        </button>
-        <button
-          class="touch-target"
-          onClick={() => handleKey("Escape")}
-          style={{
-            background: "var(--color-bg)",
-            border: "1px solid var(--color-border)",
-            color: "var(--color-fg)",
-            "border-radius": "6px",
-            padding: "0 12px",
-            height: "36px",
-            cursor: "pointer",
-            "font-weight": "600",
           }}
         >
           Esc
         </button>
+        <button
+          aria-label="上"
+          class="touch-target"
+          onClick={() => handleKey("up")}
+          style={{
+            width: "44px",
+            height: "44px",
+            "border-radius": "10px",
+            border: "1px solid var(--warnl)",
+            background: "var(--warnk)",
+            color: "var(--fg)",
+            display: "flex",
+            "align-items": "center",
+            "justify-content": "center",
+            cursor: "pointer",
+          }}
+        >
+          <svg
+            width="16"
+            height="16"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2.2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            aria-hidden="true"
+          >
+            <path d="M6 15l6-6 6 6" />
+          </svg>
+        </button>
+        <button
+          aria-label="下"
+          class="touch-target"
+          onClick={() => handleKey("down")}
+          style={{
+            width: "44px",
+            height: "44px",
+            "border-radius": "10px",
+            border: "1px solid var(--warnl)",
+            background: "var(--warnk)",
+            color: "var(--fg)",
+            display: "flex",
+            "align-items": "center",
+            "justify-content": "center",
+            cursor: "pointer",
+          }}
+        >
+          <svg
+            width="16"
+            height="16"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2.2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            aria-hidden="true"
+          >
+            <path d="M6 9l6 6 6-6" />
+          </svg>
+        </button>
       </div>
-    </div>
+
+      {/* Terminal View Button */}
+      <button
+        class="touch-target"
+        onClick={toggleTerminalSheet}
+        style={{
+          "align-self": "flex-start",
+          height: "32px",
+          padding: 0,
+          border: 0,
+          background: "transparent",
+          color: "var(--accentt)",
+          "font-size": "13px",
+          display: "flex",
+          "align-items": "center",
+          gap: "6px",
+          cursor: "pointer",
+        }}
+      >
+        <svg
+          width="14"
+          height="14"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+          aria-hidden="true"
+        >
+          <path d="M5 8l4 4-4 4M12 16h7" />
+        </svg>
+        查看原始终端画面
+      </button>
+    </section>
   );
 };

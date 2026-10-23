@@ -1,148 +1,280 @@
 import { Component, For, Show } from "solid-js";
 import {
   state,
+  setState,
   toggleDrawer,
-  toggleTerminalSheet,
   getActiveWorkspace,
   getActiveTab,
   getSubPanes,
-  setTheme,
+  getBlockedAgentsCount,
+  openNewTabModal,
 } from "../state/store";
 import { selectPane } from "../state/ws";
-import { THEMES } from "../themes";
 
 export const Header: Component = () => {
   const ws = getActiveWorkspace;
   const tab = getActiveTab;
   const subPanes = getSubPanes;
 
-  const cycleTheme = () => {
-    const keys = Object.keys(THEMES);
-    const currIdx = keys.indexOf(state.themeId);
-    const nextIdx = (currIdx + 1) % keys.length;
-    setTheme(keys[nextIdx]);
+  const jumpToBlockedAgent = () => {
+    const blockedAgent = state.workingAgents.find((a) => a.status === "blocked");
+    if (blockedAgent) {
+      setState("activeWorkspaceId", blockedAgent.workspaceId);
+      setState("activeTabId", blockedAgent.tabId);
+      selectPane(blockedAgent.paneId);
+    }
+  };
+
+  const getStatusDotColor = (status?: string) => {
+    if (status === "blocked") return "var(--warn)";
+    if (status === "working") return "var(--accent)";
+    return "var(--faint)";
   };
 
   return (
-    <header
-      style={{
-        background: "var(--color-surface)",
-        "border-bottom": "1px solid var(--color-border)",
-        display: "flex",
-        "flex-direction": "column",
-        "flex-shrink": 0,
-      }}
-    >
-      {/* Top Navbar */}
-      <div
+    <>
+      <header
         style={{
+          height: "56px",
+          "flex-shrink": 0,
           display: "flex",
           "align-items": "center",
-          "justify-content": "space-between",
-          height: "48px",
-          padding: "0 8px",
+          gap: "4px",
+          padding: "0 12px 0 4px",
+          "border-bottom": "1px solid var(--line)",
+          background: "var(--bg)",
+          color: "var(--fg)",
         }}
       >
-        <div style={{ display: "flex", "align-items": "center", gap: "8px" }}>
-          {/* Drawer Hamburger */}
-          <button
-            class="touch-target"
-            onClick={toggleDrawer}
-            title="Open Drawer"
+        <button
+          aria-label="打开抽屉"
+          class="touch-target"
+          onClick={toggleDrawer}
+          style={{
+            width: "44px",
+            height: "44px",
+            border: 0,
+            background: "transparent",
+            color: "var(--fg)",
+            display: "flex",
+            "align-items": "center",
+            "justify-content": "center",
+            "border-radius": "10px",
+            cursor: "pointer",
+          }}
+        >
+          <svg
+            width="22"
+            height="22"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            aria-hidden="true"
+          >
+            <path d="M4 7h16M4 12h16M4 17h16" />
+          </svg>
+        </button>
+
+        <div style={{ flex: 1, "min-width": 0, display: "flex", "flex-direction": "column", gap: "2px" }}>
+          <div style={{ "font-size": "16px", "font-weight": 600 }}>{ws()?.label || "Pigeon"}</div>
+          <div
             style={{
-              background: "transparent",
-              border: "none",
-              color: "var(--color-fg)",
-              cursor: "pointer",
-              "font-size": "20px",
-              padding: "0 8px",
+              "font-size": "12px",
+              color: "var(--muted)",
+              display: "flex",
+              "align-items": "center",
+              gap: "6px",
             }}
           >
-            ☰
-          </button>
-
-          {/* Title */}
-          <div style={{ "line-height": "1.2" }}>
-            <div style={{ "font-size": "14px", "font-weight": "600", color: "var(--color-fg)" }}>
-              {ws()?.label || "Pigeon"}
-            </div>
-            <div style={{ "font-size": "11px", color: "var(--color-faint)" }}>
-              {tab()?.label || "tab"} · {state.agentStatus}
-            </div>
+            <span
+              style={{
+                width: "6px",
+                height: "6px",
+                "border-radius": "3px",
+                background: state.connected ? "var(--accent)" : "var(--warn)",
+              }}
+            />
+            {state.serverHost} · {state.connected ? "已连接" : "连接中..."}
           </div>
         </div>
 
-        {/* Action icons */}
-        <div style={{ display: "flex", "align-items": "center", gap: "4px" }}>
-          {/* Theme switcher */}
+        <Show when={getBlockedAgentsCount() > 0}>
           <button
+            aria-label={`${getBlockedAgentsCount()} 个 Agent 等待确认，点击跳转`}
             class="touch-target"
-            onClick={cycleTheme}
-            title={`Current Theme: ${state.themeId}`}
+            onClick={jumpToBlockedAgent}
             style={{
-              background: "transparent",
-              border: "none",
-              color: "var(--color-faint)",
-              cursor: "pointer",
-              "font-size": "16px",
-            }}
-          >
-            🎨
-          </button>
-
-          {/* Raw Terminal Sheet Toggle */}
-          <button
-            class="touch-target"
-            onClick={toggleTerminalSheet}
-            title="Toggle Raw Terminal Screen"
-            style={{
-              background: state.terminalSheetOpen ? "var(--color-accent)" : "transparent",
-              border: "1px solid var(--color-border)",
-              "border-radius": "6px",
-              color: state.terminalSheetOpen ? "#fff" : "var(--color-fg)",
-              cursor: "pointer",
-              "font-size": "12px",
-              "font-family": "monospace",
-              padding: "4px 8px",
               height: "32px",
+              padding: "0 12px",
+              "border-radius": "16px",
+              border: "1px solid var(--warnb)",
+              background: "var(--warnbg)",
+              color: "var(--warnt)",
+              "font-size": "12px",
+              "font-weight": 600,
+              display: "flex",
+              "align-items": "center",
+              gap: "6px",
+              cursor: "pointer",
             }}
           >
-            &gt;_
+            <span
+              style={{
+                width: "6px",
+                height: "6px",
+                "border-radius": "3px",
+                background: "var(--warn)",
+              }}
+            />
+            {getBlockedAgentsCount()} 待确认
           </button>
-        </div>
-      </div>
+        </Show>
+      </header>
 
-      {/* Sub-pane Pill Chips: rendered when a tab has multiple split panes */}
+      {/* Tabs bar */}
+      <nav
+        aria-label="当前工作区的 Tab"
+        style={{
+          height: "52px",
+          "flex-shrink": 0,
+          display: "flex",
+          "align-items": "center",
+          gap: "8px",
+          padding: "0 12px",
+          "border-bottom": "1px solid var(--line)",
+          "overflow-x": "auto",
+          "scrollbar-width": "none",
+        }}
+      >
+        <For each={ws()?.tabs || []}>
+          {(t) => {
+            const isTabActive = () => (state.activeTabId ? t.id === state.activeTabId : false);
+            const hasBlocked = () => t.panes?.some((p) => p.agentStatus === "blocked");
+            const hasWorking = () => t.panes?.some((p) => p.agentStatus === "working");
+
+            const tabDotColor = () => {
+              if (hasBlocked()) return "var(--warn)";
+              if (hasWorking()) return "var(--accent)";
+              return "var(--faint)";
+            };
+
+            return (
+              <button
+                class="touch-target"
+                onClick={() => {
+                  setState("activeTabId", t.id);
+                  if (t.panes?.[0]?.id) {
+                    selectPane(t.panes[0].id);
+                  }
+                }}
+                style={{
+                  height: "36px",
+                  padding: "0 12px",
+                  "border-radius": "8px",
+                  border: isTabActive()
+                    ? hasBlocked()
+                      ? "1px solid var(--warnb)"
+                      : "1px solid var(--selb)"
+                    : "1px solid transparent",
+                  background: isTabActive()
+                    ? hasBlocked()
+                      ? "var(--warnbg)"
+                      : "var(--sel)"
+                    : "transparent",
+                  color: isTabActive() ? "var(--fg)" : "var(--muted)",
+                  "font-size": "13px",
+                  "font-weight": isTabActive() ? 600 : 500,
+                  display: "flex",
+                  "align-items": "center",
+                  gap: "6px",
+                  "white-space": "nowrap",
+                  cursor: "pointer",
+                }}
+              >
+                <span
+                  style={{
+                    width: "7px",
+                    height: "7px",
+                    "border-radius": "4px",
+                    background: tabDotColor(),
+                  }}
+                />
+                {t.label}
+              </button>
+            );
+          }}
+        </For>
+
+        <button
+          aria-label="新建 Tab"
+          class="touch-target"
+          onClick={openNewTabModal}
+          style={{
+            width: "36px",
+            height: "36px",
+            "flex-shrink": 0,
+            "border-radius": "8px",
+            border: "1px dashed var(--border2)",
+            background: "transparent",
+            color: "var(--muted)",
+            display: "flex",
+            "align-items": "center",
+            "justify-content": "center",
+            cursor: "pointer",
+          }}
+        >
+          <svg
+            width="18"
+            height="18"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            aria-hidden="true"
+          >
+            <path d="M12 5v14M5 12h14" />
+          </svg>
+        </button>
+      </nav>
+
+      {/* Sub-pane chips if split panes in current tab */}
       <Show when={subPanes().length > 1}>
         <div
           style={{
+            height: "40px",
+            "flex-shrink": 0,
             display: "flex",
+            "align-items": "center",
             gap: "6px",
-            padding: "4px 8px 8px 8px",
-            overflow: "x-auto",
-            "-webkit-overflow-scrolling": "touch",
+            padding: "0 12px",
+            background: "var(--inset)",
+            "border-bottom": "1px solid var(--line)",
+            "overflow-x": "auto",
           }}
         >
           <For each={subPanes()}>
-            {(pane) => {
-              const isSelected = () => state.activePaneId === pane.id;
+            {(p) => {
+              const isSelected = () => state.activePaneId === p.id;
               return (
                 <button
                   class="touch-target"
-                  onClick={() => selectPane(pane.id)}
+                  onClick={() => selectPane(p.id)}
                   style={{
-                    background: isSelected() ? "var(--color-accent)" : "var(--color-bg)",
-                    color: isSelected() ? "#ffffff" : "var(--color-fg)",
-                    border: `1px solid ${isSelected() ? "var(--color-accent)" : "var(--color-border)"}`,
-                    "border-radius": "16px",
-                    padding: "0 12px",
+                    height: "28px",
+                    padding: "0 10px",
+                    "border-radius": "14px",
+                    border: isSelected() ? "1px solid var(--accent)" : "1px solid var(--border)",
+                    background: isSelected() ? "var(--accentbg)" : "var(--surface)",
+                    color: isSelected() ? "var(--accent)" : "var(--muted)",
                     "font-size": "12px",
-                    "font-weight": "500",
-                    cursor: "pointer",
-                    height: "32px",
+                    "font-weight": isSelected() ? 600 : 500,
                     display: "flex",
                     "align-items": "center",
-                    gap: "6px",
+                    gap: "5px",
+                    cursor: "pointer",
                     "white-space": "nowrap",
                   }}
                 >
@@ -150,22 +282,17 @@ export const Header: Component = () => {
                     style={{
                       width: "6px",
                       height: "6px",
-                      "border-radius": "50%",
-                      background:
-                        pane.agentStatus === "blocked"
-                          ? "var(--color-danger)"
-                          : pane.agentStatus === "working"
-                          ? "var(--color-warning)"
-                          : "var(--color-success)",
+                      "border-radius": "3px",
+                      background: getStatusDotColor(p.agentStatus),
                     }}
                   />
-                  <span>{pane.name || pane.agent || pane.id}</span>
+                  {p.name || p.id}
                 </button>
               );
             }}
           </For>
         </div>
       </Show>
-    </header>
+    </>
   );
 };

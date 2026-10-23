@@ -1,7 +1,17 @@
 import { connect, type Socket } from "node:net";
 import { EventEmitter } from "node:events";
 import { CardClassifier } from "./card-classifier";
-import type { AgentStatus, Card, InteractionCardData, PaneStatePayload, SnapshotPayload } from "../types/protocol";
+import type {
+  AgentStatus,
+  Card,
+  InteractionCardData,
+  PaneStatePayload,
+  SnapshotPayload,
+  WorkspaceSummary,
+  TabSummary,
+  PaneSummary,
+  WorkingAgentSummary,
+} from "../types/protocol";
 import type { HerdrSnapshotResult } from "../types/herdr";
 
 export interface HerdrClientOptions {
@@ -150,6 +160,16 @@ export class HerdrClient extends EventEmitter {
                 { type: "pane.created" },
                 { type: "pane.closed" },
                 { type: "pane.focused" },
+                { type: "tab_created" },
+                { type: "tab_closed" },
+                { type: "tab_focused" },
+                { type: "pane_created" },
+                { type: "pane_closed" },
+                { type: "pane_focused" },
+                { type: "pane_agent_status_changed" },
+                { type: "pane_output_changed" },
+                { type: "pane.agent_status_changed" },
+                { type: "pane.output_changed" },
               ],
             },
             id: "sub-pigeon",
@@ -206,30 +226,108 @@ export class HerdrClient extends EventEmitter {
       const res: HerdrSnapshotResult = await this.request("session.snapshot", {});
       if (res && res.snapshot) {
         const snap = res.snapshot;
-        this.focusedPaneId = snap.focused_pane_id;
+        this.focusedPaneId = snap.focused_pane_id || null;
 
-        const workspaces = (snap.workspaces || []).map((w) => ({
-          id: w.workspace_id,
-          label: w.label || `Workspace ${w.number}`,
-          tabCount: w.tab_count || 1,
-          activeTabId: w.active_tab_id || null,
-          tabs: (w.tabs || []).map((t) => ({
-            id: t.tab_id,
-            label: t.label || "tab",
-            paneCount: t.panes?.length || 1,
-            panes: (t.panes || []).map((p, idx) => ({
-              id: p.pane_id,
-              agent: p.agent || null,
-              agentStatus: this.normalizeStatus(p.agent_status),
-              isPrimary: idx === 0,
-              name: p.title || p.pane_id,
-            })),
-          })),
-        }));
+        const snapWorkspaces = snap.workspaces || [];
+        const allTabs = snap.tabs || [];
+        const allPanes = snap.panes || [];
+        const allAgents = snap.agents || [];
+
+        const agentMap = new Map<string, any>();
+        for (const ag of allAgents) {
+          if (ag.pane_id) agentMap.set(ag.pane_id, ag);
+        }
+
+        const panesByTab = new Map<string, any[]>();
+        for (const p of allPanes) {
+          const list = panesByTab.get(p.tab_id) || [];
+          list.push(p);
+          panesByTab.set(p.tab_id, list);
+        }
+
+        const tabsByWs = new Map<string, any[]>();
+        for (const t of allTabs) {
+          const list = tabsByWs.get(t.workspace_id) || [];
+          list.push(t);
+          tabsByWs.set(t.workspace_id, list);
+        }
+
+        const workingAgents: WorkingAgentSummary[] = [];
+
+        const workspaces: WorkspaceSummary[] = snapWorkspaces.map((w) => {
+          const rawTabs = w.tabs && w.tabs.length > 0 ? w.tabs : tabsByWs.get(w.workspace_id) || [];
+          let wsHasWarn = false;
+          let wsHasWorking = false;
+
+          const tabs: TabSummary[] = rawTabs.map((t: any) => {
+            const rawPanes = t.panes && t.panes.length > 0 ? t.panes : panesByTab.get(t.tab_id) || [];
+            const panes: PaneSummary[] = rawPanes.map((p: any, idx: number) => {
+              const ag = agentMap.get(p.pane_id);
+              const cached = this.paneStates.get(p.pane_id);
+              const rawStatus = ag?.status || p.agent_status || cached?.agentStatus;
+              const agentStatus = this.normalizeStatus(rawStatus);
+
+              if (agentStatus === "blocked") wsHasWarn = true;
+              if (agentStatus === "working") wsHasWorking = true;
+
+              const agentName = ag?.name || p.title || p.pane_id;
+              const agentKind = ag?.kind || p.agent || null;
+
+              if (agentStatus === "working" || agentStatus === "blocked") {
+                const paneState = this.paneStates.get(p.pane_id);
+                let summary = "";
+                if (paneState?.pendingInteraction) {
+                  summary = paneState.pendingInteraction.question || paneState.pendingInteraction.title;
+                } else if (paneState?.cards && paneState.cards.length > 0) {
+                  const lastCard = paneState.cards[paneState.cards.length - 1];
+                  if (lastCard.kind === "tool_call") summary = `运行 ${lastCard.command}`;
+                  else if (lastCard.kind === "thought") summary = lastCard.title || "正在思考";
+                  else if (lastCard.kind === "markdown") summary = lastCard.content.slice(0, 40);
+                }
+
+                workingAgents.push({
+                  agent: agentKind || agentName,
+                  name: agentName,
+                  status: agentStatus,
+                  workspaceId: w.workspace_id,
+                  workspaceLabel: w.label || `Workspace ${w.number}`,
+                  tabId: t.tab_id,
+                  paneId: p.pane_id,
+                  summary: summary || undefined,
+                });
+              }
+
+              return {
+                id: p.pane_id,
+                agent: agentKind,
+                agentStatus,
+                isPrimary: idx === 0,
+                name: agentName,
+              };
+            });
+
+            return {
+              id: t.tab_id,
+              label: t.label || `Tab ${t.number || 1}`,
+              paneCount: panes.length,
+              panes,
+            };
+          });
+
+          return {
+            id: w.workspace_id,
+            label: w.label || `Workspace ${w.number}`,
+            tabCount: tabs.length,
+            activeTabId: w.active_tab_id || (tabs[0]?.id ?? null),
+            hasWarn: wsHasWarn,
+            hasWorking: wsHasWorking,
+            tabs,
+          };
+        });
 
         this.currentSnapshot = {
           workspaces,
-          workingAgents: [],
+          workingAgents,
         };
         this.emit("snapshot_updated", this.currentSnapshot);
         return this.currentSnapshot;
@@ -258,23 +356,28 @@ export class HerdrClient extends EventEmitter {
 
   private handleHerdrEvent(event: string, params: any = {}): void {
     if (!event) return;
+    const norm = event.replace(/_/g, ".");
 
     if (
-      event.startsWith("tab.") ||
-      event.startsWith("workspace.") ||
-      event === "pane.created" ||
-      event === "pane.closed"
+      norm.startsWith("tab.") ||
+      norm.startsWith("workspace.") ||
+      norm === "pane.created" ||
+      norm === "pane.closed"
     ) {
       this.refreshSnapshot();
     }
 
-    if (event === "pane_agent_status_changed" || event === "pane.agent_status_changed") {
+    if (norm === "pane.agent.status.changed" || norm === "pane.agent_status_changed") {
       const paneId = params.pane_id || params.paneId;
       const status = this.normalizeStatus(params.status || params.agent_status);
       this.updatePaneStatus(paneId, status);
     }
 
-    if (event === "pane_output_changed" || event === "pane.updated" || event === "pane.scroll_changed") {
+    if (
+      norm === "pane.output.changed" ||
+      norm === "pane.updated" ||
+      norm === "pane.scroll.changed"
+    ) {
       const paneId = params.pane_id || params.paneId;
       if (paneId) {
         this.scheduleDebouncedRead(paneId);
@@ -324,11 +427,16 @@ export class HerdrClient extends EventEmitter {
       const existing = this.paneStates.get(paneId);
       const revision = (existing?.revision || 0) + 1;
 
+      let agentStatus = existing?.agentStatus || "idle";
+      if (pendingInteraction) {
+        agentStatus = "blocked";
+      }
+
       const payload: PaneStatePayload = {
         paneId,
         workspaceId: existing?.workspaceId || "w1",
         tabId: existing?.tabId || "t1",
-        agentStatus: existing?.agentStatus || "idle",
+        agentStatus,
         cards,
         pendingInteraction,
         activeGhost: null,
@@ -382,18 +490,25 @@ export class HerdrClient extends EventEmitter {
       throw new Error(`Invalid agent name '${agentKind}'. Must match [a-z][a-z0-9_-]{0,31}`);
     }
 
-    const tabRes = await this.request("tab.create", { workspace_id: workspaceId });
-    const tabId = tabRes?.tab_id || tabRes?.id;
+    const tabRes = await this.request("tab.create", {
+      workspace_id: workspaceId,
+      ...(cwd ? { cwd } : {}),
+    });
 
-    if (tabId) {
+    const tabId = tabRes?.tab?.tab_id || tabRes?.tab_id || tabRes?.id;
+    const rootPaneId = tabRes?.root_pane?.pane_id || tabRes?.pane_id || tabRes?.root_pane_id;
+
+    if (rootPaneId) {
+      const hex4 = Math.random().toString(16).substring(2, 6);
+      const name = `p-${agentKind}-${hex4}`;
       await this.request("agent.start", {
-        tab_id: tabId,
-        agent: agentKind,
-        cwd,
+        pane_id: rootPaneId,
+        kind: agentKind,
+        name,
       });
     }
 
     await this.refreshSnapshot();
-    return { tabId };
+    return { tabId, paneId: rootPaneId };
   }
 }

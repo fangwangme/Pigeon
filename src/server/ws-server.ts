@@ -280,7 +280,7 @@ export class WsServer extends EventEmitter {
           return;
         }
 
-        if (fingerprint && pending.fingerprint !== fingerprint) {
+        if (!fingerprint || pending.fingerprint !== fingerprint) {
           this.sendError(
             ws,
             msg.id,
@@ -294,15 +294,21 @@ export class WsServer extends EventEmitter {
         let keyToSend = "\n";
         if (optionId) {
           const opt = pending.options?.find((o) => o.id === optionId);
-          if (opt?.keyShortcut) {
-            keyToSend = opt.keyShortcut + "\n";
+          if (!opt) {
+            this.sendError(
+              ws,
+              msg.id,
+              ProtocolErrors.ERR_INVALID_PAYLOAD,
+              `Unknown optionId '${optionId}'`
+            );
+            return;
           }
+          keyToSend = (opt.keyShortcut || opt.label) + "\n";
         }
 
         try {
-          // Clear pending interaction
-          state.pendingInteraction = null;
           await this.herdrClient.sendInput(target, keyToSend);
+          state.pendingInteraction = null;
           this.sendAck(ws, msg.id);
         } catch (err: any) {
           this.sendError(ws, msg.id, ProtocolErrors.ERR_INTERNAL, err.message);
@@ -364,5 +370,16 @@ export class WsServer extends EventEmitter {
 
   public getConnectedClientsCount(): number {
     return this.clients.size;
+  }
+
+  public closeDevice(deviceId: string): void {
+    for (const [ws, data] of this.clients.entries()) {
+      if (data?.session?.deviceId === deviceId) {
+        try {
+          ws.close(1008, "Device session revoked");
+        } catch {}
+        this.clients.delete(ws);
+      }
+    }
   }
 }

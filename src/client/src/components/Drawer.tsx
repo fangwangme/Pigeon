@@ -1,198 +1,448 @@
 import { Component, For, Show } from "solid-js";
-import { state, setState, closeDrawer } from "../state/store";
-import { selectPane, createTab } from "../state/ws";
+import {
+  state,
+  setState,
+  closeDrawer,
+  openAppearanceModal,
+  openMacrosModal,
+  openPairingModal,
+} from "../state/store";
+import { selectPane } from "../state/ws";
 
 export const Drawer: Component = () => {
-  const handleSelectTab = (wsId: string, tabId: string, paneId?: string) => {
-    setState({
-      activeWorkspaceId: wsId,
-      activeTabId: tabId,
-    });
-    if (paneId) {
-      selectPane(paneId);
-    }
-    closeDrawer();
-  };
-
-  const handleNewTab = (workspaceId: string) => {
-    const kind = prompt("Launch Agent (claude, codex, pi, opencode):", "claude");
-    if (kind) {
-      createTab(workspaceId, kind.trim());
-      closeDrawer();
-    }
-  };
+  const blockedAgents = () => state.workingAgents.filter((a) => a.status === "blocked");
+  const workingAgents = () => state.workingAgents.filter((a) => a.status === "working");
 
   return (
     <Show when={state.drawerOpen}>
+      {/* Scrim backdrop */}
       <div
+        aria-hidden="true"
+        onClick={closeDrawer}
         style={{
           position: "fixed",
           inset: 0,
-          "z-index": 100,
+          background: "var(--scrim)",
+          "z-index": 40,
+        }}
+      />
+
+      <aside
+        aria-label="导航抽屉"
+        style={{
+          position: "fixed",
+          top: 0,
+          left: 0,
+          bottom: 0,
+          width: "320px",
+          "box-sizing": "border-box",
+          background: "var(--sheet)",
+          "border-right": "1px solid var(--border)",
           display: "flex",
+          "flex-direction": "column",
+          "z-index": 50,
+          color: "var(--fg)",
         }}
       >
-        {/* Backdrop */}
-        <div
-          onClick={closeDrawer}
-          style={{
-            position: "absolute",
-            inset: 0,
-            background: "rgba(0, 0, 0, 0.6)",
-            "backdrop-filter": "blur(2px)",
-          }}
-        />
-
-        {/* Drawer Content */}
+        {/* Drawer Header */}
         <div
           style={{
-            position: "relative",
-            width: "280px",
-            height: "100%",
-            background: "var(--color-surface)",
-            "border-right": "1px solid var(--color-border)",
+            height: "72px",
+            "flex-shrink": 0,
             display: "flex",
-            "flex-direction": "column",
-            "z-index": 101,
-            overflow: "hidden",
+            "align-items": "center",
+            gap: "12px",
+            padding: "0 16px",
+            "border-bottom": "1px solid var(--line)",
           }}
         >
-          {/* Header */}
           <div
             style={{
-              padding: "16px",
-              "border-bottom": "1px solid var(--color-border)",
+              width: "36px",
+              height: "36px",
+              "border-radius": "10px",
+              background: "var(--sel)",
+              border: "1px solid var(--selb)",
               display: "flex",
               "align-items": "center",
-              "justify-content": "space-between",
+              "justify-content": "center",
+              color: "var(--accent)",
             }}
           >
-            <div style={{ "font-size": "16px", "font-weight": "700", color: "var(--color-fg)" }}>
-              Workspaces & Tabs
+            <svg
+              width="20"
+              height="20"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+            >
+              <path d="M3 11l18-7-7 18-2.5-8z" />
+              <path d="M11.5 14L21 4" />
+            </svg>
+          </div>
+          <div style={{ flex: 1, "min-width": 0 }}>
+            <div style={{ "font-size": "16px", "font-weight": 700 }}>Pigeon</div>
+            <div style={{ "font-size": "12px", color: "var(--muted)" }}>
+              {state.serverHost} · Tailscale
             </div>
-            <button
-              class="touch-target"
-              onClick={closeDrawer}
+          </div>
+          <button
+            aria-label="关闭抽屉"
+            class="touch-target"
+            onClick={closeDrawer}
+            style={{
+              width: "44px",
+              height: "44px",
+              border: 0,
+              background: "transparent",
+              color: "var(--muted)",
+              "border-radius": "10px",
+              display: "flex",
+              "align-items": "center",
+              "justify-content": "center",
+              cursor: "pointer",
+            }}
+          >
+            <svg
+              width="20"
+              height="20"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              aria-hidden="true"
+            >
+              <path d="M6 6l12 12M18 6L6 18" />
+            </svg>
+          </button>
+        </div>
+
+        {/* Workspaces list */}
+        <div style={{ padding: "16px 8px 8px" }}>
+          <div
+            style={{
+              display: "flex",
+              "align-items": "baseline",
+              "justify-content": "space-between",
+              padding: "0 8px 8px",
+            }}
+          >
+            <span
               style={{
-                background: "transparent",
-                border: "none",
-                color: "var(--color-faint)",
-                "font-size": "18px",
-                cursor: "pointer",
+                "font-size": "12px",
+                "font-weight": 600,
+                "letter-spacing": "0.04em",
+                color: "var(--muted)",
               }}
             >
-              ✕
-            </button>
+              工作区
+            </span>
+            <span style={{ "font-size": "11px", color: "var(--faint)" }}>
+              只读，在电脑上创建
+            </span>
           </div>
 
-          {/* List of Workspaces */}
-          <div style={{ flex: 1, "overflow-y": "auto", padding: "12px" }}>
+          <div style={{ display: "flex", "flex-direction": "column", gap: "2px" }}>
             <For each={state.workspaces}>
-              {(ws) => (
-                <div style={{ "margin-bottom": "16px" }}>
-                  <div
+              {(w) => {
+                const isSelected = () => state.activeWorkspaceId === w.id;
+                return (
+                  <button
+                    class="touch-target"
+                    onClick={() => {
+                      setState("activeWorkspaceId", w.id);
+                      if (w.tabs?.[0]?.id) {
+                        setState("activeTabId", w.tabs[0].id);
+                        if (w.tabs[0].panes?.[0]?.id) {
+                          selectPane(w.tabs[0].panes[0].id);
+                        }
+                      }
+                      closeDrawer();
+                    }}
                     style={{
+                      height: "48px",
                       display: "flex",
                       "align-items": "center",
-                      "justify-content": "space-between",
-                      "font-size": "12px",
-                      "font-weight": "600",
-                      color: "var(--color-faint)",
-                      "text-transform": "uppercase",
-                      "margin-bottom": "6px",
+                      gap: "10px",
+                      padding: "0 12px",
+                      border: 0,
+                      "border-radius": "10px",
+                      background: isSelected() ? "var(--sel)" : "transparent",
+                      color: "var(--fg)",
+                      "font-size": "14px",
+                      "font-weight": isSelected() ? 600 : 500,
+                      "text-align": "left",
+                      cursor: "pointer",
                     }}
                   >
-                    <span>{ws.label}</span>
-                    <button
-                      onClick={() => handleNewTab(ws.id)}
-                      title="New Tab in this Workspace"
+                    <span style={{ flex: 1 }}>{w.label}</span>
+                    <span style={{ display: "flex", "align-items": "center", gap: "4px" }}>
+                      <Show when={w.hasWarn}>
+                        <span
+                          style={{
+                            width: "6px",
+                            height: "6px",
+                            "border-radius": "3px",
+                            background: "var(--warn)",
+                          }}
+                        />
+                      </Show>
+                      <Show when={w.hasWorking}>
+                        <span
+                          style={{
+                            width: "6px",
+                            height: "6px",
+                            "border-radius": "3px",
+                            background: "var(--accent)",
+                          }}
+                        />
+                      </Show>
+                    </span>
+                    <span
                       style={{
-                        background: "transparent",
-                        border: "none",
-                        color: "var(--color-accent)",
-                        cursor: "pointer",
-                        "font-size": "14px",
-                        padding: "0 4px",
+                        "font-size": "12px",
+                        "font-weight": isSelected() ? 500 : 400,
+                        color: "var(--muted)",
+                        "min-width": "40px",
+                        "text-align": "right",
                       }}
                     >
-                      + Tab
-                    </button>
-                  </div>
-
-                  {/* Tabs in workspace */}
-                  <div style={{ display: "flex", "flex-direction": "column", gap: "4px" }}>
-                    <For each={ws.tabs}>
-                      {(t) => {
-                        const isCurrentTab = () => state.activeTabId === t.id;
-                        const primaryPane = t.panes[0];
-
-                        return (
-                          <div
-                            onClick={() => handleSelectTab(ws.id, t.id, primaryPane?.id)}
-                            class="touch-target"
-                            style={{
-                              padding: "8px 12px",
-                              "border-radius": "8px",
-                              cursor: "pointer",
-                              background: isCurrentTab() ? "var(--color-bg)" : "transparent",
-                              border: isCurrentTab()
-                                ? "1px solid var(--color-border)"
-                                : "1px solid transparent",
-                              display: "flex",
-                              "align-items": "center",
-                              "justify-content": "space-between",
-                              width: "100%",
-                            }}
-                          >
-                            <div style={{ display: "flex", "align-items": "center", gap: "8px" }}>
-                              <span
-                                style={{
-                                  width: "8px",
-                                  height: "8px",
-                                  "border-radius": "50%",
-                                  background:
-                                    primaryPane?.agentStatus === "blocked"
-                                      ? "var(--color-danger)"
-                                      : primaryPane?.agentStatus === "working"
-                                      ? "var(--color-warning)"
-                                      : "var(--color-success)",
-                                }}
-                              />
-                              <span
-                                style={{
-                                  "font-size": "14px",
-                                  color: isCurrentTab() ? "var(--color-accent)" : "var(--color-fg)",
-                                  "font-weight": isCurrentTab() ? "600" : "400",
-                                }}
-                              >
-                                {t.label}
-                              </span>
-                            </div>
-
-                            <Show when={t.panes.length > 1}>
-                              <span
-                                style={{
-                                  "font-size": "10px",
-                                  padding: "2px 6px",
-                                  "border-radius": "10px",
-                                  background: "var(--color-border)",
-                                  color: "var(--color-faint)",
-                                }}
-                              >
-                                {t.panes.length} panes
-                              </span>
-                            </Show>
-                          </div>
-                        );
-                      }}
-                    </For>
-                  </div>
-                </div>
-              )}
+                      {w.tabCount || w.tabs?.length || 1} Tab
+                    </span>
+                  </button>
+                );
+              }}
             </For>
           </div>
         </div>
-      </div>
+
+        <div style={{ height: "1px", margin: "8px 16px", background: "var(--line)" }} />
+
+        {/* Running Agents list */}
+        <div
+          style={{
+            flex: 1,
+            "min-height": 0,
+            padding: "8px 8px 8px",
+            display: "flex",
+            "flex-direction": "column",
+            "overflow-y": "auto",
+          }}
+        >
+          <div
+            style={{
+              display: "flex",
+              "align-items": "baseline",
+              "justify-content": "space-between",
+              padding: "0 8px 8px",
+            }}
+          >
+            <span
+              style={{
+                "font-size": "12px",
+                "font-weight": 600,
+                "letter-spacing": "0.04em",
+                color: "var(--muted)",
+              }}
+            >
+              运行中的 Agent
+            </span>
+            <span style={{ "font-size": "11px", color: "var(--faint)" }}>
+              {blockedAgents().length} 待确认 · {workingAgents().length} 工作中
+            </span>
+          </div>
+
+          <div style={{ display: "flex", "flex-direction": "column", gap: "4px" }}>
+            <For each={state.workingAgents}>
+              {(a) => {
+                const isBlocked = a.status === "blocked";
+                return (
+                  <button
+                    class="touch-target"
+                    onClick={() => {
+                      setState("activeWorkspaceId", a.workspaceId);
+                      setState("activeTabId", a.tabId);
+                      selectPane(a.paneId);
+                      closeDrawer();
+                    }}
+                    style={{
+                      display: "flex",
+                      "flex-direction": "column",
+                      gap: "4px",
+                      padding: "10px 12px",
+                      border: isBlocked ? "1px solid var(--warnb)" : "1px solid transparent",
+                      "border-radius": "10px",
+                      background: isBlocked ? "var(--warns)" : "transparent",
+                      color: "var(--fg)",
+                      "text-align": "left",
+                      cursor: "pointer",
+                    }}
+                  >
+                    <span style={{ display: "flex", "align-items": "center", gap: "8px", width: "100%" }}>
+                      <span
+                        style={{
+                          width: "8px",
+                          height: "8px",
+                          "border-radius": "4px",
+                          background: isBlocked ? "var(--warn)" : "var(--accent)",
+                        }}
+                      />
+                      <span style={{ flex: 1, "font-size": "14px", "font-weight": 600 }}>
+                        {a.name}
+                      </span>
+                      <span
+                        style={{
+                          "font-size": "11px",
+                          "font-weight": isBlocked ? 600 : 400,
+                          color: isBlocked ? "var(--warnt)" : "var(--accentt)",
+                        }}
+                      >
+                        {isBlocked ? "待确认" : "工作中"}
+                      </span>
+                    </span>
+                    <span
+                      style={{
+                        "font-size": "12px",
+                        color: "var(--muted)",
+                        "padding-left": "16px",
+                        "white-space": "nowrap",
+                        overflow: "hidden",
+                        "text-overflow": "ellipsis",
+                        width: "100%",
+                        "box-sizing": "border-box",
+                      }}
+                    >
+                      {a.workspaceLabel} · {a.summary || (isBlocked ? "等待确认授权" : "正在执行任务")}
+                    </span>
+                  </button>
+                );
+              }}
+            </For>
+          </div>
+        </div>
+
+        {/* Bottom Drawer Actions */}
+        <div
+          style={{
+            "flex-shrink": 0,
+            "border-top": "1px solid var(--line)",
+            padding: "8px 8px 16px",
+          }}
+        >
+          <button
+            class="touch-target"
+            onClick={openMacrosModal}
+            style={{
+              width: "100%",
+              height: "48px",
+              display: "flex",
+              "align-items": "center",
+              gap: "12px",
+              padding: "0 12px",
+              border: 0,
+              "border-radius": "10px",
+              background: "transparent",
+              color: "var(--fg)",
+              "font-size": "14px",
+              "text-align": "left",
+              cursor: "pointer",
+            }}
+          >
+            <svg
+              width="20"
+              height="20"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              aria-hidden="true"
+            >
+              <path d="M4 6h9M17 6h3M4 12h3M11 12h9M4 18h11M19 18h1" />
+              <circle cx="15" cy="6" r="2" />
+              <circle cx="9" cy="12" r="2" />
+              <circle cx="17" cy="18" r="2" />
+            </svg>
+            快捷操作栏
+          </button>
+
+          <button
+            class="touch-target"
+            onClick={openAppearanceModal}
+            style={{
+              width: "100%",
+              height: "48px",
+              display: "flex",
+              "align-items": "center",
+              gap: "12px",
+              padding: "0 12px",
+              border: 0,
+              "border-radius": "10px",
+              background: "transparent",
+              color: "var(--fg)",
+              "font-size": "14px",
+              "text-align": "left",
+              cursor: "pointer",
+            }}
+          >
+            <svg
+              width="20"
+              height="20"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+            >
+              <circle cx="12" cy="12" r="4" />
+              <path d="M12 2v2M12 20v2M2 12h2M20 12h2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4" />
+            </svg>
+            外观
+          </button>
+
+          <button
+            class="touch-target"
+            onClick={openPairingModal}
+            style={{
+              width: "100%",
+              height: "48px",
+              display: "flex",
+              "align-items": "center",
+              gap: "12px",
+              padding: "0 12px",
+              border: 0,
+              "border-radius": "10px",
+              background: "transparent",
+              color: "var(--fg)",
+              "font-size": "14px",
+              "text-align": "left",
+              cursor: "pointer",
+            }}
+          >
+            <svg
+              width="20"
+              height="20"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+            >
+              <path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1" />
+            </svg>
+            连接与配对
+          </button>
+        </div>
+      </aside>
     </Show>
   );
 };
