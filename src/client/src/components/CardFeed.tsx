@@ -1,4 +1,5 @@
 import { Component, For, Show, createSignal, createMemo } from "solid-js";
+import { marked } from "marked";
 import {
   state,
   setState,
@@ -18,12 +19,141 @@ import type {
   NormalizedToolCall,
 } from "../../types/protocol";
 
+marked.use({
+  gfm: true,
+  breaks: true,
+});
+
+function renderMarkdown(content: string): string {
+  if (!content) return "";
+  try {
+    return marked.parse(content) as string;
+  } catch {
+    return content;
+  }
+}
+
+function cleanPath(p: string): string {
+  if (!p) return "";
+  return p.replace(/^\/home\/[^\/]+/, "~");
+}
+
+function parseToolInfo(name: string, input: any, title?: string, fallbackCmd?: string) {
+  let action = "Tool";
+  let target = "";
+  const lowerName = (name || title || "").toLowerCase();
+
+  const rawInput = typeof input === "object" && input !== null ? input : {};
+  const cmd =
+    rawInput.CommandLine ||
+    rawInput.command ||
+    rawInput.cmd ||
+    fallbackCmd ||
+    (typeof input === "string" ? input : "");
+  const path = rawInput.Path || rawInput.path || rawInput.filePath || rawInput.file_path || "";
+  const query = rawInput.query || rawInput.search || rawInput.pattern || "";
+
+  if (lowerName.includes("read") || lowerName.includes("view") || lowerName === "read_file") {
+    action = "Read";
+    target = cleanPath(path || cmd);
+  } else if (
+    lowerName.includes("edit") ||
+    lowerName.includes("write") ||
+    lowerName === "edit_file" ||
+    lowerName === "write_file" ||
+    lowerName === "replace_file_content"
+  ) {
+    action = lowerName.includes("write") ? "Write" : "Edit";
+    target = cleanPath(path || cmd);
+  } else if (
+    lowerName.includes("bash") ||
+    lowerName.includes("run_command") ||
+    lowerName.includes("cmd") ||
+    lowerName.includes("exec") ||
+    lowerName === "sh"
+  ) {
+    action = "Bash";
+    target = cmd;
+  } else if (lowerName.includes("search") || lowerName.includes("grep") || lowerName.includes("find")) {
+    action = "Search";
+    target = query || cmd || path;
+  } else {
+    action = name || title || "Tool";
+    target = path || cmd || (typeof input === "string" ? input : JSON.stringify(input));
+  }
+
+  return { action, target, fullCommand: cmd || target };
+}
+
+function summarizeToolCalls(tools: NormalizedToolCall[]) {
+  let reads = 0;
+  let edits = 0;
+  let bashes = 0;
+  let searches = 0;
+  let others = 0;
+
+  for (const t of tools) {
+    const { action } = parseToolInfo(t.name, t.input);
+    if (action === "Read") reads++;
+    else if (action === "Edit" || action === "Write") edits++;
+    else if (action === "Bash") bashes++;
+    else if (action === "Search") searches++;
+    else others++;
+  }
+
+  const parts: string[] = [];
+  if (reads > 0) parts.push(`${reads} reads`);
+  if (searches > 0) parts.push(`${searches} search${searches > 1 ? "es" : ""}`);
+  if (edits > 0) parts.push(`${edits} edit${edits > 1 ? "s" : ""}`);
+  if (bashes > 0) parts.push(`${bashes} command${bashes > 1 ? "s" : ""}`);
+  if (others > 0) parts.push(`${others} other${others > 1 ? "s" : ""}`);
+
+  return parts.length > 0 ? parts.join(", ") : `${tools.length} actions`;
+}
+
 export const CardFeed: Component = () => {
+  let feedContainerRef: HTMLElement | undefined;
+  const [isAtBottom, setIsAtBottom] = createSignal(true);
   const [expandedThoughts, setExpandedThoughts] = createSignal<Record<string, boolean>>({});
   const [expandedDiffs, setExpandedDiffs] = createSignal<Record<string, boolean>>({});
   const [expandedTools, setExpandedTools] = createSignal<Record<string, boolean>>({});
+  const [expandedAggregated, setExpandedAggregated] = createSignal<Record<string, boolean>>({});
   const [showFullTerminalHistory, setShowFullTerminalHistory] = createSignal(false);
   const [copiedNotification, setCopiedNotification] = createSignal(false);
+
+  const handleScroll = () => {
+    if (!feedContainerRef) return;
+    const { scrollTop, scrollHeight, clientHeight } = feedContainerRef;
+    const away = scrollHeight - scrollTop - clientHeight > 60;
+    setIsAtBottom(!away);
+  };
+
+  const scrollToTop = () => {
+    feedContainerRef?.scrollTo({ top: 0, behavior: "smooth" });
+  };
+
+  const scrollToBottom = () => {
+    if (!feedContainerRef) return;
+    feedContainerRef.scrollTo({ top: feedContainerRef.scrollHeight, behavior: "smooth" });
+  };
+
+  const scrollPageUp = () => {
+    if (!feedContainerRef) return;
+    feedContainerRef.scrollBy({ top: -feedContainerRef.clientHeight * 0.75, behavior: "smooth" });
+  };
+
+  const scrollPageDown = () => {
+    if (!feedContainerRef) return;
+    feedContainerRef.scrollBy({ top: feedContainerRef.clientHeight * 0.75, behavior: "smooth" });
+  };
+
+  const toggleTool = (id: string) => {
+    setExpandedTools((prev) => ({ ...prev, [id]: !prev[id] }));
+  };
+
+  const toggleAggregated = (id: string) => {
+    setExpandedAggregated((prev) => ({ ...prev, [id]: !prev[id] }));
+  };
 
   const toggleThought = (id: string) => {
     setExpandedThoughts((prev) => ({ ...prev, [id]: !prev[id] }));
@@ -206,6 +336,8 @@ export const CardFeed: Component = () => {
 
   return (
     <main
+      ref={feedContainerRef}
+      onScroll={handleScroll}
       class="pigeon-feed"
       role="feed"
       aria-label="Agent 交互与卡片流"
@@ -697,171 +829,441 @@ export const CardFeed: Component = () => {
 
                   {/* Thinking / Reasoning Accordion */}
                   <Show when={turn.reasoning?.text}>
-                    <div
-                      style={{
-                        border: "1px solid var(--border)",
-                        "border-radius": "10px",
-                        background: "var(--bg)",
-                        overflow: "hidden",
-                      }}
-                    >
-                      <button
-                        class="touch-target"
-                        onClick={() => toggleThought(turn.turnId)}
-                        style={{
-                          display: "flex",
-                          "align-items": "center",
-                          gap: "8px",
-                          width: "100%",
-                          padding: "8px 12px",
-                          background: "transparent",
-                          border: 0,
-                          color: "var(--muted)",
-                          "font-size": "12px",
-                          cursor: "pointer",
-                          "text-align": "left",
-                        }}
-                      >
-                        <span>{isThoughtExpanded() ? "▾" : "▸"}</span>
-                        <span style={{ flex: 1, "font-weight": 500 }}>
-                          Thought {turn.reasoning?.durationMs ? `for ${Math.round(turn.reasoning.durationMs / 1000)}s` : ""}
-                          {turn.reasoning?.tokens ? ` (${turn.reasoning.tokens} tokens)` : ""}
-                        </span>
-                        <span style={{ "font-size": "11px", color: "var(--faint)" }}>
-                          {isThoughtExpanded() ? "收起" : "展开"}
-                        </span>
-                      </button>
-                      <Show when={isThoughtExpanded()}>
-                        <div
-                          style={{
-                            padding: "8px 12px 12px",
-                            "border-top": "1px solid var(--border)",
-                            "border-left": "3px solid var(--accent)",
-                            "font-size": "12.5px",
-                            "line-height": 1.6,
-                            color: "var(--muted)",
-                            "white-space": "pre-wrap",
-                            "word-break": "break-word",
-                          }}
-                        >
-                          {turn.reasoning!.text}
-                        </div>
-                      </Show>
-                    </div>
-                  </Show>
-
-                  {/* Tool Calls */}
-                  <For each={turn.toolCalls || []}>
-                    {(tc: NormalizedToolCall) => {
-                      const isToolExpanded = () => !!expandedTools()[tc.id];
-                      const lines = () => (tc.output || "").split("\n");
-                      const isLong = () => lines().length > 5;
-                      const cmdText = () =>
-                        typeof tc.input === "string"
-                          ? tc.input
-                          : (tc.input as any)?.CommandLine ||
-                            (tc.input as any)?.command ||
-                            (tc.input as any)?.path ||
-                            JSON.stringify(tc.input);
-
-                      return (
-                        <div
-                          style={{
-                            border: "1px solid var(--border)",
-                            "border-radius": "10px",
-                            background: "var(--inset)",
-                            padding: "8px 10px",
-                            display: "flex",
-                            "flex-direction": "column",
-                            gap: "6px",
-                          }}
-                        >
-                          <div style={{ display: "flex", "justify-content": "space-between", "align-items": "center" }}>
-                            <span style={{ "font-weight": 600, "font-family": "monospace", "font-size": "12px", color: "var(--fg)" }}>
-                              {tc.status === "completed" ? "✓" : tc.status === "failed" ? "✗" : "⟳"} {tc.name}
-                            </span>
-                            <Show when={tc.exitCode !== undefined}>
-                              <span style={{ "font-size": "11px", color: tc.exitCode === 0 ? "var(--accent)" : "var(--warn)" }}>
-                                exit {tc.exitCode}
-                              </span>
-                            </Show>
-                          </div>
-
-                          <div
+                    <Show
+                      when={state.displayDensity === "detailed"}
+                      fallback={
+                        /* Antigravity / OpenCode compact thought */
+                        <div style={{ margin: "2px 0 4px" }}>
+                          <button
+                            class="touch-target"
+                            onClick={() => toggleThought(turn.turnId)}
                             style={{
+                              display: "flex",
+                              "align-items": "center",
+                              gap: "6px",
+                              width: "100%",
+                              padding: "4px 6px",
+                              background: "transparent",
+                              border: 0,
+                              color: "var(--muted)",
+                              "font-size": "12px",
                               "font-family": "'JetBrains Mono', ui-monospace, monospace",
-                              "font-size": "11.5px",
-                              background: "var(--code)",
-                              padding: "4px 8px",
-                              "border-radius": "6px",
-                              overflow: "auto",
-                              "white-space": "nowrap",
+                              cursor: "pointer",
+                              "text-align": "left",
                             }}
                           >
-                            $ {cmdText()}
-                          </div>
-
-                          <Show when={tc.output}>
-                            <div style={{ position: "relative" }}>
-                              <pre
-                                style={{
-                                  "font-family": "'JetBrains Mono', ui-monospace, monospace",
-                                  "font-size": "11px",
-                                  background: "var(--code)",
-                                  padding: "6px 8px",
-                                  "border-radius": "6px",
-                                  "max-height": isToolExpanded() ? "none" : "90px",
-                                  overflow: isToolExpanded() ? "auto" : "hidden",
-                                  "white-space": "pre-wrap",
-                                  "word-break": "break-all",
-                                  "line-height": 1.45,
-                                }}
-                              >
-                                {tc.output}
-                              </pre>
-                              <Show when={isLong()}>
-                                <button
-                                  class="touch-target"
-                                  onClick={() => setExpandedTools((prev) => ({ ...prev, [tc.id]: !prev[tc.id] }))}
-                                  style={{
-                                    height: "30px",
-                                    width: "100%",
-                                    "font-size": "11px",
-                                    color: "var(--accent)",
-                                    background: "transparent",
-                                    border: 0,
-                                    cursor: "pointer",
-                                    display: "flex",
-                                    "align-items": "center",
-                                    "justify-content": "center",
-                                  }}
-                                >
-                                  {isToolExpanded() ? "收起输出 ▲" : `展开输出 (${lines().length} 行) ▼`}
-                                </button>
-                              </Show>
+                            <span style={{ color: "var(--faint)", "font-size": "11px" }}>{isThoughtExpanded() ? "▾" : "▸"}</span>
+                            <span style={{ color: "var(--muted)", "font-weight": 500 }}>
+                              Thought {turn.reasoning?.durationMs ? `for ${Math.round(turn.reasoning.durationMs / 100) / 10}s` : ""}
+                              {turn.reasoning?.tokens ? `, ${turn.reasoning.tokens} tokens` : ""}
+                            </span>
+                            <span style={{ "font-size": "11px", color: "var(--faint)", "margin-left": "auto" }}>
+                              {isThoughtExpanded() ? "收起" : "展开"}
+                            </span>
+                          </button>
+                          <Show when={!isThoughtExpanded()}>
+                            <div
+                              onClick={() => toggleThought(turn.turnId)}
+                              style={{
+                                padding: "0 6px 4px 18px",
+                                "font-size": "11.5px",
+                                color: "var(--faint)",
+                                "white-space": "nowrap",
+                                overflow: "hidden",
+                                "text-overflow": "ellipsis",
+                                cursor: "pointer",
+                                "line-height": 1.4,
+                              }}
+                            >
+                              {turn.reasoning!.text.slice(0, 140)}...
+                            </div>
+                          </Show>
+                          <Show when={isThoughtExpanded()}>
+                            <div
+                              style={{
+                                margin: "4px 0 6px 14px",
+                                padding: "8px 12px",
+                                background: "var(--inset)",
+                                "border-left": "2px solid var(--accent)",
+                                "border-radius": "0 8px 8px 0",
+                                "font-size": "12px",
+                                "line-height": 1.6,
+                                color: "var(--muted)",
+                                "white-space": "pre-wrap",
+                                "word-break": "break-word",
+                              }}
+                            >
+                              {turn.reasoning!.text}
                             </div>
                           </Show>
                         </div>
-                      );
-                    }}
-                  </For>
+                      }
+                    >
+                      <div
+                        style={{
+                          border: "1px solid var(--border)",
+                          "border-radius": "10px",
+                          background: "var(--bg)",
+                          overflow: "hidden",
+                        }}
+                      >
+                        <button
+                          class="touch-target"
+                          onClick={() => toggleThought(turn.turnId)}
+                          style={{
+                            display: "flex",
+                            "align-items": "center",
+                            gap: "8px",
+                            width: "100%",
+                            padding: "8px 12px",
+                            background: "transparent",
+                            border: 0,
+                            color: "var(--muted)",
+                            "font-size": "12px",
+                            cursor: "pointer",
+                            "text-align": "left",
+                          }}
+                        >
+                          <span>{isThoughtExpanded() ? "▾" : "▸"}</span>
+                          <span style={{ flex: 1, "font-weight": 500 }}>
+                            Thought {turn.reasoning?.durationMs ? `for ${Math.round(turn.reasoning.durationMs / 1000)}s` : ""}
+                            {turn.reasoning?.tokens ? ` (${turn.reasoning.tokens} tokens)` : ""}
+                          </span>
+                          <span style={{ "font-size": "11px", color: "var(--faint)" }}>
+                            {isThoughtExpanded() ? "收起" : "展开"}
+                          </span>
+                        </button>
+                        <Show when={isThoughtExpanded()}>
+                          <div
+                            style={{
+                              padding: "8px 12px 12px",
+                              "border-top": "1px solid var(--border)",
+                              "border-left": "3px solid var(--accent)",
+                              "font-size": "12.5px",
+                              "line-height": 1.6,
+                              color: "var(--muted)",
+                              "white-space": "pre-wrap",
+                              "word-break": "break-word",
+                            }}
+                          >
+                            {turn.reasoning!.text}
+                          </div>
+                        </Show>
+                      </div>
+                    </Show>
+                  </Show>
 
-                  {/* Assistant Response with Table Horizontal Overflow Protection */}
+                  {/* Tool Calls */}
+                  <Show when={turn.toolCalls && turn.toolCalls.length > 0}>
+                    <Show
+                      when={state.displayDensity === "aggregated"}
+                      fallback={
+                        <Show
+                          when={state.displayDensity === "detailed"}
+                          fallback={
+                            /* Antigravity Compact Single-Line Mode (DEFAULT) */
+                            <div style={{ display: "flex", "flex-direction": "column", gap: "2px", margin: "2px 0" }}>
+                              <For each={turn.toolCalls || []}>
+                                {(tc: NormalizedToolCall) => {
+                                  const isToolExpanded = () => !!expandedTools()[tc.id];
+                                  const parsed = parseToolInfo(tc.name, tc.input);
+                                  return (
+                                    <div style={{ margin: "1px 0" }}>
+                                      <div
+                                        class="tool-compact-row"
+                                        onClick={() => toggleTool(tc.id)}
+                                        style={{
+                                          display: "flex",
+                                          "align-items": "center",
+                                          gap: "6px",
+                                          padding: "5px 6px",
+                                          "border-radius": "6px",
+                                          cursor: "pointer",
+                                          "font-family": "'JetBrains Mono', ui-monospace, monospace",
+                                          "font-size": "12px",
+                                          "line-height": 1.4,
+                                          width: "100%",
+                                          "box-sizing": "border-box",
+                                        }}
+                                      >
+                                        <span
+                                          style={{
+                                            color:
+                                              tc.status === "failed" || (tc.exitCode !== undefined && tc.exitCode !== 0)
+                                                ? "var(--warn)"
+                                                : tc.status === "running"
+                                                ? "var(--accent)"
+                                                : "#e5c07b",
+                                            "font-size": "13px",
+                                            "line-height": 1,
+                                            "flex-shrink": 0,
+                                          }}
+                                        >
+                                          ●
+                                        </span>
+                                        <span style={{ "font-weight": 700, color: "var(--fg)", "flex-shrink": 0 }}>
+                                          {parsed.action}
+                                        </span>
+                                        <span
+                                          style={{
+                                            color: "var(--muted)",
+                                            flex: 1,
+                                            "min-width": 0,
+                                            overflow: "hidden",
+                                            "text-overflow": "ellipsis",
+                                            "white-space": "nowrap",
+                                          }}
+                                        >
+                                          ({parsed.target})
+                                        </span>
+                                        <span style={{ "font-size": "10.5px", color: "var(--faint)", "flex-shrink": 0 }}>
+                                          {isToolExpanded() ? "收起 ▲" : "(点按展开)"}
+                                        </span>
+                                      </div>
+
+                                      <Show when={isToolExpanded()}>
+                                        <div
+                                          style={{
+                                            margin: "4px 0 8px 16px",
+                                            padding: "8px 10px",
+                                            background: "var(--code)",
+                                            border: "1px solid var(--codeb)",
+                                            "border-radius": "8px",
+                                            display: "flex",
+                                            "flex-direction": "column",
+                                            gap: "6px",
+                                            "font-family": "'JetBrains Mono', monospace",
+                                            "font-size": "11.5px",
+                                          }}
+                                        >
+                                          <div style={{ display: "flex", "justify-content": "space-between", color: "var(--faint)", "font-size": "11px" }}>
+                                            <span>$ {parsed.fullCommand || parsed.target}</span>
+                                            <Show when={tc.exitCode !== undefined}>
+                                              <span style={{ color: tc.exitCode === 0 ? "var(--accent)" : "var(--warn)" }}>exit {tc.exitCode}</span>
+                                            </Show>
+                                          </div>
+
+                                          <Show when={tc.output}>
+                                            <pre
+                                              style={{
+                                                margin: 0,
+                                                padding: "6px 8px",
+                                                background: "var(--inset)",
+                                                "border-radius": "6px",
+                                                "max-height": "160px",
+                                                overflow: "auto",
+                                                "white-space": "pre-wrap",
+                                                "word-break": "break-all",
+                                                color: "var(--codefg)",
+                                                "font-size": "11px",
+                                                "line-height": 1.45,
+                                              }}
+                                            >
+                                              {tc.output}
+                                            </pre>
+                                          </Show>
+                                        </div>
+                                      </Show>
+                                    </div>
+                                  );
+                                }}
+                              </For>
+                            </div>
+                          }
+                        >
+                          {/* Traditional Detailed Card Mode */}
+                          <For each={turn.toolCalls || []}>
+                            {(tc: NormalizedToolCall) => {
+                              const isToolExpanded = () => !!expandedTools()[tc.id];
+                              const lines = () => (tc.output || "").split("\n");
+                              const isLong = () => lines().length > 5;
+                              const cmdText = () =>
+                                typeof tc.input === "string"
+                                  ? tc.input
+                                  : (tc.input as any)?.CommandLine ||
+                                    (tc.input as any)?.command ||
+                                    (tc.input as any)?.path ||
+                                    JSON.stringify(tc.input);
+
+                              return (
+                                <div
+                                  style={{
+                                    border: "1px solid var(--border)",
+                                    "border-radius": "10px",
+                                    background: "var(--inset)",
+                                    padding: "8px 10px",
+                                    display: "flex",
+                                    "flex-direction": "column",
+                                    gap: "6px",
+                                  }}
+                                >
+                                  <div style={{ display: "flex", "justify-content": "space-between", "align-items": "center" }}>
+                                    <span style={{ "font-weight": 600, "font-family": "monospace", "font-size": "12px", color: "var(--fg)" }}>
+                                      {tc.status === "completed" ? "✓" : tc.status === "failed" ? "✗" : "⟳"} {tc.name}
+                                    </span>
+                                    <Show when={tc.exitCode !== undefined}>
+                                      <span style={{ "font-size": "11px", color: tc.exitCode === 0 ? "var(--accent)" : "var(--warn)" }}>
+                                        exit {tc.exitCode}
+                                      </span>
+                                    </Show>
+                                  </div>
+
+                                  <div
+                                    style={{
+                                      "font-family": "'JetBrains Mono', ui-monospace, monospace",
+                                      "font-size": "11.5px",
+                                      background: "var(--code)",
+                                      padding: "4px 8px",
+                                      "border-radius": "6px",
+                                      overflow: "auto",
+                                      "white-space": "nowrap",
+                                    }}
+                                  >
+                                    $ {cmdText()}
+                                  </div>
+
+                                  <Show when={tc.output}>
+                                    <div style={{ position: "relative" }}>
+                                      <pre
+                                        style={{
+                                          "font-family": "'JetBrains Mono', ui-monospace, monospace",
+                                          "font-size": "11px",
+                                          background: "var(--code)",
+                                          padding: "6px 8px",
+                                          "border-radius": "6px",
+                                          "max-height": isToolExpanded() ? "none" : "90px",
+                                          overflow: isToolExpanded() ? "auto" : "hidden",
+                                          "white-space": "pre-wrap",
+                                          "word-break": "break-all",
+                                          "line-height": 1.45,
+                                        }}
+                                      >
+                                        {tc.output}
+                                      </pre>
+                                      <Show when={isLong()}>
+                                        <button
+                                          class="touch-target"
+                                          onClick={() => setExpandedTools((prev) => ({ ...prev, [tc.id]: !prev[tc.id] }))}
+                                          style={{
+                                            height: "30px",
+                                            width: "100%",
+                                            "font-size": "11px",
+                                            color: "var(--accent)",
+                                            background: "transparent",
+                                            border: 0,
+                                            cursor: "pointer",
+                                            display: "flex",
+                                            "align-items": "center",
+                                            "justify-content": "center",
+                                          }}
+                                        >
+                                          {isToolExpanded() ? "收起输出 ▲" : `展开输出 (${lines().length} 行) ▼`}
+                                        </button>
+                                      </Show>
+                                    </div>
+                                  </Show>
+                                </div>
+                              );
+                            }}
+                          </For>
+                        </Show>
+                      }
+                    >
+                      {/* OpenCode Aggregated Mode */}
+                      <div style={{ margin: "2px 0" }}>
+                        <button
+                          class="touch-target tool-compact-row"
+                          onClick={() => toggleAggregated(turn.turnId)}
+                          style={{
+                            display: "flex",
+                            "align-items": "center",
+                            gap: "8px",
+                            width: "100%",
+                            padding: "5px 8px",
+                            background: "transparent",
+                            border: 0,
+                            color: "var(--muted)",
+                            "font-size": "12px",
+                            "font-family": "'JetBrains Mono', monospace",
+                            cursor: "pointer",
+                            "text-align": "left",
+                            "border-radius": "6px",
+                          }}
+                        >
+                          <span style={{ color: "var(--accent)", "font-weight": 700 }}>→</span>
+                          <span style={{ "font-weight": 600, color: "var(--fg)" }}>
+                            Explored: {summarizeToolCalls(turn.toolCalls || [])}
+                          </span>
+                          <span style={{ "font-size": "11px", color: "var(--faint)", "margin-left": "auto" }}>
+                            {expandedAggregated()[turn.turnId] ? "收起 ▲" : "详情 ▼"}
+                          </span>
+                        </button>
+
+                        <Show when={expandedAggregated()[turn.turnId]}>
+                          <div style={{ padding: "4px 0 4px 14px", display: "flex", "flex-direction": "column", gap: "2px" }}>
+                            <For each={turn.toolCalls || []}>
+                              {(tc) => {
+                                const parsed = parseToolInfo(tc.name, tc.input);
+                                const isToolExpanded = () => !!expandedTools()[tc.id];
+                                return (
+                                  <div>
+                                    <div
+                                      class="tool-compact-row"
+                                      onClick={() => toggleTool(tc.id)}
+                                      style={{
+                                        display: "flex",
+                                        "align-items": "center",
+                                        gap: "6px",
+                                        padding: "4px 6px",
+                                        "font-size": "11.5px",
+                                        "font-family": "'JetBrains Mono', monospace",
+                                        cursor: "pointer",
+                                        "border-radius": "6px",
+                                      }}
+                                    >
+                                      <span style={{ color: "#e5c07b" }}>●</span>
+                                      <span style={{ "font-weight": 600, color: "var(--fg)" }}>{parsed.action}</span>
+                                      <span style={{ color: "var(--muted)", flex: 1, overflow: "hidden", "text-overflow": "ellipsis", "white-space": "nowrap" }}>
+                                        ({parsed.target})
+                                      </span>
+                                    </div>
+                                    <Show when={isToolExpanded() && tc.output}>
+                                      <pre
+                                        style={{
+                                          margin: "4px 0 6px 14px",
+                                          padding: "6px 8px",
+                                          background: "var(--code)",
+                                          "border-radius": "6px",
+                                          "font-size": "11px",
+                                          "max-height": "140px",
+                                          overflow: "auto",
+                                          "white-space": "pre-wrap",
+                                        }}
+                                      >
+                                        {tc.output}
+                                      </pre>
+                                    </Show>
+                                  </div>
+                                );
+                              }}
+                            </For>
+                          </div>
+                        </Show>
+                      </div>
+                    </Show>
+                  </Show>
+
+                  {/* Assistant Response with Full GFM Markdown Rendering */}
                   <Show when={turn.assistantResponse?.markdown}>
                     <div
                       class="markdown-body"
                       style={{
-                        padding: "10px 0 4px",
-                        "font-size": "13.5px",
-                        "line-height": 1.6,
-                        color: "var(--fg)",
-                        "overflow-x": "hidden",
+                        padding: "8px 0 4px",
+                        "max-width": "100%",
+                        "box-sizing": "border-box",
                       }}
-                    >
-                      <div style={{ "white-space": "pre-wrap" }}>
-                        {turn.assistantResponse!.markdown}
-                      </div>
-                    </div>
+                      innerHTML={renderMarkdown(turn.assistantResponse!.markdown)}
+                    />
                   </Show>
                 </article>
               );
@@ -1048,6 +1450,7 @@ export const CardFeed: Component = () => {
 
           if (card.kind === "tool_call") {
             const tool = card as ToolCallCard;
+            const parsed = parseToolInfo(tool.title || "Command", tool.command, tool.title, tool.command);
             const outputLines = () => (tool.output || "").split("\n").filter((l) => l.trim().length > 0);
             const isLongOutput = () => outputLines().length > 5;
             const isExpanded = () => !!expandedTools()[tool.id];
@@ -1058,6 +1461,102 @@ export const CardFeed: Component = () => {
             };
             const toggle = () =>
               setExpandedTools((prev) => ({ ...prev, [tool.id]: !prev[tool.id] }));
+
+            if (state.displayDensity !== "detailed") {
+              /* Antigravity single-line compact tool call */
+              return (
+                <div
+                  style={{
+                    background: "var(--surface)",
+                    border: "1px solid var(--border)",
+                    "border-radius": "10px",
+                    padding: "4px 8px",
+                  }}
+                >
+                  <div
+                    class="tool-compact-row"
+                    onClick={toggle}
+                    style={{
+                      display: "flex",
+                      "align-items": "center",
+                      gap: "6px",
+                      padding: "4px",
+                      cursor: "pointer",
+                      "font-family": "'JetBrains Mono', ui-monospace, monospace",
+                      "font-size": "12px",
+                      "border-radius": "6px",
+                    }}
+                  >
+                    <span
+                      style={{
+                        color:
+                          tool.status === "error" || (tool.exitCode !== undefined && tool.exitCode !== 0)
+                            ? "var(--warn)"
+                            : tool.status === "running"
+                            ? "var(--accent)"
+                            : "#e5c07b",
+                        "font-size": "13px",
+                      }}
+                    >
+                      ●
+                    </span>
+                    <span style={{ "font-weight": 700, color: "var(--fg)" }}>{parsed.action}</span>
+                    <span
+                      style={{
+                        color: "var(--muted)",
+                        flex: 1,
+                        overflow: "hidden",
+                        "text-overflow": "ellipsis",
+                        "white-space": "nowrap",
+                      }}
+                    >
+                      ({parsed.target})
+                    </span>
+                    <span style={{ "font-size": "10.5px", color: "var(--faint)" }}>
+                      {isExpanded() ? "收起 ▲" : "(点按展开)"}
+                    </span>
+                  </div>
+
+                  <Show when={isExpanded()}>
+                    <div
+                      style={{
+                        margin: "4px 0 4px",
+                        padding: "8px 10px",
+                        background: "var(--code)",
+                        "border-radius": "8px",
+                        "font-family": "'JetBrains Mono', monospace",
+                        "font-size": "11.5px",
+                        display: "flex",
+                        "flex-direction": "column",
+                        gap: "6px",
+                      }}
+                    >
+                      <div style={{ color: "var(--faint)", "font-size": "11px" }}>
+                        $ {tool.command}
+                      </div>
+                      <Show when={tool.output}>
+                        <pre
+                          style={{
+                            margin: 0,
+                            padding: "6px 8px",
+                            background: "var(--inset)",
+                            "border-radius": "6px",
+                            "max-height": "160px",
+                            overflow: "auto",
+                            "white-space": "pre-wrap",
+                            "word-break": "break-all",
+                            color: "var(--codefg)",
+                            "font-size": "11px",
+                          }}
+                        >
+                          {tool.output}
+                        </pre>
+                      </Show>
+                    </div>
+                  </Show>
+                </div>
+              );
+            }
 
             return (
               <div
@@ -1191,22 +1690,18 @@ export const CardFeed: Component = () => {
 
             return (
               <div
+                class="markdown-body"
                 style={{
                   background: "var(--surface)",
                   border: "1px solid var(--border)",
                   "border-radius": "12px",
                   padding: "12px 14px",
-                  "font-size": "14px",
-                  "line-height": 1.65,
-                  color: "var(--fg)",
-                  "white-space": "pre-wrap",
-                  "word-break": "break-word",
-                  "overflow-x": "hidden",
+                  "max-width": "100%",
+                  "box-sizing": "border-box",
                   "box-shadow": "0 2px 6px rgba(0, 0, 0, 0.05)",
                 }}
-              >
-                {cleanedContent}
-              </div>
+                innerHTML={renderMarkdown(cleanedContent)}
+              />
             );
           }
 
@@ -1294,7 +1789,71 @@ export const CardFeed: Component = () => {
         </section>
       </Show>
 
-      {/* 7. Bottom spacing is provided by the feed padding; status lives in the session strip. */}
+      {/* 7. Right-Side Floating Quick Scroll Controls */}
+      <Show when={state.showScrollControls !== false}>
+        <aside
+          class="floating-scroll-strip"
+          role="toolbar"
+          aria-label="快速滚动侧栏"
+        >
+          <button
+            class="floating-scroll-btn"
+            onClick={scrollToTop}
+            title="回顶部 (Top)"
+            aria-label="回顶部"
+          >
+            ⤒
+          </button>
+          <button
+            class="floating-scroll-btn"
+            onClick={scrollPageUp}
+            title="上一页 (Page Up)"
+            aria-label="上一页"
+          >
+            ↑
+          </button>
+          <button
+            class="floating-scroll-btn"
+            onClick={scrollPageDown}
+            title="下一页 (Page Down)"
+            aria-label="下一页"
+          >
+            ↓
+          </button>
+          <button
+            class="floating-scroll-btn"
+            onClick={scrollToBottom}
+            title="到底部 (Bottom)"
+            aria-label="到底部"
+          >
+            ⤓
+          </button>
+        </aside>
+      </Show>
+
+      {/* 8. Auto Floating Jump-to-Bottom Pill Button */}
+      <Show when={!isAtBottom()}>
+        <button
+          class="jump-to-bottom-pill touch-target"
+          onClick={scrollToBottom}
+          aria-label="回到底部"
+          title="回到底部"
+        >
+          <svg
+            width="14"
+            height="14"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2.5"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <path d="M12 5v14M19 12l-7 7-7-7" />
+          </svg>
+          <span>回到底部</span>
+        </button>
+      </Show>
     </main>
   );
 };

@@ -123,4 +123,49 @@ describe("Pigeon Mobile Client UI & Contract Suite", () => {
     expect(content.length).toBeGreaterThan(10000);
   });
 
+  test("CardFeed integrates marked for full GFM markdown rendering", async () => {
+    const { marked } = await import("marked");
+    expect(typeof marked.parse).toBe("function");
+
+    const sample = "# Heading 1\n\n- item 1\n- item 2\n\n| a | b |\n|---|---|\n| 1 | 2 |\n\n```ts\nconst x = 1;\n```";
+    const parsed = marked.parse(sample) as string;
+    expect(parsed).toContain("<h1>Heading 1</h1>");
+    expect(parsed).toContain("<ul>");
+    expect(parsed).toContain("<table>");
+    expect(parsed).toContain("<code");
+
+    const feedCode = readFileSync(join(rootDir, "src", "client", "src", "components", "CardFeed.tsx"), "utf-8");
+    expect(feedCode).toContain('import { marked } from "marked"');
+    expect(feedCode).toContain("renderMarkdown");
+    expect(feedCode).toContain('class="markdown-body"');
+  });
+
+  test("CardFeed supports Antigravity compact single-line tools and OpenCode aggregation", () => {
+    const feedCode = readFileSync(join(rootDir, "src", "client", "src", "components", "CardFeed.tsx"), "utf-8");
+    expect(feedCode).toContain("parseToolInfo");
+    expect(feedCode).toContain("summarizeToolCalls");
+    expect(feedCode).toContain("tool-compact-row");
+    expect(feedCode).toContain("●");
+    expect(feedCode).toContain("Explored:");
+  });
+
+  test("CardFeed and settings support right floating scroll strip and auto jump-to-bottom pill", () => {
+    const html = readFileSync(join(rootDir, "index.html"), "utf-8");
+    expect(html).toContain(".floating-scroll-strip");
+    expect(html).toContain(".floating-scroll-btn");
+    expect(html).toContain(".jump-to-bottom-pill");
+
+    const feedCode = readFileSync(join(rootDir, "src", "client", "src", "components", "CardFeed.tsx"), "utf-8");
+    expect(feedCode).toContain("floating-scroll-strip");
+    expect(feedCode).toContain("jump-to-bottom-pill");
+    expect(feedCode).toContain("scrollToTop");
+    expect(feedCode).toContain("scrollToBottom");
+    expect(feedCode).toContain("scrollPageUp");
+    expect(feedCode).toContain("scrollPageDown");
+
+    // Settings store options
+    expect(state.displayDensity).toBeDefined();
+    expect(state.showScrollControls).toBeDefined();
+  });
+
 });

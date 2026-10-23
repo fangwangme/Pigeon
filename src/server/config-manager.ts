@@ -22,6 +22,8 @@ export const DEFAULT_CLIENT_CONFIG: ClientConfig = {
   confirmCtrlC: true,
   defaultView: "cards",
   macros: DEFAULT_MACROS,
+  displayDensity: "compact",
+  showScrollControls: true,
 };
 
 export function getDefaultServerConfig(): ServerConfig {

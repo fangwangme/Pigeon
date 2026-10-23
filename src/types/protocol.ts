@@ -124,6 +124,8 @@ export interface MacroItem {
   payload: string;
 }
 
+export type DisplayDensity = "compact" | "aggregated" | "detailed";
+
 export interface ClientConfig {
   themeKey: string;
   themeMode: "system" | "light" | "dark";
@@ -131,6 +133,8 @@ export interface ClientConfig {
   confirmCtrlC: boolean;
   defaultView: string;
   macros: MacroItem[];
+  displayDensity?: DisplayDensity;
+  showScrollControls?: boolean;
 }
 
 export interface ServerConfig {

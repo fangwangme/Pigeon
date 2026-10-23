@@ -4,6 +4,8 @@ import {
   closeSettingsModal,
   setSettingsTab,
   setPaletteTheme,
+  setDisplayDensity,
+  setShowScrollControls,
   setState,
   type MacroItem,
 } from "../state/store";
@@ -42,6 +44,17 @@ export const SettingsModal: Component = () => {
   const handleSelectMode = (mode: "system" | "light" | "dark") => {
     setPaletteTheme(state.themeKey, mode);
     sendConfigPatch({ themeMode: mode });
+  };
+
+  const handleSelectDensity = (density: "compact" | "aggregated" | "detailed") => {
+    setDisplayDensity(density);
+    sendConfigPatch({ displayDensity: density });
+  };
+
+  const handleToggleScrollControls = () => {
+    const next = !state.showScrollControls;
+    setShowScrollControls(next);
+    sendConfigPatch({ showScrollControls: next });
   };
 
   const DEFAULT_MACROS: MacroItem[] = [
@@ -350,6 +363,109 @@ export const SettingsModal: Component = () => {
                     );
                   }}
                 </For>
+              </div>
+
+              {/* Display Density Settings */}
+              <div style={{ "margin-top": "12px" }}>
+                <h3 style={{ "font-size": "15px", "font-weight": 700, margin: "0 0 4px" }}>内容展示密度</h3>
+                <p style={{ "font-size": "12px", color: "var(--muted)", margin: 0 }}>
+                  控制命令执行与思考过程的紧凑程度与聚合展示方式。
+                </p>
+              </div>
+
+              <div style={{ display: "flex", "flex-direction": "column", gap: "8px" }}>
+                {[
+                  {
+                    key: "compact",
+                    title: "紧凑单行 (Antigravity 风格)",
+                    desc: "如 ● Read(file) 单行精简展示，点击随时展开命令与输出",
+                  },
+                  {
+                    key: "aggregated",
+                    title: "极简聚合 (OpenCode 风格)",
+                    desc: "如 → 探索: 4 次读取，自动汇总连续文件与搜索操作",
+                  },
+                  {
+                    key: "detailed",
+                    title: "完整卡片 (传统卡片)",
+                    desc: "每个工具调用与命令均以完整独立卡片呈现",
+                  },
+                ].map((item) => {
+                  const isSelected = () => state.displayDensity === item.key;
+                  return (
+                    <button
+                      class="touch-target"
+                      onClick={() => handleSelectDensity(item.key as any)}
+                      style={{
+                        display: "flex",
+                        "flex-direction": "column",
+                        gap: "4px",
+                        padding: "12px 14px",
+                        "border-radius": "10px",
+                        border: isSelected() ? "1.5px solid var(--accent)" : "1px solid var(--border)",
+                        background: isSelected() ? "var(--accentbg)" : "var(--surface)",
+                        color: "var(--fg)",
+                        cursor: "pointer",
+                        "text-align": "left",
+                      }}
+                    >
+                      <div style={{ display: "flex", "align-items": "center", "justify-content": "space-between", width: "100%" }}>
+                        <span style={{ "font-size": "13.5px", "font-weight": 600 }}>{item.title}</span>
+                        <Show when={isSelected()}>
+                          <span style={{ "font-size": "11.5px", color: "var(--accent)", "font-weight": 650 }}>已启用 ✓</span>
+                        </Show>
+                      </div>
+                      <span style={{ "font-size": "11.5px", color: "var(--muted)", "line-height": 1.4 }}>
+                        {item.desc}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+
+              {/* Floating Quick Scroll Controls Toggle */}
+              <div style={{ "margin-top": "12px" }}>
+                <h3 style={{ "font-size": "15px", "font-weight": 700, margin: "0 0 4px" }}>快捷悬浮滚动条</h3>
+                <p style={{ "font-size": "12px", color: "var(--muted)", margin: 0 }}>
+                  在屏幕右侧居中常驻悬浮控制条（置顶 ⤒、翻页 ↑/↓、到底 ⤓），默认微光淡隐不干扰阅读，触碰高亮。
+                </p>
+              </div>
+
+              <div
+                style={{
+                  display: "flex",
+                  "align-items": "center",
+                  "justify-content": "space-between",
+                  padding: "12px 14px",
+                  background: "var(--surface)",
+                  border: "1px solid var(--border)",
+                  "border-radius": "10px",
+                }}
+              >
+                <div>
+                  <div style={{ "font-size": "13.5px", "font-weight": 600 }}>右侧悬浮滚动条</div>
+                  <div style={{ "font-size": "11.5px", color: "var(--muted)" }}>
+                    {state.showScrollControls ? "已开启悬浮条" : "已隐藏悬浮条（仅保留非底部跳到底部药丸）"}
+                  </div>
+                </div>
+                <button
+                  class="touch-target"
+                  onClick={handleToggleScrollControls}
+                  style={{
+                    height: "36px",
+                    padding: "0 14px",
+                    "border-radius": "8px",
+                    border: state.showScrollControls ? "1px solid var(--accent)" : "1px solid var(--border)",
+                    background: state.showScrollControls ? "var(--accent)" : "transparent",
+                    color: state.showScrollControls ? "var(--onaccent)" : "var(--muted)",
+                    "font-size": "12.5px",
+                    "font-weight": 600,
+                    cursor: "pointer",
+                    transition: "all 0.15s ease",
+                  }}
+                >
+                  {state.showScrollControls ? "开启" : "关闭"}
+                </button>
               </div>
             </section>
           </Show>

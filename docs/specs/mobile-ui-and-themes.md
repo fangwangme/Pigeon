@@ -47,18 +47,22 @@ Pigeon is designed explicitly for single-handed mobile thumb usage on Chrome/Chr
 
 ## 3. Card Stream & Interactive Controls
 
-### 3.1 Card Types and Turn-Based Flow
-1. **Thought / Reasoning Block**: Displays agent internal thinking (`▸ Thought for Xs`). Collapsed by default via an accordion toggle, expanding to show full reasoning text.
-2. **Tool Execution Block**: Displays Bash command invocations with exit codes, tool input parameters, and monospaced output (collapsed by default if > 5 lines).
-3. **Table Anti-Wrap Standard**: To prevent Markdown tables from breaking on narrow 360–412px mobile screens, tables must use `display: block; overflow-x: auto; white-space: nowrap; -webkit-overflow-scrolling: touch;`. Table columns maintain natural widths and scroll smoothly horizontally without vertical character folding.
-4. **Session Diff Drawer**: A top navigation badge `[ 📝 N files · +X -Y ]` opens a dedicated slide-out drawer showing per-file change statistics and unified line diffs with red/green syntax highlighting.
-5. **Assistant Response**: Streamed Markdown text with code syntax highlighting and touch-friendly copy buttons.
+### 3.1 Card Types, Turn-Based Flow, and Markdown
+1. **Thought / Reasoning Block**: Displays agent internal thinking (`▸ Thought for Xs, Y tokens`). Collapsed by default via an accordion toggle with a subtle single-line preview beneath, expanding to show full reasoning text.
+2. **Tool Execution Block & Display Density**:
+   - **Compact Single-Line Mode (Antigravity-style, default)**: Condenses each command or file operation into a single-line item (e.g. `● Read(path)`, `● Edit(path)`, `● Bash(cmd)`), avoiding vertical screen waste. Tapping the line smoothly expands input parameters and terminal output logs.
+   - **Aggregated Mode (OpenCode-style)**: Summarizes consecutive tool invocations into an ultra-compact summary line (e.g. `→ Explored: 4 reads, 1 search`), expandable on demand.
+   - **Detailed Mode**: Full card presentation with discrete monospaced blocks.
+3. **Full GFM Markdown Rendering**: Assistant responses and markdown cards render standard GitHub Flavored Markdown (headers, bullet/ordered lists, blockquotes, code blocks with syntax styling, inline code, and links) via `marked`.
+4. **Table Anti-Wrap Standard**: To prevent Markdown tables from breaking on narrow 360–412px mobile screens, tables must use `display: block; overflow-x: auto; white-space: nowrap; -webkit-overflow-scrolling: touch;`. Table columns maintain natural widths and scroll smoothly horizontally without vertical character folding.
+5. **Session Diff Drawer**: A top navigation badge `[ 📝 N files · +X -Y ]` opens a dedicated slide-out drawer showing per-file change statistics and unified line diffs with red/green syntax highlighting.
 6. **Interactive Question Action Sheet**: When an agent transitions to `blocked` awaiting user input or permission, Pigeon elevates an Action Sheet highlighted with `--warn` borders, offering touch buttons (>= 44px) for each option plus fallback keys (`Enter`, `Esc`, `↑`, `↓`) and a "查看原始终端画面" (View Raw Terminal) sheet link.
 7. **Ghost Prediction Banner**: Renders predicted next commands with `[ ⇥ 填入 ]` (populate input textarea) and `[ ⚡ 执行 ]` (direct execute).
 
-### 3.2 Scroll Anchoring
-- When new stream chunks arrive, the viewport auto-scrolls to the bottom **only if** the user is already within 40px of the bottom.
-- If the user has scrolled upward to read past output, auto-scroll is paused, and a floating "回到底部" (Jump to Bottom) pill button appears.
+### 3.2 Scroll Anchoring, Floating Controls, and Jump to Bottom
+- **Anchoring**: When new stream chunks arrive, the viewport auto-scrolls to the bottom **only if** the user is already within 40px of the bottom.
+- **Auto Jump-to-Bottom Button**: If the user scrolls upward (> 60px from the bottom), a floating "回到底部 ⇣" (Jump to Bottom) pill button smoothly fades in centered above the bottom dock. Tapping it smoothly scrolls directly to the bottom.
+- **Right Floating Quick-Scroll Bar**: Pinned vertically to the right-center edge of the screen, providing one-touch access to `⤒ Top` (回顶部), `↑ Page Up` (上一页), `↓ Page Down` (下一页), and `⤓ Bottom` (到底部). The strip displays a faint border and low opacity (`0.35`) by default so as not to obstruct reading, transitioning to full prominence (`0.95`) on hover or touch. Users can disable this control strip in Settings.
 
 ### 3.3 Contextual Safeguards for Destructive Actions
 - **Interactive Approvals**: All authorization prompts are handled directly via elevated Interactive Question Cards and native Action Sheets with dedicated choice buttons. Redundant toolbar macro chips are eliminated to keep the bottom dock lean.
@@ -70,7 +74,7 @@ Pigeon is designed explicitly for single-handed mobile thumb usage on Chrome/Chr
 - **Top chrome budget**: header (52px) + tab bar (46px) + optional split-pane row (44px). Session strip stays under 92px so the feed keeps the majority of an 844px-tall viewport.
 - **Terminal output**: rendered as a panel with a mobile header (title, line count, copy, expand). macOS traffic lights are not used. When structured cards exist, the raw screen collapses to a single-line "终端 · 最近一行 · N 行" row that opens the full-screen terminal sheet.
 - **Tool cards**: header shows the tool name and exit status; the command renders on its own mono line; output is capped at five lines with an explicit expand control.
-- **Bottom dock**: macro actions stay strictly on a single row (`height: 42px`, `flex-wrap: nowrap`) to conserve precious vertical viewport space for input and output cards. Primary actions are shown in the row with the final cell serving as an overflow trigger (`[··· 更多]`) with high-contrast hover/touch elevation; tapping it slides in a single-row lateral tray revealing secondary and custom macros, with a `[‹ 返回]` button to smoothly slide back. The composer stays pinned above the keyboard and respects `env(safe-area-inset-bottom)`.
+- **Bottom dock**: macro actions stay strictly on a single row (`height: 42px`, `flex-wrap: nowrap`) to conserve precious vertical viewport space for input and output cards. The primary row presents the three highest-frequency actions (`[模型]`, `[Continue]`, `[Ctrl+C]`), followed by an overflow trigger (`[··· 更多]`) with high-contrast hover/touch elevation; tapping it slides in a single-row lateral tray revealing secondary utilities (`[‹ 返回]`, `[Enter]`, `[Tab]`, custom macros, and `[⚙️ 管理]`). The composer stays pinned above the keyboard and respects `env(safe-area-inset-bottom)`.
 - **Truncation**: workspace names, server host and long card titles use ellipsis, never hard clipping without an indication.
 
 ## 4. Theming and Color Tokens

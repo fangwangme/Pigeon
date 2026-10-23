@@ -43,6 +43,8 @@ export interface AppState {
   themeId: string;
   themeKey: string;
   themeMode: "system" | "light" | "dark";
+  displayDensity: "compact" | "aggregated" | "detailed";
+  showScrollControls: boolean;
   macros: MacroItem[];
 }
 
@@ -82,6 +84,14 @@ const [state, setState] = createStore<AppState>({
   themeId: "tokyo-night",
   themeKey: "tokyo-night",
   themeMode: "dark",
+  displayDensity:
+    typeof localStorage !== "undefined" && localStorage.getItem("pigeon_density")
+      ? (localStorage.getItem("pigeon_density") as any)
+      : "compact",
+  showScrollControls:
+    typeof localStorage !== "undefined"
+      ? localStorage.getItem("pigeon_scroll_controls") !== "false"
+      : true,
   macros: DEFAULT_MACROS,
 });
 
@@ -117,9 +127,27 @@ export function applySyncedClientConfig(config: Partial<ClientConfig>): void {
   if (config.themeId) {
     setState("themeId", config.themeId);
   }
+  if (config.displayDensity) {
+    setState("displayDensity", config.displayDensity);
+    localStorage.setItem("pigeon_density", config.displayDensity);
+  }
+  if (config.showScrollControls !== undefined) {
+    setState("showScrollControls", config.showScrollControls);
+    localStorage.setItem("pigeon_scroll_controls", String(config.showScrollControls));
+  }
   if (Array.isArray(config.macros)) {
     setState("macros", config.macros);
   }
+}
+
+export function setDisplayDensity(density: "compact" | "aggregated" | "detailed") {
+  setState("displayDensity", density);
+  localStorage.setItem("pigeon_density", density);
+}
+
+export function setShowScrollControls(show: boolean) {
+  setState("showScrollControls", show);
+  localStorage.setItem("pigeon_scroll_controls", String(show));
 }
 
 export function toggleDrawer() {

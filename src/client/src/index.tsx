@@ -12,8 +12,12 @@ import { PairingModal } from "./components/PairingModal";
 import { ActiveAgentsModal } from "./components/ActiveAgentsModal";
 import { SettingsModal } from "./components/SettingsModal";
 import { DiffDrawer } from "./components/DiffDrawer";
-import { state, setPaletteTheme } from "./state/store";
+import { state, setState, setPaletteTheme } from "./state/store";
 import { initWebSocket, checkPairingFromUrlHash } from "./state/ws";
+
+if (typeof window !== "undefined") {
+  (window as any).__pigeonStore = { state, setState };
+}
 
 function App() {
   onMount(async () => {
