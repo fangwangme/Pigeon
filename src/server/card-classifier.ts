@@ -182,7 +182,8 @@ export class CardClassifier {
         trimmed.includes("(y/n)") ||
         trimmed.includes("[y/N]") ||
         trimmed.includes("[Y/n]") ||
-        /^(Allow|Do you want to|Would you like to|Select|Choose|Approve|Permission)/i.test(trimmed);
+        trimmed.includes("enter Confirm") ||
+        /^(Allow|Do you want to|Would you like to|Do you trust|Select|Choose|Approve|Permission)/i.test(trimmed);
 
       // Check if subsequent lines contain structured options like [1], 1., 1)
       let lookaheadHasOptions = false;
@@ -232,12 +233,29 @@ export class CardClassifier {
         // Separate possible command block from options
         for (const optLine of optionLines) {
           const match = optLine.match(/^(\[?\d+\]?|\(?\d+\)?|[1-9]\.)[.\s:]+(.+)$/);
+          const matchArrow = optLine.match(/^[>*\-]\s*(.+)$/);
           if (match) {
             const num = match[1].replace(/\D/g, "");
             options.push({
               id: `opt_${num}`,
               label: match[2].trim(),
               keyShortcut: num,
+            });
+          } else if (matchArrow) {
+            const optLabel = matchArrow[1].trim();
+            const optNum = options.length + 1;
+            options.push({
+              id: `opt_${optNum}`,
+              label: optLabel,
+              keyShortcut: "enter",
+            });
+          } else if (/^(Yes|No)\b/i.test(optLine.trim())) {
+            const optNum = options.length + 1;
+            const isYes = optLine.toLowerCase().startsWith("yes");
+            options.push({
+              id: `opt_${optNum}`,
+              label: optLine.trim(),
+              keyShortcut: isYes ? "enter" : "ctrl+c",
             });
           } else if (!cmdPayload && !optLine.startsWith("[")) {
             cmdPayload = optLine;

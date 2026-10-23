@@ -20,7 +20,12 @@
       html, body, #root {
         height: 100%;
         width: 100%;
-        overflow: hidden;
+        max-width: 100vw;
+        overflow-x: hidden;
+        overflow-y: hidden;
+        touch-action: pan-y;
+        overscroll-behavior-x: none;
+        -webkit-overflow-scrolling: touch;
         font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
       }
       /* Ensure minimum 44px touch target rule */

@@ -51,9 +51,13 @@ export const MacroDock: Component = () => {
 
   const handleSend = () => {
     const text = inputText().trim();
-    if (!text) return;
-    sendPrompt(text);
-    setInputText("");
+    if (text) {
+      sendPrompt(text);
+      setInputText("");
+    } else {
+      // Empty input: Send button acts as instant Enter confirmation
+      sendKeys(["enter"]);
+    }
   };
 
   const handleKeyDown = (e: KeyboardEvent) => {
@@ -190,36 +194,58 @@ export const MacroDock: Component = () => {
         />
 
         <button
-          aria-label="发送"
+          aria-label={inputText().trim() ? "发送消息并回车" : "发送回车确认 (Enter)"}
           class="touch-target"
           onClick={handleSend}
+          title={inputText().trim() ? "发送并回车" : "回车 (Enter)"}
           style={{
             width: "44px",
             height: "44px",
             "flex-shrink": 0,
             "border-radius": "12px",
             border: 0,
-            background: "var(--accent)",
-            color: "var(--onaccent)",
+            background: inputText().trim() ? "var(--accent)" : "var(--sel)",
+            color: inputText().trim() ? "var(--onaccent)" : "var(--accent)",
             display: "flex",
             "align-items": "center",
             "justify-content": "center",
             cursor: "pointer",
+            transition: "all 0.15s ease",
           }}
         >
-          <svg
-            width="20"
-            height="20"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            stroke-width="2.2"
-            stroke-linecap="round"
-            stroke-linejoin="round"
-            aria-hidden="true"
+          <Show
+            when={inputText().trim().length > 0}
+            fallback={
+              <svg
+                width="20"
+                height="20"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2.2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                aria-hidden="true"
+              >
+                <polyline points="9 10 4 15 9 20" />
+                <path d="M20 4v7a4 4 0 0 1-4 4H4" />
+              </svg>
+            }
           >
-            <path d="M12 19V5M5 12l7-7 7 7" />
-          </svg>
+            <svg
+              width="20"
+              height="20"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2.2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+            >
+              <path d="M12 19V5M5 12l7-7 7 7" />
+            </svg>
+          </Show>
         </button>
       </div>
     </div>

@@ -499,7 +499,8 @@ export class HerdrClient extends EventEmitter {
   }
 
   public async sendInput(paneId: string, text: string): Promise<void> {
-    await this.request("pane.send_text", { pane_id: paneId, text: text.endsWith("\n") ? text : text + "\n" });
+    await this.request("pane.send_text", { pane_id: paneId, text });
+    await this.request("pane.send_keys", { pane_id: paneId, keys: ["enter"] });
     this.scheduleDebouncedRead(paneId);
   }
 

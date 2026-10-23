@@ -302,6 +302,7 @@ export class WsServer extends EventEmitter {
         }
 
         // Find shortcut or key for the chosen option
+        let shortcut = "";
         let keyToSend = "\n";
         if (optionId) {
           const opt = pending.options?.find((o) => o.id === optionId);
@@ -314,11 +315,18 @@ export class WsServer extends EventEmitter {
             );
             return;
           }
+          shortcut = opt.keyShortcut || "";
           keyToSend = (opt.keyShortcut || opt.label) + "\n";
         }
 
         try {
-          await this.herdrClient.sendInput(target, keyToSend);
+          if (shortcut === "enter") {
+            await this.herdrClient.sendKeys(target, ["enter"]);
+          } else if (shortcut === "ctrl+c") {
+            await this.herdrClient.sendKeys(target, ["ctrl+c"]);
+          } else {
+            await this.herdrClient.sendInput(target, keyToSend);
+          }
           state.pendingInteraction = null;
           this.sendAck(ws, msg.id);
         } catch (err: any) {
