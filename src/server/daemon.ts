@@ -366,6 +366,20 @@ export class PigeonDaemon {
           });
         }
 
+        // Review showcase page with all screenshots in one place
+        if (url.pathname === "/review" || url.pathname === "/review.html") {
+          const reviewPath = "/home/fangwang/.gemini/antigravity-cli/brain/7a55b02f-037e-4bec-b354-a0963f7e8434/review.html";
+          const reviewFile = Bun.file(reviewPath);
+          if (await reviewFile.exists()) {
+            return new Response(reviewFile, {
+              headers: {
+                "Content-Type": "text/html; charset=utf-8",
+                "Cache-Control": "no-cache",
+              },
+            });
+          }
+        }
+
         // Serve PWA SPA html
         return new Response(self.resolveHtml(), {
           headers: {

@@ -40,7 +40,7 @@ export const Header: Component = () => {
     return p.id.includes(":") ? p.id.split(":").pop()! : p.id;
   };
 
-  const resolveTabLabel = (t: { id: string; label: string; panes?: any[] }) => {
+  const resolveTabLabel = (t: { id: string; label: string; panes?: any[] }, index?: () => number) => {
     const raw = (t.label || "").trim();
     if (raw && !/^\d+$/.test(raw) && !raw.startsWith("Tab ")) return raw;
     const p = t.panes?.[0];
@@ -50,7 +50,8 @@ export const Header: Component = () => {
       if (p.agent === "claude") return "Claude Code";
       if (p.name && !p.name.includes(":p")) return p.name;
     }
-    return raw || `Tab ${t.id.split(":").pop() || 1}`;
+    const idx = index ? index() + 1 : 1;
+    return `${idx}`;
   };
 
   return (
@@ -99,28 +100,40 @@ export const Header: Component = () => {
           </svg>
         </button>
 
-        <div style={{ flex: 1, "min-width": 0, display: "flex", "flex-direction": "column", gap: "1px" }}>
-          <div
+        <div
+          style={{
+            flex: 1,
+            "min-width": 0,
+            display: "flex",
+            "align-items": "baseline",
+            gap: "8px",
+            overflow: "hidden",
+            "white-space": "nowrap",
+          }}
+        >
+          <span
             style={{
-              "font-size": "15px",
-              "font-weight": 650,
-              "line-height": "19px",
+              "font-size": "18px",
+              "font-weight": 750,
+              "letter-spacing": "-0.3px",
+              color: "var(--fg)",
               overflow: "hidden",
               "text-overflow": "ellipsis",
               "white-space": "nowrap",
+              "flex-shrink": 0,
             }}
           >
             {ws()?.label || "Pigeon"}
-          </div>
+          </span>
           <div
             style={{
-              "font-size": "11px",
-              "line-height": "14px",
+              "font-size": "11.5px",
               color: "var(--muted)",
               display: "flex",
               "align-items": "center",
-              gap: "5px",
+              gap: "4px",
               overflow: "hidden",
+              "text-overflow": "ellipsis",
               "white-space": "nowrap",
             }}
           >
@@ -241,15 +254,16 @@ export const Header: Component = () => {
           "flex-shrink": 0,
           display: "flex",
           "align-items": "center",
-          gap: "6px",
+          gap: "4px",
           padding: "0 10px",
           "border-bottom": "1px solid var(--line)",
           "overflow-x": "auto",
           "scrollbar-width": "none",
+          "-webkit-overflow-scrolling": "touch",
         }}
       >
         <For each={ws()?.tabs || []}>
-          {(t) => {
+          {(t, i) => {
             const isTabActive = () => (state.activeTabId ? t.id === state.activeTabId : false);
             const hasBlocked = () => t.panes?.some((p) => p.agentStatus === "blocked");
             const hasWorking = () => t.panes?.some((p) => p.agentStatus === "working");
@@ -261,51 +275,56 @@ export const Header: Component = () => {
             };
 
             return (
-              <button
-                class="touch-target"
-                onClick={() => {
-                  setState("activeTabId", t.id);
-                  const targetPane =
-                    t.panes?.find((p) => p.agentStatus === "working" || p.agentStatus === "blocked") ||
-                    t.panes?.[0];
-                  if (targetPane?.id) {
-                    selectPane(targetPane.id, state.activeWorkspaceId || undefined, t.id);
-                  }
-                }}
-                style={{
-                  height: "34px",
-                  padding: "0 11px",
-                  "border-radius": "9px",
-                  border: isTabActive()
-                    ? hasBlocked()
-                      ? "1px solid var(--warnb)"
-                      : "1px solid var(--selb)"
-                    : "1px solid transparent",
-                  background: isTabActive()
-                    ? hasBlocked()
-                      ? "var(--warnbg)"
-                      : "var(--sel)"
-                    : "transparent",
-                  color: isTabActive() ? "var(--fg)" : "var(--muted)",
-                  "font-size": "12.5px",
-                  "font-weight": isTabActive() ? 600 : 500,
-                  display: "flex",
-                  "align-items": "center",
-                  gap: "5px",
-                  "white-space": "nowrap",
-                  cursor: "pointer",
-                }}
-              >
-                <span
-                  style={{
-                    width: "6px",
-                    height: "6px",
-                    "border-radius": "3px",
-                    background: tabDotColor(),
+              <div style={{ display: "flex", "align-items": "center", gap: "4px", "flex-shrink": 0 }}>
+                <Show when={i() > 0}>
+                  <div style={{ width: "1px", height: "16px", background: "var(--line)", "flex-shrink": 0, margin: "0 2px" }} />
+                </Show>
+                <button
+                  class="touch-target"
+                  onClick={() => {
+                    setState("activeTabId", t.id);
+                    const targetPane =
+                      t.panes?.find((p) => p.agentStatus === "working" || p.agentStatus === "blocked") ||
+                      t.panes?.[0];
+                    if (targetPane?.id) {
+                      selectPane(targetPane.id, state.activeWorkspaceId || undefined, t.id);
+                    }
                   }}
-                />
-                {resolveTabLabel(t)}
-              </button>
+                  style={{
+                    height: "34px",
+                    padding: "0 11px",
+                    "border-radius": "9px",
+                    border: isTabActive()
+                      ? hasBlocked()
+                        ? "1.5px solid var(--warnb)"
+                        : "1.5px solid var(--selb)"
+                      : "1.5px solid transparent",
+                    background: isTabActive()
+                      ? hasBlocked()
+                        ? "var(--warnbg)"
+                        : "var(--sel)"
+                      : "transparent",
+                    color: isTabActive() ? "var(--fg)" : "var(--muted)",
+                    "font-size": "12.5px",
+                    "font-weight": isTabActive() ? 650 : 500,
+                    display: "flex",
+                    "align-items": "center",
+                    gap: "5px",
+                    "white-space": "nowrap",
+                    cursor: "pointer",
+                  }}
+                >
+                  <span
+                    style={{
+                      width: "6px",
+                      height: "6px",
+                      "border-radius": "3px",
+                      background: tabDotColor(),
+                    }}
+                  />
+                  {resolveTabLabel(t, i)}
+                </button>
+              </div>
             );
           }}
         </For>
@@ -317,15 +336,19 @@ export const Header: Component = () => {
           style={{
             width: "36px",
             height: "36px",
+            "min-width": "36px",
+            "min-height": "36px",
             "flex-shrink": 0,
-            "border-radius": "8px",
-            border: "1px dashed var(--border2)",
-            background: "transparent",
-            color: "var(--muted)",
+            "border-radius": "9px",
+            border: "1.5px solid var(--border)",
+            background: "var(--surface)",
+            color: "var(--fg)",
             display: "flex",
             "align-items": "center",
             "justify-content": "center",
             cursor: "pointer",
+            "box-shadow": "0 1px 3px rgba(0, 0, 0, 0.2)",
+            "box-sizing": "border-box",
           }}
         >
           <svg
@@ -343,55 +366,62 @@ export const Header: Component = () => {
         </button>
       </nav>
 
-      {/* Sub-pane chips if split panes in current tab */}
+      {/* Sub-pane chips (Panel index row) if multiple panels in current tab */}
       <Show when={subPanes().length > 1}>
         <div
           style={{
-            height: "44px",
+            height: "40px",
             "flex-shrink": 0,
             display: "flex",
             "align-items": "center",
-            gap: "6px",
+            gap: "4px",
             padding: "0 10px",
-            background: "var(--inset)",
+            background: "var(--bg)",
             "border-bottom": "1px solid var(--line)",
             "overflow-x": "auto",
             "scrollbar-width": "none",
+            "-webkit-overflow-scrolling": "touch",
           }}
         >
           <For each={subPanes()}>
-            {(p) => {
+            {(p, i) => {
               const isSelected = () => state.activePaneId === p.id;
               return (
-                <button
-                  class="touch-target"
-                  onClick={() => selectPane(p.id)}
-                  style={{
-                    height: "28px",
-                    padding: "0 10px",
-                    "border-radius": "14px",
-                    border: isSelected() ? "1px solid var(--accent)" : "1px solid var(--border)",
-                    background: isSelected() ? "var(--accentbg)" : "var(--surface)",
-                    color: isSelected() ? "var(--accent)" : "var(--muted)",
-                    "font-size": "12px",
-                    "font-weight": isSelected() ? 600 : 500,
-                    display: "flex",
-                    "align-items": "center",
-                    gap: "5px",
-                    cursor: "pointer",
-                    "white-space": "nowrap",
-                  }}
-                >
-                  <span
+                <div style={{ display: "flex", "align-items": "center", gap: "4px", "flex-shrink": 0 }}>
+                  <Show when={i() > 0}>
+                    <div style={{ width: "1px", height: "16px", background: "var(--line)", "flex-shrink": 0, margin: "0 2px" }} />
+                  </Show>
+                  <button
+                    class="touch-target"
+                    onClick={() => selectPane(p.id)}
                     style={{
-                      width: "6px",
-                      height: "6px",
-                      "border-radius": "3px",
-                      background: getStatusDotColor(p.agentStatus),
+                      height: "28px",
+                      padding: "0 11px",
+                      "border-radius": "8px",
+                      border: isSelected() ? "1.5px solid var(--accent)" : "1.5px solid var(--border)",
+                      background: isSelected() ? "var(--sel)" : "var(--surface)",
+                      color: isSelected() ? "var(--accent)" : "var(--muted)",
+                      "font-size": "12px",
+                      "font-weight": isSelected() ? 650 : 500,
+                      display: "flex",
+                      "align-items": "center",
+                      gap: "5px",
+                      cursor: "pointer",
+                      "white-space": "nowrap",
+                      "box-shadow": "0 1px 2px rgba(0, 0, 0, 0.12)",
                     }}
-                  />
-                  {paneLabel(p)}
-                </button>
+                  >
+                    <span
+                      style={{
+                        width: "6px",
+                        height: "6px",
+                        "border-radius": "3px",
+                        background: getStatusDotColor(p.agentStatus),
+                      }}
+                    />
+                    {`Panel ${i() + 1}`}
+                  </button>
+                </div>
               );
             }}
           </For>

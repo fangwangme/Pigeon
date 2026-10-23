@@ -339,14 +339,43 @@ export const CardFeed: Component = () => {
 
   // Summarized conversation topic
   const conversationTopic = createMemo(() => {
+    const isGeneric = (s?: string) => {
+      if (!s) return true;
+      const lower = s.trim().toLowerCase();
+      return (
+        lower === "agy" ||
+        lower === "opencode" ||
+        lower === "claude" ||
+        lower === "terminal" ||
+        lower === "bash" ||
+        lower === "zsh" ||
+        lower === "sh" ||
+        lower === "agent" ||
+        lower.startsWith("tab ") ||
+        /^[a-z0-9]+:p\d+$/i.test(lower)
+      );
+    };
+
     const paneId = state.activePaneId;
     const currentAgent = state.workingAgents?.find((a) => a.paneId === paneId);
-    if (currentAgent?.summary) return currentAgent.summary;
-    if (state.normalizedTurns && state.normalizedTurns.length > 0) {
-      const text = state.normalizedTurns[0].userPrompt?.text?.trim() || "";
-      if (text) return text.length > 28 ? text.slice(0, 28) + "…" : text;
+    if (currentAgent?.summary && !isGeneric(currentAgent.summary)) {
+      const s = currentAgent.summary.trim();
+      return s.length > 28 ? s.slice(0, 28) + "…" : s;
     }
-    return tab()?.label || agentBadgeInfo().name || "会话";
+
+    if (state.normalizedTurns && state.normalizedTurns.length > 0) {
+      for (const t of state.normalizedTurns) {
+        const text = t.userPrompt?.text?.trim() || "";
+        if (text && !isGeneric(text)) {
+          return text.length > 28 ? text.slice(0, 28) + "…" : text;
+        }
+      }
+    }
+
+    const tabLabel = (tab()?.label || "").trim();
+    if (tabLabel && !isGeneric(tabLabel)) return tabLabel;
+
+    return "会话";
   });
 
   return (
@@ -375,7 +404,7 @@ export const CardFeed: Component = () => {
         color: "var(--fg)",
       }}
     >
-      {/* 1. Streamlined Single-Row Session Bar (Compact 30px: Beacon + Model · Topic + Options menu) */}
+      {/* 1. Streamlined Session Bar (Model Badge + Dot + Summarized Topic + Options menu) */}
       <section
         aria-label="当前会话信息"
         style={{
@@ -384,98 +413,105 @@ export const CardFeed: Component = () => {
           "align-items": "center",
           "justify-content": "space-between",
           gap: "8px",
-          padding: "0 10px",
+          padding: "6px 10px",
           background: "var(--surface)",
-          border: "1px solid var(--border)",
+          border: "1.5px solid var(--border)",
           "border-radius": "9px",
-          height: "30px",
-          "min-height": "30px",
+          "min-height": "42px",
           "max-width": "100%",
           "box-sizing": "border-box",
+          "box-shadow": "0 1px 3px rgba(0, 0, 0, 0.12)",
         }}
       >
-        {/* Left: Status beacon + Model badge + Divider + Summarized Topic Title */}
+        {/* Left: Two-line stack (Line 1: Status beacon + Model badge; Line 2: Divider dot + Summarized Topic) */}
         <div
           style={{
             display: "flex",
-            "align-items": "center",
-            gap: "6px",
+            "flex-direction": "column",
+            "justify-content": "center",
+            gap: "3px",
             flex: 1,
             "min-width": 0,
             overflow: "hidden",
-            "white-space": "nowrap",
           }}
         >
-          {/* Status Indicator Animated Beacon */}
-          <div
-            title={`状态: ${getStatusText()}`}
-            style={{
-              position: "relative",
-              display: "flex",
-              "align-items": "center",
-              "justify-content": "center",
-              width: "12px",
-              height: "12px",
-              "flex-shrink": 0,
-            }}
-          >
+          {/* Line 1: Status Beacon + Model Badge */}
+          <div style={{ display: "flex", "align-items": "center", gap: "6px" }}>
+            {/* Status Indicator Animated Beacon */}
             <div
-              class={
-                state.agentStatus === "working"
-                  ? "status-dot-working"
-                  : state.agentStatus === "blocked"
-                  ? "status-dot-blocked"
-                  : ""
-              }
+              title={`状态: ${getStatusText()}`}
               style={{
-                width: "7px",
-                height: "7px",
-                "border-radius": "50%",
-                background: getStatusDotColor(),
-                "flex-shrink": 0,
-              }}
-            />
-          </div>
-
-          {/* Model badge right next to beacon */}
-          <Show when={agentBadgeInfo().model}>
-            <span
-              style={{
-                "font-size": "10.5px",
-                "font-weight": 600,
-                padding: "1px 5px",
-                "border-radius": "4px",
-                background: "var(--accentbg)",
-                color: "var(--accentt)",
-                "font-family": "'JetBrains Mono', ui-monospace, monospace",
-                "white-space": "nowrap",
+                position: "relative",
+                display: "flex",
+                "align-items": "center",
+                "justify-content": "center",
+                width: "12px",
+                height: "12px",
                 "flex-shrink": 0,
               }}
             >
-              {agentBadgeInfo().model}
-            </span>
-            <span style={{ color: "var(--faint)", "font-size": "10px", "flex-shrink": 0 }}>·</span>
-          </Show>
+              <div
+                class={
+                  state.agentStatus === "working"
+                    ? "status-dot-working"
+                    : state.agentStatus === "blocked"
+                    ? "status-dot-blocked"
+                    : ""
+                }
+                style={{
+                  width: "7px",
+                  height: "7px",
+                  "border-radius": "50%",
+                  background: getStatusDotColor(),
+                  "flex-shrink": 0,
+                }}
+              />
+            </div>
 
-          {/* Summarized Topic Title */}
-          <span
+            {/* Model badge with filled background */}
+            <Show when={agentBadgeInfo().model}>
+              <span
+                style={{
+                  "font-size": "11px",
+                  "font-weight": 650,
+                  padding: "1px 6px",
+                  "border-radius": "4px",
+                  background: "var(--accentbg)",
+                  color: "var(--accentt)",
+                  "font-family": "'JetBrains Mono', ui-monospace, monospace",
+                  "white-space": "nowrap",
+                  "flex-shrink": 0,
+                }}
+              >
+                {agentBadgeInfo().model}
+              </span>
+            </Show>
+          </div>
+
+          {/* Line 2: Dot + Summarized Topic Title */}
+          <div
             style={{
+              display: "flex",
+              "align-items": "center",
+              gap: "5px",
               "font-size": "12px",
               "font-weight": 550,
               color: "var(--fg)",
               overflow: "hidden",
               "text-overflow": "ellipsis",
               "white-space": "nowrap",
-              flex: "1 1 auto",
-              "min-width": 0,
+              "line-height": "16px",
             }}
             title={conversationTopic()}
           >
-            {conversationTopic()}
-          </span>
+            <span style={{ color: "var(--faint)", "font-size": "10px", "flex-shrink": 0 }}>·</span>
+            <span style={{ overflow: "hidden", "text-overflow": "ellipsis", "white-space": "nowrap" }}>
+              {conversationTopic()}
+            </span>
+          </div>
         </div>
 
-        {/* Right: Three-dots Session Options button */}
+        {/* Right: Three-dots Session Options button (Physical Button with solid border & shadow) */}
         <div style={{ position: "relative", display: "flex", "align-items": "center", "flex-shrink": 0 }}>
           <button
             class="touch-target"
@@ -483,20 +519,25 @@ export const CardFeed: Component = () => {
             title="会话选项 (查看 Diff / 设置)"
             onClick={() => toggleSessionMenu()}
             style={{
-              height: "22px",
-              width: "26px",
+              height: "30px",
+              width: "34px",
+              "min-height": "30px",
+              "min-width": "34px",
               padding: 0,
-              "border-radius": "6px",
-              border: "1px solid var(--border)",
-              background: state.sessionMenuOpen ? "var(--sel)" : "transparent",
-              color: state.sessionMenuOpen ? "var(--accent)" : "var(--muted)",
+              "border-radius": "8px",
+              border: "1.5px solid var(--border)",
+              background: state.sessionMenuOpen ? "var(--sel)" : "var(--surface)",
+              color: state.sessionMenuOpen ? "var(--accent)" : "var(--fg)",
               display: "flex",
               "align-items": "center",
               "justify-content": "center",
               cursor: "pointer",
+              "box-shadow": "0 1px 3px rgba(0, 0, 0, 0.2)",
+              "box-sizing": "border-box",
+              transition: "all 0.15s ease",
             }}
           >
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor">
               <circle cx="5" cy="12" r="2" />
               <circle cx="12" cy="12" r="2" />
               <circle cx="19" cy="12" r="2" />
@@ -508,7 +549,7 @@ export const CardFeed: Component = () => {
             <div
               style={{
                 position: "absolute",
-                top: "28px",
+                top: "34px",
                 right: 0,
                 "z-index": 60,
                 background: "var(--surface)",

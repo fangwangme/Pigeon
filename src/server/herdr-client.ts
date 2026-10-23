@@ -344,7 +344,7 @@ export class HerdrClient extends EventEmitter {
                   if (lastCard.kind === "tool_call") summary = `运行 ${lastCard.command}`;
                   else if (lastCard.kind === "thought") summary = lastCard.title || "正在思考";
                   else if (lastCard.kind === "markdown") summary = lastCard.content.slice(0, 40);
-                } else if (ag?.terminal_title) {
+                } else if (ag?.terminal_title && !["agy", "bash", "sh", "zsh", "opencode", "claude", "agent"].includes(ag.terminal_title.toLowerCase().trim())) {
                   summary = ag.terminal_title;
                 }
 
