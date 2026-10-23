@@ -655,7 +655,8 @@ export class HerdrClient extends EventEmitter {
   }
 
   public async createTabAndAgent(workspaceId: string, agentKind: string, cwd?: string): Promise<any> {
-    if (!this.validateAgentName(agentKind)) {
+    const isTerminal = agentKind === "terminal" || agentKind === "shell";
+    if (!isTerminal && !this.validateAgentName(agentKind)) {
       throw new Error(`Invalid agent name '${agentKind}'. Must match [a-z][a-z0-9_-]{0,31}`);
     }
 
@@ -667,7 +668,7 @@ export class HerdrClient extends EventEmitter {
     const tabId = tabRes?.tab?.tab_id || tabRes?.tab_id || tabRes?.id;
     const rootPaneId = tabRes?.root_pane?.pane_id || tabRes?.pane_id || tabRes?.root_pane_id;
 
-    if (rootPaneId) {
+    if (rootPaneId && !isTerminal) {
       const hex4 = Math.random().toString(16).substring(2, 6);
       const name = `p-${agentKind}-${hex4}`;
       await this.request("agent.start", {

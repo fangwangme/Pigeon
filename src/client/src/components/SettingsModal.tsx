@@ -6,6 +6,7 @@ import {
   setPaletteTheme,
   setDisplayDensity,
   setShowScrollControls,
+  setShowMacroDock,
   setState,
   type MacroItem,
 } from "../state/store";
@@ -58,10 +59,16 @@ export const SettingsModal: Component = () => {
     sendConfigPatch({ showScrollControls: next });
   };
 
+  const handleToggleMacroDock = () => {
+    const next = !state.showMacroDock;
+    setShowMacroDock(next);
+    sendConfigPatch({ showMacroDock: next });
+  };
+
   const DEFAULT_MACROS: MacroItem[] = [
     { id: "m_model", name: "模型", type: "key", payload: "model" },
-    { id: "m_continue", name: "Continue", type: "text", payload: "continue" },
-    { id: "m_ctrlc", name: "Ctrl+C", type: "key", payload: "ctrl+c" },
+    { id: "m_continue", name: "继续", type: "text", payload: "continue" },
+    { id: "m_ctrlc", name: "终止", type: "key", payload: "ctrl+c" },
     { id: "m_enter", name: "Enter", type: "key", payload: "enter" },
     { id: "m_tab", name: "Tab", type: "key", payload: "tab" },
   ];
@@ -474,6 +481,44 @@ export const SettingsModal: Component = () => {
           {/* TAB 2: 快捷操作栏 (Macros) */}
           <Show when={state.settingsTab === "macros"}>
             <section style={{ display: "flex", "flex-direction": "column", gap: "16px" }}>
+              {/* Show / Hide Macro Dock Switch */}
+              <div
+                style={{
+                  display: "flex",
+                  "align-items": "center",
+                  "justify-content": "space-between",
+                  padding: "12px 14px",
+                  background: "var(--surface)",
+                  border: "1px solid var(--border)",
+                  "border-radius": "10px",
+                }}
+              >
+                <div>
+                  <div style={{ "font-size": "13.5px", "font-weight": 600 }}>显示底部快捷操作栏</div>
+                  <div style={{ "font-size": "11.5px", color: "var(--muted)", "margin-top": "2px" }}>
+                    {state.showMacroDock ? "已显示快捷键栏（模型 / 继续 / 终止）" : "已隐藏快捷键栏（仅保留输入框，扩大阅读视野）"}
+                  </div>
+                </div>
+                <button
+                  class="touch-target"
+                  onClick={handleToggleMacroDock}
+                  style={{
+                    height: "36px",
+                    padding: "0 14px",
+                    "border-radius": "8px",
+                    border: state.showMacroDock ? "1px solid var(--accent)" : "1px solid var(--border)",
+                    background: state.showMacroDock ? "var(--accent)" : "transparent",
+                    color: state.showMacroDock ? "var(--onaccent)" : "var(--muted)",
+                    "font-size": "12.5px",
+                    "font-weight": 600,
+                    cursor: "pointer",
+                    transition: "all 0.15s ease",
+                  }}
+                >
+                  {state.showMacroDock ? "显示" : "隐藏"}
+                </button>
+              </div>
+
               <div style={{ display: "flex", "align-items": "center", "justify-content": "space-between" }}>
                 <div>
                   <h3 style={{ "font-size": "15px", "font-weight": 700, margin: "0 0 4px" }}>快捷键与常用命令</h3>

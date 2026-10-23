@@ -15,6 +15,7 @@ export const NewTabModal: Component = () => {
     { kind: "agy", name: "Antigravity" },
     { kind: "opencode", name: "OpenCode" },
     { kind: "pi", name: "pi" },
+    { kind: "terminal", name: "Terminal 终端" },
   ];
 
   const [selectedKind, setSelectedKind] = createSignal("claude");

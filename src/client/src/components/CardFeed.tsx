@@ -6,6 +6,9 @@ import {
   getActiveWorkspace,
   getActiveTab,
   toggleTerminalSheet,
+  openDiffDrawer,
+  toggleSessionMenu,
+  closeSessionMenu,
 } from "../state/store";
 import { InteractionCard } from "./InteractionCard";
 import { sendPrompt, sendKeys } from "../state/ws";
@@ -334,6 +337,17 @@ export const CardFeed: Component = () => {
     return { name, model };
   });
 
+  // Summarized conversation topic
+  const conversationTopic = createMemo(() => {
+    const agent = activeAgent();
+    if (agent?.summary) return agent.summary;
+    if (state.normalizedTurns.length > 0) {
+      const text = state.normalizedTurns[0].userPrompt.text.trim();
+      return text.length > 28 ? text.slice(0, 28) + "…" : text;
+    }
+    return tab()?.label || "会话";
+  });
+
   return (
     <main
       ref={feedContainerRef}
@@ -360,30 +374,31 @@ export const CardFeed: Component = () => {
         color: "var(--fg)",
       }}
     >
-      {/* 1. Ultra-Compact Session Bar: Workspace · Session · Status · Model */}
+      {/* 1. Streamlined Single-Row Session Bar (Compact 30px: Beacon + Model · Topic + Options menu) */}
       <section
         aria-label="当前会话信息"
         style={{
-          background: "var(--surface)",
-          border: "1px solid var(--border)",
-          "border-radius": "10px",
-          padding: "7px 10px",
+          position: "relative",
           display: "flex",
           "align-items": "center",
           "justify-content": "space-between",
           gap: "8px",
-          "box-shadow": "0 1px 2px rgba(0, 0, 0, 0.04)",
-          "min-height": "36px",
+          padding: "0 10px",
+          background: "var(--surface)",
+          border: "1px solid var(--border)",
+          "border-radius": "9px",
+          height: "30px",
+          "min-height": "30px",
           "max-width": "100%",
           "box-sizing": "border-box",
         }}
       >
-        {/* Left: Status beacon + Flexible Session Title */}
+        {/* Left: Status beacon + Model badge + Divider + Summarized Topic Title */}
         <div
           style={{
             display: "flex",
             "align-items": "center",
-            gap: "8px",
+            gap: "6px",
             flex: 1,
             "min-width": 0,
             overflow: "hidden",
@@ -412,8 +427,8 @@ export const CardFeed: Component = () => {
                   : ""
               }
               style={{
-                width: "7.5px",
-                height: "7.5px",
+                width: "7px",
+                height: "7px",
                 "border-radius": "50%",
                 background: getStatusDotColor(),
                 "flex-shrink": 0,
@@ -421,11 +436,31 @@ export const CardFeed: Component = () => {
             />
           </div>
 
-          {/* Flexible Session Title (No redundant workspace prefix, auto stretch) */}
+          {/* Model badge right next to beacon */}
+          <Show when={agentBadgeInfo().model}>
+            <span
+              style={{
+                "font-size": "10.5px",
+                "font-weight": 600,
+                padding: "1px 5px",
+                "border-radius": "4px",
+                background: "var(--accentbg)",
+                color: "var(--accentt)",
+                "font-family": "'JetBrains Mono', ui-monospace, monospace",
+                "white-space": "nowrap",
+                "flex-shrink": 0,
+              }}
+            >
+              {agentBadgeInfo().model}
+            </span>
+            <span style={{ color: "var(--faint)", "font-size": "10px", "flex-shrink": 0 }}>·</span>
+          </Show>
+
+          {/* Summarized Topic Title */}
           <span
             style={{
-              "font-size": "13px",
-              "font-weight": 650,
+              "font-size": "12px",
+              "font-weight": 550,
               color: "var(--fg)",
               overflow: "hidden",
               "text-overflow": "ellipsis",
@@ -433,31 +468,128 @@ export const CardFeed: Component = () => {
               flex: "1 1 auto",
               "min-width": 0,
             }}
-            title={tab()?.label || agentBadgeInfo().name}
+            title={conversationTopic()}
           >
-            {tab()?.label || agentBadgeInfo().name}
+            {conversationTopic()}
           </span>
         </div>
 
-        {/* Right: Model badge */}
-        <Show when={agentBadgeInfo().model}>
-          <div style={{ display: "flex", "align-items": "center", "flex-shrink": 0 }}>
-            <span
+        {/* Right: Three-dots Session Options button */}
+        <div style={{ position: "relative", display: "flex", "align-items": "center", "flex-shrink": 0 }}>
+          <button
+            class="touch-target"
+            aria-label="会话操作选项"
+            title="会话选项 (查看 Diff / 设置)"
+            onClick={() => toggleSessionMenu()}
+            style={{
+              height: "22px",
+              width: "26px",
+              padding: 0,
+              "border-radius": "6px",
+              border: "1px solid var(--border)",
+              background: state.sessionMenuOpen ? "var(--sel)" : "transparent",
+              color: state.sessionMenuOpen ? "var(--accent)" : "var(--muted)",
+              display: "flex",
+              "align-items": "center",
+              "justify-content": "center",
+              cursor: "pointer",
+            }}
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+              <circle cx="5" cy="12" r="2" />
+              <circle cx="12" cy="12" r="2" />
+              <circle cx="19" cy="12" r="2" />
+            </svg>
+          </button>
+
+          {/* Options Popover Menu */}
+          <Show when={state.sessionMenuOpen}>
+            <div
               style={{
-                "font-size": "10.5px",
-                "font-weight": 600,
-                padding: "2px 6px",
-                "border-radius": "5px",
-                background: "var(--accentbg)",
-                color: "var(--accentt)",
-                "font-family": "'JetBrains Mono', ui-monospace, monospace",
-                "white-space": "nowrap",
+                position: "absolute",
+                top: "28px",
+                right: 0,
+                "z-index": 60,
+                background: "var(--surface)",
+                border: "1px solid var(--border)",
+                "border-radius": "10px",
+                padding: "4px",
+                "box-shadow": "0 4px 16px rgba(0, 0, 0, 0.3)",
+                display: "flex",
+                "flex-direction": "column",
+                gap: "2px",
+                "min-width": "150px",
               }}
             >
-              {agentBadgeInfo().model}
-            </span>
-          </div>
-        </Show>
+              <button
+                class="touch-target"
+                onClick={() => {
+                  closeSessionMenu();
+                  openDiffDrawer();
+                }}
+                style={{
+                  height: "32px",
+                  padding: "0 8px",
+                  border: 0,
+                  background: "transparent",
+                  color: "var(--fg)",
+                  "font-size": "12px",
+                  "font-weight": 550,
+                  display: "flex",
+                  "align-items": "center",
+                  gap: "6px",
+                  "border-radius": "6px",
+                  cursor: "pointer",
+                  "text-align": "left",
+                  width: "100%",
+                }}
+              >
+                <span>📝</span>
+                <span>查看代码 Diff</span>
+                <Show when={state.sessionStats && state.sessionStats.filesModified > 0}>
+                  <span
+                    style={{
+                      "margin-left": "auto",
+                      "font-size": "10px",
+                      color: "var(--accent)",
+                      background: "var(--accentbg)",
+                      padding: "1px 5px",
+                      "border-radius": "4px",
+                    }}
+                  >
+                    {state.sessionStats!.filesModified}
+                  </span>
+                </Show>
+              </button>
+
+              <button
+                class="touch-target"
+                onClick={() => {
+                  closeSessionMenu();
+                  setState("settingsModalOpen", true);
+                }}
+                style={{
+                  height: "32px",
+                  padding: "0 8px",
+                  border: 0,
+                  background: "transparent",
+                  color: "var(--muted)",
+                  "font-size": "12px",
+                  display: "flex",
+                  "align-items": "center",
+                  gap: "6px",
+                  "border-radius": "6px",
+                  cursor: "pointer",
+                  "text-align": "left",
+                  width: "100%",
+                }}
+              >
+                <span>⚙️</span>
+                <span>偏好与显示设置</span>
+              </button>
+            </div>
+          </Show>
+        </div>
       </section>
 
       {/* 2. Prominent Interactive Confirmation Card (当检测到待确认交互时优先置顶展示) */}

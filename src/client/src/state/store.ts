@@ -45,13 +45,15 @@ export interface AppState {
   themeMode: "system" | "light" | "dark";
   displayDensity: "compact" | "aggregated" | "detailed";
   showScrollControls: boolean;
+  showMacroDock: boolean;
+  sessionMenuOpen: boolean;
   macros: MacroItem[];
 }
 
 const DEFAULT_MACROS: MacroItem[] = [
   { id: "m_model", name: "模型", type: "key", payload: "model" },
-  { id: "m_continue", name: "Continue", type: "text", payload: "continue" },
-  { id: "m_ctrlc", name: "Ctrl+C", type: "key", payload: "ctrl+c" },
+  { id: "m_continue", name: "继续", type: "text", payload: "continue" },
+  { id: "m_ctrlc", name: "终止", type: "key", payload: "ctrl+c" },
   { id: "m_enter", name: "Enter", type: "key", payload: "enter" },
   { id: "m_tab", name: "Tab", type: "key", payload: "tab" },
 ];
@@ -92,6 +94,11 @@ const [state, setState] = createStore<AppState>({
     typeof localStorage !== "undefined"
       ? localStorage.getItem("pigeon_scroll_controls") !== "false"
       : true,
+  showMacroDock:
+    typeof localStorage !== "undefined"
+      ? localStorage.getItem("pigeon_show_macro_dock") !== "false"
+      : true,
+  sessionMenuOpen: false,
   macros: DEFAULT_MACROS,
 });
 
@@ -135,6 +142,10 @@ export function applySyncedClientConfig(config: Partial<ClientConfig>): void {
     setState("showScrollControls", config.showScrollControls);
     localStorage.setItem("pigeon_scroll_controls", String(config.showScrollControls));
   }
+  if (config.showMacroDock !== undefined) {
+    setState("showMacroDock", config.showMacroDock);
+    localStorage.setItem("pigeon_show_macro_dock", String(config.showMacroDock));
+  }
   if (Array.isArray(config.macros)) {
     setState("macros", config.macros);
   }
@@ -148,6 +159,19 @@ export function setDisplayDensity(density: "compact" | "aggregated" | "detailed"
 export function setShowScrollControls(show: boolean) {
   setState("showScrollControls", show);
   localStorage.setItem("pigeon_scroll_controls", String(show));
+}
+
+export function setShowMacroDock(show: boolean) {
+  setState("showMacroDock", show);
+  localStorage.setItem("pigeon_show_macro_dock", String(show));
+}
+
+export function toggleSessionMenu() {
+  setState("sessionMenuOpen", (open) => !open);
+}
+
+export function closeSessionMenu() {
+  setState("sessionMenuOpen", false);
 }
 
 export function toggleDrawer() {

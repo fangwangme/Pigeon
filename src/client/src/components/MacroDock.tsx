@@ -28,13 +28,18 @@ export const MacroDock: Component = () => {
   };
 
   const handleMacroClick = (macro: { id: string; name: string; type: "text" | "key"; payload: string }) => {
-    if (macro.name === "Ctrl+C" || macro.payload === "ctrl+c") {
+    if (macro.name === "Ctrl+C" || macro.name === "终止" || macro.name === "Stop" || macro.payload === "ctrl+c") {
       handleCtrlC();
       return;
     }
 
-    if (macro.name === "模型" || macro.payload === "model") {
+    if (macro.name === "模型" || macro.name === "Model" || macro.payload === "model") {
       sendPrompt("/model");
+      return;
+    }
+
+    if (macro.name === "继续" || macro.name === "Continue" || macro.payload === "continue") {
+      sendPrompt("continue");
       return;
     }
 
@@ -68,7 +73,12 @@ export const MacroDock: Component = () => {
   const overflowMacros = () => state.macros.slice(3);
 
   const renderMacroButton = (macro: { id: string; name: string; type: "text" | "key"; payload: string }) => {
-    const isCtrlC = () => macro.name === "Ctrl+C" || macro.payload === "ctrl+c";
+    const isCtrlC = () =>
+      macro.name === "Ctrl+C" ||
+      macro.name === "终止" ||
+      macro.name === "Stop" ||
+      macro.payload === "ctrl+c";
+    // Safeguard: Confirm Ctrl+C window of 800ms
     const isConfirming = () => isCtrlC() && ctrlCConfirm();
 
     return (
@@ -77,8 +87,9 @@ export const MacroDock: Component = () => {
         onClick={() => handleMacroClick(macro)}
         style={{
           height: `${CHIP_HEIGHT}px`,
-          padding: "0 11px",
-          "flex-shrink": 0,
+          padding: "0 6px",
+          flex: 1,
+          "min-width": 0,
           "border-radius": "9px",
           border: isConfirming()
             ? "1px solid var(--delbg)"
@@ -89,13 +100,16 @@ export const MacroDock: Component = () => {
           color: isConfirming() ? "var(--delfg)" : "var(--fg)",
           "font-size": "12px",
           "font-weight": 600,
+          display: "flex",
+          "align-items": "center",
+          "justify-content": "center",
           cursor: "pointer",
           "white-space": "nowrap",
           "box-shadow": "0 1px 3px rgba(0, 0, 0, 0.16)",
           transition: "background 0.15s ease, color 0.15s ease, opacity 0.15s ease, transform 0.15s ease",
         }}
       >
-        {isConfirming() ? "Confirm Ctrl+C" : macro.name}
+        {isConfirming() ? "确认终止" : macro.name}
       </button>
     );
   };
@@ -110,171 +124,173 @@ export const MacroDock: Component = () => {
         padding: "4px 0 0",
       }}
     >
-      {/* Strictly Single-Row Macro Bar with Lateral Slide Drawer */}
-      <div
-        role="toolbar"
-        aria-label="快捷操作栏"
-        style={{
-          position: "relative",
-          height: "40px",
-          display: "flex",
-          "align-items": "center",
-          overflow: "hidden",
-          padding: "0 10px",
-          background: "var(--bg)",
-        }}
-      >
-        {/* Layer 1: Primary Row (Always fits within 1 row) */}
+      {/* Strictly Single-Row Macro Bar with Lateral Slide Drawer (Hideable via settings) */}
+      <Show when={state.showMacroDock !== false}>
         <div
+          role="toolbar"
+          aria-label="快捷操作栏"
           style={{
+            position: "relative",
+            height: "40px",
             display: "flex",
             "align-items": "center",
-            gap: "6px",
-            width: "100%",
-            height: "100%",
-            transition: "transform 0.24s cubic-bezier(0.16, 1, 0.3, 1), opacity 0.2s ease",
-            transform: showMore() ? "translateX(-20%)" : "translateX(0)",
-            opacity: showMore() ? 0 : 1,
-            "pointer-events": showMore() ? "none" : "auto",
-          }}
-        >
-          <For each={primaryMacros()}>{renderMacroButton}</For>
-
-          {/* Last slot in row: More / Overflow trigger (Icon-only 3-dots, no text, clean & internationalized) */}
-          <button
-            class="touch-target macro-more-btn"
-            aria-label="更多操作"
-            title="更多操作"
-            onClick={() => setShowMore(true)}
-            style={{
-              height: `${CHIP_HEIGHT}px`,
-              width: "34px",
-              padding: "0",
-              "flex-shrink": 0,
-              "border-radius": "9px",
-              border: "1px solid var(--border)",
-              background: "var(--surface)",
-              color: "var(--muted)",
-              display: "flex",
-              "align-items": "center",
-              "justify-content": "center",
-              cursor: "pointer",
-              "margin-left": "auto",
-              "box-shadow": "0 1px 3px rgba(0, 0, 0, 0.16)",
-            }}
-          >
-            <svg
-              width="18"
-              height="18"
-              viewBox="0 0 24 24"
-              fill="currentColor"
-              aria-hidden="true"
-              style={{ display: "block" }}
-            >
-              <circle cx="5" cy="12" r="2" />
-              <circle cx="12" cy="12" r="2" />
-              <circle cx="19" cy="12" r="2" />
-            </svg>
-          </button>
-        </div>
-
-        {/* Layer 2: Lateral Slide-Out Tray (Reveals extra macros in the same single row) */}
-        <div
-          style={{
-            position: "absolute",
-            top: 0,
-            left: 0,
-            right: 0,
-            bottom: 0,
-            display: "flex",
-            "align-items": "center",
-            gap: "6px",
+            overflow: "hidden",
             padding: "0 10px",
             background: "var(--bg)",
-            transition: "transform 0.24s cubic-bezier(0.16, 1, 0.3, 1), opacity 0.2s ease",
-            transform: showMore() ? "translateX(0)" : "translateX(100%)",
-            opacity: showMore() ? 1 : 0,
-            "pointer-events": showMore() ? "auto" : "none",
-            "overflow-x": "auto",
-            "scrollbar-width": "none",
-            "-webkit-overflow-scrolling": "touch",
-            "z-index": 5,
           }}
         >
-          {/* Back Button */}
-          <button
-            class="touch-target"
-            aria-label="返回"
-            title="返回主快捷操作"
-            onClick={() => setShowMore(false)}
+          {/* Layer 1: Primary Row (Always fits within 1 row, equal flex distribution) */}
+          <div
             style={{
-              height: `${CHIP_HEIGHT}px`,
-              width: "34px",
-              padding: "0",
-              "flex-shrink": 0,
-              "border-radius": "9px",
-              border: "1px solid var(--border)",
-              background: "var(--surface)",
-              color: "var(--fg)",
               display: "flex",
               "align-items": "center",
-              "justify-content": "center",
-              cursor: "pointer",
-              "box-shadow": "0 1px 3px rgba(0, 0, 0, 0.16)",
+              gap: "6px",
+              width: "100%",
+              height: "100%",
+              transition: "transform 0.24s cubic-bezier(0.16, 1, 0.3, 1), opacity 0.2s ease",
+              transform: showMore() ? "translateX(-20%)" : "translateX(0)",
+              opacity: showMore() ? 0 : 1,
+              "pointer-events": showMore() ? "none" : "auto",
             }}
           >
-            <svg
-              width="16"
-              height="16"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="2.5"
-              stroke-linecap="round"
-              stroke-linejoin="round"
-              aria-hidden="true"
-              style={{ display: "block" }}
+            <For each={primaryMacros()}>{renderMacroButton}</For>
+
+            {/* Last slot in row: More / Overflow trigger (Icon-only 3-dots, no text, clean & internationalized) */}
+            <button
+              class="touch-target macro-more-btn"
+              aria-label="更多操作"
+              title="更多操作"
+              onClick={() => setShowMore(true)}
+              style={{
+                height: `${CHIP_HEIGHT}px`,
+                width: "34px",
+                padding: "0",
+                "flex-shrink": 0,
+                "border-radius": "9px",
+                border: "1px solid var(--border)",
+                background: "var(--surface)",
+                color: "var(--muted)",
+                display: "flex",
+                "align-items": "center",
+                "justify-content": "center",
+                cursor: "pointer",
+                "margin-left": "2px",
+                "box-shadow": "0 1px 3px rgba(0, 0, 0, 0.16)",
+              }}
             >
-              <path d="M15 18l-6-6 6-6" />
-            </svg>
-          </button>
+              <svg
+                width="18"
+                height="18"
+                viewBox="0 0 24 24"
+                fill="currentColor"
+                aria-hidden="true"
+                style={{ display: "block" }}
+              >
+                <circle cx="5" cy="12" r="2" />
+                <circle cx="12" cy="12" r="2" />
+                <circle cx="19" cy="12" r="2" />
+              </svg>
+            </button>
+          </div>
 
-          {/* Divider */}
-          <div style={{ width: "1px", height: "18px", background: "var(--line)", "flex-shrink": 0, margin: "0 2px" }} />
-
-          {/* Secondary / Overflow Macros */}
-          <For each={overflowMacros()}>{renderMacroButton}</For>
-
-          {/* Manage Settings */}
-          <button
-            class="touch-target"
-            aria-label="管理快捷操作"
-            title="管理快捷操作"
-            onClick={() => openSettingsModal("macros")}
+          {/* Layer 2: Lateral Slide-Out Tray (Reveals extra macros in the same single row) */}
+          <div
             style={{
-              height: `${CHIP_HEIGHT}px`,
-              padding: "0 10px",
-              "flex-shrink": 0,
-              "border-radius": "9px",
-              border: "1px dashed var(--border)",
-              background: "transparent",
-              color: "var(--muted)",
-              "font-size": "12px",
+              position: "absolute",
+              top: 0,
+              left: 0,
+              right: 0,
+              bottom: 0,
               display: "flex",
               "align-items": "center",
-              gap: "4px",
-              cursor: "pointer",
-              "white-space": "nowrap",
+              gap: "6px",
+              padding: "0 10px",
+              background: "var(--bg)",
+              transition: "transform 0.24s cubic-bezier(0.16, 1, 0.3, 1), opacity 0.2s ease",
+              transform: showMore() ? "translateX(0)" : "translateX(100%)",
+              opacity: showMore() ? 1 : 0,
+              "pointer-events": showMore() ? "auto" : "none",
+              "overflow-x": "auto",
+              "scrollbar-width": "none",
+              "-webkit-overflow-scrolling": "touch",
+              "z-index": 5,
             }}
           >
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <circle cx="12" cy="12" r="3" />
-              <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z" />
-            </svg>
-            <span>管理</span>
-          </button>
+            {/* Back Button */}
+            <button
+              class="touch-target"
+              aria-label="返回"
+              title="返回主快捷操作"
+              onClick={() => setShowMore(false)}
+              style={{
+                height: `${CHIP_HEIGHT}px`,
+                width: "34px",
+                padding: "0",
+                "flex-shrink": 0,
+                "border-radius": "9px",
+                border: "1px solid var(--border)",
+                background: "var(--surface)",
+                color: "var(--fg)",
+                display: "flex",
+                "align-items": "center",
+                "justify-content": "center",
+                cursor: "pointer",
+                "box-shadow": "0 1px 3px rgba(0, 0, 0, 0.16)",
+              }}
+            >
+              <svg
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2.5"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                aria-hidden="true"
+                style={{ display: "block" }}
+              >
+                <path d="M15 18l-6-6 6-6" />
+              </svg>
+            </button>
+
+            {/* Divider */}
+            <div style={{ width: "1px", height: "18px", background: "var(--line)", "flex-shrink": 0, margin: "0 2px" }} />
+
+            {/* Secondary / Overflow Macros */}
+            <For each={overflowMacros()}>{renderMacroButton}</For>
+
+            {/* Manage Settings */}
+            <button
+              class="touch-target"
+              aria-label="管理快捷操作"
+              title="管理快捷操作"
+              onClick={() => openSettingsModal("macros")}
+              style={{
+                height: `${CHIP_HEIGHT}px`,
+                padding: "0 10px",
+                "flex-shrink": 0,
+                "border-radius": "9px",
+                border: "1px dashed var(--border)",
+                background: "transparent",
+                color: "var(--muted)",
+                "font-size": "12px",
+                display: "flex",
+                "align-items": "center",
+                gap: "4px",
+                cursor: "pointer",
+                "white-space": "nowrap",
+              }}
+            >
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="12" cy="12" r="3" />
+                <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z" />
+              </svg>
+              <span>管理</span>
+            </button>
+          </div>
         </div>
-      </div>
+      </Show>
 
       {/* Composer Input Area */}
       <div

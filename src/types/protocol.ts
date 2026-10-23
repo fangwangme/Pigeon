@@ -135,6 +135,7 @@ export interface ClientConfig {
   macros: MacroItem[];
   displayDensity?: DisplayDensity;
   showScrollControls?: boolean;
+  showMacroDock?: boolean;
 }
 
 export interface ServerConfig {
