@@ -1,5 +1,5 @@
-import { Component, For, createSignal } from "solid-js";
-import { state, openMacrosModal, getActiveTab } from "../state/store";
+import { Component, For, createSignal, Show } from "solid-js";
+import { state, getActiveTab } from "../state/store";
 import { sendPrompt, sendKeys, respondInteraction } from "../state/ws";
 
 export const MacroDock: Component = () => {
@@ -132,41 +132,6 @@ export const MacroDock: Component = () => {
           "align-items": "flex-end",
         }}
       >
-        <button
-          aria-label="编辑快捷操作栏"
-          class="touch-target"
-          onClick={openMacrosModal}
-          style={{
-            width: "44px",
-            height: "44px",
-            "flex-shrink": 0,
-            "border-radius": "12px",
-            border: "1px solid var(--border)",
-            background: "transparent",
-            color: "var(--muted)",
-            display: "flex",
-            "align-items": "center",
-            "justify-content": "center",
-            cursor: "pointer",
-          }}
-        >
-          <svg
-            width="20"
-            height="20"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            stroke-width="2"
-            stroke-linecap="round"
-            aria-hidden="true"
-          >
-            <path d="M4 6h9M17 6h3M4 12h3M11 12h9M4 18h11M19 18h1" />
-            <circle cx="15" cy="6" r="2" />
-            <circle cx="9" cy="12" r="2" />
-            <circle cx="17" cy="18" r="2" />
-          </svg>
-        </button>
-
         <textarea
           id="pigeon-input"
           aria-label={`发给 ${tab()?.label || "Agent"}`}

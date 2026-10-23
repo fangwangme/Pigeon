@@ -10,6 +10,7 @@ import { MacrosModal } from "./components/MacrosModal";
 import { NewTabModal } from "./components/NewTabModal";
 import { PairingModal } from "./components/PairingModal";
 import { ActiveAgentsModal } from "./components/ActiveAgentsModal";
+import { SettingsModal } from "./components/SettingsModal";
 import { state, setPaletteTheme } from "./state/store";
 import { initWebSocket, checkPairingFromUrlHash } from "./state/ws";
 
@@ -65,6 +66,7 @@ function App() {
       <NewTabModal />
       <PairingModal />
       <ActiveAgentsModal />
+      <SettingsModal />
     </div>
   );
 }

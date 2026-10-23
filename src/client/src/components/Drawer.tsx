@@ -3,9 +3,7 @@ import {
   state,
   setState,
   closeDrawer,
-  openAppearanceModal,
-  openMacrosModal,
-  openPairingModal,
+  openSettingsModal,
 } from "../state/store";
 import { selectPane } from "../state/ws";
 
@@ -410,8 +408,9 @@ export const Drawer: Component = () => {
           }}
         >
           <button
+            aria-label="设置"
             class="touch-target"
-            onClick={openMacrosModal}
+            onClick={() => openSettingsModal("appearance")}
             style={{
               width: "100%",
               height: "48px",
@@ -424,43 +423,7 @@ export const Drawer: Component = () => {
               background: "transparent",
               color: "var(--fg)",
               "font-size": "14px",
-              "text-align": "left",
-              cursor: "pointer",
-            }}
-          >
-            <svg
-              width="20"
-              height="20"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="2"
-              stroke-linecap="round"
-              aria-hidden="true"
-            >
-              <path d="M4 6h9M17 6h3M4 12h3M11 12h9M4 18h11M19 18h1" />
-              <circle cx="15" cy="6" r="2" />
-              <circle cx="9" cy="12" r="2" />
-              <circle cx="17" cy="18" r="2" />
-            </svg>
-            快捷操作栏
-          </button>
-
-          <button
-            class="touch-target"
-            onClick={openAppearanceModal}
-            style={{
-              width: "100%",
-              height: "48px",
-              display: "flex",
-              "align-items": "center",
-              gap: "12px",
-              padding: "0 12px",
-              border: 0,
-              "border-radius": "10px",
-              background: "transparent",
-              color: "var(--fg)",
-              "font-size": "14px",
+              "font-weight": 500,
               "text-align": "left",
               cursor: "pointer",
             }}
@@ -476,45 +439,11 @@ export const Drawer: Component = () => {
               stroke-linejoin="round"
               aria-hidden="true"
             >
-              <circle cx="12" cy="12" r="4" />
-              <path d="M12 2v2M12 20v2M2 12h2M20 12h2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4" />
+              <circle cx="12" cy="12" r="3" />
+              <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z" />
             </svg>
-            外观
-          </button>
-
-          <button
-            class="touch-target"
-            onClick={openPairingModal}
-            style={{
-              width: "100%",
-              height: "48px",
-              display: "flex",
-              "align-items": "center",
-              gap: "12px",
-              padding: "0 12px",
-              border: 0,
-              "border-radius": "10px",
-              background: "transparent",
-              color: "var(--fg)",
-              "font-size": "14px",
-              "text-align": "left",
-              cursor: "pointer",
-            }}
-          >
-            <svg
-              width="20"
-              height="20"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="2"
-              stroke-linecap="round"
-              stroke-linejoin="round"
-              aria-hidden="true"
-            >
-              <path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1" />
-            </svg>
-            连接与配对
+            <span style={{ flex: 1 }}>设置</span>
+            <span style={{ "font-size": "12px", color: "var(--muted)" }}>外观 · 宏 · 配对</span>
           </button>
         </div>
       </aside>

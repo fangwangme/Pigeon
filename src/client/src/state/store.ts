@@ -32,6 +32,8 @@ export interface AppState {
   newTabModalOpen: boolean;
   pairingModalOpen: boolean;
   activeAgentsModalOpen: boolean;
+  settingsModalOpen: boolean;
+  settingsTab: "appearance" | "macros" | "pairing";
   themeId: string;
   themeKey: string;
   themeMode: "system" | "light" | "dark";
@@ -67,6 +69,8 @@ const [state, setState] = createStore<AppState>({
   newTabModalOpen: false,
   pairingModalOpen: false,
   activeAgentsModalOpen: false,
+  settingsModalOpen: false,
+  settingsTab: "appearance",
   themeId: "tokyo-night",
   themeKey: "tokyo-night",
   themeMode: "system",
@@ -126,22 +130,34 @@ export function closeTerminalSheet() {
   setState("terminalSheetOpen", false);
 }
 
-export function openAppearanceModal() {
+export function openSettingsModal(tab: "appearance" | "macros" | "pairing" = "appearance") {
   closeDrawer();
-  setState("appearanceModalOpen", true);
+  setState("settingsTab", tab);
+  setState("settingsModalOpen", true);
+}
+
+export function closeSettingsModal() {
+  setState("settingsModalOpen", false);
+}
+
+export function setSettingsTab(tab: "appearance" | "macros" | "pairing") {
+  setState("settingsTab", tab);
+}
+
+export function openAppearanceModal() {
+  openSettingsModal("appearance");
 }
 
 export function closeAppearanceModal() {
-  setState("appearanceModalOpen", false);
+  closeSettingsModal();
 }
 
 export function openMacrosModal() {
-  closeDrawer();
-  setState("macrosModalOpen", true);
+  openSettingsModal("macros");
 }
 
 export function closeMacrosModal() {
-  setState("macrosModalOpen", false);
+  closeSettingsModal();
 }
 
 export function openNewTabModal() {
@@ -153,12 +169,11 @@ export function closeNewTabModal() {
 }
 
 export function openPairingModal() {
-  closeDrawer();
-  setState("pairingModalOpen", true);
+  openSettingsModal("pairing");
 }
 
 export function closePairingModal() {
-  setState("pairingModalOpen", false);
+  closeSettingsModal();
 }
 
 export function openActiveAgentsModal() {
