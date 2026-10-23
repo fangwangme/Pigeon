@@ -95,6 +95,22 @@ Pigeon daemon listens on an isolated local Unix socket:
 - Path: `$XDG_RUNTIME_DIR/pigeon.sock` (mode `0600`, or fallback `~/.local/state/pigeon/admin.sock`).
 - CLI subcommands (`pigeon pair`, `pigeon devices`, `pigeon devices revoke <id>`, `pigeon status`) talk directly to the running daemon over this socket to query pairing tokens and instantly sever revoked connections.
 
+### 4.7 Configuration Management and Bidirectional Persistence
+Pigeon uses a centralized, structured JSON configuration file to support pre-configured environments and seamless multi-device roaming:
+1. **Standard Storage Path**:
+   - Location: `$XDG_CONFIG_HOME/pigeon/config.json` (defaults to `~/.config/pigeon/config.json`).
+   - If the configuration file does not exist upon daemon startup, Pigeon automatically generates a default `config.json` with standard presets.
+2. **Configuration Namespaces**:
+   - `server`: Daemon-level settings (`port`, `host`, `insecureDev`, `publicBaseUrl`, `herdrSocketPath`, `adminSocketPath`). CLI flags override these values at runtime without mutating the persistent file unless explicitly saved.
+   - `client`: Mobile client preferences (`themeKey`, `themeMode`, `themeId`, `confirmCtrlC`, `defaultView`, `macros`).
+3. **Partial Patch & Deep-Merge Persistence**:
+   - Mobile clients synchronize settings via `config_patch` messages carrying only the modified delta (e.g. `{ "client": { "themeKey": "monokai-pro" } }`).
+   - The daemon performs an atomic deep-merge into its in-memory configuration cache and flushes to disk (debounced by 200ms).
+   - All unmodified configuration fields (including server networking and other client settings) are strictly preserved across sessions and updates.
+4. **Multi-Device State Broadcast**:
+   - Upon successful pairing or connection handshake (`welcome`), the client receives the current `client` configuration via `config_sync` / `welcome.payload.clientConfig`.
+   - When any device updates configuration, the daemon broadcasts `config_updated` to all active sessions, keeping multiple mobile devices in lockstep.
+
 ## 5. Trust Boundaries and Error Semantics
 
 - **Client Inputs (Untrusted)**: Every WebSocket frame and HTTP request received from the mobile client is strictly validated against schemas defined in `src/protocol/`. Malformed payloads are rejected with explicit error codes.

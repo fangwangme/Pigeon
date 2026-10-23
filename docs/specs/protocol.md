@@ -347,7 +347,95 @@ Supplies clean plain-text screen content for the raw terminal fallback sheet:
 }
 ```
 
-## 6. Error Code Registry
+## 6. Configuration Synchronization Protocol
+
+To enable seamless multi-device persistence and pre-installed defaults, Pigeon provides bidirectional configuration synchronization over WebSocket.
+
+### 6.1 Handshake Configuration Delivery (`server -> client`)
+In the `welcome` message payload, the server includes the current `clientConfig`:
+```json
+{
+  "type": "welcome",
+  "replyTo": "msg_001",
+  "payload": {
+    "protocolVersion": "1.0.0",
+    "serverVersion": "0.1.0",
+    "deviceId": "dev_9f8a3b12",
+    "clientConfig": {
+      "themeKey": "tokyo-night",
+      "themeMode": "system",
+      "themeId": "tokyo-night",
+      "confirmCtrlC": true,
+      "defaultView": "cards",
+      "macros": [
+        { "id": "m_model", "name": "模型", "type": "key", "payload": "model" }
+      ]
+    }
+  }
+}
+```
+
+### 6.2 Request Full Configuration (`client -> server`)
+Clients may explicitly query the configuration:
+```json
+{
+  "type": "config_get",
+  "id": "req_cfg_01"
+}
+```
+Server responds with `config_sync`:
+```json
+{
+  "type": "config_sync",
+  "replyTo": "req_cfg_01",
+  "payload": {
+    "version": 1,
+    "client": {
+      "themeKey": "tokyo-night",
+      "themeMode": "system",
+      "themeId": "tokyo-night",
+      "confirmCtrlC": true,
+      "defaultView": "cards",
+      "macros": []
+    }
+  }
+}
+```
+
+### 6.3 Partial Patch Update (`client -> server`)
+When the user alters a setting in the mobile UI (e.g. changes theme or customizes a macro), the client sends a `config_patch` carrying only the modified delta:
+```json
+{
+  "type": "config_patch",
+  "id": "req_cfg_02",
+  "payload": {
+    "client": {
+      "themeKey": "monokai-pro",
+      "themeId": "monokai-pro"
+    }
+  }
+}
+```
+
+### 6.4 Server Patch Acknowledgment and Broadcast
+Upon receiving `config_patch`:
+1. The daemon validates the payload fields and deep-merges them into `config.client`.
+2. The daemon replies with standard `ack`:
+   ```json
+   { "type": "ack", "replyTo": "req_cfg_02" }
+   ```
+3. The daemon asynchronously flushes the merged configuration to `~/.config/pigeon/config.json`.
+4. The daemon broadcasts `config_updated` to all connected clients:
+   ```json
+   {
+     "type": "config_updated",
+     "payload": {
+       "client": { "themeKey": "monokai-pro", "themeId": "monokai-pro" }
+     }
+   }
+   ```
+
+## 7. Error Code Registry
 
 | Error Code | Meaning | Recovery Action |
 | :--- | :--- | :--- |
