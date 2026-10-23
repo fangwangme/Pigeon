@@ -123,13 +123,26 @@ function handleServerMessage(msg: ServerMessage): void {
       setState("workingAgents", snap.workingAgents || []);
 
       if (!state.activeWorkspaceId && snap.workspaces?.length > 0) {
-        const firstWs = snap.workspaces[0];
-        setState("activeWorkspaceId", firstWs.id);
-        if (firstWs.tabs?.length > 0) {
-          const firstTab = firstWs.tabs[0];
-          setState("activeTabId", firstTab.id);
-          if (firstTab.panes?.length > 0) {
-            setState("activePaneId", firstTab.panes[0].id);
+        // Prioritize workspace with active/blocked agents, else first workspace
+        const targetWs =
+          snap.workspaces.find((w) => w.hasWarn || w.hasWorking) || snap.workspaces[0];
+        setState("activeWorkspaceId", targetWs.id);
+
+        const targetTab =
+          targetWs.tabs?.find((t) =>
+            t.panes?.some((p) => p.agentStatus === "working" || p.agentStatus === "blocked")
+          ) ||
+          targetWs.tabs?.find((t) => t.id === targetWs.activeTabId) ||
+          targetWs.tabs?.[0];
+
+        if (targetTab) {
+          setState("activeTabId", targetTab.id);
+          const targetPane =
+            targetTab.panes?.find(
+              (p) => p.agentStatus === "working" || p.agentStatus === "blocked"
+            ) || targetTab.panes?.[0];
+          if (targetPane?.id) {
+            selectPane(targetPane.id);
           }
         }
       }

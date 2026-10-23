@@ -41,9 +41,14 @@ export class CardClassifier {
         continue;
       }
 
-      // 1. Tool Call: Line starting with "$ " or "❯ " or "> "
-      if (trimmed.startsWith("$ ") || trimmed.startsWith("❯ ")) {
-        const cmd = trimmed.replace(/^(\$|❯)\s+/, "");
+      // 1. Tool Call: Line starting with "$ " or "❯ " or "● " or "○ "
+      if (
+        trimmed.startsWith("$ ") ||
+        trimmed.startsWith("❯ ") ||
+        trimmed.startsWith("● ") ||
+        trimmed.startsWith("○ ")
+      ) {
+        const cmd = trimmed.replace(/^(\$|❯|●|○)\s+/, "");
         const startLine = trimmed;
         i++;
         const outputLines: string[] = [];
@@ -54,10 +59,14 @@ export class CardClassifier {
           if (
             nextTrimmed.startsWith("$ ") ||
             nextTrimmed.startsWith("❯ ") ||
+            nextTrimmed.startsWith("● ") ||
+            nextTrimmed.startsWith("○ ") ||
             nextTrimmed.startsWith("diff --git") ||
             nextTrimmed.startsWith("@@ ") ||
             nextTrimmed.startsWith("+ Thought") ||
             nextTrimmed.startsWith("Thinking...") ||
+            nextTrimmed.startsWith("▸ Thought") ||
+            nextTrimmed.startsWith("Thought ") ||
             nextTrimmed.match(/^(Allow|Do you want to|Select|Choose|\(y\/n\))/i)
           ) {
             break;
@@ -103,8 +112,11 @@ export class CardClassifier {
           if (
             nextTrimmed.startsWith("$ ") ||
             nextTrimmed.startsWith("❯ ") ||
+            nextTrimmed.startsWith("● ") ||
+            nextTrimmed.startsWith("○ ") ||
             nextTrimmed.startsWith("+ Thought") ||
             nextTrimmed.startsWith("Thinking...") ||
+            nextTrimmed.startsWith("▸ Thought") ||
             nextTrimmed.startsWith("diff --git")
           ) {
             break;
@@ -127,8 +139,13 @@ export class CardClassifier {
         continue;
       }
 
-      // 3. Thought Card: starts with "+ Thought" or "Thinking..."
-      if (trimmed.startsWith("+ Thought") || trimmed.startsWith("Thinking...")) {
+      // 3. Thought Card: starts with "+ Thought", "Thinking...", "▸ Thought", or "Thought"
+      if (
+        trimmed.startsWith("+ Thought") ||
+        trimmed.startsWith("Thinking...") ||
+        trimmed.startsWith("▸ Thought") ||
+        trimmed.startsWith("Thought ")
+      ) {
         const startLine = trimmed;
         i++;
         const thoughtLines: string[] = [];
@@ -138,6 +155,8 @@ export class CardClassifier {
           if (
             nextTrimmed.startsWith("$ ") ||
             nextTrimmed.startsWith("❯ ") ||
+            nextTrimmed.startsWith("● ") ||
+            nextTrimmed.startsWith("○ ") ||
             nextTrimmed.startsWith("diff --git") ||
             nextTrimmed.startsWith("@@ ") ||
             nextTrimmed.match(/^(Allow|Do you want to|Select|Choose|\(y\/n\))/i)
@@ -193,8 +212,11 @@ export class CardClassifier {
           if (
             nextTrimmed.startsWith("$ ") ||
             nextTrimmed.startsWith("❯ ") ||
+            nextTrimmed.startsWith("● ") ||
+            nextTrimmed.startsWith("○ ") ||
             nextTrimmed.startsWith("+ Thought") ||
-            nextTrimmed.startsWith("Thinking...")
+            nextTrimmed.startsWith("Thinking...") ||
+            nextTrimmed.startsWith("▸ Thought")
           ) {
             break;
           }
@@ -259,10 +281,13 @@ export class CardClassifier {
         if (
           nextTrimmed.startsWith("$ ") ||
           nextTrimmed.startsWith("❯ ") ||
+          nextTrimmed.startsWith("● ") ||
+          nextTrimmed.startsWith("○ ") ||
           nextTrimmed.startsWith("diff --git") ||
           nextTrimmed.startsWith("@@ ") ||
           nextTrimmed.startsWith("+ Thought") ||
           nextTrimmed.startsWith("Thinking...") ||
+          nextTrimmed.startsWith("▸ Thought") ||
           nextTrimmed.endsWith("?") ||
           nextTrimmed.match(/^(Allow|Do you want to|Select|Choose|\(y\/n\))/i)
         ) {

@@ -164,6 +164,7 @@ export class WsServer extends EventEmitter {
         );
 
         // Push pane state
+        await this.herdrClient.readAndClassifyPane(paneId);
         const state = this.herdrClient.getPaneState(paneId);
         ws.send(
           JSON.stringify({
@@ -195,6 +196,7 @@ export class WsServer extends EventEmitter {
 
       case "subscribe_pane": {
         data.subscribedPaneId = msg.paneId;
+        await this.herdrClient.readAndClassifyPane(msg.paneId);
         const state = this.herdrClient.getPaneState(msg.paneId);
         ws.send(
           JSON.stringify({
@@ -209,6 +211,7 @@ export class WsServer extends EventEmitter {
         const paneId = msg.payload?.paneId;
         if (paneId) {
           data.subscribedPaneId = paneId;
+          await this.herdrClient.readAndClassifyPane(paneId);
           const state = this.herdrClient.getPaneState(paneId);
           ws.send(
             JSON.stringify({

@@ -18,12 +18,27 @@ function App() {
     // 1. Check for token exchange from URL hash (#code=...)
     await checkPairingFromUrlHash();
 
-    // 2. Load stored theme or default
-    const savedThemeKey = localStorage.getItem("pigeon_theme_key") || "pigeon";
-    const savedThemeMode = (localStorage.getItem("pigeon_theme_mode") as any) || "dark";
+    // 2. Load stored theme or default (Tokyo Night with system auto light/dark)
+    const savedThemeKey = localStorage.getItem("pigeon_theme_key") || "tokyo-night";
+    const savedThemeMode = (localStorage.getItem("pigeon_theme_mode") as any) || "system";
     setPaletteTheme(savedThemeKey, savedThemeMode);
 
-    // 3. Connect WebSocket
+    // 3. Listen to system preference changes when in 'system' mode
+    if (typeof window !== "undefined" && window.matchMedia) {
+      const mediaQuery = window.matchMedia("(prefers-color-scheme: dark)");
+      const handleThemeChange = () => {
+        if (state.themeMode === "system") {
+          applyFullTheme(state.themeKey, "system");
+        }
+      };
+      if (mediaQuery.addEventListener) {
+        mediaQuery.addEventListener("change", handleThemeChange);
+      } else if ((mediaQuery as any).addListener) {
+        (mediaQuery as any).addListener(handleThemeChange);
+      }
+    }
+
+    // 4. Connect WebSocket
     initWebSocket();
   });
 

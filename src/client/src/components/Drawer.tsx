@@ -122,207 +122,230 @@ export const Drawer: Component = () => {
           </button>
         </div>
 
-        {/* Workspaces list */}
-        <div style={{ padding: "16px 8px 8px" }}>
-          <div
-            style={{
-              display: "flex",
-              "align-items": "baseline",
-              "justify-content": "space-between",
-              padding: "0 8px 8px",
-            }}
-          >
-            <span
-              style={{
-                "font-size": "12px",
-                "font-weight": 600,
-                "letter-spacing": "0.04em",
-                color: "var(--muted)",
-              }}
-            >
-              工作区
-            </span>
-            <span style={{ "font-size": "11px", color: "var(--faint)" }}>
-              只读，在电脑上创建
-            </span>
-          </div>
-
-          <div style={{ display: "flex", "flex-direction": "column", gap: "2px" }}>
-            <For each={state.workspaces}>
-              {(w) => {
-                const isSelected = () => state.activeWorkspaceId === w.id;
-                return (
-                  <button
-                    class="touch-target"
-                    onClick={() => {
-                      setState("activeWorkspaceId", w.id);
-                      if (w.tabs?.[0]?.id) {
-                        setState("activeTabId", w.tabs[0].id);
-                        if (w.tabs[0].panes?.[0]?.id) {
-                          selectPane(w.tabs[0].panes[0].id);
-                        }
-                      }
-                      closeDrawer();
-                    }}
-                    style={{
-                      height: "48px",
-                      display: "flex",
-                      "align-items": "center",
-                      gap: "10px",
-                      padding: "0 12px",
-                      border: 0,
-                      "border-radius": "10px",
-                      background: isSelected() ? "var(--sel)" : "transparent",
-                      color: "var(--fg)",
-                      "font-size": "14px",
-                      "font-weight": isSelected() ? 600 : 500,
-                      "text-align": "left",
-                      cursor: "pointer",
-                    }}
-                  >
-                    <span style={{ flex: 1 }}>{w.label}</span>
-                    <span style={{ display: "flex", "align-items": "center", gap: "4px" }}>
-                      <Show when={w.hasWarn}>
-                        <span
-                          style={{
-                            width: "6px",
-                            height: "6px",
-                            "border-radius": "3px",
-                            background: "var(--warn)",
-                          }}
-                        />
-                      </Show>
-                      <Show when={w.hasWorking}>
-                        <span
-                          style={{
-                            width: "6px",
-                            height: "6px",
-                            "border-radius": "3px",
-                            background: "var(--accent)",
-                          }}
-                        />
-                      </Show>
-                    </span>
-                    <span
-                      style={{
-                        "font-size": "12px",
-                        "font-weight": isSelected() ? 500 : 400,
-                        color: "var(--muted)",
-                        "min-width": "40px",
-                        "text-align": "right",
-                      }}
-                    >
-                      {w.tabCount || w.tabs?.length || 1} Tab
-                    </span>
-                  </button>
-                );
-              }}
-            </For>
-          </div>
-        </div>
-
-        <div style={{ height: "1px", margin: "8px 16px", background: "var(--line)" }} />
-
-        {/* Running Agents list */}
+        {/* Scrollable Drawer Body */}
         <div
           style={{
             flex: 1,
             "min-height": 0,
-            padding: "8px 8px 8px",
+            "overflow-y": "auto",
+            "-webkit-overflow-scrolling": "touch",
+            "touch-action": "pan-y",
             display: "flex",
             "flex-direction": "column",
-            "overflow-y": "auto",
           }}
         >
-          <div
-            style={{
-              display: "flex",
-              "align-items": "baseline",
-              "justify-content": "space-between",
-              padding: "0 8px 8px",
-            }}
-          >
-            <span
+          {/* Workspaces list */}
+          <div style={{ padding: "16px 8px 8px", "flex-shrink": 0 }}>
+            <div
               style={{
-                "font-size": "12px",
-                "font-weight": 600,
-                "letter-spacing": "0.04em",
-                color: "var(--muted)",
+                display: "flex",
+                "align-items": "baseline",
+                "justify-content": "space-between",
+                padding: "0 8px 8px",
               }}
             >
-              运行中的 Agent
-            </span>
-            <span style={{ "font-size": "11px", color: "var(--faint)" }}>
-              {blockedAgents().length} 待确认 · {workingAgents().length} 工作中
-            </span>
-          </div>
+              <span
+                style={{
+                  "font-size": "12px",
+                  "font-weight": 600,
+                  "letter-spacing": "0.04em",
+                  color: "var(--muted)",
+                }}
+              >
+                工作区
+              </span>
+              <span style={{ "font-size": "11px", color: "var(--faint)" }}>
+                只读，在电脑上创建
+              </span>
+            </div>
 
-          <div style={{ display: "flex", "flex-direction": "column", gap: "4px" }}>
-            <For each={state.workingAgents}>
-              {(a) => {
-                const isBlocked = a.status === "blocked";
-                return (
-                  <button
-                    class="touch-target"
-                    onClick={() => {
-                      setState("activeWorkspaceId", a.workspaceId);
-                      setState("activeTabId", a.tabId);
-                      selectPane(a.paneId);
-                      closeDrawer();
-                    }}
-                    style={{
-                      display: "flex",
-                      "flex-direction": "column",
-                      gap: "4px",
-                      padding: "10px 12px",
-                      border: isBlocked ? "1px solid var(--warnb)" : "1px solid transparent",
-                      "border-radius": "10px",
-                      background: isBlocked ? "var(--warns)" : "transparent",
-                      color: "var(--fg)",
-                      "text-align": "left",
-                      cursor: "pointer",
-                    }}
-                  >
-                    <span style={{ display: "flex", "align-items": "center", gap: "8px", width: "100%" }}>
-                      <span
-                        style={{
-                          width: "8px",
-                          height: "8px",
-                          "border-radius": "4px",
-                          background: isBlocked ? "var(--warn)" : "var(--accent)",
-                        }}
-                      />
-                      <span style={{ flex: 1, "font-size": "14px", "font-weight": 600 }}>
-                        {a.name}
-                      </span>
-                      <span
-                        style={{
-                          "font-size": "11px",
-                          "font-weight": isBlocked ? 600 : 400,
-                          color: isBlocked ? "var(--warnt)" : "var(--accentt)",
-                        }}
-                      >
-                        {isBlocked ? "待确认" : "工作中"}
-                      </span>
-                    </span>
-                    <span
+            <div style={{ display: "flex", "flex-direction": "column", gap: "2px" }}>
+              <For each={state.workspaces}>
+                {(w) => {
+                  const isSelected = () => state.activeWorkspaceId === w.id;
+                  return (
+                    <button
+                      class="touch-target"
+                      onClick={() => {
+                        setState("activeWorkspaceId", w.id);
+                        const targetTab =
+                          w.tabs?.find((t) =>
+                            t.panes?.some(
+                              (p) => p.agentStatus === "working" || p.agentStatus === "blocked"
+                            )
+                          ) ||
+                          w.tabs?.find((t) => t.id === w.activeTabId) ||
+                          w.tabs?.[0];
+
+                        if (targetTab?.id) {
+                          setState("activeTabId", targetTab.id);
+                          const targetPane =
+                            targetTab.panes?.find(
+                              (p) => p.agentStatus === "working" || p.agentStatus === "blocked"
+                            ) || targetTab.panes?.[0];
+                          if (targetPane?.id) {
+                            selectPane(targetPane.id);
+                          }
+                        }
+                        closeDrawer();
+                      }}
                       style={{
-                        "font-size": "12px",
-                        color: "var(--muted)",
-                        "padding-left": "16px",
-                        "white-space": "nowrap",
-                        overflow: "hidden",
-                        "text-overflow": "ellipsis",
-                        width: "100%",
-                        "box-sizing": "border-box",
+                        height: "48px",
+                        display: "flex",
+                        "align-items": "center",
+                        gap: "10px",
+                        padding: "0 12px",
+                        border: 0,
+                        "border-radius": "10px",
+                        background: isSelected() ? "var(--sel)" : "transparent",
+                        color: "var(--fg)",
+                        "font-size": "14px",
+                        "font-weight": isSelected() ? 600 : 500,
+                        "text-align": "left",
+                        cursor: "pointer",
                       }}
                     >
-                      {a.workspaceLabel} · {a.summary || (isBlocked ? "等待确认授权" : "正在执行任务")}
-                    </span>
-                  </button>
-                );
+                      <span style={{ flex: 1 }}>{w.label}</span>
+                      <span style={{ display: "flex", "align-items": "center", gap: "4px" }}>
+                        <Show when={w.hasWarn}>
+                          <span
+                            style={{
+                              width: "6px",
+                              height: "6px",
+                              "border-radius": "3px",
+                              background: "var(--warn)",
+                            }}
+                          />
+                        </Show>
+                        <Show when={w.hasWorking}>
+                          <span
+                            style={{
+                              width: "6px",
+                              height: "6px",
+                              "border-radius": "3px",
+                              background: "var(--accent)",
+                            }}
+                          />
+                        </Show>
+                      </span>
+                      <span
+                        style={{
+                          "font-size": "12px",
+                          "font-weight": isSelected() ? 500 : 400,
+                          color: "var(--muted)",
+                          "min-width": "40px",
+                          "text-align": "right",
+                        }}
+                      >
+                        {w.tabCount || w.tabs?.length || 1} Tab
+                      </span>
+                    </button>
+                  );
+                }}
+              </For>
+            </div>
+          </div>
+
+          <div style={{ height: "1px", margin: "8px 16px", background: "var(--line)", "flex-shrink": 0 }} />
+
+          {/* Running Agents list */}
+          <div
+            style={{
+              padding: "8px 8px 16px",
+              display: "flex",
+              "flex-direction": "column",
+            }}
+          >
+            <div
+              style={{
+                display: "flex",
+                "align-items": "baseline",
+                "justify-content": "space-between",
+                padding: "0 8px 8px",
               }}
-            </For>
+            >
+              <span
+                style={{
+                  "font-size": "12px",
+                  "font-weight": 600,
+                  "letter-spacing": "0.04em",
+                  color: "var(--muted)",
+                }}
+              >
+                运行中的 Agent
+              </span>
+              <span style={{ "font-size": "11px", color: "var(--faint)" }}>
+                {blockedAgents().length} 待确认 · {workingAgents().length} 工作中
+              </span>
+            </div>
+
+            <div style={{ display: "flex", "flex-direction": "column", gap: "4px" }}>
+              <For each={state.workingAgents}>
+                {(a) => {
+                  const isBlocked = a.status === "blocked";
+                  return (
+                    <button
+                      class="touch-target"
+                      onClick={() => {
+                        setState("activeWorkspaceId", a.workspaceId);
+                        setState("activeTabId", a.tabId);
+                        selectPane(a.paneId);
+                        closeDrawer();
+                      }}
+                      style={{
+                        display: "flex",
+                        "flex-direction": "column",
+                        gap: "4px",
+                        padding: "10px 12px",
+                        border: isBlocked ? "1px solid var(--warnb)" : "1px solid transparent",
+                        "border-radius": "10px",
+                        background: isBlocked ? "var(--warns)" : "transparent",
+                        color: "var(--fg)",
+                        "text-align": "left",
+                        cursor: "pointer",
+                      }}
+                    >
+                      <span style={{ display: "flex", "align-items": "center", gap: "8px", width: "100%" }}>
+                        <span
+                          style={{
+                            width: "8px",
+                            height: "8px",
+                            "border-radius": "4px",
+                            background: isBlocked ? "var(--warn)" : "var(--accent)",
+                          }}
+                        />
+                        <span style={{ flex: 1, "font-size": "14px", "font-weight": 600 }}>
+                          {a.name}
+                        </span>
+                        <span
+                          style={{
+                            "font-size": "11px",
+                            "font-weight": isBlocked ? 600 : 400,
+                            color: isBlocked ? "var(--warnt)" : "var(--accentt)",
+                          }}
+                        >
+                          {isBlocked ? "待确认" : "工作中"}
+                        </span>
+                      </span>
+                      <span
+                        style={{
+                          "font-size": "12px",
+                          color: "var(--muted)",
+                          "padding-left": "16px",
+                          "white-space": "nowrap",
+                          overflow: "hidden",
+                          "text-overflow": "ellipsis",
+                          width: "100%",
+                          "box-sizing": "border-box",
+                        }}
+                      >
+                        {a.workspaceLabel} · {a.summary || (isBlocked ? "等待确认授权" : "正在执行任务")}
+                      </span>
+                    </button>
+                  );
+                }}
+              </For>
+            </div>
           </div>
         </div>
 

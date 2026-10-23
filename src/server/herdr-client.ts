@@ -154,22 +154,18 @@ export class HerdrClient extends EventEmitter {
             method: "events.subscribe",
             params: {
               subscriptions: [
+                { type: "workspace.created" },
+                { type: "workspace.updated" },
+                { type: "workspace.closed" },
                 { type: "tab.created" },
                 { type: "tab.closed" },
                 { type: "tab.focused" },
                 { type: "pane.created" },
                 { type: "pane.closed" },
+                { type: "pane.updated" },
                 { type: "pane.focused" },
-                { type: "tab_created" },
-                { type: "tab_closed" },
-                { type: "tab_focused" },
-                { type: "pane_created" },
-                { type: "pane_closed" },
-                { type: "pane_focused" },
-                { type: "pane_agent_status_changed" },
-                { type: "pane_output_changed" },
-                { type: "pane.agent_status_changed" },
-                { type: "pane.output_changed" },
+                { type: "pane.agent_detected" },
+                { type: "layout.updated" },
               ],
             },
             id: "sub-pigeon",
@@ -413,14 +409,14 @@ export class HerdrClient extends EventEmitter {
           pane_id: paneId,
           source: "recent_unwrapped",
         });
-        rawScreen = readRes?.text || readRes?.data || "";
+        rawScreen = readRes?.read?.text || readRes?.text || readRes?.data || "";
       } catch {
         // Fallback to visible
         const readRes = await this.request("pane.read", {
           pane_id: paneId,
           source: "visible",
         });
-        rawScreen = readRes?.text || readRes?.data || "";
+        rawScreen = readRes?.read?.text || readRes?.text || readRes?.data || "";
       }
 
       const { cards, pendingInteraction } = this.classifier.classifyScreen(rawScreen);

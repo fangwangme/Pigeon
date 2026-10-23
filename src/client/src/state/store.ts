@@ -70,9 +70,9 @@ const [state, setState] = createStore<AppState>({
   newTabModalOpen: false,
   pairingModalOpen: false,
   activeAgentsModalOpen: false,
-  themeId: "pigeon-dark",
-  themeKey: "pigeon",
-  themeMode: "dark",
+  themeId: "tokyo-night",
+  themeKey: "tokyo-night",
+  themeMode: "system",
   macros: DEFAULT_MACROS,
 });
 

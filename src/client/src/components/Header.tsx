@@ -218,8 +218,11 @@ export const Header: Component = () => {
                 class="touch-target"
                 onClick={() => {
                   setState("activeTabId", t.id);
-                  if (t.panes?.[0]?.id) {
-                    selectPane(t.panes[0].id);
+                  const targetPane =
+                    t.panes?.find((p) => p.agentStatus === "working" || p.agentStatus === "blocked") ||
+                    t.panes?.[0];
+                  if (targetPane?.id) {
+                    selectPane(targetPane.id);
                   }
                 }}
                 style={{
