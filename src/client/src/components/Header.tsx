@@ -9,6 +9,7 @@ import {
   getBlockedAgentsCount,
   openNewTabModal,
   openActiveAgentsModal,
+  toggleDiffDrawer,
 } from "../state/store";
 import { selectPane } from "../state/ws";
 
@@ -125,8 +126,34 @@ export const Header: Component = () => {
           </div>
         </div>
 
-        {/* Quick Access to Active Agents */}
+        {/* Quick Access to Active Agents and Session Diff */}
         <div style={{ display: "flex", "align-items": "center", gap: "6px" }}>
+          <Show when={state.sessionStats && (state.sessionStats.filesModified > 0 || state.sessionStats.additions > 0 || state.sessionStats.deletions > 0)}>
+            <button
+              aria-label="查看代码变更 Diff"
+              class="touch-target"
+              onClick={toggleDiffDrawer}
+              style={{
+                height: "30px",
+                padding: "0 8px",
+                "border-radius": "15px",
+                border: "1px solid var(--border)",
+                background: "var(--surface)",
+                color: "var(--fg)",
+                "font-size": "11.5px",
+                "font-weight": 600,
+                display: "flex",
+                "align-items": "center",
+                gap: "4px",
+                cursor: "pointer",
+              }}
+            >
+              <span>📝</span>
+              <span>{state.sessionStats!.filesModified}</span>
+              <span style={{ color: "var(--addfg, #3fb950)" }}>+{state.sessionStats!.additions}</span>
+              <span style={{ color: "var(--delfg, #f85149)" }}>-{state.sessionStats!.deletions}</span>
+            </button>
+          </Show>
           <Show
             when={state.workingAgents.length > 0}
             fallback={

@@ -1,3 +1,6 @@
+import type { NormalizedTurn, FileDiffSummary } from "../shared/agent-session";
+export type { NormalizedTurn, NormalizedToolCall, FileDiffSummary, NormalizedQuestion, NormalizedBlock, NormalizedBlockKind } from "../shared/agent-session";
+
 export type AgentStatus = "idle" | "working" | "blocked" | "done" | "unknown";
 
 export type CardKind = "thought" | "tool_call" | "diff" | "markdown" | "interaction" | "text";
@@ -178,7 +181,8 @@ export type ServerMessage =
   | { type: "interaction_required"; payload: InteractionCardData & { paneId: string } }
   | { type: "ghost_suggestion"; payload: { paneId: string; suggestionId: string; command: string; paneRevision: number } }
   | { type: "ghost_cleared"; payload: { paneId: string } }
-  | { type: "pane_screen"; payload: { paneId: string; text: string; revision: number } };
+  | { type: "pane_screen"; payload: { paneId: string; text: string; revision: number } }
+  | { type: "normalized_turns"; payload: { paneId: string; turns: NormalizedTurn[]; sessionStats?: { filesModified: number; additions: number; deletions: number; diffs?: FileDiffSummary[] }; isStreaming?: boolean } };
 
 export const ProtocolErrors = {
   ERR_UNAUTHORIZED: "ERR_UNAUTHORIZED",

@@ -8,6 +8,8 @@
     "pigeon": "./dist/pigeon"
   },
   "scripts": {
+    "dev": "vite",
+    "dev:server": "bun --watch ./src/cli/index.ts start --insecure-dev",
     "build:client": "vite build && bun run scripts/embed-html.ts",
     "build:daemon": "bun build --compile --minify ./src/cli/index.ts --outfile dist/pigeon",
     "build": "vite build && bun run scripts/embed-html.ts && bun build --compile --minify ./src/cli/index.ts --outfile dist/pigeon",

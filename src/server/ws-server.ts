@@ -4,6 +4,7 @@ import type { HerdrClient } from "./herdr-client";
 import type { PairingManager, DeviceSession } from "./pairing";
 import type { PushManager } from "./push";
 import { ConfigManager } from "./config-manager";
+import { AgentAdapterManager } from "./agent-adapters/index";
 import {
   type ClientMessage,
   type ServerMessage,
@@ -34,6 +35,7 @@ export class WsServer extends EventEmitter {
   private allowedOrigins: string[];
   private insecureDev: boolean;
   public configManager: ConfigManager;
+  public agentAdapters: AgentAdapterManager;
   private clients = new Map<ServerWebSocket<ClientConnectionData>, ClientConnectionData>();
 
   constructor(options: WsServerOptions) {
@@ -44,6 +46,7 @@ export class WsServer extends EventEmitter {
     this.allowedOrigins = options.allowedOrigins || [];
     this.insecureDev = !!options.insecureDev;
     this.configManager = options.configManager || new ConfigManager();
+    this.agentAdapters = new AgentAdapterManager();
 
     // Listen to Herdr updates to broadcast
     this.herdrClient.on("snapshot_updated", (snapshot) => {
@@ -54,8 +57,29 @@ export class WsServer extends EventEmitter {
     });
 
     this.herdrClient.on("cards_updated", (update) => {
+      // Check if pane has recognized agent session for structured normalized turns
+      const session = this.herdrClient.getPaneAgentSession(update.paneId);
+      let structuredTurnsPayload: any = null;
+      if (session && this.agentAdapters.isSupported(session.agent)) {
+        const { turns, stats } = this.agentAdapters.getTurns(session.agent, session.sessionId, true);
+        if (turns && turns.length > 0) {
+          structuredTurnsPayload = {
+            type: "normalized_turns",
+            payload: {
+              paneId: update.paneId,
+              turns,
+              sessionStats: stats,
+            },
+          };
+        }
+      }
+
       for (const [ws, data] of this.clients.entries()) {
         if (data.subscribedPaneId === update.paneId) {
+          if (structuredTurnsPayload) {
+            ws.send(JSON.stringify(structuredTurnsPayload));
+          }
+
           ws.send(
             JSON.stringify({
               type: "cards_upsert",
@@ -171,7 +195,25 @@ export class WsServer extends EventEmitter {
           })
         );
 
-        // Push pane state
+        // Push pane state & normalized turns
+        this.herdrClient.setMonitoredPaneId(paneId);
+        const session = this.herdrClient.getPaneAgentSession(paneId);
+        if (session && this.agentAdapters.isSupported(session.agent)) {
+          const { turns, stats } = this.agentAdapters.getTurns(session.agent, session.sessionId);
+          if (turns && turns.length > 0) {
+            ws.send(
+              JSON.stringify({
+                type: "normalized_turns",
+                payload: {
+                  paneId,
+                  turns,
+                  sessionStats: stats,
+                },
+              })
+            );
+          }
+        }
+
         await this.herdrClient.readAndClassifyPane(paneId);
         const state = this.herdrClient.getPaneState(paneId);
         ws.send(
@@ -204,6 +246,25 @@ export class WsServer extends EventEmitter {
 
       case "subscribe_pane": {
         data.subscribedPaneId = msg.paneId;
+        this.herdrClient.setMonitoredPaneId(msg.paneId);
+
+        const subSession = this.herdrClient.getPaneAgentSession(msg.paneId);
+        if (subSession && this.agentAdapters.isSupported(subSession.agent)) {
+          const { turns, stats } = this.agentAdapters.getTurns(subSession.agent, subSession.sessionId);
+          if (turns && turns.length > 0) {
+            ws.send(
+              JSON.stringify({
+                type: "normalized_turns",
+                payload: {
+                  paneId: msg.paneId,
+                  turns,
+                  sessionStats: stats,
+                },
+              })
+            );
+          }
+        }
+
         await this.herdrClient.readAndClassifyPane(msg.paneId);
         const state = this.herdrClient.getPaneState(msg.paneId);
         ws.send(
@@ -219,6 +280,25 @@ export class WsServer extends EventEmitter {
         const paneId = msg.payload?.paneId;
         if (paneId) {
           data.subscribedPaneId = paneId;
+          this.herdrClient.setMonitoredPaneId(paneId);
+
+          const selSession = this.herdrClient.getPaneAgentSession(paneId);
+          if (selSession && this.agentAdapters.isSupported(selSession.agent)) {
+            const { turns, stats } = this.agentAdapters.getTurns(selSession.agent, selSession.sessionId);
+            if (turns && turns.length > 0) {
+              ws.send(
+                JSON.stringify({
+                  type: "normalized_turns",
+                  payload: {
+                    paneId,
+                    turns,
+                    sessionStats: stats,
+                  },
+                })
+              );
+            }
+          }
+
           await this.herdrClient.readAndClassifyPane(paneId);
           const state = this.herdrClient.getPaneState(paneId);
           ws.send(
@@ -241,7 +321,11 @@ export class WsServer extends EventEmitter {
         }
 
         try {
-          await this.herdrClient.sendInput(target, promptText);
+          if (this.herdrClient.isConnected()) {
+            await this.herdrClient.sendAgentPrompt(target, promptText);
+          } else {
+            await this.herdrClient.sendInput(target, promptText);
+          }
           this.sendAck(ws, msg.id);
         } catch (err: any) {
           this.sendError(ws, msg.id, ProtocolErrors.ERR_AGENT_NOT_READY, err.message);

@@ -14,6 +14,8 @@ import type {
   ThoughtCard,
   ToolCallCard,
   MarkdownCard,
+  NormalizedTurn,
+  NormalizedToolCall,
 } from "../../types/protocol";
 
 export const CardFeed: Component = () => {
@@ -431,9 +433,9 @@ export const CardFeed: Component = () => {
         </section>
       </Show>
 
-      {/* 4. Terminal output: full panel when there are no cards, compact strip otherwise */}
+      {/* 4. Terminal output: full panel when there are no cards or turns, compact strip otherwise */}
       <Show
-        when={state.cards.length === 0}
+        when={state.normalizedTurns.length === 0 && state.cards.length === 0}
         fallback={
           <button
             class="touch-target"
@@ -635,7 +637,240 @@ export const CardFeed: Component = () => {
         </section>
       </Show>
 
-      {/* 5. Render Structured Cards when available */}
+      {/* 5. Render Structured Normalized Turns when available */}
+      <Show when={state.normalizedTurns && state.normalizedTurns.length > 0}>
+        <div style={{ display: "flex", "flex-direction": "column", gap: "14px", width: "100%" }}>
+          <For each={state.normalizedTurns}>
+            {(turn: NormalizedTurn) => {
+              const isThoughtExpanded = () => !!expandedThoughts()[turn.turnId];
+              return (
+                <article
+                  style={{
+                    display: "flex",
+                    "flex-direction": "column",
+                    gap: "8px",
+                    background: "var(--surface)",
+                    border: "1px solid var(--border)",
+                    "border-radius": "14px",
+                    padding: "12px",
+                    "box-shadow": "0 1px 3px rgba(0, 0, 0, 0.05)",
+                    width: "100%",
+                    "box-sizing": "border-box",
+                  }}
+                >
+                  {/* Turn header */}
+                  <div
+                    style={{
+                      display: "flex",
+                      "justify-content": "space-between",
+                      "align-items": "center",
+                      "font-size": "11.5px",
+                      color: "var(--muted)",
+                    }}
+                  >
+                    <span style={{ "font-weight": 600 }}>回合 #{turn.turnNumber}</span>
+                    <span>
+                      {new Date(turn.timestamp).toLocaleTimeString([], {
+                        hour: "2-digit",
+                        minute: "2-digit",
+                      })}
+                    </span>
+                  </div>
+
+                  {/* User Prompt */}
+                  <Show when={turn.userPrompt?.text}>
+                    <div
+                      style={{
+                        background: "var(--inset)",
+                        "border-radius": "10px",
+                        padding: "10px 12px",
+                        "font-size": "14px",
+                        "font-weight": 500,
+                        color: "var(--fg)",
+                        "white-space": "pre-wrap",
+                        "word-break": "break-word",
+                      }}
+                    >
+                      {turn.userPrompt!.text}
+                    </div>
+                  </Show>
+
+                  {/* Thinking / Reasoning Accordion */}
+                  <Show when={turn.reasoning?.text}>
+                    <div
+                      style={{
+                        border: "1px solid var(--border)",
+                        "border-radius": "10px",
+                        background: "var(--bg)",
+                        overflow: "hidden",
+                      }}
+                    >
+                      <button
+                        class="touch-target"
+                        onClick={() => toggleThought(turn.turnId)}
+                        style={{
+                          display: "flex",
+                          "align-items": "center",
+                          gap: "8px",
+                          width: "100%",
+                          padding: "8px 12px",
+                          background: "transparent",
+                          border: 0,
+                          color: "var(--muted)",
+                          "font-size": "12px",
+                          cursor: "pointer",
+                          "text-align": "left",
+                        }}
+                      >
+                        <span>{isThoughtExpanded() ? "▾" : "▸"}</span>
+                        <span style={{ flex: 1, "font-weight": 500 }}>
+                          Thought {turn.reasoning?.durationMs ? `for ${Math.round(turn.reasoning.durationMs / 1000)}s` : ""}
+                          {turn.reasoning?.tokens ? ` (${turn.reasoning.tokens} tokens)` : ""}
+                        </span>
+                        <span style={{ "font-size": "11px", color: "var(--faint)" }}>
+                          {isThoughtExpanded() ? "收起" : "展开"}
+                        </span>
+                      </button>
+                      <Show when={isThoughtExpanded()}>
+                        <div
+                          style={{
+                            padding: "8px 12px 12px",
+                            "border-top": "1px solid var(--border)",
+                            "border-left": "3px solid var(--accent)",
+                            "font-size": "12.5px",
+                            "line-height": 1.6,
+                            color: "var(--muted)",
+                            "white-space": "pre-wrap",
+                            "word-break": "break-word",
+                          }}
+                        >
+                          {turn.reasoning!.text}
+                        </div>
+                      </Show>
+                    </div>
+                  </Show>
+
+                  {/* Tool Calls */}
+                  <For each={turn.toolCalls || []}>
+                    {(tc: NormalizedToolCall) => {
+                      const isToolExpanded = () => !!expandedTools()[tc.id];
+                      const lines = () => (tc.output || "").split("\n");
+                      const isLong = () => lines().length > 5;
+                      const cmdText = () =>
+                        typeof tc.input === "string"
+                          ? tc.input
+                          : (tc.input as any)?.CommandLine ||
+                            (tc.input as any)?.command ||
+                            (tc.input as any)?.path ||
+                            JSON.stringify(tc.input);
+
+                      return (
+                        <div
+                          style={{
+                            border: "1px solid var(--border)",
+                            "border-radius": "10px",
+                            background: "var(--inset)",
+                            padding: "8px 10px",
+                            display: "flex",
+                            "flex-direction": "column",
+                            gap: "6px",
+                          }}
+                        >
+                          <div style={{ display: "flex", "justify-content": "space-between", "align-items": "center" }}>
+                            <span style={{ "font-weight": 600, "font-family": "monospace", "font-size": "12px", color: "var(--fg)" }}>
+                              {tc.status === "completed" ? "✓" : tc.status === "failed" ? "✗" : "⟳"} {tc.name}
+                            </span>
+                            <Show when={tc.exitCode !== undefined}>
+                              <span style={{ "font-size": "11px", color: tc.exitCode === 0 ? "var(--accent)" : "var(--warn)" }}>
+                                exit {tc.exitCode}
+                              </span>
+                            </Show>
+                          </div>
+
+                          <div
+                            style={{
+                              "font-family": "'JetBrains Mono', ui-monospace, monospace",
+                              "font-size": "11.5px",
+                              background: "var(--code)",
+                              padding: "4px 8px",
+                              "border-radius": "6px",
+                              overflow: "auto",
+                              "white-space": "nowrap",
+                            }}
+                          >
+                            $ {cmdText()}
+                          </div>
+
+                          <Show when={tc.output}>
+                            <div style={{ position: "relative" }}>
+                              <pre
+                                style={{
+                                  "font-family": "'JetBrains Mono', ui-monospace, monospace",
+                                  "font-size": "11px",
+                                  background: "var(--code)",
+                                  padding: "6px 8px",
+                                  "border-radius": "6px",
+                                  "max-height": isToolExpanded() ? "none" : "90px",
+                                  overflow: isToolExpanded() ? "auto" : "hidden",
+                                  "white-space": "pre-wrap",
+                                  "word-break": "break-all",
+                                  "line-height": 1.45,
+                                }}
+                              >
+                                {tc.output}
+                              </pre>
+                              <Show when={isLong()}>
+                                <button
+                                  class="touch-target"
+                                  onClick={() => setExpandedTools((prev) => ({ ...prev, [tc.id]: !prev[tc.id] }))}
+                                  style={{
+                                    height: "30px",
+                                    width: "100%",
+                                    "font-size": "11px",
+                                    color: "var(--accent)",
+                                    background: "transparent",
+                                    border: 0,
+                                    cursor: "pointer",
+                                    display: "flex",
+                                    "align-items": "center",
+                                    "justify-content": "center",
+                                  }}
+                                >
+                                  {isToolExpanded() ? "收起输出 ▲" : `展开输出 (${lines().length} 行) ▼`}
+                                </button>
+                              </Show>
+                            </div>
+                          </Show>
+                        </div>
+                      );
+                    }}
+                  </For>
+
+                  {/* Assistant Response with Table Horizontal Overflow Protection */}
+                  <Show when={turn.assistantResponse?.markdown}>
+                    <div
+                      class="markdown-body"
+                      style={{
+                        padding: "10px 0 4px",
+                        "font-size": "13.5px",
+                        "line-height": 1.6,
+                        color: "var(--fg)",
+                        "overflow-x": "hidden",
+                      }}
+                    >
+                      <div style={{ "white-space": "pre-wrap" }}>
+                        {turn.assistantResponse!.markdown}
+                      </div>
+                    </div>
+                  </Show>
+                </article>
+              );
+            }}
+          </For>
+        </div>
+      </Show>
+
+      {/* 6. Render Structured Cards when available */}
       <For each={state.cards}>
         {(card: Card) => {
           if (card.kind === "thought") {

@@ -11,6 +11,7 @@ import { NewTabModal } from "./components/NewTabModal";
 import { PairingModal } from "./components/PairingModal";
 import { ActiveAgentsModal } from "./components/ActiveAgentsModal";
 import { SettingsModal } from "./components/SettingsModal";
+import { DiffDrawer } from "./components/DiffDrawer";
 import { state, setPaletteTheme } from "./state/store";
 import { initWebSocket, checkPairingFromUrlHash } from "./state/ws";
 
@@ -67,6 +68,7 @@ function App() {
       <PairingModal />
       <ActiveAgentsModal />
       <SettingsModal />
+      <DiffDrawer />
     </div>
   );
 }

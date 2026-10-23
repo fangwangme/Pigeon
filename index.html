@@ -39,6 +39,20 @@
         align-items: center;
         justify-content: center;
       }
+      /* Table horizontal overflow protection (Table Anti-Wrap) per spec */
+      .markdown-body table, table {
+        display: block;
+        width: 100%;
+        overflow-x: auto;
+        white-space: nowrap;
+        -webkit-overflow-scrolling: touch;
+        border-collapse: collapse;
+        margin: 10px 0;
+      }
+      .markdown-body th, .markdown-body td, th, td {
+        padding: 6px 10px;
+        min-width: 72px;
+      }
       /* Feed is a scrolling column: never let its children collapse to fit.
          Without this, cards with overflow:hidden shrink to a few pixels. */
       .pigeon-feed > * {

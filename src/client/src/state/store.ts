@@ -7,7 +7,10 @@ import type {
   AgentStatus,
   ClientConfig,
   MacroItem,
+  NormalizedTurn,
+  FileDiffSummary,
 } from "../../types/protocol";
+import type { SessionStats } from "../../../shared/agent-session";
 import { THEMES, applyTheme, applyFullTheme, type ThemeTokens } from "../themes";
 
 export type { MacroItem };
@@ -22,11 +25,14 @@ export interface AppState {
   activePaneId: string | null;
   agentStatus: AgentStatus;
   cards: Card[];
+  normalizedTurns: NormalizedTurn[];
+  sessionStats: SessionStats | null;
   pendingInteraction: InteractionCardData | null;
   rawScreen: string;
   activeGhost: { suggestion: string; actionText: string } | null;
   drawerOpen: boolean;
   terminalSheetOpen: boolean;
+  diffDrawerOpen: boolean;
   appearanceModalOpen: boolean;
   macrosModalOpen: boolean;
   newTabModalOpen: boolean;
@@ -59,11 +65,14 @@ const [state, setState] = createStore<AppState>({
   activePaneId: null,
   agentStatus: "idle",
   cards: [],
+  normalizedTurns: [],
+  sessionStats: null,
   pendingInteraction: null,
   rawScreen: "",
   activeGhost: null,
   drawerOpen: false,
   terminalSheetOpen: false,
+  diffDrawerOpen: false,
   appearanceModalOpen: false,
   macrosModalOpen: false,
   newTabModalOpen: false,
@@ -124,6 +133,18 @@ export function closeDrawer() {
 
 export function toggleTerminalSheet() {
   setState("terminalSheetOpen", (open) => !open);
+}
+
+export function openDiffDrawer() {
+  setState("diffDrawerOpen", true);
+}
+
+export function closeDiffDrawer() {
+  setState("diffDrawerOpen", false);
+}
+
+export function toggleDiffDrawer() {
+  setState("diffDrawerOpen", (open) => !open);
 }
 
 export function closeTerminalSheet() {

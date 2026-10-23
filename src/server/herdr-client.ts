@@ -1,5 +1,6 @@
 import { connect, type Socket } from "node:net";
 import { EventEmitter } from "node:events";
+import { createHash } from "node:crypto";
 import { CardClassifier } from "./card-classifier";
 import type {
   AgentStatus,
@@ -32,8 +33,13 @@ export class HerdrClient extends EventEmitter {
   private paneStates = new Map<string, PaneStatePayload>();
   private paneLocations = new Map<string, { workspaceId: string; tabId: string }>();
   private paneDebounceTimers = new Map<string, NodeJS.Timeout>();
+  private paneAgentSessions = new Map<string, { agent: string; sessionId: string }>();
+  private paneContentHashes = new Map<string, string>();
   private currentSnapshot: SnapshotPayload = { workspaces: [], workingAgents: [] };
   private focusedPaneId: string | null = null;
+  private monitoredPaneId: string | null = null;
+  private snapshotPollTimer: any = null;
+  private activePanePollTimer: any = null;
 
   constructor(options: HerdrClientOptions = {}) {
     super();
@@ -57,6 +63,46 @@ export class HerdrClient extends EventEmitter {
 
     // 2. Start persistent event stream
     this.startSubscription();
+
+    // 3. Start robust polling per spec
+    this.startPolling();
+  }
+
+  public startPolling(): void {
+    this.stopPolling();
+    // Global topology: 1-2s query session.snapshot
+    this.snapshotPollTimer = setInterval(() => {
+      if (this.connected) {
+        this.refreshSnapshot().catch(() => {});
+      }
+    }, 1500);
+
+    // Active pane reading: 200-300ms query recent_unwrapped for focused/monitored pane
+    this.activePanePollTimer = setInterval(() => {
+      const targetPane = this.monitoredPaneId || this.focusedPaneId;
+      if (targetPane && this.connected) {
+        this.readAndClassifyPane(targetPane).catch(() => {});
+      }
+    }, 250);
+  }
+
+  public stopPolling(): void {
+    if (this.snapshotPollTimer) {
+      clearInterval(this.snapshotPollTimer);
+      this.snapshotPollTimer = null;
+    }
+    if (this.activePanePollTimer) {
+      clearInterval(this.activePanePollTimer);
+      this.activePanePollTimer = null;
+    }
+  }
+
+  public setMonitoredPaneId(paneId: string | null): void {
+    this.monitoredPaneId = paneId;
+  }
+
+  public getPaneAgentSession(paneId: string): { agent: string; sessionId: string } | null {
+    return this.paneAgentSessions.get(paneId) || null;
   }
 
   public isConnected(): boolean {
@@ -64,6 +110,7 @@ export class HerdrClient extends EventEmitter {
   }
 
   public disconnect(): void {
+    this.stopPolling();
     clearTimeout(this.reconnectTimer);
     if (this.subSocket) {
       try {
@@ -247,6 +294,15 @@ export class HerdrClient extends EventEmitter {
                 p.workspace_id || (p.pane_id.includes(":") ? p.pane_id.split(":")[0] : "w1"),
               tabId: p.tab_id || "t1",
             });
+
+            const ag = agentMap.get(p.pane_id);
+            const sessionObj = p.agent_session || ag?.agent_session;
+            if (sessionObj && sessionObj.value) {
+              this.paneAgentSessions.set(p.pane_id, {
+                agent: sessionObj.agent || p.agent || ag?.agent || ag?.kind || "unknown",
+                sessionId: sessionObj.value,
+              });
+            }
           }
         }
 
@@ -441,14 +497,30 @@ export class HerdrClient extends EventEmitter {
         this.paneLocations.set(paneId, { workspaceId: readWsId, tabId: readTabId });
       }
 
-      const { cards, pendingInteraction } = this.classifier.classifyScreen(rawScreen);
+      // SHA-256 deduplication
+      const contentHash = createHash("sha256").update(rawScreen).digest("hex");
+      const prevHash = this.paneContentHashes.get(paneId);
       const existing = this.paneStates.get(paneId);
-      const revision = (existing?.revision || 0) + 1;
 
+      const { cards, pendingInteraction } = this.classifier.classifyScreen(rawScreen);
       let agentStatus = existing?.agentStatus || "idle";
       if (pendingInteraction) {
         agentStatus = "blocked";
       }
+
+      if (
+        prevHash === contentHash &&
+        existing &&
+        existing.agentStatus === agentStatus &&
+        ((!existing.pendingInteraction && !pendingInteraction) ||
+          (existing.pendingInteraction?.fingerprint === pendingInteraction?.fingerprint))
+      ) {
+        // No changes, skip emitting update
+        return existing;
+      }
+
+      this.paneContentHashes.set(paneId, contentHash);
+      const revision = (existing?.revision || 0) + 1;
 
       let loc = this.paneLocations.get(paneId);
       if (!loc && this.currentSnapshot) {
@@ -523,6 +595,34 @@ export class HerdrClient extends EventEmitter {
     };
     this.paneStates.set(paneId, initial);
     return initial;
+  }
+
+  public async sendAgentPrompt(paneId: string, text: string): Promise<void> {
+    try {
+      await this.request("agent.prompt", { pane_id: paneId, text });
+    } catch (err: any) {
+      const msg = err?.message || String(err);
+      if (msg.includes("agent_blocked") || msg.includes("blocked")) {
+        throw err;
+      }
+      await this.sendInput(paneId, text);
+      return;
+    }
+    this.scheduleDebouncedRead(paneId);
+  }
+
+  public async sendInteractionApproval(paneId: string, keys: string[]): Promise<boolean> {
+    try {
+      await this.request("agent.send_keys", { pane_id: paneId, keys });
+    } catch {
+      await this.request("pane.send_keys", { pane_id: paneId, keys });
+    }
+
+    // Wait 150ms and re-read screen to confirm prompt disappeared per spec
+    await new Promise((r) => setTimeout(r, 150));
+    await this.readAndClassifyPane(paneId);
+    const state = this.getPaneState(paneId);
+    return state.pendingInteraction === null;
   }
 
   public async sendInput(paneId: string, text: string): Promise<void> {

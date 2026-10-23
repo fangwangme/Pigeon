@@ -221,6 +221,16 @@ function handleServerMessage(msg: ServerMessage): void {
       break;
     }
 
+    case "normalized_turns": {
+      if (!state.activePaneId || state.activePaneId === msg.payload.paneId) {
+        setState("normalizedTurns", msg.payload.turns || []);
+        if (msg.payload.sessionStats) {
+          setState("sessionStats", msg.payload.sessionStats);
+        }
+      }
+      break;
+    }
+
     case "ack": {
       if (msg.payload?.workspaceId) {
         setState("activeWorkspaceId", msg.payload.workspaceId);
