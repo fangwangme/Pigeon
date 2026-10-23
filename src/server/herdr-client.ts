@@ -278,7 +278,7 @@ export class HerdrClient extends EventEmitter {
               const agentName = ag?.name || p.title || p.pane_id;
               const agentKind = ag?.kind || p.agent || null;
 
-              if (agentStatus === "working" || agentStatus === "blocked") {
+              if (ag || agentKind || agentStatus === "working" || agentStatus === "blocked") {
                 const paneState = this.paneStates.get(p.pane_id);
                 let summary = "";
                 if (paneState?.pendingInteraction) {
@@ -288,6 +288,8 @@ export class HerdrClient extends EventEmitter {
                   if (lastCard.kind === "tool_call") summary = `运行 ${lastCard.command}`;
                   else if (lastCard.kind === "thought") summary = lastCard.title || "正在思考";
                   else if (lastCard.kind === "markdown") summary = lastCard.content.slice(0, 40);
+                } else if (ag?.terminal_title) {
+                  summary = ag.terminal_title;
                 }
 
                 workingAgents.push({

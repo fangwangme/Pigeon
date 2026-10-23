@@ -6,6 +6,15 @@ import {
   openNewTabModal,
 } from "../state/store";
 import { selectPane } from "../state/ws";
+import type { WorkingAgentSummary } from "../../types/protocol";
+
+interface WorkspaceAgentGroup {
+  workspaceId: string;
+  workspaceLabel: string;
+  hasBlocked: boolean;
+  hasWorking: boolean;
+  agents: WorkingAgentSummary[];
+}
 
 export const ActiveAgentsModal: Component = () => {
   const blockedAgents = () => state.workingAgents.filter((a) => a.status === "blocked");
@@ -16,6 +25,49 @@ export const ActiveAgentsModal: Component = () => {
     setState("activeTabId", agent.tabId);
     selectPane(agent.paneId, agent.workspaceId, agent.tabId);
     closeActiveAgentsModal();
+  };
+
+  const groupedWorkspaces = () => {
+    const map = new Map<string, WorkspaceAgentGroup>();
+
+    const statusPriority = (status: string) => {
+      if (status === "blocked") return 0;
+      if (status === "working") return 1;
+      return 2;
+    };
+
+    for (const a of state.workingAgents) {
+      let group = map.get(a.workspaceId);
+      if (!group) {
+        group = {
+          workspaceId: a.workspaceId,
+          workspaceLabel: a.workspaceLabel || a.workspaceId,
+          hasBlocked: false,
+          hasWorking: false,
+          agents: [],
+        };
+        map.set(a.workspaceId, group);
+      }
+      if (a.status === "blocked") group.hasBlocked = true;
+      if (a.status === "working") group.hasWorking = true;
+      group.agents.push(a);
+    }
+
+    // Sort agents in each workspace: blocked first, working next, idle/done after
+    for (const group of map.values()) {
+      group.agents.sort((a, b) => statusPriority(a.status) - statusPriority(b.status));
+    }
+
+    // Sort workspace groups: those with blocked/working agents float to the top
+    const groups = Array.from(map.values());
+    groups.sort((a, b) => {
+      const scoreA = (a.hasBlocked ? 20 : 0) + (a.hasWorking ? 10 : 0);
+      const scoreB = (b.hasBlocked ? 20 : 0) + (b.hasWorking ? 10 : 0);
+      if (scoreA !== scoreB) return scoreB - scoreA;
+      return a.workspaceLabel.localeCompare(b.workspaceLabel);
+    });
+
+    return groups;
   };
 
   return (
@@ -38,7 +90,7 @@ export const ActiveAgentsModal: Component = () => {
           left: 0,
           right: 0,
           bottom: 0,
-          "max-height": "75vh",
+          "max-height": "80vh",
           "box-sizing": "border-box",
           background: "var(--sheet)",
           "border-top": "1px solid var(--border)",
@@ -67,7 +119,7 @@ export const ActiveAgentsModal: Component = () => {
           <div style={{ flex: 1 }}>
             <div style={{ "font-size": "18px", "font-weight": 700 }}>活动中的 Agent</div>
             <div style={{ "font-size": "12px", color: "var(--muted)", "margin-top": "2px" }}>
-              {blockedAgents().length} 待确认 · {workingAgents().length} 工作中
+              {blockedAgents().length} 待确认 · {workingAgents().length} 工作中 · 按工作区聚合
             </div>
           </div>
           <button
@@ -102,7 +154,7 @@ export const ActiveAgentsModal: Component = () => {
           </button>
         </div>
 
-        {/* Agent list */}
+        {/* Agent list grouped by workspace */}
         <div
           style={{
             flex: 1,
@@ -111,7 +163,7 @@ export const ActiveAgentsModal: Component = () => {
             padding: "12px 16px 24px",
             display: "flex",
             "flex-direction": "column",
-            gap: "8px",
+            gap: "16px",
           }}
         >
           <Show
@@ -153,71 +205,158 @@ export const ActiveAgentsModal: Component = () => {
               </div>
             }
           >
-            <For each={state.workingAgents}>
-              {(a) => {
-                const isBlocked = a.status === "blocked";
-                return (
-                  <button
-                    class="touch-target"
-                    onClick={() => handleSelectAgent(a)}
+            <For each={groupedWorkspaces()}>
+              {(group) => (
+                <div style={{ display: "flex", "flex-direction": "column", gap: "6px" }}>
+                  {/* Workspace Group Header */}
+                  <div
                     style={{
                       display: "flex",
-                      "flex-direction": "column",
+                      "align-items": "center",
                       gap: "6px",
-                      padding: "12px 14px",
-                      border: isBlocked ? "1.5px solid var(--warnb)" : "1px solid var(--border)",
-                      "border-radius": "12px",
-                      background: isBlocked ? "var(--warns)" : "var(--surface)",
-                      color: "var(--fg)",
-                      "text-align": "left",
-                      cursor: "pointer",
-                      width: "100%",
-                      "box-sizing": "border-box",
+                      padding: "4px 8px",
+                      "font-size": "12px",
+                      "font-weight": 700,
+                      color: "var(--muted)",
+                      "letter-spacing": "0.02em",
                     }}
                   >
-                    <div style={{ display: "flex", "align-items": "center", gap: "8px", width: "100%" }}>
+                    <svg
+                      width="14"
+                      height="14"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="2"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                      aria-hidden="true"
+                    >
+                      <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
+                    </svg>
+                    <span style={{ flex: 1 }}>{group.workspaceLabel}</span>
+                    <Show when={group.hasBlocked}>
                       <span
                         style={{
-                          width: "8px",
-                          height: "8px",
-                          "border-radius": "4px",
-                          background: isBlocked ? "var(--warn)" : "var(--accent)",
-                        }}
-                      />
-                      <span style={{ flex: 1, "font-size": "15px", "font-weight": 600 }}>
-                        {a.name}
-                      </span>
-                      <span
-                        style={{
-                          "font-size": "12px",
+                          "font-size": "11px",
                           "font-weight": 600,
-                          padding: "2px 8px",
-                          "border-radius": "6px",
-                          background: isBlocked ? "var(--warnbg)" : "var(--accentbg)",
-                          color: isBlocked ? "var(--warnt)" : "var(--accentt)",
+                          padding: "1px 6px",
+                          "border-radius": "4px",
+                          background: "var(--warnbg)",
+                          color: "var(--warnt)",
                         }}
                       >
-                        {isBlocked ? "待确认" : "工作中"}
+                        待确认
                       </span>
-                    </div>
+                    </Show>
+                    <Show when={group.hasWorking}>
+                      <span
+                        style={{
+                          "font-size": "11px",
+                          "font-weight": 600,
+                          padding: "1px 6px",
+                          "border-radius": "4px",
+                          background: "var(--accentbg)",
+                          color: "var(--accentt)",
+                        }}
+                      >
+                        运行中
+                      </span>
+                    </Show>
+                  </div>
 
-                    <div
-                      style={{
-                        "font-size": "13px",
-                        color: "var(--muted)",
-                        "padding-left": "16px",
-                        "white-space": "nowrap",
-                        overflow: "hidden",
-                        "text-overflow": "ellipsis",
-                        width: "100%",
-                        "box-sizing": "border-box",
+                  {/* Agents in this Workspace */}
+                  <div style={{ display: "flex", "flex-direction": "column", gap: "6px" }}>
+                    <For each={group.agents}>
+                      {(a) => {
+                        const isBlocked = a.status === "blocked";
+                        const isWorking = a.status === "working";
+                        return (
+                          <button
+                            class="touch-target"
+                            onClick={() => handleSelectAgent(a)}
+                            style={{
+                              display: "flex",
+                              "flex-direction": "column",
+                              gap: "6px",
+                              padding: "12px 14px",
+                              border: isBlocked
+                                ? "1.5px solid var(--warnb)"
+                                : isWorking
+                                ? "1.5px solid var(--accentl)"
+                                : "1px solid var(--border)",
+                              "border-radius": "12px",
+                              background: isBlocked
+                                ? "var(--warns)"
+                                : isWorking
+                                ? "var(--accents)"
+                                : "var(--surface)",
+                              color: "var(--fg)",
+                              "text-align": "left",
+                              cursor: "pointer",
+                              width: "100%",
+                              "box-sizing": "border-box",
+                            }}
+                          >
+                            <div style={{ display: "flex", "align-items": "center", gap: "8px", width: "100%" }}>
+                              <span
+                                style={{
+                                  width: "8px",
+                                  height: "8px",
+                                  "border-radius": "4px",
+                                  background: isBlocked
+                                    ? "var(--warn)"
+                                    : isWorking
+                                    ? "var(--accent)"
+                                    : "var(--faint)",
+                                }}
+                              />
+                              <span style={{ flex: 1, "font-size": "15px", "font-weight": 600 }}>
+                                {a.name}
+                              </span>
+                              <span
+                                style={{
+                                  "font-size": "12px",
+                                  "font-weight": 600,
+                                  padding: "2px 8px",
+                                  "border-radius": "6px",
+                                  background: isBlocked
+                                    ? "var(--warnbg)"
+                                    : isWorking
+                                    ? "var(--accentbg)"
+                                    : "var(--inset)",
+                                  color: isBlocked
+                                    ? "var(--warnt)"
+                                    : isWorking
+                                    ? "var(--accentt)"
+                                    : "var(--muted)",
+                                }}
+                              >
+                                {isBlocked ? "待确认" : isWorking ? "工作中" : "就绪"}
+                              </span>
+                            </div>
+
+                            <div
+                              style={{
+                                "font-size": "13px",
+                                color: "var(--muted)",
+                                "padding-left": "16px",
+                                "white-space": "nowrap",
+                                overflow: "hidden",
+                                "text-overflow": "ellipsis",
+                                width: "100%",
+                                "box-sizing": "border-box",
+                              }}
+                            >
+                              {a.summary || (isBlocked ? "需要确认授权" : isWorking ? "正在执行中" : "就绪")}
+                            </div>
+                          </button>
+                        );
                       }}
-                    >
-                      {a.workspaceLabel} · {a.summary || (isBlocked ? "需要确认授权" : "正在执行中")}
-                    </div>
-                  </button>
-                );
-              }}
+                    </For>
+                  </div>
+                </div>
+              )}
             </For>
           </Show>
         </div>
