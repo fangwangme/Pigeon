@@ -70,20 +70,20 @@ export class HerdrClient extends EventEmitter {
 
   public startPolling(): void {
     this.stopPolling();
-    // Global topology: 1-2s query session.snapshot
+    // Gentle heartbeat fallback (30s) per spec event-driven model when event stream is inactive
     this.snapshotPollTimer = setInterval(() => {
-      if (this.connected) {
+      if (this.connected && !this.subSocket) {
         this.refreshSnapshot().catch(() => {});
       }
-    }, 1500);
+    }, 30000);
 
-    // Active pane reading: 200-300ms query recent_unwrapped for focused/monitored pane
+    // Active pane reading: only if a mobile client explicitly requested monitoredPaneId,
+    // using a gentle fallback interval (3s) rather than hammering Herdr's pty
     this.activePanePollTimer = setInterval(() => {
-      const targetPane = this.monitoredPaneId || this.focusedPaneId;
-      if (targetPane && this.connected) {
-        this.readAndClassifyPane(targetPane).catch(() => {});
+      if (this.monitoredPaneId && this.connected) {
+        this.readAndClassifyPane(this.monitoredPaneId).catch(() => {});
       }
-    }, 250);
+    }, 3000);
   }
 
   public stopPolling(): void {
