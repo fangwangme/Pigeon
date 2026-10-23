@@ -61,7 +61,7 @@ Pigeon is designed explicitly for single-handed mobile thumb usage on Chrome/Chr
 - If the user has scrolled upward to read past output, auto-scroll is paused, and a floating "回到底部" (Jump to Bottom) pill button appears.
 
 ### 3.3 Contextual Safeguards for Destructive Actions
-- **`Approve` / `Reject` Macros**: Automatically disabled and dimmed when no interaction prompt is currently pending.
+- **Interactive Approvals**: All authorization prompts are handled directly via elevated Interactive Question Cards and native Action Sheets with dedicated choice buttons. Redundant toolbar macro chips are eliminated to keep the bottom dock lean.
 - **Terminating Action (`Ctrl+C`)**: **Double-tap protection**. Tapping once displays a temporary confirmation tooltip: *"再次点击确认中断 (Ctrl+C)"*; only a second tap within 0.8 seconds dispatches the termination signal.
 
 ### 3.4 Mobile Shell Layout Invariants

@@ -48,11 +48,10 @@ export interface AppState {
 
 const DEFAULT_MACROS: MacroItem[] = [
   { id: "m_model", name: "模型", type: "key", payload: "model" },
-  { id: "m_tab", name: "Tab", type: "key", payload: "tab" },
   { id: "m_continue", name: "Continue", type: "text", payload: "continue" },
-  { id: "m_approve", name: "Approve", type: "key", payload: "enter" },
-  { id: "m_enter", name: "Enter", type: "key", payload: "enter" },
   { id: "m_ctrlc", name: "Ctrl+C", type: "key", payload: "ctrl+c" },
+  { id: "m_enter", name: "Enter", type: "key", payload: "enter" },
+  { id: "m_tab", name: "Tab", type: "key", payload: "tab" },
 ];
 
 const [state, setState] = createStore<AppState>({

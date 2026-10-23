@@ -322,7 +322,7 @@ describe("Pigeon Server Implementation Suite", () => {
       expect(cfg.client).toBeDefined();
       expect(cfg.client.themeKey).toBe("tokyo-night");
       expect(cfg.client.themeMode).toBe("system");
-      expect(cfg.client.macros).toHaveLength(6);
+      expect(cfg.client.macros).toHaveLength(5);
     });
 
     test("Deep merge retains unmodified server and client configurations", () => {

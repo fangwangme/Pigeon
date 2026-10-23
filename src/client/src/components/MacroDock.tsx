@@ -33,14 +33,6 @@ export const MacroDock: Component = () => {
       return;
     }
 
-    if (macro.name === "Approve" && state.pendingInteraction) {
-      const yesOpt = state.pendingInteraction.options.find(
-        (o) => o.id === "opt_yes" || o.id === "opt_1" || o.label.includes("是") || o.label.toLowerCase().includes("yes")
-      );
-      respondInteraction(state.pendingInteraction.interactionId, yesOpt?.id, state.pendingInteraction.fingerprint);
-      return;
-    }
-
     if (macro.name === "模型" || macro.payload === "model") {
       sendPrompt("/model");
       return;
@@ -72,23 +64,17 @@ export const MacroDock: Component = () => {
     }
   };
 
-  const isDisabled = (macro: { name: string }) =>
-    macro.name === "Approve" && !state.pendingInteraction;
-
-  const primaryMacros = () => state.macros.slice(0, 4);
-  const overflowMacros = () => state.macros.slice(4);
+  const primaryMacros = () => state.macros.slice(0, 3);
+  const overflowMacros = () => state.macros.slice(3);
 
   const renderMacroButton = (macro: { id: string; name: string; type: "text" | "key"; payload: string }) => {
     const isCtrlC = () => macro.name === "Ctrl+C" || macro.payload === "ctrl+c";
     const isConfirming = () => isCtrlC() && ctrlCConfirm();
-    const disabled = () => isDisabled(macro);
 
     return (
       <button
         class="touch-target"
-        disabled={disabled()}
-        aria-disabled={disabled()}
-        onClick={() => !disabled() && handleMacroClick(macro)}
+        onClick={() => handleMacroClick(macro)}
         style={{
           height: `${CHIP_HEIGHT}px`,
           padding: "0 10px",
@@ -103,8 +89,7 @@ export const MacroDock: Component = () => {
           color: isConfirming() ? "var(--delfg)" : "var(--fg)",
           "font-size": "12px",
           "font-weight": 550,
-          cursor: disabled() ? "default" : "pointer",
-          opacity: disabled() ? 0.42 : 1,
+          cursor: "pointer",
           "white-space": "nowrap",
           transition: "background 0.15s ease, color 0.15s ease, opacity 0.15s ease, transform 0.15s ease",
         }}
