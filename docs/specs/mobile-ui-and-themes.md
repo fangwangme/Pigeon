@@ -74,7 +74,12 @@ Pigeon is designed explicitly for single-handed mobile thumb usage on Chrome/Chr
 - **Top chrome budget**: header (52px) + tab bar (46px) + optional split-pane row (44px). Session strip stays under 92px so the feed keeps the majority of an 844px-tall viewport.
 - **Terminal output**: rendered as a panel with a mobile header (title, line count, copy, expand). macOS traffic lights are not used. When structured cards exist, the raw screen collapses to a single-line "终端 · 最近一行 · N 行" row that opens the full-screen terminal sheet.
 - **Tool cards**: header shows the tool name and exit status; the command renders on its own mono line; output is capped at five lines with an explicit expand control.
-- **Bottom dock**: macro actions stay strictly on a single row (`height: 42px`, `flex-wrap: nowrap`) to conserve precious vertical viewport space for input and output cards. The primary row presents the three highest-frequency actions (`[模型]`, `[Continue]`, `[Ctrl+C]`), followed by an overflow trigger (`[··· 更多]`) with high-contrast hover/touch elevation; tapping it slides in a single-row lateral tray revealing secondary utilities (`[‹ 返回]`, `[Enter]`, `[Tab]`, custom macros, and `[⚙️ 管理]`). The composer stays pinned above the keyboard and respects `env(safe-area-inset-bottom)`.
+- **Bottom composer & Unified Input Area (D3, D7)**: Replaces persistent macro toolbars with an all-in-one input composer area to maximize the viewport available for agent cards. It incorporates:
+  - An inline model and thinking level capsule indicator.
+  - Native `/` local Skill completion popup with zero-latency fuzzy search.
+  - An Options button (`[···]`) that elevates an on-demand Option Sheet housing interrupts (`[🛑 中断 / Esc]`, double-tap `[Ctrl+C]`), raw virtual keys (`Tab`, `Enter`, arrows), and user macros. The Options trigger can be toggled in Settings (`showMacroDock`).
+  - Strict respect for `interactive-widget=resizes-content` and `env(safe-area-inset-bottom)`.
+- **Tab Lifecycle Safeguard (D5)**: Closing an active Tab triggers a double-confirmation modal warning that the agent process and session will terminate, synchronizing real destruction to Herdr (`tab.close`).
 - **Truncation**: workspace names, server host and long card titles use ellipsis, never hard clipping without an indication.
 
 ## 4. Theming and Color Tokens

@@ -5,6 +5,9 @@ import type { PairingManager, DeviceSession } from "./pairing";
 import type { PushManager } from "./push";
 import { ConfigManager } from "./config-manager";
 import { AgentAdapterManager } from "./agent-adapters/index";
+import { PaneStore } from "./pane-store";
+import { SkillScanner } from "./skill-scanner";
+import { listAgentRecipes } from "./agent-recipes";
 import {
   type ClientMessage,
   type ServerMessage,
@@ -36,6 +39,8 @@ export class WsServer extends EventEmitter {
   private insecureDev: boolean;
   public configManager: ConfigManager;
   public agentAdapters: AgentAdapterManager;
+  public paneStore: PaneStore;
+  public skillScanner: SkillScanner;
   private clients = new Map<ServerWebSocket<ClientConnectionData>, ClientConnectionData>();
 
   constructor(options: WsServerOptions) {
@@ -47,6 +52,36 @@ export class WsServer extends EventEmitter {
     this.insecureDev = !!options.insecureDev;
     this.configManager = options.configManager || new ConfigManager();
     this.agentAdapters = new AgentAdapterManager();
+    this.paneStore = new PaneStore(this.agentAdapters);
+    this.skillScanner = new SkillScanner();
+
+    this.herdrClient.on("connected", () => {
+      this.paneStore.setHerdrStatus(true);
+    });
+
+    this.herdrClient.on("disconnected", () => {
+      this.paneStore.setHerdrStatus(false);
+    });
+
+    this.paneStore.on("upstream_status", (status) => {
+      this.broadcast({
+        type: "upstream_status",
+        payload: status,
+      });
+    });
+
+    this.paneStore.on("turns_delta", (delta) => {
+      for (const [ws, data] of this.clients.entries()) {
+        if (data.subscribedPaneId === delta.paneId) {
+          ws.send(
+            JSON.stringify({
+              type: "turns_delta",
+              payload: delta,
+            })
+          );
+        }
+      }
+    });
 
     // Listen to Herdr updates to broadcast
     this.herdrClient.on("snapshot_updated", (snapshot) => {
@@ -61,6 +96,7 @@ export class WsServer extends EventEmitter {
       const session = this.herdrClient.getPaneAgentSession(update.paneId);
       let structuredTurnsPayload: any = null;
       if (session && this.agentAdapters.isSupported(session.agent)) {
+        this.paneStore.registerPaneSession(update.paneId, session.agent, session.sessionId);
         const { turns, stats, sessionTitle } = this.agentAdapters.getTurns(session.agent, session.sessionId, true);
         if (turns && turns.length > 0) {
           structuredTurnsPayload = {
@@ -186,6 +222,18 @@ export class WsServer extends EventEmitter {
         this.syncMonitoredPanes();
 
         const clientCfg = this.configManager.getClientConfig();
+        const skills = this.skillScanner.listSkills();
+        const recipes: Record<string, any> = {};
+        for (const r of listAgentRecipes()) {
+          recipes[r.kind] = {
+            kind: r.kind,
+            label: r.label,
+            models: r.models,
+            defaultModel: r.defaultModel,
+            defaultThinking: r.defaultThinking,
+            interruptKeys: r.interruptKeys,
+          };
+        }
 
         // Reply welcome
         const welcomeMsg: ServerMessage = {
@@ -202,9 +250,19 @@ export class WsServer extends EventEmitter {
               macrosVersion: 1,
             },
             clientConfig: clientCfg,
+            skills,
+            recipes,
           },
         };
         ws.send(JSON.stringify(welcomeMsg));
+
+        // Push upstream health status
+        ws.send(
+          JSON.stringify({
+            type: "upstream_status",
+            payload: this.paneStore.getHerdrStatus(),
+          })
+        );
 
         // Push snapshot
         const snapshot = this.herdrClient.getSnapshot();
@@ -499,9 +557,13 @@ export class WsServer extends EventEmitter {
       }
 
       case "create_tab_and_agent": {
-        const { workspaceId, agentKind, cwd } = msg.payload || {};
+        const { workspaceId, agentKind, modelId, thinking, cwd } = msg.payload || {};
         try {
-          const res = await this.herdrClient.createTabAndAgent(workspaceId, agentKind, cwd);
+          const res = await this.herdrClient.createTabAndAgent(workspaceId, agentKind, {
+            modelId,
+            thinking,
+            cwd,
+          });
           this.sendAck(ws, msg.id, {
             workspaceId,
             tabId: res?.tabId,
@@ -510,6 +572,44 @@ export class WsServer extends EventEmitter {
         } catch (err: any) {
           this.sendError(ws, msg.id, ProtocolErrors.ERR_INVALID_PAYLOAD, err.message);
         }
+        break;
+      }
+
+      case "close_tab": {
+        const tabId = msg.payload?.tabId;
+        if (!tabId) {
+          this.sendError(ws, msg.id, ProtocolErrors.ERR_INVALID_PAYLOAD, "Missing tabId in close_tab");
+          break;
+        }
+        try {
+          await this.herdrClient.closeTab(tabId);
+          this.sendAck(ws, msg.id, { closedTabId: tabId });
+        } catch (err: any) {
+          this.sendError(ws, msg.id, ProtocolErrors.ERR_INTERNAL, err.message);
+        }
+        break;
+      }
+
+      case "skills_get": {
+        const skills = this.skillScanner.listSkills();
+        const recipes: Record<string, any> = {};
+        for (const r of listAgentRecipes()) {
+          recipes[r.kind] = {
+            kind: r.kind,
+            label: r.label,
+            models: r.models,
+            defaultModel: r.defaultModel,
+            defaultThinking: r.defaultThinking,
+            interruptKeys: r.interruptKeys,
+          };
+        }
+        ws.send(
+          JSON.stringify({
+            type: "skills_sync",
+            replyTo: msg.id,
+            payload: { skills, recipes },
+          })
+        );
         break;
       }
 

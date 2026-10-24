@@ -2,6 +2,7 @@ import { connect, type Socket } from "node:net";
 import { EventEmitter } from "node:events";
 import { createHash } from "node:crypto";
 import { CardClassifier } from "./card-classifier";
+import { getAgentRecipe } from "./agent-recipes";
 import type {
   AgentStatus,
   Card,
@@ -681,15 +682,20 @@ export class HerdrClient extends EventEmitter {
     return /^[a-z][a-z0-9_-]{0,31}$/.test(name);
   }
 
-  public async createTabAndAgent(workspaceId: string, agentKind: string, cwd?: string): Promise<any> {
+  public async createTabAndAgent(
+    workspaceId: string,
+    agentKind: string,
+    options?: { modelId?: string; thinking?: string; cwd?: string } | string
+  ): Promise<any> {
     const isTerminal = agentKind === "terminal" || agentKind === "shell";
     if (!isTerminal && !this.validateAgentName(agentKind)) {
       throw new Error(`Invalid agent name '${agentKind}'. Must match [a-z][a-z0-9_-]{0,31}`);
     }
 
+    const opts = typeof options === "string" ? { cwd: options } : options || {};
     const tabRes = await this.request("tab.create", {
       workspace_id: workspaceId,
-      ...(cwd ? { cwd } : {}),
+      ...(opts.cwd ? { cwd: opts.cwd } : {}),
     });
 
     const tabId = tabRes?.tab?.tab_id || tabRes?.tab_id || tabRes?.id;
@@ -698,14 +704,23 @@ export class HerdrClient extends EventEmitter {
     if (rootPaneId && !isTerminal) {
       const hex4 = Math.random().toString(16).substring(2, 6);
       const name = `p-${agentKind}-${hex4}`;
+      const recipe = getAgentRecipe(agentKind);
+      const args = recipe ? recipe.launchArgs({ modelId: opts.modelId, thinking: opts.thinking }) : [];
+
       await this.request("agent.start", {
         pane_id: rootPaneId,
         kind: agentKind,
         name,
+        ...(args.length > 0 ? { args } : {}),
       });
     }
 
     await this.refreshSnapshot();
     return { tabId, paneId: rootPaneId };
+  }
+
+  public async closeTab(tabId: string): Promise<void> {
+    await this.request("tab.close", { tab_id: tabId });
+    await this.refreshSnapshot();
   }
 }

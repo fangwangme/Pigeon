@@ -147,6 +147,39 @@ export interface ServerConfig {
   adminSocketPath: string;
 }
 
+export interface SkillEntry {
+  name: string;
+  description: string;
+  source: "builtin" | "user" | "project";
+  path?: string;
+}
+
+export interface ModelOption {
+  id: string;
+  label: string;
+  thinkingLevels?: string[];
+}
+
+export interface AgentRecipeSummary {
+  kind: string;
+  label: string;
+  models: ModelOption[];
+  defaultModel?: string;
+  defaultThinking?: string;
+  interruptKeys: string[];
+}
+
+export interface TurnsDeltaPayload {
+  paneId: string;
+  seqWatermark: number;
+  sinceTurnIndex: number;
+  appendTurns: NormalizedTurn[];
+  patchLastTurn?: NormalizedTurn;
+  sessionStats?: { filesModified: number; additions: number; deletions: number; diffs?: FileDiffSummary[] };
+  sessionTitle?: string;
+  isStreaming?: boolean;
+}
+
 export interface PigeonConfig {
   server: ServerConfig;
   client: ClientConfig;
@@ -165,7 +198,9 @@ export type ClientMessage =
   | { type: "select_view"; id: string; payload: { paneId: string } }
   | { type: "ghost_execute"; id: string; payload: { targetPaneId: string; suggestionId: string; paneRevision: number } }
   | { type: "open_agent_menu"; id: string; payload: { targetPaneId: string; menu: string } }
-  | { type: "create_tab_and_agent"; id: string; payload: { workspaceId: string; agentKind: string; cwd?: string } }
+  | { type: "create_tab_and_agent"; id: string; payload: { workspaceId: string; agentKind: string; modelId?: string; thinking?: string; cwd?: string } }
+  | { type: "close_tab"; id: string; payload: { tabId: string } }
+  | { type: "skills_get"; id: string }
   | { type: "push_subscribe"; subscription: any }
   | { type: "config_get"; id: string }
   | { type: "config_patch"; id: string; payload: { client?: Partial<ClientConfig> } | Partial<ClientConfig> }
@@ -173,7 +208,7 @@ export type ClientMessage =
 
 // Server -> Client messages
 export type ServerMessage =
-  | { type: "welcome"; replyTo: string; payload: { protocolVersion: string; serverVersion: string; deviceId: string; preferences?: any; clientConfig?: ClientConfig } }
+  | { type: "welcome"; replyTo: string; payload: { protocolVersion: string; serverVersion: string; deviceId: string; preferences?: any; clientConfig?: ClientConfig; skills?: SkillEntry[]; recipes?: Record<string, AgentRecipeSummary> } }
   | { type: "pong"; timestamp: number }
   | { type: "ack"; replyTo: string; payload: { status: "ok" | string; [key: string]: any } }
   | { type: "error"; replyTo?: string; error: { code: string; message: string; details?: any } }
@@ -181,13 +216,16 @@ export type ServerMessage =
   | { type: "snapshot_update"; payload: SnapshotPayload }
   | { type: "config_sync"; replyTo?: string; payload: { version?: number; client: ClientConfig } }
   | { type: "config_updated"; payload: { client: ClientConfig } }
+  | { type: "skills_sync"; replyTo?: string; payload: { skills: SkillEntry[]; recipes: Record<string, AgentRecipeSummary> } }
+  | { type: "upstream_status"; payload: { herdrConnected: boolean; lastSyncTimestamp: number } }
   | { type: "cards_upsert"; payload: { paneId: string; cards: Card[]; revision: number } }
   | { type: "cards_remove"; payload: { paneId: string; cardIds: string[] } }
   | { type: "interaction_required"; payload: InteractionCardData & { paneId: string } }
   | { type: "ghost_suggestion"; payload: { paneId: string; suggestionId: string; command: string; paneRevision: number } }
   | { type: "ghost_cleared"; payload: { paneId: string } }
   | { type: "pane_screen"; payload: { paneId: string; text: string; revision: number } }
-  | { type: "normalized_turns"; payload: { paneId: string; turns: NormalizedTurn[]; sessionStats?: { filesModified: number; additions: number; deletions: number; diffs?: FileDiffSummary[] }; isStreaming?: boolean } };
+  | { type: "normalized_turns"; payload: { paneId: string; turns: NormalizedTurn[]; sessionStats?: { filesModified: number; additions: number; deletions: number; diffs?: FileDiffSummary[] }; isStreaming?: boolean } }
+  | { type: "turns_delta"; payload: TurnsDeltaPayload };
 
 export const ProtocolErrors = {
   ERR_UNAUTHORIZED: "ERR_UNAUTHORIZED",

@@ -1,24 +1,79 @@
-import { Component, For, createSignal, Show } from "solid-js";
+import { Component, For, createSignal, Show, createMemo } from "solid-js";
 import { state, getActiveTab, openSettingsModal } from "../state/store";
-import { sendPrompt, sendKeys, respondInteraction } from "../state/ws";
-
-const CHIP_HEIGHT = 36;
-const TOUCH = 44;
+import { sendPrompt, sendKeys } from "../state/ws";
 
 export const MacroDock: Component = () => {
   const [inputText, setInputText] = createSignal("");
   const [isComposing, setIsComposing] = createSignal(false);
   const [ctrlCConfirm, setCtrlCConfirm] = createSignal(false);
-  const [showMore, setShowMore] = createSignal(false);
+  const [showOptions, setShowOptions] = createSignal(false);
+  const [showSkillPicker, setShowSkillPicker] = createSignal(false);
   let ctrlCTimer: any = null;
+  let textareaRef: HTMLTextAreaElement | undefined;
 
   const tab = getActiveTab;
 
+  const activePane = () => {
+    const t = tab();
+    if (!t) return undefined;
+    return t.panes?.find((p) => p.id === state.activePaneId) || t.panes?.[0];
+  };
+
+  const currentAgentKind = () => {
+    const p = activePane();
+    return p?.agent?.toLowerCase() || "";
+  };
+
+  const currentRecipe = () => {
+    return state.recipes?.[currentAgentKind()];
+  };
+
+  // Skill completion query
+  const skillQuery = createMemo(() => {
+    const text = inputText();
+    const lastSlash = text.lastIndexOf("/");
+    if (lastSlash === -1) return null;
+    const after = text.slice(lastSlash + 1);
+    if (after.includes(" ") || after.includes("\n")) return null;
+    return after.toLowerCase();
+  });
+
+  const matchingSkills = createMemo(() => {
+    const q = skillQuery();
+    if (q === null) return [];
+    const all = state.skills || [];
+    if (!q) return all.slice(0, 8);
+    return all
+      .filter((s) => s.name.toLowerCase().includes(q) || s.description.toLowerCase().includes(q))
+      .slice(0, 8);
+  });
+
+  const handleSelectSkill = (skillName: string) => {
+    const text = inputText();
+    const lastSlash = text.lastIndexOf("/");
+    if (lastSlash !== -1) {
+      const before = text.slice(0, lastSlash);
+      const newText = `${before}/${skillName} `;
+      setInputText(newText);
+      setShowSkillPicker(false);
+      textareaRef?.focus();
+    }
+  };
+
+  const handleInterrupt = () => {
+    const recipe = currentRecipe();
+    const keys = recipe?.interruptKeys || ["esc"];
+    sendKeys(keys);
+    setShowOptions(false);
+  };
+
   const handleCtrlC = () => {
+    // Confirm Ctrl+C safeguard with 800ms window
     if (ctrlCConfirm()) {
       clearTimeout(ctrlCTimer);
       setCtrlCConfirm(false);
       sendKeys(["ctrl+c"]);
+      setShowOptions(false);
     } else {
       setCtrlCConfirm(true);
       ctrlCTimer = setTimeout(() => {
@@ -27,34 +82,12 @@ export const MacroDock: Component = () => {
     }
   };
 
-  const handleMacroClick = (macro: { id: string; name: string; type: "text" | "key"; payload: string }) => {
-    if (macro.name === "Ctrl+C" || macro.name === "终止" || macro.name === "Stop" || macro.payload === "ctrl+c") {
-      handleCtrlC();
-      return;
-    }
-
-    if (macro.name === "模型" || macro.name === "Model" || macro.payload === "model") {
-      sendPrompt("/model");
-      return;
-    }
-
-    if (macro.name === "继续" || macro.name === "Continue" || macro.payload === "continue") {
-      sendPrompt("continue");
-      return;
-    }
-
-    if (macro.type === "key") {
-      sendKeys([macro.payload]);
-    } else {
-      sendPrompt(macro.payload);
-    }
-  };
-
   const handleSend = () => {
     const text = inputText().trim();
     if (text) {
       sendPrompt(text);
       setInputText("");
+      setShowSkillPicker(false);
     } else {
       // Empty input: Send button acts as instant Enter confirmation
       sendKeys(["enter"]);
@@ -69,52 +102,17 @@ export const MacroDock: Component = () => {
     }
   };
 
-  const primaryMacros = () => state.macros.slice(0, 3);
-  const overflowMacros = () => state.macros.slice(3);
-
-  const renderMacroButton = (macro: { id: string; name: string; type: "text" | "key"; payload: string }) => {
-    const isCtrlC = () =>
-      macro.name === "Ctrl+C" ||
-      macro.name === "终止" ||
-      macro.name === "Stop" ||
-      macro.payload === "ctrl+c";
-    // Safeguard: Confirm Ctrl+C window of 800ms
-    const isConfirming = () => isCtrlC() && ctrlCConfirm();
-
-    return (
-      <button
-        class="touch-target"
-        onClick={() => handleMacroClick(macro)}
-        style={{
-          height: `${CHIP_HEIGHT}px`,
-          "min-height": `${CHIP_HEIGHT}px`,
-          "max-height": `${CHIP_HEIGHT}px`,
-          padding: "0 8px",
-          flex: 1,
-          "min-width": 0,
-          "border-radius": "9px",
-          border: isConfirming()
-            ? "1.5px solid var(--delbg)"
-            : "1.5px solid var(--border)",
-          background: isConfirming()
-            ? "var(--delbg)"
-            : "var(--surface)",
-          color: isConfirming() ? "var(--delfg)" : "var(--fg)",
-          "font-size": "13px",
-          "font-weight": 600,
-          display: "flex",
-          "align-items": "center",
-          "justify-content": "center",
-          cursor: "pointer",
-          "white-space": "nowrap",
-          "box-shadow": "0 1px 3px rgba(0, 0, 0, 0.2)",
-          "box-sizing": "border-box",
-          transition: "background 0.15s ease, color 0.15s ease, opacity 0.15s ease, transform 0.15s ease",
-        }}
-      >
-        {isConfirming() ? "确认终止" : macro.name}
-      </button>
-    );
+  const handleMacroAction = (macro: { id: string; name: string; type: "text" | "key"; payload: string }) => {
+    if (macro.payload === "ctrl+c" || macro.name === "终止") {
+      handleCtrlC();
+      return;
+    }
+    if (macro.type === "key") {
+      sendKeys([macro.payload]);
+    } else {
+      sendPrompt(macro.payload);
+    }
+    setShowOptions(false);
   };
 
   return (
@@ -122,247 +120,401 @@ export const MacroDock: Component = () => {
       style={{
         "flex-shrink": 0,
         background: "var(--bg)",
-        color: "var(--fg)",
         "border-top": "1px solid var(--line)",
-        padding: "4px 0 0",
-        "box-sizing": "border-box",
+        position: "relative",
+        "z-index": 20,
       }}
     >
-      {/* Strictly Single-Row Macro Bar with Lateral Slide Drawer (Hideable via settings) */}
-      <Show when={state.showMacroDock !== false}>
+      {/* Skill completion popup (D2) */}
+      <Show when={skillQuery() !== null && matchingSkills().length > 0}>
         <div
-          role="toolbar"
-          aria-label="快捷操作栏"
+          role="listbox"
+          aria-label="Skill 补全列表"
           style={{
-            position: "relative",
-            height: "46px",
-            "min-height": "46px",
+            position: "absolute",
+            bottom: "100%",
+            left: "10px",
+            right: "10px",
+            "margin-bottom": "6px",
+            "max-height": "220px",
+            "overflow-y": "auto",
+            background: "var(--sheet)",
+            border: "1.5px solid var(--border)",
+            "border-radius": "14px",
+            "box-shadow": "0 8px 24px rgba(0,0,0,0.3)",
+            padding: "6px",
             display: "flex",
-            "align-items": "center",
-            overflow: "hidden",
-            padding: "0 10px",
-            background: "var(--bg)",
-            "box-sizing": "border-box",
+            "flex-direction": "column",
+            gap: "4px",
+            "z-index": 35,
           }}
         >
-          {/* Layer 1: Primary Row (Always fits within 1 row, equal flex distribution) */}
           <div
             style={{
+              padding: "4px 8px 6px",
+              "font-size": "11px",
+              color: "var(--muted)",
+              "font-weight": 600,
+              "border-bottom": "1px solid var(--line)",
               display: "flex",
-              "align-items": "center",
-              gap: "6px",
-              width: "100%",
-              height: "100%",
-              transition: "transform 0.24s cubic-bezier(0.16, 1, 0.3, 1), opacity 0.2s ease",
-              transform: showMore() ? "translateX(-20%)" : "translateX(0)",
-              opacity: showMore() ? 0 : 1,
-              "pointer-events": showMore() ? "none" : "auto",
-              "box-sizing": "border-box",
+              "justify-content": "space-between",
             }}
           >
-            <For each={primaryMacros()}>{renderMacroButton}</For>
-
-            {/* Last slot in row: More / Overflow trigger (Icon-only 3-dots, no text, clean & internationalized) */}
-            <button
-              class="touch-target macro-more-btn"
-              aria-label="更多操作"
-              title="更多操作"
-              onClick={() => setShowMore(true)}
-              style={{
-                height: `${CHIP_HEIGHT}px`,
-                "min-height": `${CHIP_HEIGHT}px`,
-                "max-height": `${CHIP_HEIGHT}px`,
-                width: "36px",
-                "min-width": "36px",
-                padding: "0",
-                "flex-shrink": 0,
-                "border-radius": "9px",
-                border: "1.5px solid var(--border)",
-                background: "var(--surface)",
-                color: "var(--muted)",
-                display: "flex",
-                "align-items": "center",
-                "justify-content": "center",
-                cursor: "pointer",
-                "margin-left": "2px",
-                "box-shadow": "0 1px 3px rgba(0, 0, 0, 0.2)",
-                "box-sizing": "border-box",
-              }}
-            >
-              <svg
-                width="18"
-                height="18"
-                viewBox="0 0 24 24"
-                fill="currentColor"
-                aria-hidden="true"
-                style={{ display: "block" }}
+            <span>SKILL 补全 ({matchingSkills().length})</span>
+            <span>点击选择</span>
+          </div>
+          <For each={matchingSkills()}>
+            {(skill) => (
+              <button
+                class="touch-target"
+                onClick={() => handleSelectSkill(skill.name)}
+                style={{
+                  display: "flex",
+                  "flex-direction": "column",
+                  "align-items": "flex-start",
+                  padding: "8px 10px",
+                  "border-radius": "8px",
+                  border: "1px solid transparent",
+                  background: "var(--surface)",
+                  color: "var(--fg)",
+                  "text-align": "left",
+                  cursor: "pointer",
+                  gap: "2px",
+                }}
               >
-                <circle cx="5" cy="12" r="2" />
-                <circle cx="12" cy="12" r="2" />
-                <circle cx="19" cy="12" r="2" />
-              </svg>
-            </button>
+                <div style={{ display: "flex", "align-items": "center", gap: "6px" }}>
+                  <span
+                    style={{
+                      "font-family": "'JetBrains Mono', monospace",
+                      "font-weight": 700,
+                      "font-size": "13px",
+                      color: "var(--accent)",
+                    }}
+                  >
+                    /{skill.name}
+                  </span>
+                  <span
+                    style={{
+                      "font-size": "10px",
+                      padding: "1px 5px",
+                      "border-radius": "4px",
+                      background: "var(--inset)",
+                      color: "var(--muted)",
+                    }}
+                  >
+                    {skill.source}
+                  </span>
+                </div>
+                <div
+                  style={{
+                    "font-size": "12px",
+                    color: "var(--muted)",
+                    overflow: "hidden",
+                    "text-overflow": "ellipsis",
+                    "white-space": "nowrap",
+                    width: "100%",
+                  }}
+                >
+                  {skill.description}
+                </div>
+              </button>
+            )}
+          </For>
+        </div>
+      </Show>
+
+      {/* Option Sheet popup (D7) */}
+      <Show when={showOptions()}>
+        <div
+          aria-hidden="true"
+          onClick={() => setShowOptions(false)}
+          style={{
+            position: "fixed",
+            inset: 0,
+            background: "var(--scrim)",
+            "z-index": 45,
+          }}
+        />
+        <div
+          role="dialog"
+          aria-label="操作选项"
+          style={{
+            position: "absolute",
+            bottom: "100%",
+            left: "10px",
+            right: "10px",
+            "margin-bottom": "8px",
+            background: "var(--sheet)",
+            border: "1.5px solid var(--border)",
+            "border-radius": "16px",
+            "box-shadow": "0 10px 30px rgba(0,0,0,0.35)",
+            padding: "14px",
+            display: "flex",
+            "flex-direction": "column",
+            gap: "12px",
+            "z-index": 50,
+          }}
+        >
+          {/* Section: Interrupt & Stop */}
+          <div>
+            <div style={{ "font-size": "11.5px", "font-weight": 700, color: "var(--muted)", "margin-bottom": "6px" }}>
+              控制与中断
+            </div>
+            <div style={{ display: "flex", gap: "8px" }}>
+              <button
+                class="touch-target"
+                onClick={handleInterrupt}
+                style={{
+                  flex: 1,
+                  height: "40px",
+                  "border-radius": "9px",
+                  border: "1.5px solid var(--border)",
+                  background: "var(--surface)",
+                  color: "var(--fg)",
+                  "font-size": "13px",
+                  "font-weight": 600,
+                  display: "flex",
+                  "align-items": "center",
+                  "justify-content": "center",
+                  gap: "6px",
+                  cursor: "pointer",
+                }}
+              >
+                <span>🛑 中断 (Esc)</span>
+              </button>
+              <button
+                class="touch-target"
+                onClick={handleCtrlC}
+                style={{
+                  flex: 1,
+                  height: "40px",
+                  "border-radius": "9px",
+                  border: ctrlCConfirm() ? "1.5px solid var(--delbg)" : "1.5px solid var(--border)",
+                  background: ctrlCConfirm() ? "var(--delbg)" : "var(--surface)",
+                  color: ctrlCConfirm() ? "#fff" : "var(--delbg)",
+                  "font-size": "13px",
+                  "font-weight": 600,
+                  display: "flex",
+                  "align-items": "center",
+                  "justify-content": "center",
+                  cursor: "pointer",
+                }}
+              >
+                <span>{ctrlCConfirm() ? "再按一次确认" : "Ctrl+C"}</span>
+              </button>
+            </div>
           </div>
 
-          {/* Layer 2: Lateral Slide-Out Tray (Reveals extra macros in the same single row) */}
-          <div
-            style={{
-              position: "absolute",
-              top: 0,
-              left: 0,
-              right: 0,
-              bottom: 0,
-              display: "flex",
-              "align-items": "center",
-              gap: "6px",
-              padding: "0 10px",
-              background: "var(--bg)",
-              transition: "transform 0.24s cubic-bezier(0.16, 1, 0.3, 1), opacity 0.2s ease",
-              transform: showMore() ? "translateX(0)" : "translateX(100%)",
-              opacity: showMore() ? 1 : 0,
-              "pointer-events": showMore() ? "auto" : "none",
-              "overflow-x": "auto",
-              "scrollbar-width": "none",
-              "-webkit-overflow-scrolling": "touch",
-              "z-index": 5,
-              "box-sizing": "border-box",
-            }}
-          >
-            {/* Back Button */}
-            <button
-              class="touch-target"
-              aria-label="返回"
-              title="返回主快捷操作"
-              onClick={() => setShowMore(false)}
-              style={{
-                height: `${CHIP_HEIGHT}px`,
-                "min-height": `${CHIP_HEIGHT}px`,
-                "max-height": `${CHIP_HEIGHT}px`,
-                width: "36px",
-                "min-width": "36px",
-                padding: "0",
-                "flex-shrink": 0,
-                "border-radius": "9px",
-                border: "1.5px solid var(--border)",
-                background: "var(--surface)",
-                color: "var(--fg)",
-                display: "flex",
-                "align-items": "center",
-                "justify-content": "center",
-                cursor: "pointer",
-                "box-shadow": "0 1px 3px rgba(0, 0, 0, 0.2)",
-                "box-sizing": "border-box",
-              }}
-            >
-              <svg
-                width="16"
-                height="16"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="2.5"
-                stroke-linecap="round"
-                stroke-linejoin="round"
-                aria-hidden="true"
-                style={{ display: "block" }}
+          {/* Section: Keys */}
+          <div>
+            <div style={{ "font-size": "11.5px", "font-weight": 700, color: "var(--muted)", "margin-bottom": "6px" }}>
+              常用按键
+            </div>
+            <div style={{ display: "grid", "grid-template-columns": "repeat(4, 1fr)", gap: "6px" }}>
+              <button
+                class="touch-target"
+                onClick={() => { sendKeys(["tab"]); setShowOptions(false); }}
+                style={{
+                  height: "36px",
+                  "border-radius": "8px",
+                  border: "1px solid var(--border)",
+                  background: "var(--surface)",
+                  color: "var(--fg)",
+                  "font-size": "12.5px",
+                  "font-weight": 600,
+                  cursor: "pointer",
+                }}
               >
-                <path d="M15 18l-6-6 6-6" />
-              </svg>
-            </button>
+                Tab
+              </button>
+              <button
+                class="touch-target"
+                onClick={() => { sendKeys(["enter"]); setShowOptions(false); }}
+                style={{
+                  height: "36px",
+                  "border-radius": "8px",
+                  border: "1px solid var(--border)",
+                  background: "var(--surface)",
+                  color: "var(--fg)",
+                  "font-size": "12.5px",
+                  "font-weight": 600,
+                  cursor: "pointer",
+                }}
+              >
+                Enter
+              </button>
+              <button
+                class="touch-target"
+                onClick={() => { sendKeys(["up"]); setShowOptions(false); }}
+                style={{
+                  height: "36px",
+                  "border-radius": "8px",
+                  border: "1px solid var(--border)",
+                  background: "var(--surface)",
+                  color: "var(--fg)",
+                  "font-size": "12.5px",
+                  "font-weight": 600,
+                  cursor: "pointer",
+                }}
+              >
+                ↑
+              </button>
+              <button
+                class="touch-target"
+                onClick={() => { sendKeys(["down"]); setShowOptions(false); }}
+                style={{
+                  height: "36px",
+                  "border-radius": "8px",
+                  border: "1px solid var(--border)",
+                  background: "var(--surface)",
+                  color: "var(--fg)",
+                  "font-size": "12.5px",
+                  "font-weight": 600,
+                  cursor: "pointer",
+                }}
+              >
+                ↓
+              </button>
+            </div>
+          </div>
 
-            {/* Divider */}
-            <div style={{ width: "1px", height: "20px", background: "var(--line)", "flex-shrink": 0, margin: "0 2px" }} />
-
-            {/* Secondary / Overflow Macros */}
-            <For each={overflowMacros()}>{renderMacroButton}</For>
-
-            {/* Manage Settings */}
-            <button
-              class="touch-target"
-              aria-label="管理快捷操作"
-              title="管理快捷操作"
-              onClick={() => openSettingsModal("macros")}
-              style={{
-                height: `${CHIP_HEIGHT}px`,
-                "min-height": `${CHIP_HEIGHT}px`,
-                "max-height": `${CHIP_HEIGHT}px`,
-                padding: "0 10px",
-                "flex-shrink": 0,
-                "border-radius": "9px",
-                border: "1.5px dashed var(--border)",
-                background: "transparent",
-                color: "var(--muted)",
-                "font-size": "12px",
-                display: "flex",
-                "align-items": "center",
-                gap: "4px",
-                cursor: "pointer",
-                "white-space": "nowrap",
-                "box-sizing": "border-box",
-              }}
-            >
-              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <circle cx="12" cy="12" r="3" />
-                <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z" />
-              </svg>
-              <span>管理</span>
-            </button>
+          {/* Section: Custom Macros */}
+          <div>
+            <div style={{ display: "flex", "justify-content": "space-between", "align-items": "center", "margin-bottom": "6px" }}>
+              <span style={{ "font-size": "11.5px", "font-weight": 700, color: "var(--muted)" }}>快捷宏</span>
+              <button
+                onClick={() => { setShowOptions(false); openSettingsModal("macros"); }}
+                style={{
+                  background: "transparent",
+                  border: 0,
+                  color: "var(--accent)",
+                  "font-size": "11.5px",
+                  cursor: "pointer",
+                }}
+              >
+                ⚙️ 管理
+              </button>
+            </div>
+            <div style={{ display: "flex", "overflow-x": "auto", gap: "6px", "scrollbar-width": "none" }}>
+              <For each={state.macros}>
+                {(m) => (
+                  <button
+                    class="touch-target"
+                    onClick={() => handleMacroAction(m)}
+                    style={{
+                      height: "34px",
+                      padding: "0 10px",
+                      "border-radius": "8px",
+                      border: "1px solid var(--border)",
+                      background: "var(--surface)",
+                      color: "var(--fg)",
+                      "font-size": "12px",
+                      cursor: "pointer",
+                    }}
+                  >
+                    {m.name}
+                  </button>
+                )}
+              </For>
+            </div>
           </div>
         </div>
       </Show>
 
-      {/* Composer Input Area */}
+      {/* Unified Input Composer Row (D3) */}
       <div
         style={{
-          padding: "6px 10px calc(12px + env(safe-area-inset-bottom))",
+          padding: "8px 10px calc(12px + env(safe-area-inset-bottom))",
           display: "flex",
           gap: "8px",
-          "align-items": "center",
+          "align-items": "flex-end",
           background: "var(--bg)",
           "box-sizing": "border-box",
         }}
       >
-        <textarea
-          id="pigeon-input"
-          aria-label={`发给 ${tab()?.label || "Agent"}`}
-          rows={1}
-          placeholder="输入消息或指令..."
-          value={inputText()}
-          onInput={(e) => setInputText(e.currentTarget.value)}
-          onKeyDown={handleKeyDown}
-          onCompositionStart={() => setIsComposing(true)}
-          onCompositionEnd={() => setIsComposing(false)}
-          style={{
-            flex: 1,
-            height: "44px",
-            "min-height": "44px",
-            "max-height": "110px",
-            "box-sizing": "border-box",
-            resize: "none",
-            background: "var(--surface)",
-            border: "1.5px solid var(--border)",
-            "border-radius": "12px",
-            color: "var(--fg)",
-            "font-family": "inherit",
-            "font-size": "14px",
-            "line-height": "20px",
-            padding: "11px 12px",
-            "field-sizing": "content",
-            "box-shadow": "0 1px 3px rgba(0, 0, 0, 0.15)",
-          }}
-        />
+        <div style={{ flex: 1, position: "relative" }}>
+          <textarea
+            ref={textareaRef}
+            id="pigeon-input"
+            aria-label={`发给 ${tab()?.label || "Agent"}`}
+            rows={1}
+            placeholder={
+              state.agentStatus === "blocked"
+                ? "Agent 处于确认状态，输入或点击选项..."
+                : "输入消息或指令（输入 / 唤起 Skill）..."
+            }
+            value={inputText()}
+            onInput={(e) => setInputText(e.currentTarget.value)}
+            onKeyDown={handleKeyDown}
+            onCompositionStart={() => setIsComposing(true)}
+            onCompositionEnd={() => setIsComposing(false)}
+            style={{
+              width: "100%",
+              minHeight: "44px",
+              maxHeight: "120px",
+              "box-sizing": "border-box",
+              resize: "none",
+              background: "var(--surface)",
+              border: "1.5px solid var(--border)",
+              "border-radius": "12px",
+              color: "var(--fg)",
+              "font-family": "inherit",
+              "font-size": "14px",
+              "line-height": "20px",
+              padding: "11px 12px",
+              "field-sizing": "content",
+              "box-shadow": "0 1px 3px rgba(0, 0, 0, 0.15)",
+              outline: "none",
+            }}
+          />
+        </div>
 
+        {/* Options Button (···) (D7) */}
+        <Show when={state.showMacroDock !== false}>
+          <button
+            id="macro-more-btn"
+            aria-label="操作与宏选项"
+            class="touch-target macro-more-btn"
+            onClick={() => setShowOptions((o) => !o)}
+            title="快捷操作与宏"
+            style={{
+              width: "44px",
+              height: "44px",
+              "min-width": "44px",
+              "min-height": "44px",
+              "flex-shrink": 0,
+              "border-radius": "12px",
+              border: "1.5px solid var(--border)",
+              background: showOptions() ? "var(--accentbg)" : "var(--surface)",
+              color: showOptions() ? "var(--accent)" : "var(--fg)",
+              display: "flex",
+              "align-items": "center",
+              "justify-content": "center",
+              cursor: "pointer",
+              "box-shadow": "0 1px 3px rgba(0, 0, 0, 0.15)",
+              "box-sizing": "border-box",
+              transition: "all 0.15s ease",
+            }}
+          >
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="12" cy="12" r="1.5" />
+              <circle cx="19" cy="12" r="1.5" />
+              <circle cx="5" cy="12" r="1.5" />
+            </svg>
+          </button>
+        </Show>
+
+        {/* Send Button */}
         <button
           aria-label={inputText().trim() ? "发送消息并回车" : "发送回车确认 (Enter)"}
           class="touch-target"
           onClick={handleSend}
-          title={inputText().trim() ? "发送并回车" : "回车 (Enter)"}
+          title={inputText().trim() ? "发送" : "回车 (Enter)"}
           style={{
             width: "44px",
             height: "44px",
             "min-width": "44px",
             "min-height": "44px",
-            "max-height": "44px",
             "flex-shrink": 0,
             "border-radius": "12px",
             border: "1.5px solid " + (inputText().trim() ? "var(--accent)" : "var(--border)"),
@@ -380,33 +532,13 @@ export const MacroDock: Component = () => {
           <Show
             when={inputText().trim().length > 0}
             fallback={
-              <svg
-                width="19"
-                height="19"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="2.2"
-                stroke-linecap="round"
-                stroke-linejoin="round"
-                aria-hidden="true"
-              >
+              <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
                 <polyline points="9 10 4 15 9 20" />
                 <path d="M20 4v7a4 4 0 0 1-4 4H4" />
               </svg>
             }
           >
-            <svg
-              width="19"
-              height="19"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="2.2"
-              stroke-linecap="round"
-              stroke-linejoin="round"
-              aria-hidden="true"
-            >
+            <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
               <path d="M12 19V5M5 12l7-7 7 7" />
             </svg>
           </Show>

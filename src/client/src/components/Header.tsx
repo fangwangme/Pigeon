@@ -10,6 +10,7 @@ import {
   openNewTabModal,
   openActiveAgentsModal,
   toggleDiffDrawer,
+  openCloseTabConfirm,
 } from "../state/store";
 import { selectPane } from "../state/ws";
 
@@ -322,7 +323,32 @@ export const Header: Component = () => {
                       background: tabDotColor(),
                     }}
                   />
-                  {resolveTabLabel(t, i)}
+                  <span>{resolveTabLabel(t, i)}</span>
+                  <Show when={isTabActive()}>
+                    <span
+                      role="button"
+                      aria-label="关闭 Tab"
+                      title="关闭 Tab"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        openCloseTabConfirm(t.id, resolveTabLabel(t, i));
+                      }}
+                      style={{
+                        display: "inline-flex",
+                        "align-items": "center",
+                        "justify-content": "center",
+                        width: "16px",
+                        height: "16px",
+                        "border-radius": "50%",
+                        "margin-left": "4px",
+                        color: "var(--muted)",
+                        "font-size": "11px",
+                        "line-height": 1,
+                      }}
+                    >
+                      ✕
+                    </span>
+                  </Show>
                 </button>
               </div>
             );

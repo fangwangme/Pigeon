@@ -126,7 +126,29 @@ function handleServerMessage(msg: ServerMessage): void {
       if (msg.payload?.clientConfig) {
         applySyncedClientConfig(msg.payload.clientConfig);
       }
+      if (msg.payload?.skills) {
+        setState("skills", msg.payload.skills);
+      }
+      if (msg.payload?.recipes) {
+        setState("recipes", msg.payload.recipes);
+      }
       break;
+
+    case "skills_sync": {
+      if (msg.payload?.skills) {
+        setState("skills", msg.payload.skills);
+      }
+      if (msg.payload?.recipes) {
+        setState("recipes", msg.payload.recipes);
+      }
+      break;
+    }
+
+    case "upstream_status": {
+      setState("herdrConnected", msg.payload.herdrConnected);
+      setState("lastSyncTimestamp", msg.payload.lastSyncTimestamp);
+      break;
+    }
 
     case "config_sync": {
       if (msg.payload?.client) {
@@ -237,6 +259,27 @@ function handleServerMessage(msg: ServerMessage): void {
         if (msg.payload.sessionTitle) {
           setState("sessionTitle", msg.payload.sessionTitle);
         }
+      }
+      break;
+    }
+
+    case "turns_delta": {
+      if (!state.activePaneId || state.activePaneId === msg.payload.paneId) {
+        const { sinceTurnIndex, appendTurns, patchLastTurn, sessionStats, sessionTitle } = msg.payload;
+        let current = [...state.normalizedTurns];
+        if (sinceTurnIndex === 0) {
+          current = appendTurns || [];
+        } else {
+          if (patchLastTurn && sinceTurnIndex > 0 && current.length >= sinceTurnIndex) {
+            current[sinceTurnIndex - 1] = patchLastTurn;
+          }
+          if (appendTurns && appendTurns.length > 0) {
+            current = [...current.slice(0, sinceTurnIndex), ...appendTurns];
+          }
+        }
+        setState("normalizedTurns", current);
+        if (sessionStats) setState("sessionStats", sessionStats);
+        if (sessionTitle) setState("sessionTitle", sessionTitle);
       }
       break;
     }
@@ -356,11 +399,36 @@ export function selectPane(paneId: string, workspaceId?: string, tabId?: string)
   reportPresence();
 }
 
-export function createTab(workspaceId: string, agentKind: string): void {
+export function createTab(
+  workspaceId: string,
+  agentKind: string,
+  options?: { modelId?: string; thinking?: string; cwd?: string }
+): void {
   sendMessage({
     type: "create_tab_and_agent",
     id: nextId(),
-    payload: { workspaceId, agentKind },
+    payload: {
+      workspaceId,
+      agentKind,
+      modelId: options?.modelId,
+      thinking: options?.thinking,
+      cwd: options?.cwd,
+    },
+  });
+}
+
+export function closeTab(tabId: string): void {
+  sendMessage({
+    type: "close_tab",
+    id: nextId(),
+    payload: { tabId },
+  });
+}
+
+export function fetchSkills(): void {
+  sendMessage({
+    type: "skills_get",
+    id: nextId(),
   });
 }
 

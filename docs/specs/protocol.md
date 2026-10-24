@@ -183,6 +183,7 @@ Triggers an agent's built-in interactive menu (e.g. `/model`). Permitted only wh
 ```
 
 ### 4.7 Create Tab and Launch Agent (`create_tab_and_agent`)
+Creates a new Tab and launches the requested Agent with secure server-assembled model and thinking CLI parameters:
 ```json
 {
   "type": "create_tab_and_agent",
@@ -190,12 +191,35 @@ Triggers an agent's built-in interactive menu (e.g. `/model`). Permitted only wh
   "payload": {
     "workspaceId": "w1",
     "agentKind": "claude",
+    "modelId": "claude-3-7-sonnet",
+    "thinking": "medium",
     "cwd": "/home/user/project"
   }
 }
 ```
 
-### 4.8 Preferences Synchronization (`preferences_set`)
+### 4.8 Close Tab with Session Teardown (`close_tab`)
+Closes the targeted Tab, terminates its running agent processes, and triggers a fresh snapshot update:
+```json
+{
+  "type": "close_tab",
+  "id": "cmd_108",
+  "payload": {
+    "tabId": "w1:t1"
+  }
+}
+```
+
+### 4.9 Query Available Skills (`skills_get`)
+Explicitly requests an up-to-date listing of installed and project skills:
+```json
+{
+  "type": "skills_get",
+  "id": "cmd_109"
+}
+```
+
+### 4.10 Preferences Synchronization (`preferences_set`)
 ```json
 {
   "type": "preferences_set",
@@ -343,6 +367,63 @@ Supplies clean plain-text screen content for the raw terminal fallback sheet:
     "paneId": "w1:p2",
     "text": "Claude Code\n~/Projects/coding/Pigeon\n$ bun test\n",
     "revision": 19
+  }
+}
+```
+
+### 5.8 Normalized Turns & Delta Streaming (`normalized_turns`, `turns_delta`)
+Delivers normalized semantic turns parsed by Track 1 adapters. For large or streaming sessions, `turns_delta` streams append and patch deltas to prevent mobile UI re-render thrashing:
+```json
+{
+  "type": "turns_delta",
+  "payload": {
+    "paneId": "w1:p2",
+    "seqWatermark": 42,
+    "sinceTurnIndex": 12,
+    "appendTurns": [
+      {
+        "id": "turn_13",
+        "role": "assistant",
+        "timestamp": 1729650005000,
+        "blocks": [
+          { "kind": "markdown", "content": "Running test suite now..." }
+        ]
+      }
+    ],
+    "sessionStats": { "filesModified": 3, "additions": 45, "deletions": 12 }
+  }
+}
+```
+
+### 5.9 Upstream Runtime Health Status (`upstream_status`)
+Reports connectivity state with the underlying Herdr daemon:
+```json
+{
+  "type": "upstream_status",
+  "payload": {
+    "herdrConnected": true,
+    "lastSyncTimestamp": 1729650000000
+  }
+}
+```
+
+### 5.10 Skills & Agent Recipe Sync (`skills_sync`)
+Pushes available skill registry items and agent capabilities:
+```json
+{
+  "type": "skills_sync",
+  "payload": {
+    "skills": [
+      { "name": "grilling", "description": "Stress-test ideas and architecture plans", "source": "user" }
+    ],
+    "recipes": {
+      "claude": {
+        "kind": "claude",
+        "label": "Claude Code",
+        "models": [{ "id": "claude-3-7-sonnet", "label": "Claude 3.7 Sonnet" }],
+        "interruptKeys": ["esc"]
+      }
+    }
   }
 }
 ```

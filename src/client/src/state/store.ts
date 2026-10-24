@@ -9,14 +9,18 @@ import type {
   MacroItem,
   NormalizedTurn,
   FileDiffSummary,
+  SkillEntry,
+  AgentRecipeSummary,
 } from "../../types/protocol";
 import type { SessionStats } from "../../../shared/agent-session";
 import { THEMES, applyTheme, applyFullTheme, type ThemeTokens } from "../themes";
 
-export type { MacroItem };
+export type { MacroItem, SkillEntry, AgentRecipeSummary };
 
 export interface AppState {
   connected: boolean;
+  herdrConnected: boolean;
+  lastSyncTimestamp: number;
   serverHost: string;
   workspaces: WorkspaceSummary[];
   workingAgents: WorkingAgentSummary[];
@@ -48,8 +52,14 @@ export interface AppState {
   displayDensity: "compact" | "aggregated" | "detailed";
   showScrollControls: boolean;
   showMacroDock: boolean;
+  showOptionSheet: boolean;
+  optionSheetOpen: boolean;
+  closeTabConfirmModalOpen: boolean;
+  tabToClose: { tabId: string; label: string } | null;
   sessionMenuOpen: boolean;
   macros: MacroItem[];
+  skills: SkillEntry[];
+  recipes: Record<string, AgentRecipeSummary>;
 }
 
 const DEFAULT_MACROS: MacroItem[] = [
@@ -62,6 +72,8 @@ const DEFAULT_MACROS: MacroItem[] = [
 
 const [state, setState] = createStore<AppState>({
   connected: false,
+  herdrConnected: true,
+  lastSyncTimestamp: Date.now(),
   serverHost: typeof window !== "undefined" ? window.location.hostname : "localhost",
   workspaces: [],
   workingAgents: [],
@@ -102,8 +114,14 @@ const [state, setState] = createStore<AppState>({
     typeof localStorage !== "undefined"
       ? localStorage.getItem("pigeon_show_macro_dock") !== "false"
       : true,
+  showOptionSheet: false,
+  optionSheetOpen: false,
+  closeTabConfirmModalOpen: false,
+  tabToClose: null,
   sessionMenuOpen: false,
   macros: DEFAULT_MACROS,
+  skills: [],
+  recipes: {},
 });
 
 export { state, setState };
@@ -262,6 +280,24 @@ export function closeActiveAgentsModal() {
 
 export function toggleActiveAgentsModal() {
   setState("activeAgentsModalOpen", (open) => !open);
+}
+
+export function openCloseTabConfirm(tabId: string, label: string) {
+  setState("tabToClose", { tabId, label });
+  setState("closeTabConfirmModalOpen", true);
+}
+
+export function cancelCloseTabConfirm() {
+  setState("closeTabConfirmModalOpen", false);
+  setState("tabToClose", null);
+}
+
+export function toggleOptionSheet() {
+  setState("optionSheetOpen", (open) => !open);
+}
+
+export function closeOptionSheet() {
+  setState("optionSheetOpen", false);
 }
 
 export function getActiveWorkspace(): WorkspaceSummary | undefined {

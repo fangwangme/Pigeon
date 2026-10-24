@@ -8,6 +8,10 @@ import { WsServer } from "../src/server/ws-server";
 import { ConfigManager } from "../src/server/config-manager";
 import { PigeonDaemon } from "../src/server/daemon";
 import { ProtocolErrors } from "../src/types/protocol";
+import { getAgentRecipe, listAgentRecipes } from "../src/server/agent-recipes";
+import { SkillScanner } from "../src/server/skill-scanner";
+import { PaneStore } from "../src/server/pane-store";
+import { AgentAdapterManager } from "../src/server/agent-adapters/index";
 
 describe("Pigeon Server Implementation Suite", () => {
   describe("Pairing & Admin Socket Subsystem", () => {
@@ -676,6 +680,110 @@ describe("Pigeon Server Implementation Suite", () => {
         body: JSON.stringify({ endpoint: "https://fcm.googleapis.com/fcm/send/xyz" }),
       });
       expect(res.status).toBe(401);
+    });
+  });
+
+  describe("Agent Capabilities, PaneStore Delta Streaming & Lifecycle Suite", () => {
+    test("Agent recipes register all supported agents and construct safe launchArgs", () => {
+      const recipes = listAgentRecipes();
+      expect(recipes.length).toBeGreaterThanOrEqual(5);
+
+      const claude = getAgentRecipe("claude");
+      expect(claude).toBeDefined();
+      expect(claude!.launchArgs({ modelId: "claude-3-7-sonnet" })).toEqual(["--model", "claude-3-7-sonnet"]);
+      expect(claude!.interruptKeys).toEqual(["esc"]);
+
+      const codex = getAgentRecipe("codex");
+      expect(codex).toBeDefined();
+      expect(codex!.launchArgs({ modelId: "o3-mini" })).toEqual(["-m", "o3-mini"]);
+
+      const agy = getAgentRecipe("agy");
+      expect(agy).toBeDefined();
+      expect(agy!.launchArgs({ modelId: "gemini-3.8-flash" })).toEqual(["--model", "gemini-3.8-flash"]);
+    });
+
+    test("SkillScanner scans skills directory and extracts skill entries", () => {
+      const scanner = new SkillScanner();
+      const skills = scanner.listSkills();
+      expect(Array.isArray(skills)).toBe(true);
+      if (skills.length > 0) {
+        expect(skills[0].name).toBeDefined();
+        expect(skills[0].description).toBeDefined();
+        expect(skills[0].source).toBeDefined();
+      }
+    });
+
+    test("PaneStore manages upstream status and broadcasts health updates", () => {
+      const adapters = new AgentAdapterManager();
+      const store = new PaneStore(adapters);
+
+      let emittedStatus: any = null;
+      store.on("upstream_status", (s) => {
+        emittedStatus = s;
+      });
+
+      store.setHerdrStatus(false);
+      expect(emittedStatus).toBeDefined();
+      expect(emittedStatus.herdrConnected).toBe(false);
+      expect(store.getHerdrStatus().herdrConnected).toBe(false);
+
+      store.setHerdrStatus(true);
+      expect(emittedStatus.herdrConnected).toBe(true);
+      expect(store.getHerdrStatus().herdrConnected).toBe(true);
+    });
+
+    test("WsServer processes close_tab and skills_get commands", async () => {
+      const adminSock = `/tmp/test_pigeon_admin_v2_${Date.now()}.sock`;
+      const pairing = new PairingManager({ publicBaseUrl: "http://localhost:4100", adminSocketPath: adminSock });
+      const push = new PushManager({ vapidPath: `/tmp/test_vapid_v2_${Date.now()}.json` });
+      const herdr = new HerdrClient();
+
+      let closedTabIdParam: string | null = null;
+      (herdr as any).closeTab = async (tabId: string) => {
+        closedTabIdParam = tabId;
+      };
+
+      const wsServer = new WsServer({
+        herdrClient: herdr,
+        pairingManager: pairing,
+        pushManager: push,
+      });
+
+      let sentMessages: any[] = [];
+      const mockWs: any = {
+        data: {
+          session: { deviceId: "dev-test", sessionToken: "st-1" },
+          subscribedPaneId: "p1",
+          lastPingTime: Date.now(),
+        },
+        send: (msgStr: string) => {
+          sentMessages.push(JSON.parse(msgStr));
+        },
+      };
+
+      // 1. Test close_tab
+      await wsServer.handleMessage(mockWs, JSON.stringify({
+        type: "close_tab",
+        id: "msg_close",
+        payload: { tabId: "tab-target-99" },
+      }));
+
+      expect(closedTabIdParam).toBe("tab-target-99");
+      const closeAck = sentMessages.find((m) => m.replyTo === "msg_close");
+      expect(closeAck).toBeDefined();
+      expect(closeAck.payload.closedTabId).toBe("tab-target-99");
+
+      // 2. Test skills_get
+      await wsServer.handleMessage(mockWs, JSON.stringify({
+        type: "skills_get",
+        id: "msg_skills",
+      }));
+
+      const skillsSync = sentMessages.find((m) => m.type === "skills_sync" && m.replyTo === "msg_skills");
+      expect(skillsSync).toBeDefined();
+      expect(Array.isArray(skillsSync.payload.skills)).toBe(true);
+      expect(skillsSync.payload.recipes).toBeDefined();
+      expect(skillsSync.payload.recipes.claude).toBeDefined();
     });
   });
 });
