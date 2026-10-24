@@ -173,6 +173,15 @@ describe("Pigeon Server Implementation Suite", () => {
       expect(pubKey.length).toBeGreaterThan(30);
     });
 
+    test("VAPID keys file is generated with mode 0600 permissions", () => {
+      const tmpVapid = `/tmp/test_vapid_0600_${Date.now()}.json`;
+      new PushManager(tmpVapid);
+      expect(existsSync(tmpVapid)).toBe(true);
+      const stat = statSync(tmpVapid);
+      expect(stat.mode & 0o777).toBe(0o600);
+      try { unlinkSync(tmpVapid); } catch {}
+    });
+
     test("Presence suppression suppresses notification when client is actively viewing target pane", async () => {
       const deviceId = "dev_test_1";
       const paneId = "w1:p2";
@@ -388,6 +397,59 @@ describe("Pigeon Server Implementation Suite", () => {
       expect(remaining).toContain("w1:p2");
       expect(remaining).toContain("w2:p1");
     });
+
+    test("Multiple devices sending hello preserves union of monitored panes without reset (P0-4 regression)", async () => {
+      const mockHerdr = new HerdrClient();
+      const mockWsServer = new WsServer({ herdrClient: mockHerdr, pairingManager: pairing, pushManager: push });
+
+      const d1: any = {
+        data: { session: { deviceId: "d1" }, lastPingTime: Date.now() },
+        send: () => {},
+      };
+      const d2: any = {
+        data: { session: { deviceId: "d2" }, lastPingTime: Date.now() },
+        send: () => {},
+      };
+
+      mockWsServer.handleOpen(d1);
+      await mockWsServer.handleMessage(d1, JSON.stringify({
+        type: "hello",
+        id: "h1",
+        payload: { protocolVersion: "1.0.0", subscribePaneId: "w1:p1" },
+      }));
+
+      expect(mockHerdr.getMonitoredPaneIds()).toEqual(["w1:p1"]);
+
+      mockWsServer.handleOpen(d2);
+      await mockWsServer.handleMessage(d2, JSON.stringify({
+        type: "hello",
+        id: "h2",
+        payload: { protocolVersion: "1.0.0", subscribePaneId: "w2:p1" },
+      }));
+
+      const monitored = mockHerdr.getMonitoredPaneIds();
+      expect(monitored).toContain("w1:p1");
+      expect(monitored).toContain("w2:p1");
+    });
+
+    test("Herdr client sends 'target' parameter for agent.prompt and agent.send_keys", async () => {
+      const client = new HerdrClient();
+      const capturedCalls: Array<{ method: string; params: any }> = [];
+      (client as any).request = async (method: string, params: any) => {
+        capturedCalls.push({ method, params });
+        return { ok: true, lines: [] };
+      };
+
+      await client.sendAgentPrompt("w1:p2", "hello agent");
+      const promptCall = capturedCalls.find((c) => c.method === "agent.prompt");
+      expect(promptCall).toBeDefined();
+      expect(promptCall!.params).toEqual({ target: "w1:p2", text: "hello agent" });
+
+      await client.sendInteractionApproval("w1:p2", ["enter"]);
+      const sendKeysCall = capturedCalls.find((c) => c.method === "agent.send_keys");
+      expect(sendKeysCall).toBeDefined();
+      expect(sendKeysCall!.params).toEqual({ target: "w1:p2", keys: ["enter"] });
+    });
   });
 
   describe("Configuration Management & Persistence Subsystem", () => {
@@ -586,6 +648,25 @@ describe("Pigeon Server Implementation Suite", () => {
         },
       });
       expect(res.status).toBe(403);
+    });
+
+    test("Rejects cross-origin WebSocket requests with forged Host header (anti-DNS-rebinding)", async () => {
+      const res = await fetch(`http://localhost:${testPort}/ws`, {
+        headers: {
+          Host: "evil.example.com:4195",
+          Origin: "http://evil.example.com",
+          Connection: "Upgrade",
+          Upgrade: "websocket",
+          "Sec-WebSocket-Key": testWsKey,
+          "Sec-WebSocket-Version": "13",
+        },
+      });
+      expect(res.status).toBe(403);
+    });
+
+    test("Rejects unauthenticated access to /review with 404 (removed debug route)", async () => {
+      const res = await fetch(`http://localhost:${testPort}/review`);
+      expect(res.status).toBe(404);
     });
 
     test("Rejects unauthenticated push subscription POST requests with 401", async () => {

@@ -216,7 +216,6 @@ export class WsServer extends EventEmitter {
         );
 
         // Push pane state & normalized turns
-        this.herdrClient.setMonitoredPaneId(paneId);
         const session = this.herdrClient.getPaneAgentSession(paneId);
         if (session && this.agentAdapters.isSupported(session.agent)) {
           const { turns, stats, sessionTitle } = this.agentAdapters.getTurns(session.agent, session.sessionId);

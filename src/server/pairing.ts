@@ -1,6 +1,6 @@
 import { randomBytes, createHash, timingSafeEqual } from "node:crypto";
 import { createServer, type Server as NetServer, type Socket } from "node:net";
-import { existsSync, unlinkSync, mkdirSync, chmodSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, unlinkSync, mkdirSync, chmodSync, readFileSync, writeFileSync, renameSync } from "node:fs";
 import { dirname } from "node:path";
 import { EventEmitter } from "node:events";
 import qrcode from "qrcode-terminal";
@@ -121,13 +121,15 @@ export class PairingManager extends EventEmitter {
         activeToken: this.activeToken,
         sessions: Array.from(this.sessions.values()),
       };
-      writeFileSync(this.devicesFilePath, JSON.stringify(data, null, 2), {
+      const tmpPath = `${this.devicesFilePath}.${process.pid}.${Date.now()}.tmp`;
+      writeFileSync(tmpPath, JSON.stringify(data, null, 2), {
         encoding: "utf-8",
         mode: 0o600,
       });
       try {
-        chmodSync(this.devicesFilePath, 0o600);
+        chmodSync(tmpPath, 0o600);
       } catch {}
+      renameSync(tmpPath, this.devicesFilePath);
     } catch {}
   }
 

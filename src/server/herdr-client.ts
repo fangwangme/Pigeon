@@ -72,7 +72,7 @@ export class HerdrClient extends EventEmitter {
     this.stopPolling();
     // Gentle heartbeat fallback (30s) per spec event-driven model when event stream is inactive
     this.snapshotPollTimer = setInterval(() => {
-      if (this.connected && !this.subSocket) {
+      if (this.connected) {
         this.refreshSnapshot().catch(() => {});
       }
     }, 30000);
@@ -200,6 +200,8 @@ export class HerdrClient extends EventEmitter {
           } catch (e) {
             reject(e);
           }
+        } else {
+          reject(new Error("Herdr socket closed without response"));
         }
       });
 
@@ -230,6 +232,9 @@ export class HerdrClient extends EventEmitter {
                 { type: "pane.updated" },
                 { type: "pane.focused" },
                 { type: "pane.agent_detected" },
+                { type: "pane.agent_status_changed" },
+                { type: "pane_agent_status_changed" },
+                { type: "pane.output_changed" },
                 { type: "layout.updated" },
               ],
             },
@@ -630,7 +635,7 @@ export class HerdrClient extends EventEmitter {
 
   public async sendAgentPrompt(paneId: string, text: string): Promise<void> {
     try {
-      await this.request("agent.prompt", { pane_id: paneId, text });
+      await this.request("agent.prompt", { target: paneId, text });
     } catch (err: any) {
       const msg = (err?.message || String(err)).toLowerCase();
       // If agent is blocked or request timed out, fail loudly per AGENTS.md rather than double-sending
@@ -649,7 +654,7 @@ export class HerdrClient extends EventEmitter {
 
   public async sendInteractionApproval(paneId: string, keys: string[]): Promise<boolean> {
     try {
-      await this.request("agent.send_keys", { pane_id: paneId, keys });
+      await this.request("agent.send_keys", { target: paneId, keys });
     } catch {
       await this.request("pane.send_keys", { pane_id: paneId, keys });
     }

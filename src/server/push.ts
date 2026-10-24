@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync, mkdirSync, chmodSync } from "node:fs";
 import { dirname } from "node:path";
 import { generateKeyPairSync, createSign } from "node:crypto";
 
@@ -42,6 +42,9 @@ export class PushManager {
   private loadOrCreateVapidKeys(): VapidKeys {
     try {
       if (existsSync(this.vapidPath)) {
+        try {
+          chmodSync(this.vapidPath, 0o600);
+        } catch {}
         const data = JSON.parse(readFileSync(this.vapidPath, "utf-8"));
         if (data.publicKey && data.privateKey) {
           return data;
@@ -68,8 +71,14 @@ export class PushManager {
     };
 
     try {
-      mkdirSync(dirname(this.vapidPath), { recursive: true });
-      writeFileSync(this.vapidPath, JSON.stringify(keys, null, 2), "utf-8");
+      mkdirSync(dirname(this.vapidPath), { recursive: true, mode: 0o700 });
+      writeFileSync(this.vapidPath, JSON.stringify(keys, null, 2), {
+        encoding: "utf-8",
+        mode: 0o600,
+      });
+      try {
+        chmodSync(this.vapidPath, 0o600);
+      } catch {}
     } catch {}
 
     return keys;

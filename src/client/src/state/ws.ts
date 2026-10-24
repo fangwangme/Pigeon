@@ -10,6 +10,7 @@ import type {
 let socket: WebSocket | null = null;
 let pingInterval: any = null;
 let reconnectTimer: any = null;
+let lastPongTime = Date.now();
 let msgId = 0;
 
 function nextId(): string {
@@ -21,11 +22,6 @@ export async function checkPairingFromUrlHash(): Promise<boolean> {
   let code = "";
   if (hash.startsWith("#code=")) {
     code = hash.replace("#code=", "").trim();
-  } else if (window.location.search) {
-    const params = new URLSearchParams(window.location.search);
-    if (params.has("code")) {
-      code = params.get("code")!.trim();
-    }
   }
 
   if (code) {
@@ -76,6 +72,7 @@ export function initWebSocket(): void {
 
   socket.onopen = () => {
     setState("connected", true);
+    lastPongTime = Date.now();
 
     // Send Handshake
     sendMessage({
@@ -87,9 +84,14 @@ export function initWebSocket(): void {
       },
     });
 
-    // Setup 15s ping keepalive
+    // Setup 15s ping keepalive with 30s half-open auto-healing
     clearInterval(pingInterval);
     pingInterval = setInterval(() => {
+      if (Date.now() - lastPongTime > 30000) {
+        // Socket is dead / half-open; force close to trigger auto-reconnect
+        socket?.close();
+        return;
+      }
       sendMessage({ type: "ping", id: nextId(), timestamp: Date.now() });
     }, 15000);
 
@@ -240,6 +242,9 @@ function handleServerMessage(msg: ServerMessage): void {
     }
 
     case "ack": {
+      if (msg.payload?.approved !== undefined) {
+        setState("pendingInteraction", null);
+      }
       if (msg.payload?.workspaceId) {
         setState("activeWorkspaceId", msg.payload.workspaceId);
       }
@@ -252,7 +257,27 @@ function handleServerMessage(msg: ServerMessage): void {
       break;
     }
 
+    case "error": {
+      console.error("[Pigeon Server Error]", msg.error?.code, msg.error?.message);
+      // If error indicates stale interaction or mismatch, re-fetch pane state to synchronize UI
+      if (
+        msg.error?.code === "ERR_INTERACTION_STALE" ||
+        msg.error?.code === "ERR_FINGERPRINT_MISMATCH" ||
+        msg.error?.code === "ERR_INVALID_PAYLOAD"
+      ) {
+        if (state.activePaneId) {
+          sendMessage({
+            type: "select_view",
+            id: nextId(),
+            payload: { paneId: state.activePaneId },
+          });
+        }
+      }
+      break;
+    }
+
     case "pong":
+      lastPongTime = Date.now();
       break;
   }
 }
@@ -303,8 +328,6 @@ export function respondInteraction(
       fingerprint,
     },
   });
-  // Clear locally
-  setState("pendingInteraction", null);
 }
 
 export function selectPane(paneId: string, workspaceId?: string, tabId?: string): void {
@@ -364,7 +387,17 @@ export function reportPresence(): void {
   });
 }
 
-// Presence listener for mobile screen lock / tab switch
+// Presence and auto-healing listener for mobile screen lock / tab switch
 if (typeof document !== "undefined") {
-  document.addEventListener("visibilitychange", reportPresence);
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible") {
+      if (!socket || socket.readyState !== WebSocket.OPEN || Date.now() - lastPongTime > 15000) {
+        try {
+          socket?.close();
+        } catch {}
+        initWebSocket();
+      }
+    }
+    reportPresence();
+  });
 }

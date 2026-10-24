@@ -208,7 +208,11 @@ export class PigeonDaemon {
       if (idx > 0) {
         const key = pair.slice(0, idx).trim();
         const val = pair.slice(idx + 1).trim();
-        cookies[key] = decodeURIComponent(val);
+        try {
+          cookies[key] = decodeURIComponent(val);
+        } catch {
+          cookies[key] = val;
+        }
       }
     }
     return cookies;
@@ -228,7 +232,7 @@ export class PigeonDaemon {
 
     this.bunServer = Bun.serve<ClientConnectionData>({
       port: this.config.port,
-      hostname: this.config.host || undefined,
+      hostname: this.config.host || (this.config.insecureDev ? "0.0.0.0" : "127.0.0.1"),
 
       async fetch(req, server) {
         const url = new URL(req.url);
@@ -239,28 +243,36 @@ export class PigeonDaemon {
         // WebSocket Upgrade endpoint
         if (url.pathname === "/ws") {
           // Check Origin & Host per security-and-pairing.md §4 (anti-CSWSH & DNS rebinding)
+          const allowedHosts = new Set([
+            "localhost",
+            "127.0.0.1",
+            "::1",
+          ]);
+          if (self.config.publicBaseUrl) {
+            try {
+              allowedHosts.add(new URL(self.config.publicBaseUrl).hostname);
+            } catch {}
+          }
+          if (self.config.insecureDev) {
+            const localIp = detectLocalIp();
+            if (localIp) allowedHosts.add(localIp);
+          }
+          if (self.config.host && self.config.host !== "0.0.0.0") {
+            allowedHosts.add(self.config.host);
+          }
+
+          // Check Host header
+          const hostHeader = req.headers.get("host") || "";
+          const hostOnly = hostHeader.split(":")[0];
+          if (hostOnly && !allowedHosts.has(hostOnly)) {
+            return new Response("Forbidden Host", { status: 403 });
+          }
+
+          // Check Origin header
           const origin = req.headers.get("origin");
           if (origin) {
             try {
               const originUrl = new URL(origin);
-              const hostHeader = req.headers.get("host") || "";
-              const hostOnly = hostHeader.split(":")[0];
-              const allowedHosts = new Set([
-                "localhost",
-                "127.0.0.1",
-                "::1",
-                url.hostname,
-                hostOnly,
-              ]);
-              if (self.config.publicBaseUrl) {
-                try {
-                  allowedHosts.add(new URL(self.config.publicBaseUrl).hostname);
-                } catch {}
-              }
-              if (self.config.insecureDev) {
-                const localIp = detectLocalIp();
-                if (localIp) allowedHosts.add(localIp);
-              }
               if (!allowedHosts.has(originUrl.hostname)) {
                 return new Response("Forbidden Origin", { status: 403 });
               }
@@ -414,27 +426,17 @@ export class PigeonDaemon {
           });
         }
 
-        // Review showcase page with all screenshots in one place
-        if (url.pathname === "/review" || url.pathname === "/review.html") {
-          const reviewPath = "/home/fangwang/.gemini/antigravity-cli/brain/7a55b02f-037e-4bec-b354-a0963f7e8434/review.html";
-          const reviewFile = Bun.file(reviewPath);
-          if (await reviewFile.exists()) {
-            return new Response(reviewFile, {
-              headers: {
-                "Content-Type": "text/html; charset=utf-8",
-                "Cache-Control": "no-cache",
-              },
-            });
-          }
+        // Serve PWA SPA html for root, index.html, or /pair
+        if (url.pathname === "/" || url.pathname === "/index.html" || url.pathname === "/pair") {
+          return new Response(self.resolveHtml(), {
+            headers: {
+              "Content-Type": "text/html; charset=utf-8",
+              "Content-Security-Policy": csp,
+            },
+          });
         }
 
-        // Serve PWA SPA html
-        return new Response(self.resolveHtml(), {
-          headers: {
-            "Content-Type": "text/html; charset=utf-8",
-            "Content-Security-Policy": csp,
-          },
-        });
+        return new Response("Not Found", { status: 404 });
       },
 
       websocket: {
