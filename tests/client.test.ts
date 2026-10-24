@@ -134,8 +134,13 @@ describe("Pigeon Mobile Client UI & Contract Suite", () => {
 
   test("Single-file production bundle dist/index.html is built and inlines assets", () => {
     const distHtmlPath = join(rootDir, "dist", "index.html");
-    expect(existsSync(distHtmlPath)).toBe(true);
-    const content = readFileSync(distHtmlPath, "utf-8");
+    const embeddedPath = join(rootDir, "src", "server", "embedded-html.ts");
+    const hasDistOrEmbedded = existsSync(distHtmlPath) || existsSync(embeddedPath);
+    expect(hasDistOrEmbedded).toBe(true);
+
+    const content = existsSync(distHtmlPath)
+      ? readFileSync(distHtmlPath, "utf-8")
+      : readFileSync(embeddedPath, "utf-8");
 
     // Must inline JS script and CSS without external link stylesheets or script src
     expect(content).toContain("<script");

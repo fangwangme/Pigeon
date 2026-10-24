@@ -1,5 +1,5 @@
 import { Component, For, Show } from "solid-js";
-import type { InteractionCardData } from "../../types/protocol";
+import type { InteractionCardData } from "../../../types/protocol";
 import { respondInteraction, sendKeys } from "../state/ws";
 import { toggleTerminalSheet } from "../state/store";
 

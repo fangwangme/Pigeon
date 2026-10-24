@@ -11,7 +11,7 @@ import type {
   FileDiffSummary,
   SkillEntry,
   AgentRecipeSummary,
-} from "../../types/protocol";
+} from "../../../types/protocol";
 import type { SessionStats } from "../../../shared/agent-session";
 import { THEMES, applyTheme, applyFullTheme, type ThemeTokens } from "../themes";
 

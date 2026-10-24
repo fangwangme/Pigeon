@@ -6,7 +6,7 @@ import {
   openNewTabModal,
 } from "../state/store";
 import { selectPane } from "../state/ws";
-import type { WorkingAgentSummary } from "../../types/protocol";
+import type { WorkingAgentSummary } from "../../../types/protocol";
 
 interface WorkspaceAgentGroup {
   workspaceId: string;

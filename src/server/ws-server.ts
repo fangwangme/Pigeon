@@ -647,6 +647,18 @@ export class WsServer extends EventEmitter {
         break;
       }
 
+      case "push_subscribe": {
+        try {
+          if (msg.subscription) {
+            this.pushManager.addSubscription(msg.subscription);
+          }
+          this.sendAck(ws, (msg as any).id, { subscribed: true });
+        } catch (err: any) {
+          this.sendError(ws, (msg as any).id, ProtocolErrors.ERR_INVALID_PAYLOAD, err.message);
+        }
+        break;
+      }
+
       default:
         this.sendError(
           ws,

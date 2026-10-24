@@ -20,7 +20,7 @@ import type {
   MarkdownCard,
   NormalizedTurn,
   NormalizedToolCall,
-} from "../../types/protocol";
+} from "../../../types/protocol";
 
 function cleanPath(p: string): string {
   if (!p) return "";

@@ -5,7 +5,7 @@ import type {
   SnapshotPayload,
   PaneStatePayload,
   ClientConfig,
-} from "../../types/protocol";
+} from "../../../types/protocol";
 
 let socket: WebSocket | null = null;
 let pingInterval: any = null;
@@ -93,6 +93,7 @@ export function initWebSocket(): void {
         return;
       }
       sendMessage({ type: "ping", id: nextId(), timestamp: Date.now() });
+      reportPresence();
     }, 15000);
 
     // Report initial visibility presence
@@ -106,11 +107,16 @@ export function initWebSocket(): void {
     } catch {}
   };
 
-  socket.onclose = () => {
+  socket.onclose = (event) => {
     setState("connected", false);
     clearInterval(pingInterval);
     socket = null;
     clearTimeout(reconnectTimer);
+    if (event?.code === 4401 || event?.code === 1008) {
+      // Unauthorized or revoked: stop reconnecting and open pairing sheet per spec
+      import("./store").then(({ openPairingModal }) => openPairingModal());
+      return;
+    }
     reconnectTimer = setTimeout(initWebSocket, 3000);
   };
 
