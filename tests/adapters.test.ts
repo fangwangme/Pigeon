@@ -1,47 +1,17 @@
 import { describe, expect, test, afterAll, beforeAll } from "bun:test";
-import { writeFileSync, unlinkSync, existsSync, mkdirSync, rmSync } from "node:fs";
+import { writeFileSync, mkdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { Database } from "bun:sqlite";
 import { OpenCodeAdapter } from "../src/server/agent-adapters/opencode";
 import { AgyAdapter } from "../src/server/agent-adapters/agy";
 import { AgentAdapterManager } from "../src/server/agent-adapters/index";
-import { HerdrClient } from "../src/server/herdr-client";
-import { PALETTES, THEMES } from "../src/client/src/themes";
+import { tempDir } from "./helpers/fixtures";
 
-function hexToRgb(hex: string): [number, number, number] {
-  const cleanHex = hex.replace("#", "");
-  const num = parseInt(cleanHex, 16);
-  return [(num >> 16) & 255, (num >> 8) & 255, num & 255];
-}
+// agent-session-normalization.md §2.1 (OpenCode) and §2.2 (Antigravity).
+describe("structured session adapters (agent-session-normalization.md §2)", () => {
+  const testDir = tempDir("adapters");
 
-function relativeLuminance([r, g, b]: [number, number, number]): number {
-  const [rs, gs, bs] = [r, g, b].map((c) => {
-    const s = c / 255;
-    return s <= 0.03928 ? s / 12.92 : Math.pow((s + 0.055) / 1.055, 2.4);
-  });
-  return 0.2126 * rs + 0.7152 * gs + 0.0722 * bs;
-}
-
-function contrastRatio(hex1: string, hex2: string): number {
-  const lum1 = relativeLuminance(hexToRgb(hex1));
-  const lum2 = relativeLuminance(hexToRgb(hex2));
-  const brightest = Math.max(lum1, lum2);
-  const darkest = Math.min(lum1, lum2);
-  return (brightest + 0.05) / (darkest + 0.05);
-}
-
-describe("Pigeon Phase 1 Agent Normalization & Adapter Suite", () => {
-  const testDir = `/tmp/pigeon_test_adapters_${Date.now()}`;
-
-  beforeAll(() => {
-    mkdirSync(testDir, { recursive: true });
-  });
-
-  afterAll(() => {
-    try {
-      rmSync(testDir, { recursive: true, force: true });
-    } catch {}
-  });
+  afterAll(() => rmSync(testDir, { recursive: true, force: true }));
 
   describe("OpenCode SQLite Adapter", () => {
     const mockDbPath = join(testDir, "mock_opencode.db");
@@ -241,12 +211,30 @@ describe("Pigeon Phase 1 Agent Normalization & Adapter Suite", () => {
 
       // Append incomplete JSON line without trailing newline
       const incomplete = '{"step_index": 3, "type": "USER_INPUT", "content": "正在输入的未';
-      const currentContent = Bun.file(logFile).text();
       writeFileSync(logFile, incomplete, { flag: "a" });
 
       // Should not throw or crash on incomplete line
       const { turns } = adapter.getTurns(sessionId, true);
       expect(turns.length).toBe(1);
+    });
+  });
+
+  describe("Antigravity full re-read", () => {
+    test("a full read after an incremental read that stopped mid-line still returns the first turn", () => {
+      const brain = join(testDir, "brain2");
+      const logs = join(brain, "s2", ".system_generated", "logs");
+      mkdirSync(logs, { recursive: true });
+      const line = (o: object) => JSON.stringify(o) + "\n";
+      writeFileSync(
+        join(logs, "transcript.jsonl"),
+        line({ step_index: 0, type: "USER_INPUT", content: "<USER_REQUEST>first</USER_REQUEST>", created_at: new Date(1000).toISOString() }) +
+          line({ step_index: 1, type: "PLANNER_RESPONSE", content: "done", created_at: new Date(2000).toISOString() }) +
+          '{"step_index": 2, "type": "USER_INPUT", "content": "half' // still being written
+      );
+      const adapter = new AgyAdapter({ baseBrainDir: brain });
+      expect(adapter.getTurns("s2", true).turns).toHaveLength(1);
+      const { turns } = adapter.getTurns("s2", false);
+      expect(turns.map((t) => t.userPrompt?.text)).toEqual(["first"]);
     });
   });
 
@@ -258,41 +246,6 @@ describe("Pigeon Phase 1 Agent Normalization & Adapter Suite", () => {
       expect(mgr.isSupported("agy")).toBe(true);
       expect(mgr.isSupported("bash")).toBe(false);
       expect(mgr.isSupported("htop")).toBe(false);
-    });
-  });
-
-  describe("Gruvbox Theme & Contrast Verification", () => {
-    test("Gruvbox theme exists in PALETTES and THEMES", () => {
-      expect(PALETTES.gruvbox).toBeDefined();
-      expect(PALETTES.gruvbox.dark.bg).toBe("#282828");
-      expect(PALETTES.gruvbox.light.bg).toBe("#FBF1C7");
-
-      expect(THEMES["gruvbox-dark"]).toBeDefined();
-      expect(THEMES["gruvbox-light"]).toBeDefined();
-    });
-
-    test("Gruvbox Light passes WCAG AA contrast (>= 4.5:1)", () => {
-      const light = PALETTES.gruvbox.light;
-      const fgContrast = contrastRatio(light.bg, light.fg);
-      expect(fgContrast).toBeGreaterThanOrEqual(4.5);
-
-      const faintContrast = contrastRatio(light.bg, light.faint);
-      expect(faintContrast).toBeGreaterThanOrEqual(4.5);
-
-      const mutedContrast = contrastRatio(light.bg, light.muted);
-      expect(mutedContrast).toBeGreaterThanOrEqual(4.5);
-    });
-  });
-
-  describe("Herdr Client Enhancements", () => {
-    test("Herdr client exposes polling and agent session mappings", () => {
-      const client = new HerdrClient();
-      expect(typeof client.startPolling).toBe("function");
-      expect(typeof client.stopPolling).toBe("function");
-      expect(typeof client.setMonitoredPaneId).toBe("function");
-      expect(typeof client.getPaneAgentSession).toBe("function");
-      expect(typeof client.sendAgentPrompt).toBe("function");
-      expect(typeof client.sendInteractionApproval).toBe("function");
     });
   });
 });

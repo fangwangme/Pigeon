@@ -121,7 +121,7 @@ export const Drawer: Component = () => {
           <div style={{ flex: 1, "min-width": 0 }}>
             <div style={{ "font-size": "16px", "font-weight": 700 }}>Pigeon</div>
             <div style={{ "font-size": "12px", color: "var(--muted)" }}>
-              {state.serverHost} · Tailscale
+              {state.serverHost}
             </div>
           </div>
           <button
@@ -218,7 +218,7 @@ export const Drawer: Component = () => {
                               (p) => p.agentStatus === "working" || p.agentStatus === "blocked"
                             ) || targetTab.panes?.[0];
                           if (targetPane?.id) {
-                            selectPane(targetPane.id, w.id, targetTab.id);
+                            selectPane(targetPane.id);
                           }
                         }
                         closeDrawer();
@@ -336,7 +336,7 @@ export const Drawer: Component = () => {
                             onClick={() => {
                               setState("activeWorkspaceId", a.workspaceId);
                               setState("activeTabId", a.tabId);
-                              selectPane(a.paneId, a.workspaceId, a.tabId);
+                              selectPane(a.paneId);
                               closeDrawer();
                             }}
                             style={{

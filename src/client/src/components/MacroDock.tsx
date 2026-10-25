@@ -1,5 +1,5 @@
 import { Component, For, createSignal, Show, createMemo } from "solid-js";
-import { state, getActiveTab, openSettingsModal } from "../state/store";
+import { state, getActiveTab, openSettingsModal, type MacroItem } from "../state/store";
 import { sendPrompt, sendKeys } from "../state/ws";
 
 export const MacroDock: Component = () => {
@@ -7,7 +7,6 @@ export const MacroDock: Component = () => {
   const [isComposing, setIsComposing] = createSignal(false);
   const [ctrlCConfirm, setCtrlCConfirm] = createSignal(false);
   const [showOptions, setShowOptions] = createSignal(false);
-  const [showSkillPicker, setShowSkillPicker] = createSignal(false);
   let ctrlCTimer: any = null;
   let textareaRef: HTMLTextAreaElement | undefined;
 
@@ -28,14 +27,11 @@ export const MacroDock: Component = () => {
     return state.recipes?.[currentAgentKind()];
   };
 
-  // Skill completion query
+  // Skill completion: a "/" at the start of the input, before any space (D2).
   const skillQuery = createMemo(() => {
-    const text = inputText();
-    const lastSlash = text.lastIndexOf("/");
-    if (lastSlash === -1) return null;
-    const after = text.slice(lastSlash + 1);
-    if (after.includes(" ") || after.includes("\n")) return null;
-    return after.toLowerCase();
+    if (isComposing()) return null;
+    const m = /^\/(\S*)$/.exec(inputText());
+    return m ? m[1].toLowerCase() : null;
   });
 
   const matchingSkills = createMemo(() => {
@@ -48,16 +44,10 @@ export const MacroDock: Component = () => {
       .slice(0, 8);
   });
 
-  const handleSelectSkill = (skillName: string) => {
-    const text = inputText();
-    const lastSlash = text.lastIndexOf("/");
-    if (lastSlash !== -1) {
-      const before = text.slice(0, lastSlash);
-      const newText = `${before}/${skillName} `;
-      setInputText(newText);
-      setShowSkillPicker(false);
-      textareaRef?.focus();
-    }
+  // Inserts the skill in the current agent's own syntax (e.g. "/name", "$name").
+  const handleSelectSkill = (invocation: string) => {
+    setInputText(`${invocation} `);
+    textareaRef?.focus();
   };
 
   const handleInterrupt = () => {
@@ -67,27 +57,25 @@ export const MacroDock: Component = () => {
     setShowOptions(false);
   };
 
-  const handleCtrlC = () => {
-    // Confirm Ctrl+C safeguard with 800ms window
-    if (ctrlCConfirm()) {
+  // Ctrl+C can kill the agent, so it needs a second tap within 2s unless the user turned that off.
+  const confirmThenSend = (keys: string[]) => {
+    if (!state.confirmCtrlC || ctrlCConfirm()) {
       clearTimeout(ctrlCTimer);
       setCtrlCConfirm(false);
-      sendKeys(["ctrl+c"]);
+      sendKeys(keys);
       setShowOptions(false);
-    } else {
-      setCtrlCConfirm(true);
-      ctrlCTimer = setTimeout(() => {
-        setCtrlCConfirm(false);
-      }, 800);
+      return;
     }
+    setCtrlCConfirm(true);
+    ctrlCTimer = setTimeout(() => setCtrlCConfirm(false), 2000);
   };
+  const handleCtrlC = () => confirmThenSend(["ctrl+c"]);
 
   const handleSend = () => {
     const text = inputText().trim();
     if (text) {
-      sendPrompt(text);
-      setInputText("");
-      setShowSkillPicker(false);
+      // Keep the draft when the message could not be sent (offline).
+      if (sendPrompt(text)) setInputText("");
     } else {
       // Empty input: Send button acts as instant Enter confirmation
       sendKeys(["enter"]);
@@ -102,9 +90,9 @@ export const MacroDock: Component = () => {
     }
   };
 
-  const handleMacroAction = (macro: { id: string; name: string; type: "text" | "key"; payload: string }) => {
-    if (macro.payload === "ctrl+c" || macro.name === "终止") {
-      handleCtrlC();
+  const handleMacroAction = (macro: MacroItem) => {
+    if (macro.type === "key" && macro.confirm) {
+      confirmThenSend([macro.payload]);
       return;
     }
     if (macro.type === "key") {
@@ -167,7 +155,7 @@ export const MacroDock: Component = () => {
             {(skill) => (
               <button
                 class="touch-target"
-                onClick={() => handleSelectSkill(skill.name)}
+                onClick={() => handleSelectSkill(skill.invocation)}
                 style={{
                   display: "flex",
                   "flex-direction": "column",
@@ -191,7 +179,7 @@ export const MacroDock: Component = () => {
                       color: "var(--accent)",
                     }}
                   >
-                    /{skill.name}
+                    {skill.invocation}
                   </span>
                   <span
                     style={{
@@ -280,7 +268,7 @@ export const MacroDock: Component = () => {
                   cursor: "pointer",
                 }}
               >
-                <span>🛑 中断 (Esc)</span>
+                <span>🛑 中断 ({(currentRecipe()?.interruptKeys || ["esc"]).join("+")})</span>
               </button>
               <button
                 class="touch-target"
@@ -450,8 +438,8 @@ export const MacroDock: Component = () => {
             onCompositionEnd={() => setIsComposing(false)}
             style={{
               width: "100%",
-              minHeight: "44px",
-              maxHeight: "120px",
+              "min-height": "44px",
+              "max-height": "120px",
               "box-sizing": "border-box",
               resize: "none",
               background: "var(--surface)",

@@ -1,4 +1,4 @@
-import { Component, For, Show, createSignal, createMemo } from "solid-js";
+import { Component, For, Show, createSignal, createMemo, createEffect, on } from "solid-js";
 import {
   state,
   setState,
@@ -10,7 +10,6 @@ import {
   closeSessionMenu,
 } from "../state/store";
 import { InteractionCard } from "./InteractionCard";
-import { sendPrompt, sendKeys } from "../state/ws";
 import { renderMarkdown } from "../utils/markdown";
 import type {
   Card,
@@ -117,6 +116,17 @@ export const CardFeed: Component = () => {
     setIsAtBottom(!away);
   };
 
+  // Follow new output while the user is at the bottom; leave them alone when they scrolled up.
+  createEffect(
+    on(
+      () => [state.cards.length, state.normalizedTurns.length, state.rawScreen, state.pendingInteraction?.interactionId],
+      () => {
+        if (!isAtBottom() || !feedContainerRef) return;
+        queueMicrotask(() => feedContainerRef!.scrollTo({ top: feedContainerRef!.scrollHeight }));
+      }
+    )
+  );
+
   const scrollToTop = () => {
     feedContainerRef?.scrollTo({ top: 0, behavior: "smooth" });
   };
@@ -191,12 +201,8 @@ export const CardFeed: Component = () => {
         continue;
       }
 
-      // If line has block characters mixed with text (e.g. Antigravity ASCII logo beside text), strip the logo
-      let cleaned = trimmed;
-      if (blockChars > 0) {
-        cleaned = trimmed.replace(/^[\s\u2580-\u259F\u25A0-\u25FF╹╻]+/, "").trim();
-      }
-
+      // Keep indentation (code, diffs, trees); only strip a logo made of block characters.
+      const cleaned = blockChars > 0 ? rawLine.replace(/^[\s\u2580-\u259F\u25A0-\u25FF╹╻]+/, "").trimEnd() : rawLine.trimEnd();
       processedLines.push(cleaned);
     }
 
@@ -266,61 +272,13 @@ export const CardFeed: Component = () => {
     } catch {}
   };
 
-  // Detect interactive confirmation clues directly in raw terminal screen
-  const detectedInteractivePrompt = createMemo(() => {
-    const raw = state.rawScreen || "";
-    if (state.agentStatus !== "blocked" && !raw.includes("Confirm") && !raw.includes("(y/n)") && !raw.includes("[y/N]")) {
-      return null;
-    }
-    if (raw.includes("Do you trust") || raw.includes("trust this folder")) {
-      return {
-        question: "确认信任当前工作区文件夹？",
-        description: "Agent 请求读取、编辑并在当前目录执行代码的权限。",
-        options: [
-          { label: "信任并继续 (Enter)", action: () => sendKeys(["enter"]), primary: true },
-          { label: "拒绝并退出 (Ctrl+C)", action: () => sendKeys(["ctrl+c"]), primary: false },
-        ],
-      };
-    }
-    if (raw.includes("(y/n)") || raw.includes("[y/N]") || raw.includes("[Y/n]")) {
-      return {
-        question: "需要授权确认 (y/n)",
-        description: "终端命令请求执行确认。",
-        options: [
-          { label: "确认 (y)", action: () => sendKeys(["y", "enter"]), primary: true },
-          { label: "拒绝 (n)", action: () => sendKeys(["n", "enter"]), primary: false },
-        ],
-      };
-    }
-    return null;
-  });
-
-  // Infer agent model or friendly name
+  // Agent name from the pane's detected kind. The model is not shown: Pigeon does not know it
+  // reliably, and a guessed model name would be wrong.
   const agentBadgeInfo = createMemo(() => {
-    const raw = state.rawScreen || "";
     const activeTab = tab();
-    const primaryPane = activeTab?.panes?.[0];
-    const paneAgent = primaryPane?.agent?.toLowerCase() || "";
-    const paneName = primaryPane?.name?.toLowerCase() || "";
-    const label = (activeTab?.label || "").toLowerCase();
-
-    let name = "Agent";
-    let model = "";
-
-    if (paneAgent === "opencode" || paneName.includes("opencode") || label.includes("opencode") || raw.includes("DeepSeek") || raw.includes("OpenCode")) {
-      name = "OpenCode";
-      model = "DeepSeek V4.1 Flash";
-    } else if (paneAgent === "agy" || paneName.includes("agy") || label.includes("agy") || raw.includes("Antigravity") || raw.includes("Gemini")) {
-      name = "Antigravity";
-      model = "Gemini 3.8 Flash";
-    } else if (paneAgent === "claude" || paneName.includes("claude") || label.includes("claude") || raw.includes("Claude")) {
-      name = "Claude Code";
-      model = "Claude 3.7 Sonnet";
-    } else {
-      name = activeTab?.label || "终端";
-    }
-
-    return { name, model };
+    const pane = activeTab?.panes?.find((p) => p.id === state.activePaneId) || activeTab?.panes?.[0];
+    const kind = pane?.agent?.toLowerCase() || "";
+    return { name: state.recipes[kind]?.label || activeTab?.label || "终端", model: "" };
   });
 
   // Summarized conversation topic
@@ -370,7 +328,7 @@ export const CardFeed: Component = () => {
     const tabLabel = (tab()?.label || "").trim();
     if (tabLabel && !isGeneric(tabLabel)) return tabLabel;
 
-    return "Mobile Voice Development Bridge Architecture";
+    return "";
   });
 
   return (
@@ -634,59 +592,6 @@ export const CardFeed: Component = () => {
       {/* 2. Prominent Interactive Confirmation Card (当检测到待确认交互时优先置顶展示) */}
       <Show when={state.pendingInteraction}>
         <InteractionCard data={state.pendingInteraction!} />
-      </Show>
-
-      {/* 3. In-Terminal Detected Prompt Elevation (当终端处于授权阻断时提升交互) */}
-      <Show when={!state.pendingInteraction && detectedInteractivePrompt()}>
-        <section
-          aria-label="智能体交互授权请求"
-          style={{
-            background: "var(--warns)",
-            border: "1.5px solid var(--warn)",
-            "border-radius": "14px",
-            padding: "14px",
-            display: "flex",
-            "flex-direction": "column",
-            gap: "10px",
-            "box-shadow": "0 4px 14px rgba(234, 179, 8, 0.15)",
-          }}
-        >
-          <div style={{ display: "flex", "align-items": "center", gap: "8px", color: "var(--warnt)", "font-weight": 700 }}>
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
-            </svg>
-            <span style={{ "font-size": "14px" }}>{detectedInteractivePrompt()!.question}</span>
-          </div>
-          <div style={{ "font-size": "12px", color: "var(--muted)", "line-height": 1.5 }}>
-            {detectedInteractivePrompt()!.description}
-          </div>
-          <div style={{ display: "grid", "grid-template-columns": "repeat(2, minmax(0, 1fr))", gap: "8px", "margin-top": "4px" }}>
-            <For each={detectedInteractivePrompt()!.options}>
-              {(opt) => (
-                <button
-                  class="touch-target"
-                  onClick={opt.action}
-                  style={{
-                    height: "44px",
-                    "border-radius": "10px",
-                    border: opt.primary ? 0 : "1px solid var(--border)",
-                    background: opt.primary ? "var(--warn)" : "var(--surface)",
-                    color: opt.primary ? "#fff" : "var(--fg)",
-                    "font-size": "13px",
-                    "font-weight": 600,
-                    cursor: "pointer",
-                    display: "flex",
-                    "align-items": "center",
-                    "justify-content": "center",
-                    gap: "6px",
-                  }}
-                >
-                  {opt.label}
-                </button>
-              )}
-            </For>
-          </div>
-        </section>
       </Show>
 
       {/* 4. Terminal output: full panel only when there are no cards or turns */}
@@ -1351,8 +1256,8 @@ export const CardFeed: Component = () => {
         </div>
       </Show>
 
-      {/* 6. Render Structured Cards when available */}
-      <For each={state.cards}>
+      {/* 6. Screen-derived cards, only when there is no structured transcript for this pane */}
+      <For each={state.normalizedTurns.length > 0 ? [] : state.cards}>
         {(card: Card) => {
           if (card.kind === "thought") {
             const thought = card as ThoughtCard;
@@ -1787,86 +1692,6 @@ export const CardFeed: Component = () => {
           return null;
         }}
       </For>
-
-      {/* 6. Active Ghost Suggestion Banner */}
-      <Show when={state.activeGhost}>
-        <section
-          aria-label="预测指令"
-          style={{
-            "flex-shrink": 0,
-            padding: "6px 6px 6px 12px",
-            background: "var(--surface)",
-            border: "1px solid var(--border)",
-            "border-radius": "12px",
-            display: "flex",
-            "align-items": "center",
-            gap: "10px",
-          }}
-        >
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style={{ color: "var(--accent)" }}>
-            <path d="M9 18h6M10 21h4M12 3a6 6 0 0 0-3.5 10.9c.6.5 1 1.2 1 2.1h5c0-.9.4-1.6 1-2.1A6 6 0 0 0 12 3z" />
-          </svg>
-          <div style={{ flex: 1, "min-width": 0 }}>
-            <div style={{ "font-size": "11px", color: "var(--muted)" }}>预测指令</div>
-            <div
-              style={{
-                "font-family": "'JetBrains Mono', ui-monospace, monospace",
-                "font-size": "13px",
-                "white-space": "nowrap",
-                overflow: "hidden",
-                "text-overflow": "ellipsis",
-              }}
-            >
-              {state.activeGhost!.suggestion}
-            </div>
-          </div>
-          <button
-            class="touch-target"
-            onClick={() => {
-              const el = document.getElementById("pigeon-input") as HTMLTextAreaElement | null;
-              if (el) {
-                el.value = state.activeGhost!.suggestion;
-                el.focus();
-              }
-            }}
-            style={{
-              height: "44px",
-              padding: "0 12px",
-              "border-radius": "10px",
-              border: "1px solid var(--selb)",
-              background: "transparent",
-              color: "var(--fg)",
-              "font-size": "13px",
-              "font-weight": 500,
-              cursor: "pointer",
-            }}
-          >
-            填入
-          </button>
-          <button
-            class="touch-target"
-            onClick={() => {
-              if (state.activeGhost) {
-                sendPrompt(state.activeGhost.suggestion);
-                setState("activeGhost", null);
-              }
-            }}
-            style={{
-              height: "44px",
-              padding: "0 14px",
-              "border-radius": "10px",
-              border: 0,
-              background: "var(--accent)",
-              color: "var(--onaccent)",
-              "font-size": "13px",
-              "font-weight": 600,
-              cursor: "pointer",
-            }}
-          >
-            {state.activeGhost!.actionText || "执行"}
-          </button>
-        </section>
-      </Show>
 
       {/* 7. Right-Side Floating Quick Scroll Controls */}
       <Show when={state.showScrollControls !== false}>

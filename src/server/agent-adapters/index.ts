@@ -36,6 +36,14 @@ export class AgentAdapterManager {
     return { turns: [] };
   }
 
+  /** File whose changes mean the session has new records; watched instead of polling. */
+  public getWatchPath(agent: string, sessionId: string): string | null {
+    const a = agent.toLowerCase();
+    if (a === "agy") return this.agy.getSessionLogPath(sessionId);
+    if (a === "opencode") return `${this.opencode.getDbPath()}-wal`;
+    return null;
+  }
+
   public getOpenCodeAdapter(): OpenCodeAdapter {
     return this.opencode;
   }

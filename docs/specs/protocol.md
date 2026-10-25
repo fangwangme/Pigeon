@@ -2,70 +2,167 @@
 
 ## 1. Overview and Design Principles
 
-The communication between the mobile client and the Pigeon bridge daemon is conducted via a **Typed JSON Message Protocol over WebSocket** (`/ws`), supported by initial HTTP authentication endpoints (`/api/pair`).
+The phone and the Pigeon daemon talk through **typed JSON messages over one WebSocket** (`/ws`). Pairing goes through one HTTP endpoint (`POST /api/pair`, see `security-and-pairing.md`). The TypeScript source of truth is `src/types/protocol.ts`. Runtime validation of every client frame lives in `src/server/ws-validate.ts`.
 
 Key Protocol Principles:
-1. **Zero Raw Key Misfires**: Interactive prompts and approvals are answered via discrete `interaction_respond` commands referencing an explicit `interactionId` and verified screen fingerprint, preventing stale keys from acting on subsequent commands.
-2. **Deterministic Reconnection**: Handshake immediately pushes the complete state (`pane_state`) of the subscribed pane, eliminating fragile log offset replays.
-3. **Application Heartbeats**: Regular `ping`/`pong` frames prevent silent mobile connection drops and ensure accurate push notification suppression.
-4. **Desktop Non-Interference**: Mobile navigation and view switching use `select_view` and do **not** steal keyboard focus on the desktop Herdr session.
+1. **No guessed keys**: A prompt is answered with `interaction_respond`, which names an `interactionId`, a screen `fingerprint` and an `optionId`. The server sends exactly that option's key, and only while the same prompt is still on screen. Anything without a structured option goes through the raw key pad (`agent_send_keys`).
+2. **State, not replay**: Each pane update carries the full classified state of the pane (`pane_state`) with a per-pane `revision`. A reconnecting client gets the current state, and nothing is replayed from a log offset.
+3. **Application heartbeats**: `ping`/`pong` frames detect half-open mobile connections. `presence_update` frames drive push suppression.
+4. **Desktop non-interference**: Choosing what the phone shows (`select_view`) never moves keyboard focus in the desktop Herdr session.
+5. **Validate at the boundary**: Every client frame is validated before dispatch. A frame that fails validation, or has an unknown `type`, is answered with `ERR_INVALID_PAYLOAD`.
 
 ## 2. Connection Lifecycle and Heartbeat
 
 ### 2.1 Heartbeat (`client <-> server`)
-Mobile operating systems aggressively suspend background network sockets.
-- The client dispatches a `ping` message every 15 seconds:
-  ```json
-  { "type": "ping", "timestamp": 1729650000000 }
-  ```
-- The server responds immediately with `pong`:
-  ```json
-  { "type": "pong", "timestamp": 1729650000000 }
-  ```
-- **Timeout**: If the client misses 2 consecutive `pong` responses (30 seconds), the connection is terminated and re-established.
-- **Wakeup**: When `document.visibilityState` changes to `visible`, if the elapsed time since the last `pong` exceeds 15 seconds, the client initiates an immediate reconnect.
+- The client sends `{ "type": "ping", "timestamp": 1729650000000 }` every 15 seconds. The server answers `{ "type": "pong", "timestamp": … }`.
+- **Timeout**: If no `pong` has arrived for 30 seconds, the client closes the socket and reconnects.
+- **Wakeup**: When `document.visibilityState` becomes `visible`, the client reconnects at once if the socket is not open or the last `pong` is older than 30 seconds.
+- With every heartbeat, and whenever visibility or the viewed pane changes, the client sends `{ "type": "presence_update", "isVisible": true, "viewingPaneId": "w1:p2" }`. This message has no `id` and gets no reply.
 
-### 2.2 WebSocket Closure Codes
-The server uses standardized closure codes to communicate authorization and protocol status:
-- `4401`: Unauthorized (missing or invalid session cookie). The client must redirect to the pairing screen.
-- `4403`: Forbidden (Origin or Host validation failed).
-- `4409`: Incompatible Protocol Version. The client triggers a hard reload to bust Service Worker cache.
+### 2.2 Refusals and Closure Codes
+- A WebSocket upgrade without a valid session cookie is refused with HTTP **401**. A wrong `Host` or `Origin` is refused with HTTP **403** (`security-and-pairing.md` §4). In the browser, both show up as a plain close. Before reconnecting, the client checks `GET /api/auth/status` and shows the pairing guidance when it is not paired.
+- `4403`: The device was revoked (`pigeon devices revoke`). The client shows the pairing guidance and does not reconnect.
+- `4409`: Incompatible protocol major version. The client does not reconnect.
+- The client also treats `4401` and `1008` as final.
 
 ## 3. Handshake and Initial Synchronization
 
 ### 3.1 Handshake Request (`client -> server`)
 ```json
-{
-  "type": "hello",
-  "id": "msg_001",
-  "payload": {
-    "protocolVersion": "1.0.0",
-    "subscribePaneId": "w1:p2"
-  }
-}
+{ "type": "hello", "id": "cli_1", "payload": { "protocolVersion": "1.0.0", "subscribePaneId": "w1:p2" } }
 ```
+If the major version differs from the server's, the server answers `ERR_INCOMPATIBLE_PROTOCOL` and closes the socket with `4409`.
 
 ### 3.2 Handshake Response (`server -> client`)
 ```json
 {
   "type": "welcome",
-  "replyTo": "msg_001",
+  "replyTo": "cli_1",
   "payload": {
     "protocolVersion": "1.0.0",
     "serverVersion": "0.1.0",
-    "deviceId": "dev_9f8a3b12",
-    "preferences": {
-      "themeId": "pigeon",
-      "mode": "dark",
-      "locale": "zh-CN",
-      "macrosVersion": 1
-    }
+    "deviceId": "6f1c…",
+    "clientConfig": { "themeKey": "gruvbox", "themeMode": "system", "macros": [] },
+    "recipes": { "claude": { "kind": "claude", "label": "Claude Code", "models": [], "interruptKeys": ["esc"] } }
+  }
+}
+```
+Then come, in this order, `upstream_status` (§5.7) and `snapshot_update` (§5.3).
+
+### 3.3 Initial Pane Data (`server -> client`)
+The server picks a pane. It uses `subscribePaneId` when Herdr knows that pane, otherwise Herdr's focused pane. It subscribes the connection to that pane and sends:
+1. `normalized_turns` (§5.6). This is always sent, with `turns: []` for panes without a structured session, so the client never keeps the previous pane's conversation.
+2. `skills_sync` (§5.8) for that pane's agent and project directory.
+3. `pane_state` (§5.4): the cached state at once if the pane was read before, then a fresh screen read. The fresh read reaches the client as another `pane_state` only if the screen changed.
+
+`select_view` (§4.4) runs the same three steps for a different pane.
+
+## 4. Client Commands (`client -> server`)
+
+Every command except `ping` and `presence_update` carries a string `id`. Success is answered with `ack` (§5.1), failure with `error` (§5.2). Commands that name a pane are answered with `ERR_NOT_FOUND` when that pane is not in the latest Herdr snapshot.
+
+### 4.1 Answer Interactive Prompt (`interaction_respond`)
+```json
+{
+  "type": "interaction_respond",
+  "id": "cli_7",
+  "payload": { "targetPaneId": "w1:p2", "interactionId": "int_4ae721c8e2", "fingerprint": "fp_88a7b9c1d2e3", "optionId": "opt_2" }
+}
+```
+*Server Behavior*:
+1. If the pane has no pending prompt, or its `interactionId` or `fingerprint` differs, the server rejects with `ERR_INTERACTION_STALE` and sends no key. The client then re-selects the pane to get fresh state.
+2. If `optionId` is not one of the prompt's options, the server rejects with `ERR_INVALID_PAYLOAD`.
+3. The server sends exactly the option's `keyShortcut`, which is its digit (`herdr-adapter.md` §8), once through `pane.send_keys`. A failed send is never retried, because a timed-out send may already have landed.
+4. After about 300 ms the server re-reads the screen. It acks `{ "approved": true, "interactionId": … }` when that prompt is gone, or `{ "approved": false, … }` when it is still showing. On `approved: false` the client opens the raw terminal sheet.
+
+### 4.2 Submit Prompt (`agent_prompt`)
+```json
+{ "type": "agent_prompt", "id": "cli_8", "payload": { "targetPaneId": "w1:p2", "text": "Fix the unit tests in auth.test.ts" } }
+```
+*Server Behavior*: For a pane with a detected agent, the server calls Herdr's `agent.prompt`, which handles bracketed paste and submission. For a plain shell pane, it sends the text followed by Enter. Herdr's `agent_blocked` surfaces as `ERR_AGENT_BLOCKED`, `agent_not_ready` as `ERR_AGENT_NOT_READY`, and `agent_prompt_stalled` as `ERR_TIMEOUT`. Agent slash commands (`/model`, `/compact`, a skill's invocation) are ordinary prompt text.
+
+### 4.3 Dispatch Raw Keys (`agent_send_keys`)
+```json
+{ "type": "agent_send_keys", "id": "cli_9", "payload": { "targetPaneId": "w1:p2", "keys": ["ctrl+c"] } }
+```
+`keys` holds 1–16 Herdr key names. Each matches `^[a-z0-9+_-]{1,24}$` (case-insensitive). This command serves the raw key pad, the interrupt button and key macros.
+
+### 4.4 Switch Mobile View (`select_view`)
+```json
+{ "type": "select_view", "id": "cli_10", "payload": { "paneId": "w1:p4" } }
+```
+This moves the connection's subscription and sends the pane data from §3.3. Desktop focus is not touched. Herdr polls the union of the panes that connected clients are viewing.
+
+### 4.5 Create Tab and Launch Agent (`create_tab_and_agent`)
+```json
+{
+  "type": "create_tab_and_agent",
+  "id": "cli_11",
+  "payload": { "workspaceId": "w1", "agentKind": "claude", "modelId": "opus", "thinking": "high", "cwd": "/home/user/project" }
+}
+```
+*Server Behavior*: The server checks the request against the recipe:
+- `agentKind` must be a known recipe.
+- `modelId`, if given, must be one of the recipe's models.
+- `thinking`, if given, must be one of that model's levels.
+- `cwd`, if given, must be absolute.
+
+Any violation gets `ERR_INVALID_PAYLOAD` before anything is created. The launch sequence is in `herdr-adapter.md` §5. The ack carries `{ "workspaceId", "tabId", "paneId" }`, and the client switches to the new pane.
+
+### 4.6 Close Tab (`close_tab`)
+```json
+{ "type": "close_tab", "id": "cli_12", "payload": { "tabId": "w1:t1" } }
+```
+This closes the tab through Herdr (ending its processes) and refreshes the snapshot. The ack carries `{ "closedTabId" }`.
+
+### 4.7 Query Skills (`skills_get`)
+```json
+{ "type": "skills_get", "id": "cli_13" }
+```
+The server answers with `skills_sync` for the connection's current pane.
+
+### 4.8 Configuration (`config_get`, `config_patch`)
+See §6.
+
+## 5. Server Events (`server -> client`)
+
+### 5.1 Command Acknowledgment (`ack`)
+```json
+{ "type": "ack", "replyTo": "cli_7", "payload": { "status": "ok", "approved": true, "interactionId": "int_4ae721c8e2" } }
+```
+Command-specific fields sit next to `status`.
+
+### 5.2 Command Error (`error`)
+```json
+{ "type": "error", "replyTo": "cli_7", "error": { "code": "ERR_INTERACTION_STALE", "message": "The prompt changed or was already answered." } }
+```
+
+### 5.3 Topology Snapshot (`snapshot_update`)
+Broadcast to every client whenever the Herdr snapshot changes:
+```json
+{
+  "type": "snapshot_update",
+  "payload": {
+    "workspaces": [
+      {
+        "id": "w1", "label": "Pigeon", "tabCount": 1, "activeTabId": "w1:t1", "hasWarn": true, "hasWorking": false, "isFocused": true,
+        "tabs": [
+          { "id": "w1:t1", "label": "Claude Code", "paneCount": 2, "panes": [
+            { "id": "w1:p2", "agent": "claude", "agentStatus": "blocked", "isPrimary": true, "name": "claude" },
+            { "id": "w1:p3", "agent": null, "agentStatus": "unknown", "isPrimary": false }
+          ] }
+        ]
+      }
+    ],
+    "workingAgents": [
+      { "agent": "claude", "name": "claude", "status": "blocked", "workspaceId": "w1", "workspaceLabel": "Pigeon", "tabId": "w1:t1", "paneId": "w1:p2", "summary": "Do you want to proceed?" }
+    ]
   }
 }
 ```
 
-### 3.3 Initial Pane State (`server -> client`)
-Immediately following `welcome`, the server transmits the complete initial state for the requested pane:
+### 5.4 Pane State (`pane_state`)
+Sent to the clients viewing a pane whenever its classified screen or status changes:
 ```json
 {
   "type": "pane_state",
@@ -73,306 +170,37 @@ Immediately following `welcome`, the server transmits the complete initial state
     "paneId": "w1:p2",
     "workspaceId": "w1",
     "tabId": "w1:t1",
-    "agentStatus": "idle",
-    "cards": [
-      {
-        "id": "card_auth_01",
-        "kind": "tool_call",
-        "title": "Bash",
-        "command": "bun test auth.test.ts",
-        "status": "done",
-        "exitCode": 0,
-        "output": "✓ 2 tests pass"
-      }
-    ],
-    "pendingInteraction": null,
-    "activeGhost": null,
-    "rawScreen": "$ bun test auth.test.ts\n✓ 2 tests pass\n"
+    "agentStatus": "blocked",
+    "revision": 7,
+    "cards": [ { "id": "card_tool_call_…", "kind": "tool_call", "title": "Bash", "command": "bun test", "status": "done", "output": "…" } ],
+    "pendingInteraction": {
+      "id": "card_interaction_…",
+      "kind": "interaction",
+      "interactionId": "int_4ae721c8e2",
+      "title": "需要授权",
+      "question": "Do you want to proceed?",
+      "fingerprint": "fp_88a7b9c1d2e3",
+      "options": [ { "id": "opt_1", "label": "Yes", "keyShortcut": "1" }, { "id": "opt_2", "label": "No", "keyShortcut": "2" } ],
+      "fallbackKeys": ["enter", "esc", "up", "down"]
+    },
+    "rawScreen": "…"
   }
 }
 ```
+- `revision` increases per pane, and the client drops any `pane_state` whose revision is not newer than the last one it applied.
+- `pendingInteraction.options` is empty when the prompt has no numbered options, or when Herdr reports `blocked` but no prompt was recognized. The client then shows `fallbackKeys` as a raw key pad.
+- `exitCode` on a tool card is present only when the screen shows it.
 
-## 4. Client Commands (`client -> server`)
-
-Every client command contains a unique `id` for tracking and deduplication. The server enforces a 60-second idempotency deduplication window.
-
-### 4.1 Answer Interactive Prompt (`interaction_respond`)
-Submits a user response to a pending authorization or multiple-choice interaction.
+### 5.5 Upstream Status (`upstream_status`)
 ```json
-{
-  "type": "interaction_respond",
-  "id": "cmd_101",
-  "payload": {
-    "targetPaneId": "w1:p2",
-    "interactionId": "int_789",
-    "optionId": "opt_0"
-  }
-}
+{ "type": "upstream_status", "payload": { "herdrConnected": true, "lastSyncTimestamp": 1729650000000 } }
 ```
-*Server Behavior*:
-1. Verifies that `interactionId` matches the pane's active interaction and that the screen fingerprint has not changed.
-2. If stale or mismatched, rejects with `ERR_INTERACTION_STALE`.
-3. Dispatches the option's key sequence to Herdr (`enter`, `1\n`, etc.).
-4. Re-reads the screen buffer to verify the prompt is dismissed. If verification fails, downgrades to raw terminal view with fallback keys.
+This is sent in the handshake and broadcast whenever the daemon's connection to Herdr goes up or down.
 
-### 4.2 Submit Prompt (`agent_prompt`)
-Sends user prompt text (from keyboard or speech-to-text) to the targeted pane.
-```json
-{
-  "type": "agent_prompt",
-  "id": "cmd_102",
-  "payload": {
-    "targetPaneId": "w1:p2",
-    "text": "Fix the unit tests in auth.test.ts"
-  }
-}
-```
-*Server Behavior*: Invokes Herdr's `agent.prompt` with bracketed paste enabled. If the agent is currently `blocked`, Herdr rejects with `agent_blocked` which surfaces as `ERR_AGENT_BLOCKED`.
+### 5.6 Normalized Turns (`normalized_turns`, `turns_delta`)
+`normalized_turns` carries the whole conversation of a pane's structured session (`agent-session-normalization.md`): `{ paneId, turns, sessionStats?, sessionTitle? }`.
 
-### 4.3 Dispatch Raw Keys (`agent_send_keys`)
-Dispatches raw physical keys. Used exclusively for navigation fallback buttons and macro dock commands.
-```json
-{
-  "type": "agent_send_keys",
-  "id": "cmd_103",
-  "payload": {
-    "targetPaneId": "w1:p2",
-    "keys": ["ctrl+c"]
-  }
-}
-```
-
-### 4.4 Switch Mobile View (`select_view`)
-Switches the mobile view to a different pane. **Does not steal or alter desktop Herdr focus.**
-```json
-{
-  "type": "select_view",
-  "id": "cmd_104",
-  "payload": {
-    "paneId": "w1:p4"
-  }
-}
-```
-
-### 4.5 Execute Predicted Command (`ghost_execute`)
-Accepts and executes an agent's ghost text command suggestion.
-```json
-{
-  "type": "ghost_execute",
-  "id": "cmd_105",
-  "payload": {
-    "targetPaneId": "w1:p2",
-    "suggestionId": "gh_456",
-    "paneRevision": 18
-  }
-}
-```
-*Server Behavior*: Verifies that `paneRevision` matches current screen revision. If the screen has changed since the suggestion was offered, rejects with `ERR_INTERACTION_STALE`.
-
-### 4.6 Open Agent Native Menu (`open_agent_menu`)
-Triggers an agent's built-in interactive menu (e.g. `/model`). Permitted only when status is `idle` or `done`.
-```json
-{
-  "type": "open_agent_menu",
-  "id": "cmd_106",
-  "payload": {
-    "targetPaneId": "w1:p2",
-    "menu": "model"
-  }
-}
-```
-
-### 4.7 Create Tab and Launch Agent (`create_tab_and_agent`)
-Creates a new Tab and launches the requested Agent with secure server-assembled model and thinking CLI parameters:
-```json
-{
-  "type": "create_tab_and_agent",
-  "id": "cmd_107",
-  "payload": {
-    "workspaceId": "w1",
-    "agentKind": "claude",
-    "modelId": "claude-3-7-sonnet",
-    "thinking": "medium",
-    "cwd": "/home/user/project"
-  }
-}
-```
-
-### 4.8 Close Tab with Session Teardown (`close_tab`)
-Closes the targeted Tab, terminates its running agent processes, and triggers a fresh snapshot update:
-```json
-{
-  "type": "close_tab",
-  "id": "cmd_108",
-  "payload": {
-    "tabId": "w1:t1"
-  }
-}
-```
-
-### 4.9 Query Available Skills (`skills_get`)
-Explicitly requests an up-to-date listing of installed and project skills:
-```json
-{
-  "type": "skills_get",
-  "id": "cmd_109"
-}
-```
-
-### 4.10 Preferences Synchronization (`preferences_set`)
-```json
-{
-  "type": "preferences_set",
-  "id": "cmd_108",
-  "payload": {
-    "themeId": "github",
-    "mode": "dark",
-    "locale": "en",
-    "macrosVersion": 2,
-    "macros": [
-      { "id": "m1", "label": "Tab", "type": "key", "payload": "tab" },
-      { "id": "m2", "label": "Continue", "type": "prompt", "payload": "continue" }
-    ]
-  }
-}
-```
-
-## 5. Server Push Events (`server -> client`)
-
-### 5.1 Command Acknowledgment (`ack`)
-```json
-{
-  "type": "ack",
-  "replyTo": "cmd_101",
-  "payload": { "status": "ok" }
-}
-```
-
-### 5.2 Command Error (`error`)
-```json
-{
-  "type": "error",
-  "replyTo": "cmd_101",
-  "error": {
-    "code": "ERR_INTERACTION_STALE",
-    "message": "The interaction has expired or was already answered."
-  }
-}
-```
-
-### 5.3 Topology & Radar Snapshot (`snapshot_update`)
-Pushes workspace and tab topology, including sub-pane lists for split tabs:
-```json
-{
-  "type": "snapshot_update",
-  "payload": {
-    "workspaces": [
-      {
-        "id": "w1",
-        "label": "Pigeon",
-        "tabCount": 2,
-        "activeTabId": "w1:t1",
-        "hasWarn": true,
-        "hasWorking": false,
-        "tabs": [
-          {
-            "id": "w1:t1",
-            "label": "c1",
-            "paneCount": 2,
-            "panes": [
-              { "id": "w1:p2", "agent": "claude", "agentStatus": "blocked", "isPrimary": true },
-              { "id": "w1:p3", "agent": null, "agentStatus": "idle", "isPrimary": false }
-            ]
-          }
-        ]
-      }
-    ],
-    "workingAgents": [
-      {
-        "agent": "claude",
-        "name": "c1",
-        "status": "blocked",
-        "workspaceId": "w1",
-        "workspaceLabel": "Pigeon",
-        "tabId": "w1:t1",
-        "paneId": "w1:p2",
-        "summary": "Asking permission for: rm -rf dist && bun run build"
-      }
-    ]
-  }
-}
-```
-
-### 5.4 Card Stream Upsert & Removal (`cards_upsert`, `cards_remove`)
-```json
-{
-  "type": "cards_upsert",
-  "payload": {
-    "paneId": "w1:p2",
-    "cards": [
-      {
-        "id": "card_hash_89a",
-        "kind": "diff",
-        "filePath": "src/auth.ts",
-        "additions": 1,
-        "deletions": 1,
-        "diff": "@@ -10,1 +10,1 @@\n- const exp = sec * 1000;\n+ const exp = sec;"
-      }
-    ]
-  }
-}
-```
-
-### 5.5 Interactive Question Prompt (`interaction_required`)
-```json
-{
-  "type": "interaction_required",
-  "payload": {
-    "paneId": "w1:p2",
-    "interactionId": "int_789",
-    "kind": "select",
-    "title": "Bash command permission",
-    "question": "Allow Claude to execute this command?",
-    "payload": "rm -rf dist && bun run build",
-    "fingerprint": "fp_88a7b9c1",
-    "options": [
-      { "id": "opt_0", "label": "Yes, execute", "keyShortcut": "1" },
-      { "id": "opt_1", "label": "Yes, don't ask again", "keyShortcut": "2" },
-      { "id": "opt_2", "label": "No", "keyShortcut": "3" }
-    ],
-    "fallbackKeys": ["enter", "esc", "up", "down"]
-  }
-}
-```
-
-### 5.6 Ghost Text Suggestion (`ghost_suggestion`, `ghost_cleared`)
-```json
-{
-  "type": "ghost_suggestion",
-  "payload": {
-    "paneId": "w1:p2",
-    "suggestionId": "gh_456",
-    "command": "git commit -am 'fix: auth expiry'",
-    "paneRevision": 18
-  }
-}
-```
-
-### 5.7 Raw Screen View (`pane_screen`)
-Supplies clean plain-text screen content for the raw terminal fallback sheet:
-```json
-{
-  "type": "pane_screen",
-  "payload": {
-    "paneId": "w1:p2",
-    "text": "Claude Code\n~/Projects/coding/Pigeon\n$ bun test\n",
-    "revision": 19
-  }
-}
-```
-
-### 5.8 Normalized Turns & Delta Streaming (`normalized_turns`, `turns_delta`)
-Delivers normalized semantic turns parsed by Track 1 adapters. For large or streaming sessions, `turns_delta` streams append and patch deltas to prevent mobile UI re-render thrashing:
+`turns_delta` streams later changes to the viewing clients:
 ```json
 {
   "type": "turns_delta",
@@ -380,156 +208,62 @@ Delivers normalized semantic turns parsed by Track 1 adapters. For large or stre
     "paneId": "w1:p2",
     "seqWatermark": 42,
     "sinceTurnIndex": 12,
-    "appendTurns": [
-      {
-        "id": "turn_13",
-        "role": "assistant",
-        "timestamp": 1729650005000,
-        "blocks": [
-          { "kind": "markdown", "content": "Running test suite now..." }
-        ]
-      }
-    ],
+    "appendTurns": [],
+    "patchLastTurn": { "turnNumber": 12 },
     "sessionStats": { "filesModified": 3, "additions": 45, "deletions": 12 }
   }
 }
 ```
+`sinceTurnIndex: 0` without `patchLastTurn` replaces the whole list. Otherwise `patchLastTurn` replaces the last known turn, and `appendTurns` is placed from `sinceTurnIndex` on.
 
-### 5.9 Upstream Runtime Health Status (`upstream_status`)
-Reports connectivity state with the underlying Herdr daemon:
-```json
-{
-  "type": "upstream_status",
-  "payload": {
-    "herdrConnected": true,
-    "lastSyncTimestamp": 1729650000000
-  }
-}
-```
-
-### 5.10 Skills & Agent Recipe Sync (`skills_sync`)
-Pushes available skill registry items and agent capabilities:
+### 5.7 Skills and Agent Recipes (`skills_sync`)
 ```json
 {
   "type": "skills_sync",
   "payload": {
-    "skills": [
-      { "name": "grilling", "description": "Stress-test ideas and architecture plans", "source": "user" }
-    ],
-    "recipes": {
-      "claude": {
-        "kind": "claude",
-        "label": "Claude Code",
-        "models": [{ "id": "claude-3-7-sonnet", "label": "Claude 3.7 Sonnet" }],
-        "interruptKeys": ["esc"]
-      }
-    }
+    "paneId": "w1:p2",
+    "skills": [ { "name": "review", "description": "Review code", "source": "project", "invocation": "/review" } ],
+    "recipes": { "claude": { "kind": "claude", "label": "Claude Code", "models": [ { "id": "opus", "label": "Opus", "thinkingLevels": ["low", "medium", "high", "xhigh", "max"] } ], "interruptKeys": ["esc"] } }
   }
 }
 ```
+Skills are per pane: they depend on the pane's agent kind and project directory (`herdr-adapter.md` §8.3). The client ignores skills for a pane it is no longer viewing. Typing `/` in the composer completes skills by inserting their `invocation`.
 
 ## 6. Configuration Synchronization Protocol
 
-To enable seamless multi-device persistence and pre-installed defaults, Pigeon provides bidirectional configuration synchronization over WebSocket.
+The client part of `config.json` (theme, macros, display options) is shared by all paired devices.
 
-### 6.1 Handshake Configuration Delivery (`server -> client`)
-In the `welcome` message payload, the server includes the current `clientConfig`:
+### 6.1 Handshake Delivery
+`welcome.payload.clientConfig` carries the current client config.
+
+### 6.2 Request (`config_get` → `config_sync`)
 ```json
-{
-  "type": "welcome",
-  "replyTo": "msg_001",
-  "payload": {
-    "protocolVersion": "1.0.0",
-    "serverVersion": "0.1.0",
-    "deviceId": "dev_9f8a3b12",
-    "clientConfig": {
-      "themeKey": "tokyo-night",
-      "themeMode": "system",
-      "themeId": "tokyo-night",
-      "confirmCtrlC": true,
-      "defaultView": "cards",
-      "macros": [
-        { "id": "m_model", "name": "模型", "type": "key", "payload": "model" }
-      ]
-    }
-  }
-}
+{ "type": "config_get", "id": "cli_20" }
+```
+```json
+{ "type": "config_sync", "replyTo": "cli_20", "payload": { "version": 3, "client": { "themeKey": "gruvbox", "macros": [] } } }
 ```
 
-### 6.2 Request Full Configuration (`client -> server`)
-Clients may explicitly query the configuration:
+### 6.3 Patch (`config_patch`)
 ```json
-{
-  "type": "config_get",
-  "id": "req_cfg_01"
-}
+{ "type": "config_patch", "id": "cli_21", "payload": { "client": { "themeKey": "nord" } } }
 ```
-Server responds with `config_sync`:
-```json
-{
-  "type": "config_sync",
-  "replyTo": "req_cfg_01",
-  "payload": {
-    "version": 1,
-    "client": {
-      "themeKey": "tokyo-night",
-      "themeMode": "system",
-      "themeId": "tokyo-night",
-      "confirmCtrlC": true,
-      "defaultView": "cards",
-      "macros": []
-    }
-  }
-}
-```
-
-### 6.3 Partial Patch Update (`client -> server`)
-When the user alters a setting in the mobile UI (e.g. changes theme or customizes a macro), the client sends a `config_patch` carrying only the modified delta:
-```json
-{
-  "type": "config_patch",
-  "id": "req_cfg_02",
-  "payload": {
-    "client": {
-      "themeKey": "monokai-pro",
-      "themeId": "monokai-pro"
-    }
-  }
-}
-```
-
-### 6.4 Server Patch Acknowledgment and Broadcast
-Upon receiving `config_patch`:
-1. The daemon validates the payload fields and deep-merges them into `config.client`.
-2. The daemon replies with standard `ack`:
-   ```json
-   { "type": "ack", "replyTo": "req_cfg_02" }
-   ```
-3. The daemon asynchronously flushes the merged configuration to `~/.config/pigeon/config.json`.
-4. The daemon broadcasts `config_updated` to all connected clients:
-   ```json
-   {
-     "type": "config_updated",
-     "payload": {
-       "client": { "themeKey": "monokai-pro", "themeId": "monokai-pro" }
-     }
-   }
-   ```
+*Server Behavior*:
+1. The patch is validated against a whitelist of keys and value types. Key macros must name a valid key (§4.3). Any unknown key or bad value rejects the whole patch with `ERR_INVALID_PAYLOAD`, and nothing is saved.
+2. The patch is deep-merged and written to `config.json` before the reply. A write error is reported as `ERR_INTERNAL`.
+3. The config version is bumped. The sender gets `ack` with `{ "version", "client" }`.
+4. Every other client gets `{ "type": "config_updated", "payload": { "version", "client" } }`. Clients ignore a `config_sync` or `config_updated` whose version is older than one they have already applied.
 
 ## 7. Error Code Registry
 
 | Error Code | Meaning | Recovery Action |
 | :--- | :--- | :--- |
-| `ERR_UNAUTHORIZED` | Session cookie invalid or expired | Redirect to QR code pair page |
-| `ERR_FORBIDDEN_ORIGIN` | Request Origin or Host check failed | Verify Tailscale / publicBaseUrl |
-| `ERR_INVALID_PAYLOAD` | Schema validation failed | Drop frame, log client error |
-| `ERR_NOT_FOUND` | Targeted workspace, tab, or pane not found | Refresh snapshot |
-| `ERR_INTERACTION_STALE` | Interaction ID expired, answered, or screen changed | Refresh pane state, dismiss card |
-| `ERR_AGENT_BUSY` | Action rejected because agent is working | Wait until agent reaches idle/done |
-| `ERR_AGENT_NOT_READY` | Agent shell prompt not ready | Wait for shell readiness |
-| `ERR_AGENT_BLOCKED` | Agent waiting for interactive input | Answer active interaction card |
-| `ERR_MENU_NOT_SUPPORTED` | Agent profile does not declare this menu | Disable menu button in UI |
-| `ERR_MENU_TIMEOUT` | Menu did not render within timeout | Press Esc to dismiss menu |
-| `ERR_TIMEOUT` | Operation timed out | Retry |
-| `ERR_INCOMPATIBLE_PROTOCOL` | Client/server protocol version mismatch | Reload PWA |
-| `ERR_INTERNAL` | Unhandled daemon error | Check daemon logs |
+| `ERR_INVALID_PAYLOAD` | Frame failed validation, unknown type, unknown option/model/key | Fix the request; nothing was executed |
+| `ERR_NOT_FOUND` | Targeted pane is not in the Herdr snapshot | Wait for the next `snapshot_update` |
+| `ERR_INTERACTION_STALE` | Prompt changed or was already answered | Re-select the pane for fresh state |
+| `ERR_AGENT_NOT_READY` | Herdr: agent not ready for input | Retry once the agent is idle |
+| `ERR_AGENT_BLOCKED` | Herdr: agent is waiting on a prompt | Answer the prompt first |
+| `ERR_TIMEOUT` | Herdr request or prompt submission timed out | Check the pane before retrying; the action may have landed |
+| `ERR_INCOMPATIBLE_PROTOCOL` | Protocol major version mismatch | Update the PWA (service worker update banner) |
+| `ERR_INTERNAL` | Unexpected daemon error (logged with a stack trace) | Check daemon logs |
+| `ERR_OFFLINE` | Client-side only: the socket was not open, so nothing was sent | The draft is kept; resend after reconnect |

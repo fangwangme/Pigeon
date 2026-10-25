@@ -1,80 +1,100 @@
-import { readdirSync, existsSync, readFileSync, statSync } from "node:fs";
+import { readdirSync, existsSync, readFileSync } from "node:fs";
+import { homedir } from "node:os";
 import { join } from "node:path";
+import type { SkillEntry } from "../types/protocol";
 
-export interface SkillEntry {
-  name: string;
-  description: string;
-  source: "builtin" | "user" | "project";
-  path?: string;
+export type { SkillEntry };
+
+interface SkillSource {
+  dir: string;
+  source: SkillEntry["source"];
+}
+
+/**
+ * Where each agent looks for skills, and how a skill is invoked from its prompt.
+ * `{name}` in `invocation` is replaced by the skill name. Paths under `cwd` are the project's.
+ */
+const AGENT_SKILL_LAYOUT: Record<string, { sources: (home: string, cwd?: string) => SkillSource[]; invocation: string }> = {
+  claude: {
+    sources: (home, cwd) => [
+      ...(cwd ? [{ dir: join(cwd, ".claude", "skills"), source: "project" as const }] : []),
+      { dir: join(home, ".claude", "skills"), source: "user" },
+    ],
+    invocation: "/{name}",
+  },
+  codex: {
+    sources: (home, cwd) => [
+      ...(cwd ? [{ dir: join(cwd, ".agents", "skills"), source: "project" as const }] : []),
+      { dir: join(home, ".agents", "skills"), source: "user" },
+      { dir: join(home, ".codex", "skills"), source: "user" },
+    ],
+    invocation: "${name}",
+  },
+  pi: {
+    sources: (home, cwd) => [
+      ...(cwd ? [{ dir: join(cwd, ".pi", "skills"), source: "project" as const }] : []),
+      { dir: join(home, ".pi", "agent", "skills"), source: "user" },
+    ],
+    invocation: "/skill:{name}",
+  },
+  agy: {
+    sources: (home, cwd) => [
+      ...(cwd ? [{ dir: join(cwd, ".agents", "skills"), source: "project" as const }] : []),
+      { dir: join(home, ".gemini", "antigravity-cli", "skills"), source: "user" },
+      { dir: join(home, ".gemini", "antigravity", "builtin", "skills"), source: "builtin" },
+    ],
+    invocation: "/{name}",
+  },
+  opencode: {
+    sources: (home, cwd) => [
+      ...(cwd ? [{ dir: join(cwd, ".opencode", "skills"), source: "project" as const }] : []),
+      { dir: join(home, ".config", "opencode", "skills"), source: "user" },
+    ],
+    invocation: "/{name}",
+  },
+};
+
+/** Reads `description:` from SKILL.md front matter; file content is untrusted and rendered as text. */
+function readDescription(skillMd: string): string {
+  if (!existsSync(skillMd)) return "";
+  const content = readFileSync(skillMd, "utf-8");
+  const fm = /^---\n([\s\S]*?)\n---/.exec(content);
+  const desc = fm && /^description:\s*(.+)$/m.exec(fm[1]);
+  return desc ? desc[1].trim().replace(/^["']|["']$/g, "").slice(0, 300) : "";
 }
 
 export class SkillScanner {
-  private cache: SkillEntry[] | null = null;
-  private lastScanTime = 0;
-  private ttlMs = 15000; // Cache for 15s
+  private cache = new Map<string, { at: number; entries: SkillEntry[] }>();
+  private ttlMs = 15_000;
 
-  public listSkills(projectRoot?: string): SkillEntry[] {
-    const now = Date.now();
-    if (this.cache && now - this.lastScanTime < this.ttlMs) {
-      return this.cache;
-    }
+  constructor(private home: string = homedir()) {}
 
-    const home = process.env.HOME || "";
-    const searchDirs: Array<{ path: string; source: "builtin" | "user" | "project" }> = [
-      { path: join(home, ".gemini/antigravity/builtin/skills"), source: "builtin" },
-      { path: join(home, ".gemini/config/skills"), source: "user" },
-      { path: join(home, ".claude/skills"), source: "user" },
-    ];
-
-    if (projectRoot) {
-      searchDirs.push(
-        { path: join(projectRoot, ".agents/skills"), source: "project" },
-        { path: join(projectRoot, "skills"), source: "project" }
-      );
-    }
+  /** Skills for one agent kind in one project; empty for agents without a known layout. */
+  public listSkills(agentKind: string | null, cwd?: string | null): SkillEntry[] {
+    const layout = agentKind ? AGENT_SKILL_LAYOUT[agentKind.toLowerCase()] : undefined;
+    if (!layout) return [];
+    const key = `${agentKind}|${cwd || ""}`;
+    const cached = this.cache.get(key);
+    if (cached && Date.now() - cached.at < this.ttlMs) return cached.entries;
 
     const results = new Map<string, SkillEntry>();
-
-    for (const { path: dir, source } of searchDirs) {
+    // Earlier sources win on a name clash, so project skills shadow user skills.
+    for (const { dir, source } of layout.sources(this.home, cwd || undefined)) {
       if (!existsSync(dir)) continue;
-      try {
-        const entries = readdirSync(dir, { withFileTypes: true });
-        for (const entry of entries) {
-          if (!entry.isDirectory()) continue;
-          const skillName = entry.name;
-          if (results.has(skillName)) continue;
-
-          let description = "";
-          const skillMdPath = join(dir, skillName, "SKILL.md");
-          if (existsSync(skillMdPath)) {
-            try {
-              const content = readFileSync(skillMdPath, "utf-8");
-              // Parse yaml frontmatter description if present
-              const descMatch = content.match(/description:\s*([^\r\n]+)/i);
-              if (descMatch) {
-                description = descMatch[1].trim().replace(/^["']|["']$/g, "");
-              } else {
-                // Fallback to first non-heading paragraph
-                const lines = content.split("\n").map((l) => l.trim()).filter((l) => l && !l.startsWith("#"));
-                if (lines.length > 0) {
-                  description = lines[0].substring(0, 100);
-                }
-              }
-            } catch {}
-          }
-
-          results.set(skillName, {
-            name: skillName,
-            description: description || `Skill ${skillName}`,
-            source,
-            path: skillMdPath,
-          });
-        }
-      } catch {}
+      for (const entry of readdirSync(dir, { withFileTypes: true })) {
+        if (!(entry.isDirectory() || entry.isSymbolicLink()) || results.has(entry.name)) continue;
+        const skillMd = join(dir, entry.name, "SKILL.md");
+        if (!existsSync(skillMd)) continue;
+        results.set(entry.name, {
+          name: entry.name,
+          description: readDescription(skillMd),
+          source,
+          invocation: layout.invocation.replace("{name}", entry.name),
+        });
+      }
     }
-
-    this.cache = Array.from(results.values()).sort((a, b) => a.name.localeCompare(b.name));
-    this.lastScanTime = now;
-    return this.cache;
+    const entries = Array.from(results.values()).sort((a, b) => a.name.localeCompare(b.name));
+    this.cache.set(key, { at: Date.now(), entries });
+    return entries;
   }
 }

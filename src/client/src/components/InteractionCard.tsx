@@ -3,6 +3,8 @@ import type { InteractionCardData } from "../../../types/protocol";
 import { respondInteraction, sendKeys } from "../state/ws";
 import { toggleTerminalSheet } from "../state/store";
 
+const KEY_LABELS: Record<string, string> = { enter: "Enter", esc: "Esc", up: "↑", down: "↓", y: "y", n: "n", tab: "Tab" };
+
 export const InteractionCard: Component<{ data: InteractionCardData }> = (props) => {
   const item = () => props.data;
 
@@ -74,14 +76,15 @@ export const InteractionCard: Component<{ data: InteractionCardData }> = (props)
             "font-size": "13px",
             color: "var(--fg)",
             "word-break": "break-all",
+            "white-space": "pre-wrap",
           }}
         >
           {item().payload}
         </div>
       </Show>
 
-      {/* Choice Buttons */}
-      <div style={{ display: "flex", "flex-direction": "column", gap: "8px" }}>
+      {/* Numbered choices: tapping sends exactly that digit */}
+      <div style={{ display: item().options.length > 0 ? "flex" : "none", "flex-direction": "column", gap: "8px" }}>
         <For each={item().options}>
           {(opt, idx) => {
             const isPrimary = idx() === 0;
@@ -113,7 +116,7 @@ export const InteractionCard: Component<{ data: InteractionCardData }> = (props)
                     color: isPrimary ? "inherit" : "var(--faint)",
                   }}
                 >
-                  {opt.keyShortcut || idx() + 1}
+                  {opt.keyShortcut}
                 </span>
               </button>
             );
@@ -121,109 +124,37 @@ export const InteractionCard: Component<{ data: InteractionCardData }> = (props)
         </For>
       </div>
 
-      {/* Fallback Keys Divider & Row */}
-      <div style={{ height: "1px", background: "var(--warnl)" }} />
-
-      <div style={{ display: "flex", "align-items": "center", gap: "6px" }}>
-        <span style={{ flex: 1, "font-size": "12px", color: "var(--muted)" }}>
-          识别不准？直接发按键
+      {/* Raw key pad: the only controls when the prompt has no numbered options */}
+      <Show when={item().options.length > 0}>
+        <div style={{ height: "1px", background: "var(--warnl)" }} />
+      </Show>
+      <div style={{ display: "flex", "align-items": "center", gap: "6px", "flex-wrap": "wrap" }}>
+        <span style={{ flex: "1 1 100%", "font-size": "12px", color: "var(--muted)" }}>
+          {item().options.length > 0 ? "识别不准？直接发按键" : "看着上面的画面，用按键操作"}
         </span>
-        <button
-          class="touch-target"
-          onClick={() => handleKey("enter")}
-          style={{
-            width: "52px",
-            height: "44px",
-            "border-radius": "10px",
-            border: "1px solid var(--warnl)",
-            background: "var(--warnk)",
-            color: "var(--fg)",
-            "font-size": "12px",
-            "font-weight": 500,
-            cursor: "pointer",
-          }}
-        >
-          Enter
-        </button>
-        <button
-          class="touch-target"
-          onClick={() => handleKey("esc")}
-          style={{
-            width: "44px",
-            height: "44px",
-            "border-radius": "10px",
-            border: "1px solid var(--warnl)",
-            background: "var(--warnk)",
-            color: "var(--fg)",
-            "font-size": "12px",
-            "font-weight": 500,
-            cursor: "pointer",
-          }}
-        >
-          Esc
-        </button>
-        <button
-          aria-label="上"
-          class="touch-target"
-          onClick={() => handleKey("up")}
-          style={{
-            width: "44px",
-            height: "44px",
-            "border-radius": "10px",
-            border: "1px solid var(--warnl)",
-            background: "var(--warnk)",
-            color: "var(--fg)",
-            display: "flex",
-            "align-items": "center",
-            "justify-content": "center",
-            cursor: "pointer",
-          }}
-        >
-          <svg
-            width="16"
-            height="16"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            stroke-width="2.2"
-            stroke-linecap="round"
-            stroke-linejoin="round"
-            aria-hidden="true"
-          >
-            <path d="M6 15l6-6 6 6" />
-          </svg>
-        </button>
-        <button
-          aria-label="下"
-          class="touch-target"
-          onClick={() => handleKey("down")}
-          style={{
-            width: "44px",
-            height: "44px",
-            "border-radius": "10px",
-            border: "1px solid var(--warnl)",
-            background: "var(--warnk)",
-            color: "var(--fg)",
-            display: "flex",
-            "align-items": "center",
-            "justify-content": "center",
-            cursor: "pointer",
-          }}
-        >
-          <svg
-            width="16"
-            height="16"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            stroke-width="2.2"
-            stroke-linecap="round"
-            stroke-linejoin="round"
-            aria-hidden="true"
-          >
-            <path d="M6 9l6 6 6-6" />
-          </svg>
-        </button>
+        <For each={item().fallbackKeys}>
+          {(key) => (
+            <button
+              class="touch-target"
+              aria-label={KEY_LABELS[key] || key}
+              onClick={() => handleKey(key)}
+              style={{
+                "min-width": "48px",
+                height: "44px",
+                padding: "0 10px",
+                "border-radius": "10px",
+                border: "1px solid var(--warnl)",
+                background: "var(--warnk)",
+                color: "var(--fg)",
+                "font-size": "13px",
+                "font-weight": 500,
+                cursor: "pointer",
+              }}
+            >
+              {KEY_LABELS[key] || key}
+            </button>
+          )}
+        </For>
       </div>
 
       {/* Terminal View Button */}

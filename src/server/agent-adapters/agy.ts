@@ -38,7 +38,7 @@ export class AgyAdapter {
   }
 
   public getSessionTitle(sessionId: string): string | null {
-    try {
+    {
       const annotPath = join(
         homedir(),
         ".gemini",
@@ -53,7 +53,7 @@ export class AgyAdapter {
           return match[1];
         }
       }
-    } catch {}
+    }
     return null;
   }
 
@@ -63,6 +63,9 @@ export class AgyAdapter {
   ): { turns: NormalizedTurn[]; stats?: SessionStats; sessionTitle?: string } {
     const title = this.getSessionTitle(sessionId) || undefined;
     const logPath = this.getSessionLogPath(sessionId);
+    // A full read starts from scratch: a half line left over from an earlier incremental read
+    // would otherwise be glued to the first record and drop the first turn.
+    if (!incremental) this.resetCache(sessionId);
     if (!existsSync(logPath)) {
       return { turns: [], sessionTitle: title };
     }
@@ -84,7 +87,7 @@ export class AgyAdapter {
       }
 
       if (startOffset === totalBytes && this.cachedTurns.has(sessionId)) {
-        return { turns: this.cachedTurns.get(sessionId)! };
+        return { turns: this.cachedTurns.get(sessionId)!, sessionTitle: title };
       }
 
       const bytesToRead = totalBytes - startOffset;
@@ -102,7 +105,7 @@ export class AgyAdapter {
       if (lastNewlineIdx === -1) {
         // Entire chunk is incomplete, wait for newline
         this.partialLineBuffers.set(sessionId, fullText);
-        return { turns: this.cachedTurns.get(sessionId) || [] };
+        return { turns: this.cachedTurns.get(sessionId) || [], sessionTitle: title };
       }
 
       const completeChunk = fullText.slice(0, lastNewlineIdx);
@@ -180,7 +183,7 @@ export class AgyAdapter {
             currentTurn.toolCalls = currentTurn.toolCalls || [];
             for (const tc of record.tool_calls) {
               currentTurn.toolCalls.push({
-                id: `tc_${Date.now()}_${Math.random()}`,
+                id: `tc_${currentTurn.turnNumber}_${currentTurn.toolCalls.length}`,
                 name: tc.name || "tool",
                 input: tc.args || {},
                 status: "completed",
@@ -197,26 +200,18 @@ export class AgyAdapter {
             };
           }
         } else if (recType === "GENERIC") {
-          // Output of tools or command execution
-          if (currentTurn?.toolCalls && currentTurn.toolCalls.length > 0) {
-            const lastTc = currentTurn.toolCalls[currentTurn.toolCalls.length - 1];
-            if (!lastTc.output && record.content) {
-              lastTc.output = record.content;
-            }
+          // Tool outputs arrive in call order; attach each to the first call still without output.
+          const pending = currentTurn?.toolCalls?.find((tc) => tc.output === undefined);
+          if (pending && record.content) {
+            pending.output = record.content;
           }
         }
       }
 
       this.cachedTurns.set(sessionId, turns);
       return { turns, sessionTitle: title };
-    } catch {
-      return { turns: [], sessionTitle: title };
     } finally {
-      if (fd !== null) {
-        try {
-          closeSync(fd);
-        } catch {}
-      }
+      if (fd !== null) closeSync(fd);
     }
   }
 

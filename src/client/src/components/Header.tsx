@@ -144,11 +144,12 @@ export const Header: Component = () => {
                 height: "6px",
                 "border-radius": "3px",
                 "flex-shrink": 0,
-                background: state.connected ? "var(--accent)" : "var(--warn)",
+                background: state.connected && state.herdrConnected ? "var(--accent)" : "var(--warn)",
               }}
             />
             <span style={{ overflow: "hidden", "text-overflow": "ellipsis" }}>
-              {state.serverHost} · {state.connected ? "已连接" : "连接中..."}
+              {state.serverHost} ·{" "}
+              {!state.paired ? "未配对" : !state.connected ? "连接中..." : state.herdrConnected ? "已连接" : "Herdr 未运行 · 数据已过期"}
             </span>
           </div>
         </div>
@@ -288,7 +289,7 @@ export const Header: Component = () => {
                       t.panes?.find((p) => p.agentStatus === "working" || p.agentStatus === "blocked") ||
                       t.panes?.[0];
                     if (targetPane?.id) {
-                      selectPane(targetPane.id, state.activeWorkspaceId || undefined, t.id);
+                      selectPane(targetPane.id);
                     }
                   }}
                   style={{

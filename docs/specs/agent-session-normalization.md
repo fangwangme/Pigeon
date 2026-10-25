@@ -172,7 +172,8 @@ When `pendingQuestion` is present (or Herdr reports `agent_status === "blocked"`
 - Renders a native mobile **Action Sheet** anchored at the bottom:
   - Displays the question in bold text.
   - Renders each option as a prominent touch target (height `>= 44px`).
-  - Clicking an option dispatches the corresponding key shortcut via Herdr and dismisses the Action Sheet upon verified disappearance.
+  - Clicking an option dispatches the corresponding key shortcut via Herdr and dismisses the Action Sheet upon verified disappearance (`protocol.md` §4.1). If the prompt is still showing afterwards, the raw terminal sheet opens.
+  - A prompt without numbered options shows no option buttons, only a raw key pad built from `fallbackKeys` (`herdr-adapter.md` §8.2).
 
 ---
 

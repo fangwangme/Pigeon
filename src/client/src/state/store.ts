@@ -13,12 +13,17 @@ import type {
   AgentRecipeSummary,
 } from "../../../types/protocol";
 import type { SessionStats } from "../../../shared/agent-session";
-import { THEMES, applyTheme, applyFullTheme, type ThemeTokens } from "../themes";
+import { applyFullTheme } from "../themes";
+import { DEFAULT_MACROS } from "../../../shared/defaults";
 
 export type { MacroItem, SkillEntry, AgentRecipeSummary };
 
 export interface AppState {
   connected: boolean;
+  /** False once the server says this browser holds no valid pairing. */
+  paired: boolean;
+  lastError: { code: string; message: string; at: number } | null;
+  updateAvailable: boolean;
   herdrConnected: boolean;
   lastSyncTimestamp: number;
   serverHost: string;
@@ -34,14 +39,10 @@ export interface AppState {
   sessionTitle: string | null;
   pendingInteraction: InteractionCardData | null;
   rawScreen: string;
-  activeGhost: { suggestion: string; actionText: string } | null;
   drawerOpen: boolean;
   terminalSheetOpen: boolean;
   diffDrawerOpen: boolean;
-  appearanceModalOpen: boolean;
-  macrosModalOpen: boolean;
   newTabModalOpen: boolean;
-  pairingModalOpen: boolean;
   activeAgentsModalOpen: boolean;
   settingsModalOpen: boolean;
   settingsTab: "appearance" | "macros" | "pairing" | "pwa";
@@ -52,8 +53,7 @@ export interface AppState {
   displayDensity: "compact" | "aggregated" | "detailed";
   showScrollControls: boolean;
   showMacroDock: boolean;
-  showOptionSheet: boolean;
-  optionSheetOpen: boolean;
+  confirmCtrlC: boolean;
   closeTabConfirmModalOpen: boolean;
   tabToClose: { tabId: string; label: string } | null;
   sessionMenuOpen: boolean;
@@ -62,16 +62,28 @@ export interface AppState {
   recipes: Record<string, AgentRecipeSummary>;
 }
 
-const DEFAULT_MACROS: MacroItem[] = [
-  { id: "m_model", name: "模型", type: "key", payload: "model" },
-  { id: "m_continue", name: "继续", type: "text", payload: "continue" },
-  { id: "m_ctrlc", name: "终止", type: "key", payload: "ctrl+c" },
-  { id: "m_enter", name: "Enter", type: "key", payload: "enter" },
-  { id: "m_tab", name: "Tab", type: "key", payload: "tab" },
-];
+/** localStorage can throw (private mode, blocked site data); preferences then fall back to defaults. */
+export function readPref(key: string): string | null {
+  try {
+    return localStorage.getItem(key);
+  } catch {
+    return null;
+  }
+}
+
+export function writePref(key: string, value: string): void {
+  try {
+    localStorage.setItem(key, value);
+  } catch {
+    // per-browser convenience only; the server copy in config.json is authoritative
+  }
+}
 
 const [state, setState] = createStore<AppState>({
   connected: false,
+  paired: true,
+  lastError: null,
+  updateAvailable: false,
   herdrConnected: true,
   lastSyncTimestamp: Date.now(),
   serverHost: typeof window !== "undefined" ? window.location.hostname : "localhost",
@@ -87,14 +99,10 @@ const [state, setState] = createStore<AppState>({
   sessionTitle: null,
   pendingInteraction: null,
   rawScreen: "",
-  activeGhost: null,
   drawerOpen: false,
   terminalSheetOpen: false,
   diffDrawerOpen: false,
-  appearanceModalOpen: false,
-  macrosModalOpen: false,
   newTabModalOpen: false,
-  pairingModalOpen: false,
   activeAgentsModalOpen: false,
   settingsModalOpen: false,
   settingsTab: "appearance",
@@ -102,20 +110,10 @@ const [state, setState] = createStore<AppState>({
   themeId: "gruvbox",
   themeKey: "gruvbox",
   themeMode: "system",
-  displayDensity:
-    typeof localStorage !== "undefined" && localStorage.getItem("pigeon_density")
-      ? (localStorage.getItem("pigeon_density") as any)
-      : "compact",
-  showScrollControls:
-    typeof localStorage !== "undefined"
-      ? localStorage.getItem("pigeon_scroll_controls") !== "false"
-      : true,
-  showMacroDock:
-    typeof localStorage !== "undefined"
-      ? localStorage.getItem("pigeon_show_macro_dock") !== "false"
-      : true,
-  showOptionSheet: false,
-  optionSheetOpen: false,
+  displayDensity: (readPref("pigeon_density") as AppState["displayDensity"] | null) || "compact",
+  showScrollControls: readPref("pigeon_scroll_controls") !== "false",
+  showMacroDock: readPref("pigeon_show_macro_dock") !== "false",
+  confirmCtrlC: true,
   closeTabConfirmModalOpen: false,
   tabToClose: null,
   sessionMenuOpen: false,
@@ -126,20 +124,12 @@ const [state, setState] = createStore<AppState>({
 
 export { state, setState };
 
-export function setTheme(themeId: string) {
-  if (THEMES[themeId]) {
-    setState("themeId", themeId);
-    applyTheme(THEMES[themeId]);
-    localStorage.setItem("pigeon_theme", themeId);
-  }
-}
-
 export function setPaletteTheme(themeKey: string, mode: "system" | "light" | "dark") {
   setState("themeKey", themeKey);
   setState("themeMode", mode);
   applyFullTheme(themeKey, mode);
-  localStorage.setItem("pigeon_theme_key", themeKey);
-  localStorage.setItem("pigeon_theme_mode", mode);
+  writePref("pigeon_theme_key", themeKey);
+  writePref("pigeon_theme_mode", mode);
 }
 
 export function applySyncedClientConfig(config: Partial<ClientConfig>): void {
@@ -150,42 +140,45 @@ export function applySyncedClientConfig(config: Partial<ClientConfig>): void {
     setState("themeKey", key);
     setState("themeMode", mode);
     applyFullTheme(key, mode);
-    localStorage.setItem("pigeon_theme_key", key);
-    localStorage.setItem("pigeon_theme_mode", mode);
+    writePref("pigeon_theme_key", key);
+    writePref("pigeon_theme_mode", mode);
   }
   if (config.themeId) {
     setState("themeId", config.themeId);
   }
   if (config.displayDensity) {
     setState("displayDensity", config.displayDensity);
-    localStorage.setItem("pigeon_density", config.displayDensity);
+    writePref("pigeon_density", config.displayDensity);
   }
   if (config.showScrollControls !== undefined) {
     setState("showScrollControls", config.showScrollControls);
-    localStorage.setItem("pigeon_scroll_controls", String(config.showScrollControls));
+    writePref("pigeon_scroll_controls", String(config.showScrollControls));
   }
   if (config.showMacroDock !== undefined) {
     setState("showMacroDock", config.showMacroDock);
-    localStorage.setItem("pigeon_show_macro_dock", String(config.showMacroDock));
+    writePref("pigeon_show_macro_dock", String(config.showMacroDock));
   }
   if (Array.isArray(config.macros)) {
     setState("macros", config.macros);
+  }
+  if (config.confirmCtrlC !== undefined) {
+    setState("confirmCtrlC", config.confirmCtrlC);
   }
 }
 
 export function setDisplayDensity(density: "compact" | "aggregated" | "detailed") {
   setState("displayDensity", density);
-  localStorage.setItem("pigeon_density", density);
+  writePref("pigeon_density", density);
 }
 
 export function setShowScrollControls(show: boolean) {
   setState("showScrollControls", show);
-  localStorage.setItem("pigeon_scroll_controls", String(show));
+  writePref("pigeon_scroll_controls", String(show));
 }
 
 export function setShowMacroDock(show: boolean) {
   setState("showMacroDock", show);
-  localStorage.setItem("pigeon_show_macro_dock", String(show));
+  writePref("pigeon_show_macro_dock", String(show));
 }
 
 export function toggleSessionMenu() {
@@ -238,22 +231,6 @@ export function setSettingsTab(tab: "appearance" | "macros" | "pairing" | "pwa")
   setState("settingsTab", tab);
 }
 
-export function openAppearanceModal() {
-  openSettingsModal("appearance");
-}
-
-export function closeAppearanceModal() {
-  closeSettingsModal();
-}
-
-export function openMacrosModal() {
-  openSettingsModal("macros");
-}
-
-export function closeMacrosModal() {
-  closeSettingsModal();
-}
-
 export function openNewTabModal() {
   setState("newTabModalOpen", true);
 }
@@ -264,10 +241,6 @@ export function closeNewTabModal() {
 
 export function openPairingModal() {
   openSettingsModal("pairing");
-}
-
-export function closePairingModal() {
-  closeSettingsModal();
 }
 
 export function openActiveAgentsModal() {
@@ -290,14 +263,6 @@ export function openCloseTabConfirm(tabId: string, label: string) {
 export function cancelCloseTabConfirm() {
   setState("closeTabConfirmModalOpen", false);
   setState("tabToClose", null);
-}
-
-export function toggleOptionSheet() {
-  setState("optionSheetOpen", (open) => !open);
-}
-
-export function closeOptionSheet() {
-  setState("optionSheetOpen", false);
 }
 
 export function getActiveWorkspace(): WorkspaceSummary | undefined {

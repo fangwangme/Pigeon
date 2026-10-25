@@ -1,5 +1,5 @@
-import { randomBytes, createHash, timingSafeEqual } from "node:crypto";
-import { createServer, type Server as NetServer, type Socket } from "node:net";
+import { randomBytes, randomUUID, createHash, timingSafeEqual } from "node:crypto";
+import { createServer, connect, type Server as NetServer, type Socket } from "node:net";
 import { existsSync, unlinkSync, mkdirSync, chmodSync, readFileSync, writeFileSync, renameSync } from "node:fs";
 import { dirname } from "node:path";
 import { EventEmitter } from "node:events";
@@ -42,8 +42,8 @@ export interface DeviceSession {
 export interface PairingOptions {
   publicBaseUrl: string;
   insecureDev?: boolean;
-  adminSocketPath?: string;
-  devicesFilePath?: string;
+  adminSocketPath: string;
+  devicesFilePath: string;
 }
 
 export interface PairingTokenOptions {
@@ -73,25 +73,23 @@ export class PairingManager extends EventEmitter {
     super();
     this.publicBaseUrl = options.publicBaseUrl.replace(/\/+$/, "");
     this.insecureDev = !!options.insecureDev;
-    this.adminSocketPath =
-      options.adminSocketPath ||
-      (process.env.XDG_RUNTIME_DIR
-        ? `${process.env.XDG_RUNTIME_DIR}/pigeon.sock`
-        : `${process.env.HOME}/.local/state/pigeon/admin.sock`);
-    this.devicesFilePath =
-      options.devicesFilePath ||
-      (process.env.XDG_STATE_HOME
-        ? `${process.env.XDG_STATE_HOME}/pigeon/devices.json`
-        : `${process.env.HOME || "/tmp"}/.local/state/pigeon/devices.json`);
+    this.adminSocketPath = options.adminSocketPath;
+    this.devicesFilePath = options.devicesFilePath;
 
     this.loadDevices();
   }
 
+  /** A corrupt registry stops startup: silently dropping it would unpair every device. */
   private loadDevices(): void {
     if (!existsSync(this.devicesFilePath)) return;
-    try {
+    {
       const raw = readFileSync(this.devicesFilePath, "utf-8");
-      const parsed = JSON.parse(raw);
+      let parsed: any;
+      try {
+        parsed = JSON.parse(raw);
+      } catch (err) {
+        throw new Error(`Device registry ${this.devicesFilePath} is not valid JSON: ${(err as Error).message}`);
+      }
       if (parsed.activeToken) {
         const at = parsed.activeToken;
         if (at.permanent || !at.expiresAt || at.expiresAt > Date.now()) {
@@ -106,31 +104,21 @@ export class PairingManager extends EventEmitter {
           }
         }
       }
-    } catch {}
+    }
   }
 
   private saveDevices(): void {
-    try {
-      const dir = dirname(this.devicesFilePath);
-      if (!existsSync(dir)) {
-        mkdirSync(dir, { recursive: true, mode: 0o700 });
-      }
-      const data = {
-        version: "1.0.0",
-        updatedAt: Date.now(),
-        activeToken: this.activeToken,
-        sessions: Array.from(this.sessions.values()),
-      };
-      const tmpPath = `${this.devicesFilePath}.${process.pid}.${Date.now()}.tmp`;
-      writeFileSync(tmpPath, JSON.stringify(data, null, 2), {
-        encoding: "utf-8",
-        mode: 0o600,
-      });
-      try {
-        chmodSync(tmpPath, 0o600);
-      } catch {}
-      renameSync(tmpPath, this.devicesFilePath);
-    } catch {}
+    mkdirSync(dirname(this.devicesFilePath), { recursive: true, mode: 0o700 });
+    const data = {
+      version: "1.0.0",
+      updatedAt: Date.now(),
+      activeToken: this.activeToken,
+      sessions: Array.from(this.sessions.values()),
+    };
+    const tmpPath = `${this.devicesFilePath}.${process.pid}.tmp`;
+    writeFileSync(tmpPath, JSON.stringify(data, null, 2), { encoding: "utf-8", mode: 0o600 });
+    chmodSync(tmpPath, 0o600);
+    renameSync(tmpPath, this.devicesFilePath);
   }
 
   public getCookieName(): string {
@@ -176,7 +164,7 @@ export class PairingManager extends EventEmitter {
     };
     this.saveDevices();
 
-    const url = `${this.publicBaseUrl}/#code=${token}`;
+    const url = `${this.publicBaseUrl}/pair#code=${token}`;
     return { token, url, expiresAt, permanent };
   }
 
@@ -196,9 +184,10 @@ export class PairingManager extends EventEmitter {
     console.log("=======================================================\n");
   }
 
+  /** `code` and `deviceName` are already validated strings (checked at the HTTP boundary). */
   public exchangeToken(
     code: string,
-    deviceName = "Mobile Chrome"
+    deviceName: string
   ): { success: boolean; sessionToken?: string; deviceId?: string; error?: string } {
     const now = Date.now();
 
@@ -235,8 +224,8 @@ export class PairingManager extends EventEmitter {
 
     const sessionToken = generateBase32Token(32);
     const tokenHash = hashToken(sessionToken);
-    const deviceId = `dev_${randomBytes(6).toString("hex")}`;
-    const sanitizedName = deviceName.replace(/[\x00-\x1F\x7F]/g, "").slice(0, 32) || "Mobile Chrome";
+    const deviceId = randomUUID();
+    const sanitizedName = deviceName.replace(/\x1B\[[0-9;]*[A-Za-z]/g, "").replace(/[\x00-\x1F\x7F]/g, "").slice(0, 32) || "Mobile Chrome";
 
     const session: DeviceSession = {
       deviceId,
@@ -285,19 +274,31 @@ export class PairingManager extends EventEmitter {
     return found;
   }
 
-  public startAdminSocket(): Promise<void> {
+  /** Resolves true when another daemon is already answering on the admin socket. */
+  private probeAdminSocket(): Promise<boolean> {
+    return new Promise((resolve) => {
+      const probe = connect(this.adminSocketPath);
+      probe.once("connect", () => {
+        probe.destroy();
+        resolve(true);
+      });
+      probe.once("error", () => resolve(false)); // stale socket file: nothing is listening
+    });
+  }
+
+  public async startAdminSocket(): Promise<void> {
+    mkdirSync(dirname(this.adminSocketPath), { recursive: true, mode: 0o700 });
+    if (existsSync(this.adminSocketPath)) {
+      if (await this.probeAdminSocket()) {
+        throw new Error(`Another Pigeon daemon is already running (admin socket ${this.adminSocketPath} is answering)`);
+      }
+      unlinkSync(this.adminSocketPath);
+    }
     return new Promise((resolve, reject) => {
-      try {
-        const dir = dirname(this.adminSocketPath);
-        if (!existsSync(dir)) {
-          mkdirSync(dir, { recursive: true, mode: 0o700 });
-        }
-        if (existsSync(this.adminSocketPath)) {
-          unlinkSync(this.adminSocketPath);
-        }
+      {
 
         this.adminServer = createServer((socket: Socket) => {
-          socket.on("error", () => {});
+          socket.on("error", (err) => console.error("[pigeon] admin socket client error:", err));
           let buffer = "";
           socket.on("data", (chunk) => {
             buffer += chunk.toString("utf-8");
@@ -312,18 +313,11 @@ export class PairingManager extends EventEmitter {
           });
         });
 
+        this.adminServer.on("error", reject);
         this.adminServer.listen(this.adminSocketPath, () => {
-          try {
-            chmodSync(this.adminSocketPath, 0o600);
-          } catch {}
+          chmodSync(this.adminSocketPath, 0o600);
           resolve();
         });
-
-        this.adminServer.on("error", (err) => {
-          reject(err);
-        });
-      } catch (err) {
-        reject(err);
       }
     });
   }
@@ -336,7 +330,7 @@ export class PairingManager extends EventEmitter {
 
       switch (method) {
         case "pair.create": {
-          const tokenInfo = this.createPairingToken();
+          const tokenInfo = this.createPairingToken(msg.params?.ephemeral ? { permanent: false } : undefined);
           socket.write(JSON.stringify({ id, result: tokenInfo }) + "\n");
           break;
         }
@@ -385,14 +379,9 @@ export class PairingManager extends EventEmitter {
   }
 
   public stopAdminSocket(): void {
-    if (this.adminServer) {
-      this.adminServer.close();
-      this.adminServer = null;
-    }
-    if (existsSync(this.adminSocketPath)) {
-      try {
-        unlinkSync(this.adminSocketPath);
-      } catch {}
-    }
+    if (!this.adminServer) return; // never started, or another daemon owns the socket
+    this.adminServer.close();
+    this.adminServer = null;
+    if (existsSync(this.adminSocketPath)) unlinkSync(this.adminSocketPath);
   }
 }

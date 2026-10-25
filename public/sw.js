@@ -1,7 +1,9 @@
 const CACHE_NAME = "pigeon-cache-v1";
 
-self.addEventListener("install", (event) => {
-  self.skipWaiting();
+// A new version waits until the page asks it to take over, so an update never reloads the app
+// while the user is typing; the page shows an "update available" prompt instead.
+self.addEventListener("message", (event) => {
+  if (event.data && event.data.type === "SKIP_WAITING") self.skipWaiting();
 });
 
 self.addEventListener("activate", (event) => {

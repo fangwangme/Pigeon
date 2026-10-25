@@ -1,86 +1,73 @@
 import { existsSync, readFileSync, writeFileSync, mkdirSync, chmodSync } from "node:fs";
 import { dirname } from "node:path";
-import { generateKeyPairSync, createSign } from "node:crypto";
+import { generateKeyPairSync } from "node:crypto";
 
 export interface PushSubscriptionData {
   endpoint: string;
   expirationTime?: number | null;
-  keys: {
-    p256dh: string;
-    auth: string;
-  };
+  keys: { p256dh: string; auth: string };
 }
 
 export interface ClientPresence {
-  deviceId: string;
   isVisible: boolean;
   viewingPaneId: string | null;
   lastUpdated: number;
 }
 
 export interface VapidKeys {
+  /** Uncompressed P-256 point, base64url — the form `PushManager.subscribe` expects. */
   publicKey: string;
+  /** PKCS#8 PEM. */
   privateKey: string;
 }
 
+const PRESENCE_STALE_MS = 60_000;
+
+function base64url(buf: Buffer): string {
+  return buf.toString("base64").replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+
+/**
+ * Presence tracking, VAPID keys and push subscriptions.
+ *
+ * Web Push delivery (RFC 8291 payload encryption + RFC 8292 VAPID JWT) is not implemented yet:
+ * `sendNotification` reports `delivered: false` instead of pretending to send.
+ */
 export class PushManager {
   private vapidKeys: VapidKeys;
-  private subscriptions: PushSubscriptionData[] = [];
-  private presenceMap = new Map<string, ClientPresence>(); // deviceId -> ClientPresence
-  private vapidPath: string;
+  private subscriptions = new Map<string, PushSubscriptionData>(); // endpoint -> subscription
+  private presence = new Map<string, ClientPresence>(); // connectionId -> presence
 
-  constructor(vapidPath?: string) {
-    this.vapidPath =
-      vapidPath ||
-      (process.env.HOME
-        ? `${process.env.HOME}/.local/state/pigeon/vapid.json`
-        : "/tmp/pigeon_vapid.json");
-
+  constructor(private vapidPath: string) {
     this.vapidKeys = this.loadOrCreateVapidKeys();
   }
 
   private loadOrCreateVapidKeys(): VapidKeys {
-    try {
-      if (existsSync(this.vapidPath)) {
-        try {
-          chmodSync(this.vapidPath, 0o600);
-        } catch {}
-        const data = JSON.parse(readFileSync(this.vapidPath, "utf-8"));
-        if (data.publicKey && data.privateKey) {
-          return data;
-        }
+    if (existsSync(this.vapidPath)) {
+      const data = JSON.parse(readFileSync(this.vapidPath, "utf-8"));
+      // Files from older builds stored an SPKI DER key, which browsers reject; regenerate those.
+      if (typeof data.publicKey === "string" && /^[A-Za-z0-9_-]{87}$/.test(data.publicKey) && data.privateKey) {
+        chmodSync(this.vapidPath, 0o600);
+        return data;
       }
-    } catch {}
+    }
 
-    // Generate ECDSA P-256 keypair for VAPID
     const { publicKey, privateKey } = generateKeyPairSync("ec", {
       namedCurve: "prime256v1",
-      publicKeyEncoding: { type: "spki", format: "pem" },
+      publicKeyEncoding: { type: "spki", format: "jwk" } as any,
       privateKeyEncoding: { type: "pkcs8", format: "pem" },
-    });
+    }) as unknown as { publicKey: { x: string; y: string }; privateKey: string };
 
-    // Create URL-safe base64 DER public key
-    const rawPub = publicKey
-      .replace(/-----BEGIN PUBLIC KEY-----/, "")
-      .replace(/-----END PUBLIC KEY-----/, "")
-      .replace(/\s+/g, "");
+    const point = Buffer.concat([
+      Buffer.from([0x04]),
+      Buffer.from(publicKey.x, "base64url"),
+      Buffer.from(publicKey.y, "base64url"),
+    ]);
+    const keys: VapidKeys = { publicKey: base64url(point), privateKey };
 
-    const keys: VapidKeys = {
-      publicKey: rawPub,
-      privateKey: privateKey,
-    };
-
-    try {
-      mkdirSync(dirname(this.vapidPath), { recursive: true, mode: 0o700 });
-      writeFileSync(this.vapidPath, JSON.stringify(keys, null, 2), {
-        encoding: "utf-8",
-        mode: 0o600,
-      });
-      try {
-        chmodSync(this.vapidPath, 0o600);
-      } catch {}
-    } catch {}
-
+    mkdirSync(dirname(this.vapidPath), { recursive: true, mode: 0o700 });
+    writeFileSync(this.vapidPath, JSON.stringify(keys, null, 2), { encoding: "utf-8", mode: 0o600 });
+    chmodSync(this.vapidPath, 0o600);
     return keys;
   }
 
@@ -89,73 +76,35 @@ export class PushManager {
   }
 
   public addSubscription(sub: PushSubscriptionData): void {
-    const existing = this.subscriptions.findIndex((s) => s.endpoint === sub.endpoint);
-    if (existing >= 0) {
-      this.subscriptions[existing] = sub;
-    } else {
-      this.subscriptions.push(sub);
-    }
+    this.subscriptions.set(sub.endpoint, sub);
   }
 
-  public removeSubscription(endpoint: string): void {
-    this.subscriptions = this.subscriptions.filter((s) => s.endpoint !== endpoint);
+  public getSubscriptionsCount(): number {
+    return this.subscriptions.size;
   }
 
-  public updatePresence(deviceId: string, isVisible: boolean, viewingPaneId: string | null): void {
-    this.presenceMap.set(deviceId, {
-      deviceId,
-      isVisible,
-      viewingPaneId,
-      lastUpdated: Date.now(),
-    });
+  public updatePresence(connectionId: string, isVisible: boolean, viewingPaneId: string | null): void {
+    this.presence.set(connectionId, { isVisible, viewingPaneId, lastUpdated: Date.now() });
   }
 
-  public removePresence(deviceId: string): void {
-    this.presenceMap.delete(deviceId);
+  public removePresence(connectionId: string): void {
+    this.presence.delete(connectionId);
   }
 
-  /**
-   * Determines whether push notification should be suppressed based on active client presence.
-   * If any client is actively visible on the target pane, push is suppressed.
-   */
+  /** Suppressed while any live connection is visibly showing the target pane. */
   public shouldSuppressPush(targetPaneId: string): boolean {
     const now = Date.now();
-    for (const presence of this.presenceMap.values()) {
-      // Discard stale presence records older than 60 seconds
-      if (now - presence.lastUpdated > 60000) continue;
-
-      if (presence.isVisible && presence.viewingPaneId === targetPaneId) {
-        return true; // Suppress notification!
-      }
+    for (const p of this.presence.values()) {
+      if (now - p.lastUpdated > PRESENCE_STALE_MS) continue;
+      if (p.isVisible && p.viewingPaneId === targetPaneId) return true;
     }
     return false;
   }
 
-  public async sendNotification(
+  public sendNotification(
     targetPaneId: string,
-    notification: { title: string; body: string; data?: any }
-  ): Promise<{ sent: number; suppressed: boolean }> {
-    if (this.shouldSuppressPush(targetPaneId)) {
-      return { sent: 0, suppressed: true };
-    }
-
-    let sent = 0;
-    // In local / intranet testing environments, Web Push endpoints may not be reachable
-    // We log and track subscriptions. Real web-push requests can be sent via fetch if online.
-    for (const sub of this.subscriptions) {
-      try {
-        // Attempt web push fetch if endpoint is valid HTTP URL
-        if (sub.endpoint.startsWith("https://")) {
-          // Send request with standard headers
-          sent++;
-        }
-      } catch {}
-    }
-
-    return { sent, suppressed: false };
-  }
-
-  public getSubscriptionsCount(): number {
-    return this.subscriptions.length;
+    _notification: { title: string; body: string }
+  ): { suppressed: boolean; delivered: false } {
+    return { suppressed: this.shouldSuppressPush(targetPaneId), delivered: false };
   }
 }

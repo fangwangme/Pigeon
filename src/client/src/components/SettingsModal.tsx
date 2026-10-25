@@ -10,7 +10,8 @@ import {
   setState,
   type MacroItem,
 } from "../state/store";
-import { sendConfigPatch, pairWithCode, initWebSocket } from "../state/ws";
+import { sendConfigPatch } from "../state/ws";
+import { DEFAULT_MACROS } from "../../../shared/defaults";
 import { PALETTES } from "../themes";
 
 export const SettingsModal: Component = () => {
@@ -32,11 +33,6 @@ export const SettingsModal: Component = () => {
   const [editingId, setEditingId] = createSignal<string | null>(null);
 
   // Pairing state
-  const [hostInput, setHostInput] = createSignal("");
-  const [codeInput, setCodeInput] = createSignal("");
-  const [pairingError, setPairingError] = createSignal("");
-  const [isPairing, setIsPairing] = createSignal(false);
-  const [pairSuccess, setPairSuccess] = createSignal(false);
 
   const handleSelectTheme = (themeKey: string) => {
     setPaletteTheme(themeKey, state.themeMode);
@@ -64,14 +60,6 @@ export const SettingsModal: Component = () => {
     setShowMacroDock(next);
     sendConfigPatch({ showMacroDock: next });
   };
-
-  const DEFAULT_MACROS: MacroItem[] = [
-    { id: "m_model", name: "模型", type: "key", payload: "model" },
-    { id: "m_continue", name: "继续", type: "text", payload: "continue" },
-    { id: "m_ctrlc", name: "终止", type: "key", payload: "ctrl+c" },
-    { id: "m_enter", name: "Enter", type: "key", payload: "enter" },
-    { id: "m_tab", name: "Tab", type: "key", payload: "tab" },
-  ];
 
   const handleSaveMacro = (e: Event) => {
     e.preventDefault();
@@ -113,34 +101,6 @@ export const SettingsModal: Component = () => {
   const handleResetMacros = () => {
     setState("macros", DEFAULT_MACROS);
     sendConfigPatch({ macros: DEFAULT_MACROS });
-  };
-
-  const handlePairConnect = async () => {
-    const code = codeInput().trim();
-    if (!code) {
-      setPairingError("请输入配对码");
-      return;
-    }
-
-    setIsPairing(true);
-    setPairingError("");
-
-    try {
-      const ok = await pairWithCode(hostInput().trim(), code);
-      if (ok) {
-        setPairSuccess(true);
-        setTimeout(() => {
-          closeSettingsModal();
-          initWebSocket();
-        }, 1000);
-      } else {
-        setPairingError("配对失败，请检查配对码是否正确（配对码一次有效）");
-      }
-    } catch (e: any) {
-      setPairingError(e?.message || "连接失败");
-    } finally {
-      setIsPairing(false);
-    }
   };
 
   return (
@@ -703,7 +663,7 @@ export const SettingsModal: Component = () => {
               <div>
                 <h3 style={{ "font-size": "15px", "font-weight": 700, margin: "0 0 4px" }}>连接状态</h3>
                 <p style={{ "font-size": "12px", color: "var(--muted)", margin: 0 }}>
-                  当前主机：<code style={{ color: "var(--fg)" }}>{state.serverHost}</code> · {state.connected ? "已连接" : "未连接"}
+                  当前主机：<code style={{ color: "var(--fg)" }}>{window.location.host}</code> · {state.connected ? "已连接" : "未连接"}
                 </p>
               </div>
 
@@ -719,74 +679,10 @@ export const SettingsModal: Component = () => {
                   gap: "14px",
                 }}
               >
-                <div style={{ "font-size": "14px", "font-weight": 600 }}>手动配对新电脑 / 服务</div>
-
-                <div style={{ display: "flex", "flex-direction": "column", gap: "6px" }}>
-                  <label style={{ "font-size": "12px", color: "var(--muted)" }}>电脑地址 (可选，默认当前)</label>
-                  <input
-                    type="text"
-                    placeholder="如: http://192.168.1.15:4100"
-                    value={hostInput()}
-                    onInput={(e) => setHostInput(e.currentTarget.value)}
-                    style={{
-                      height: "44px",
-                      padding: "0 12px",
-                      background: "var(--inset)",
-                      border: "1px solid var(--border)",
-                      "border-radius": "8px",
-                      color: "var(--fg)",
-                      "font-size": "13px",
-                    }}
-                  />
+                <div style={{ "font-size": "14px", "font-weight": 600 }}>{state.paired ? "重新配对本机" : "这台手机还没有配对"}</div>
+                <div style={{ "font-size": "12px", color: "var(--muted)", "line-height": 1.5 }}>
+                  在电脑上运行 <code>pigeon pair</code>，用手机相机扫终端里的二维码即可配对（security-and-pairing.md §2：只支持扫码）。
                 </div>
-
-                <div style={{ display: "flex", "flex-direction": "column", gap: "6px" }}>
-                  <label style={{ "font-size": "12px", color: "var(--muted)" }}>配对码 (One-Time Token)</label>
-                  <input
-                    type="text"
-                    placeholder="从终端获取的 26 位配对码"
-                    value={codeInput()}
-                    onInput={(e) => setCodeInput(e.currentTarget.value.toUpperCase())}
-                    style={{
-                      height: "44px",
-                      padding: "0 12px",
-                      background: "var(--inset)",
-                      border: "1px solid var(--border)",
-                      "border-radius": "8px",
-                      color: "var(--fg)",
-                      "font-size": "14px",
-                      "font-family": "'JetBrains Mono', monospace",
-                      "letter-spacing": "0.05em",
-                    }}
-                  />
-                </div>
-
-                <Show when={pairingError()}>
-                  <div style={{ color: "var(--delfg)", "font-size": "12px" }}>{pairingError()}</div>
-                </Show>
-
-                <Show when={pairSuccess()}>
-                  <div style={{ color: "var(--accent)", "font-size": "12px", "font-weight": 600 }}>配对成功，正在重新连接...</div>
-                </Show>
-
-                <button
-                  class="touch-target"
-                  onClick={handlePairConnect}
-                  disabled={isPairing()}
-                  style={{
-                    height: "48px",
-                    background: "var(--accent)",
-                    color: "var(--onaccent)",
-                    border: 0,
-                    "border-radius": "10px",
-                    "font-size": "15px",
-                    "font-weight": 600,
-                    cursor: isPairing() ? "not-allowed" : "pointer",
-                    opacity: isPairing() ? 0.7 : 1,
-                  }}
-                >
-                  {isPairing() ? "正在配对..." : "连接并配对"}
-                </button>
               </div>
 
               {/* Instructions */}

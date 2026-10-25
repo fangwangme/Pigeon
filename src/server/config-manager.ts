@@ -1,65 +1,34 @@
 import { existsSync, readFileSync, writeFileSync, mkdirSync, renameSync } from "node:fs";
 import { dirname, join } from "node:path";
-import type {
-  ClientConfig,
-  ServerConfig,
-  PigeonConfig,
-  MacroItem,
-} from "../types/protocol";
+import type { ClientConfig, ServerConfig, PigeonConfig } from "../types/protocol";
+import { DEFAULT_CLIENT_CONFIG } from "../shared/defaults";
 
-export const DEFAULT_MACROS: MacroItem[] = [
-  { id: "m_model", name: "模型", type: "key", payload: "model" },
-  { id: "m_continue", name: "继续", type: "text", payload: "continue" },
-  { id: "m_ctrlc", name: "终止", type: "key", payload: "ctrl+c" },
-  { id: "m_enter", name: "Enter", type: "key", payload: "enter" },
-  { id: "m_tab", name: "Tab", type: "key", payload: "tab" },
-];
+export { DEFAULT_MACROS, DEFAULT_CLIENT_CONFIG } from "../shared/defaults";
 
-export const DEFAULT_CLIENT_CONFIG: ClientConfig = {
-  themeKey: "gruvbox",
-  themeMode: "system",
-  themeId: "gruvbox",
-  confirmCtrlC: true,
-  defaultView: "cards",
-  macros: DEFAULT_MACROS,
-  displayDensity: "compact",
-  showScrollControls: true,
-  showMacroDock: true,
-};
+/** Server settings that do not depend on the environment, written into a fresh config file. */
+const STATIC_SERVER_DEFAULTS = { port: 4100, host: "", insecureDev: false, publicBaseUrl: "" };
 
-export function getDefaultServerConfig(): ServerConfig {
+/**
+ * Environment-derived defaults. Resolved on every start and never written to disk, so a later
+ * change of `XDG_RUNTIME_DIR` or `HERDR_SOCKET_PATH` is picked up.
+ */
+export function resolveRuntimeServerDefaults(env: NodeJS.ProcessEnv = process.env): Pick<ServerConfig, "herdrSocketPath" | "adminSocketPath" | "stateDir"> {
+  const home = env.HOME;
+  if (!home) throw new Error("HOME is not set; Pigeon cannot locate its state and the Herdr socket");
+  const stateDir = env.XDG_STATE_HOME ? join(env.XDG_STATE_HOME, "pigeon") : join(home, ".local", "state", "pigeon");
   return {
-    port: 4100,
-    host: "",
-    insecureDev: false,
-    publicBaseUrl: "",
-    herdrSocketPath:
-      process.env.HERDR_SOCKET_PATH ||
-      (process.env.HOME ? join(process.env.HOME, ".config", "herdr", "herdr.sock") : "/tmp/herdr.sock"),
-    adminSocketPath:
-      process.env.XDG_RUNTIME_DIR
-        ? join(process.env.XDG_RUNTIME_DIR, "pigeon.sock")
-        : (process.env.HOME ? join(process.env.HOME, ".local", "state", "pigeon", "admin.sock") : "/tmp/pigeon.sock"),
+    herdrSocketPath: env.HERDR_SOCKET_PATH || join(home, ".config", "herdr", "herdr.sock"),
+    adminSocketPath: env.XDG_RUNTIME_DIR ? join(env.XDG_RUNTIME_DIR, "pigeon.sock") : join(stateDir, "admin.sock"),
+    stateDir,
   };
 }
 
-export function getDefaultConfig(): PigeonConfig {
-  return {
-    server: getDefaultServerConfig(),
-    client: { ...DEFAULT_CLIENT_CONFIG },
-  };
-}
-
-export function resolveConfigPath(customPath?: string): string {
+export function resolveConfigPath(customPath?: string, env: NodeJS.ProcessEnv = process.env): string {
   if (customPath) return customPath;
-  if (process.env.PIGEON_CONFIG_PATH) return process.env.PIGEON_CONFIG_PATH;
-  if (process.env.XDG_CONFIG_HOME) {
-    return join(process.env.XDG_CONFIG_HOME, "pigeon", "config.json");
-  }
-  if (process.env.HOME) {
-    return join(process.env.HOME, ".config", "pigeon", "config.json");
-  }
-  return "/tmp/pigeon_config.json";
+  if (env.PIGEON_CONFIG_PATH) return env.PIGEON_CONFIG_PATH;
+  if (env.XDG_CONFIG_HOME) return join(env.XDG_CONFIG_HOME, "pigeon", "config.json");
+  if (!env.HOME) throw new Error("HOME is not set; cannot resolve the Pigeon config path");
+  return join(env.HOME, ".config", "pigeon", "config.json");
 }
 
 export function deepMerge<T extends Record<string, any>>(target: T, source: Partial<T>): T {
@@ -81,39 +50,51 @@ export function deepMerge<T extends Record<string, any>>(target: T, source: Part
   return result;
 }
 
+interface StoredConfig {
+  server?: Partial<ServerConfig>;
+  client?: Partial<ClientConfig>;
+}
+
+/**
+ * Owns `config.json`. The file holds only what the user (or the first-run template) set;
+ * the effective config is defaults merged with it. A file that cannot be parsed stops startup
+ * instead of being silently replaced, so hand edits are never lost.
+ */
 export class ConfigManager {
   private configPath: string;
+  private env: NodeJS.ProcessEnv;
+  private stored: StoredConfig;
   private config: PigeonConfig;
-  private saveTimer: any = null;
-  private debounceMs: number;
 
-  constructor(customPath?: string, debounceMs = 200) {
-    this.configPath = resolveConfigPath(customPath);
-    this.debounceMs = debounceMs;
-    this.config = this.loadOrCreate();
+  constructor(customPath?: string, env: NodeJS.ProcessEnv = process.env) {
+    this.configPath = resolveConfigPath(customPath, env);
+    this.env = env;
+    this.stored = this.loadOrCreate();
+    this.config = {
+      server: { ...STATIC_SERVER_DEFAULTS, ...resolveRuntimeServerDefaults(env), ...(this.stored.server || {}) } as ServerConfig,
+      client: deepMerge({ ...DEFAULT_CLIENT_CONFIG }, this.stored.client || {}),
+    };
   }
 
-  private loadOrCreate(): PigeonConfig {
-    const defaults = getDefaultConfig();
-    try {
-      if (!existsSync(this.configPath)) {
-        const dir = dirname(this.configPath);
-        if (!existsSync(dir)) {
-          mkdirSync(dir, { recursive: true });
-        }
-        writeFileSync(this.configPath, JSON.stringify(defaults, null, 2) + "\n", "utf-8");
-        return defaults;
-      }
-
-      const raw = readFileSync(this.configPath, "utf-8");
-      const parsed = JSON.parse(raw);
-      return {
-        server: deepMerge(defaults.server, parsed.server || {}),
-        client: deepMerge(defaults.client, parsed.client || {}),
-      };
-    } catch {
-      return defaults;
+  private loadOrCreate(): StoredConfig {
+    if (!existsSync(this.configPath)) {
+      const initial: StoredConfig = { server: { ...STATIC_SERVER_DEFAULTS }, client: { ...DEFAULT_CLIENT_CONFIG } };
+      this.write(initial);
+      return initial;
     }
+    const raw = readFileSync(this.configPath, "utf-8");
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(raw);
+    } catch (err) {
+      throw new Error(`Pigeon config ${this.configPath} is not valid JSON: ${(err as Error).message}`);
+    }
+    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+      throw new Error(`Pigeon config ${this.configPath} must contain a JSON object`);
+    }
+    const { stored, changed } = migrate(parsed as StoredConfig, this.env);
+    if (changed) this.write(stored);
+    return stored;
   }
 
   public getConfig(): PigeonConfig {
@@ -132,45 +113,63 @@ export class ConfigManager {
     return this.configPath;
   }
 
+  /** Merges a validated patch and writes it to disk before returning; write errors propagate. */
   public patchClientConfig(patch: Partial<ClientConfig>): ClientConfig {
-    if (!patch || typeof patch !== "object") {
-      return this.config.client;
-    }
+    const nextStored: StoredConfig = { ...this.stored, client: deepMerge(this.stored.client || {}, patch) };
+    this.write(nextStored);
+    this.stored = nextStored;
     this.config.client = deepMerge(this.config.client, patch);
-    this.scheduleSave();
     return this.config.client;
   }
 
-  private scheduleSave(): void {
-    if (this.saveTimer) {
-      clearTimeout(this.saveTimer);
-    }
-    this.saveTimer = setTimeout(() => {
-      this.flush();
-    }, this.debounceMs);
+  private write(data: StoredConfig): void {
+    mkdirSync(dirname(this.configPath), { recursive: true });
+    const tmpPath = `${this.configPath}.${process.pid}.tmp`;
+    writeFileSync(tmpPath, JSON.stringify(data, null, 2) + "\n", "utf-8");
+    renameSync(tmpPath, this.configPath);
   }
+}
 
-  public flush(): void {
-    if (this.saveTimer) {
-      clearTimeout(this.saveTimer);
-      this.saveTimer = null;
-    }
-    try {
-      const dir = dirname(this.configPath);
-      if (!existsSync(dir)) {
-        mkdirSync(dir, { recursive: true });
-      }
-      const tmpPath = `${this.configPath}.tmp.${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
-      writeFileSync(tmpPath, JSON.stringify(this.config, null, 2) + "\n", "utf-8");
-      renameSync(tmpPath, this.configPath);
-    } catch (err) {
-      console.error("Failed to write Pigeon config:", err);
-    }
+/**
+ * Socket paths that builds before 0.1 computed and wrote into a fresh config. Such a value was
+ * never chosen by the user, yet it would override the environment, so it is dropped on load.
+ */
+function oldAutoSocketPaths(env: NodeJS.ProcessEnv): { herdr: Set<string>; admin: Set<string> } {
+  const home = env.HOME;
+  const herdr = new Set(["/tmp/herdr.sock"]);
+  const admin = new Set(["/tmp/pigeon.sock"]);
+  if (env.HERDR_SOCKET_PATH) herdr.add(env.HERDR_SOCKET_PATH);
+  if (env.XDG_RUNTIME_DIR) admin.add(join(env.XDG_RUNTIME_DIR, "pigeon.sock"));
+  if (home) {
+    herdr.add(join(home, ".config", "herdr", "herdr.sock"));
+    admin.add(join(home, ".local", "state", "pigeon", "admin.sock"));
   }
+  return { herdr, admin };
+}
 
-  public destroy(): void {
-    if (this.saveTimer) {
-      this.flush();
+/** Upgrades values written by older builds; `changed` says whether the file needs rewriting. */
+function migrate(stored: StoredConfig, env: NodeJS.ProcessEnv): { stored: StoredConfig; changed: boolean } {
+  let changed = false;
+  const server = stored.server;
+  if (server) {
+    const old = oldAutoSocketPaths(env);
+    if (server.herdrSocketPath !== undefined && old.herdr.has(server.herdrSocketPath)) {
+      delete server.herdrSocketPath;
+      changed = true;
+    }
+    if (server.adminSocketPath !== undefined && old.admin.has(server.adminSocketPath)) {
+      delete server.adminSocketPath;
+      changed = true;
     }
   }
+  const macros = stored.client?.macros;
+  if (Array.isArray(macros)) {
+    // The old default "模型" macro sent a key named "model", which Herdr rejects.
+    stored.client!.macros = macros.map((m) => {
+      if (m.id !== "m_model" || m.type !== "key" || m.payload !== "model") return m;
+      changed = true;
+      return { ...m, type: "text" as const, payload: "/model" };
+    });
+  }
+  return { stored, changed };
 }

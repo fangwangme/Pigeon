@@ -57,7 +57,7 @@ Pigeon is designed explicitly for single-handed mobile thumb usage on Chrome/Chr
 4. **Table Anti-Wrap Standard**: To prevent Markdown tables from breaking on narrow 360–412px mobile screens, tables must use `display: block; overflow-x: auto; white-space: nowrap; -webkit-overflow-scrolling: touch;`. Table columns maintain natural widths and scroll smoothly horizontally without vertical character folding.
 5. **Session Diff Drawer**: A top navigation badge `[ 📝 N files · +X -Y ]` opens a dedicated slide-out drawer showing per-file change statistics and unified line diffs with red/green syntax highlighting.
 6. **Interactive Question Action Sheet**: When an agent transitions to `blocked` awaiting user input or permission, Pigeon elevates an Action Sheet highlighted with `--warn` borders, offering touch buttons (>= 44px) for each option plus fallback keys (`Enter`, `Esc`, `↑`, `↓`) and a "查看原始终端画面" (View Raw Terminal) sheet link.
-7. **Ghost Prediction Banner**: Renders predicted next commands with `[ ⇥ 填入 ]` (populate input textarea) and `[ ⚡ 执行 ]` (direct execute).
+7. **Skill Completion**: Typing `/` at the start of the composer lists the current pane's skills (`protocol.md` §5.7). Choosing one inserts its agent-specific invocation.
 
 ### 3.2 Scroll Anchoring, Floating Controls, and Jump to Bottom
 - **Anchoring**: When new stream chunks arrive, the viewport auto-scrolls to the bottom **only if** the user is already within 40px of the bottom.
@@ -66,7 +66,9 @@ Pigeon is designed explicitly for single-handed mobile thumb usage on Chrome/Chr
 
 ### 3.3 Contextual Safeguards for Destructive Actions
 - **Interactive Approvals**: All authorization prompts are handled directly via elevated Interactive Question Cards and native Action Sheets with dedicated choice buttons. Redundant toolbar macro chips are eliminated to keep the bottom dock lean.
-- **Terminating Action (`Ctrl+C`)**: **Double-tap protection**. Tapping once displays a temporary confirmation tooltip: *"再次点击确认中断 (Ctrl+C)"*; only a second tap within 0.8 seconds dispatches the termination signal.
+- **Terminating Action (`Ctrl+C`)**: **Double-tap protection**. A macro marked `confirm` (the default Ctrl+C macro) needs a second tap within 2 seconds; the first tap changes its label to a confirmation prompt. The setting `confirmCtrlC: false` turns this off.
+- **Interrupt**: The interrupt button sends the current agent recipe's `interruptKeys` (Esc for agents, Ctrl+C for a plain terminal).
+- **Unsent drafts**: When a prompt cannot be sent (offline), the composer keeps the text and an error toast explains why.
 
 ### 3.4 Mobile Shell Layout Invariants
 - **Feed must scroll, never compress**: the card feed is a fixed-height flex column with `overflow-y: auto`. Its direct children are scroll content, so they must not participate in flex shrinking (`flex: 0 0 auto`). Cards with `overflow: hidden` otherwise collapse to a few pixels and overlap.

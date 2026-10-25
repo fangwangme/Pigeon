@@ -112,7 +112,6 @@ export interface PaneStatePayload {
   agentStatus: AgentStatus;
   cards: Card[];
   pendingInteraction: InteractionCardData | null;
-  activeGhost: { suggestionId: string; command: string; paneRevision: number } | null;
   rawScreen: string;
   revision: number;
 }
@@ -122,6 +121,8 @@ export interface MacroItem {
   name: string;
   type: "text" | "key";
   payload: string;
+  /** Ask for a second tap before sending (used for interrupting keys such as Ctrl+C). */
+  confirm?: boolean;
 }
 
 export type DisplayDensity = "compact" | "aggregated" | "detailed";
@@ -145,13 +146,16 @@ export interface ServerConfig {
   publicBaseUrl: string;
   herdrSocketPath: string;
   adminSocketPath: string;
+  /** Directory for devices.json and vapid.json. */
+  stateDir: string;
 }
 
 export interface SkillEntry {
   name: string;
   description: string;
   source: "builtin" | "user" | "project";
-  path?: string;
+  /** Text to insert into the prompt to invoke the skill in this agent (e.g. "/name", "$name"). */
+  invocation: string;
 }
 
 export interface ModelOption {
@@ -190,41 +194,29 @@ export type ClientMessage =
   | { type: "hello"; id: string; payload: { protocolVersion: string; subscribePaneId?: string } }
   | { type: "ping"; id?: string; timestamp?: number }
   | { type: "presence_update"; isVisible: boolean; viewingPaneId: string | null }
-  | { type: "subscribe_pane"; paneId: string }
-  | { type: "unsubscribe_pane"; paneId: string }
-  | { type: "interaction_respond"; id: string; payload: { targetPaneId: string; interactionId: string; optionId?: string; action?: string; fingerprint?: string; value?: string } }
+  | { type: "select_view"; id: string; payload: { paneId: string } }
+  | { type: "interaction_respond"; id: string; payload: { targetPaneId: string; interactionId: string; optionId: string; fingerprint: string } }
   | { type: "agent_prompt"; id: string; payload: { targetPaneId: string; text: string } }
   | { type: "agent_send_keys"; id: string; payload: { targetPaneId: string; keys: string[] } }
-  | { type: "select_view"; id: string; payload: { paneId: string } }
-  | { type: "ghost_execute"; id: string; payload: { targetPaneId: string; suggestionId: string; paneRevision: number } }
-  | { type: "open_agent_menu"; id: string; payload: { targetPaneId: string; menu: string } }
   | { type: "create_tab_and_agent"; id: string; payload: { workspaceId: string; agentKind: string; modelId?: string; thinking?: string; cwd?: string } }
   | { type: "close_tab"; id: string; payload: { tabId: string } }
   | { type: "skills_get"; id: string }
-  | { type: "push_subscribe"; subscription: any }
   | { type: "config_get"; id: string }
-  | { type: "config_patch"; id: string; payload: { client?: Partial<ClientConfig> } | Partial<ClientConfig> }
-  | { type: "preferences_set"; id: string; payload: any };
+  | { type: "config_patch"; id: string; payload: { client: Partial<ClientConfig> } };
 
 // Server -> Client messages
 export type ServerMessage =
-  | { type: "welcome"; replyTo: string; payload: { protocolVersion: string; serverVersion: string; deviceId: string; preferences?: any; clientConfig?: ClientConfig; skills?: SkillEntry[]; recipes?: Record<string, AgentRecipeSummary> } }
+  | { type: "welcome"; replyTo: string; payload: { protocolVersion: string; serverVersion: string; deviceId: string; clientConfig: ClientConfig; recipes: Record<string, AgentRecipeSummary> } }
   | { type: "pong"; timestamp: number }
-  | { type: "ack"; replyTo: string; payload: { status: "ok" | string; [key: string]: any } }
+  | { type: "ack"; replyTo: string; payload: { status: "ok"; [key: string]: any } }
   | { type: "error"; replyTo?: string; error: { code: string; message: string; details?: any } }
   | { type: "pane_state"; payload: PaneStatePayload }
   | { type: "snapshot_update"; payload: SnapshotPayload }
-  | { type: "config_sync"; replyTo?: string; payload: { version?: number; client: ClientConfig } }
-  | { type: "config_updated"; payload: { client: ClientConfig } }
-  | { type: "skills_sync"; replyTo?: string; payload: { skills: SkillEntry[]; recipes: Record<string, AgentRecipeSummary> } }
+  | { type: "config_sync"; replyTo?: string; payload: { version: number; client: ClientConfig } }
+  | { type: "config_updated"; payload: { version: number; client: ClientConfig } }
+  | { type: "skills_sync"; replyTo?: string; payload: { paneId: string | null; skills: SkillEntry[]; recipes: Record<string, AgentRecipeSummary> } }
   | { type: "upstream_status"; payload: { herdrConnected: boolean; lastSyncTimestamp: number } }
-  | { type: "cards_upsert"; payload: { paneId: string; cards: Card[]; revision: number } }
-  | { type: "cards_remove"; payload: { paneId: string; cardIds: string[] } }
-  | { type: "interaction_required"; payload: InteractionCardData & { paneId: string } }
-  | { type: "ghost_suggestion"; payload: { paneId: string; suggestionId: string; command: string; paneRevision: number } }
-  | { type: "ghost_cleared"; payload: { paneId: string } }
-  | { type: "pane_screen"; payload: { paneId: string; text: string; revision: number } }
-  | { type: "normalized_turns"; payload: { paneId: string; turns: NormalizedTurn[]; sessionStats?: { filesModified: number; additions: number; deletions: number; diffs?: FileDiffSummary[] }; isStreaming?: boolean } }
+  | { type: "normalized_turns"; payload: { paneId: string; turns: NormalizedTurn[]; sessionStats?: { filesModified: number; additions: number; deletions: number; diffs?: FileDiffSummary[] }; sessionTitle?: string } }
   | { type: "turns_delta"; payload: TurnsDeltaPayload };
 
 export const ProtocolErrors = {
@@ -236,8 +228,6 @@ export const ProtocolErrors = {
   ERR_AGENT_BUSY: "ERR_AGENT_BUSY",
   ERR_AGENT_NOT_READY: "ERR_AGENT_NOT_READY",
   ERR_AGENT_BLOCKED: "ERR_AGENT_BLOCKED",
-  ERR_MENU_NOT_SUPPORTED: "ERR_MENU_NOT_SUPPORTED",
-  ERR_MENU_TIMEOUT: "ERR_MENU_TIMEOUT",
   ERR_TIMEOUT: "ERR_TIMEOUT",
   ERR_INCOMPATIBLE_PROTOCOL: "ERR_INCOMPATIBLE_PROTOCOL",
   ERR_INTERNAL: "ERR_INTERNAL",

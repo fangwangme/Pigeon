@@ -6,7 +6,7 @@ Specs describe what the system does and why. They are the authoritative standard
 
 1. [`architecture.md`](architecture.md) — System topology, Bun runtime daemon, Solid.js PWA, single-binary distribution, Tailscale serve HTTPS access, and line-pattern card classifier.
 2. [`protocol.md`](protocol.md) — Typed JSON message protocol over WebSocket (heartbeat, `interaction_respond` safe answering, commands, server events, error codes).
-3. [`herdr-adapter.md`](herdr-adapter.md) — Herdr 0.9.5 integration contract: event-driven subscription (`events.subscribe`), complete 5-state machine, Agent profile registry, and `/model` menu lifecycle.
+3. [`herdr-adapter.md`](herdr-adapter.md) — Herdr integration contract: socket channels, event subscription plus viewed-pane polling, agent states, tab and agent launch, prompting and answering, screen parse rules, and per-agent skills.
 4. [`security-and-pairing.md`](security-and-pairing.md) — Security model: QR-code-only pairing via URL fragment (`#code=...`), Base32 token, HttpOnly cookies, Origin/Host validation, and local admin IPC socket.
 5. [`mobile-ui-and-themes.md`](mobile-ui-and-themes.md) — Mobile UX on Chromium (sub-pane chips, double-tap `Ctrl+C` safeguard, IME composition safety, 44px hit targets, semantic tokens, and 6 preset theme packs).
 6. [`push.md`](push.md) — Web Push notification subsystem (VAPID keypair, presence-based push suppression, and privacy-preserving alerts).

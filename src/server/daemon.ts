@@ -1,440 +1,283 @@
-import { existsSync, readFileSync } from "node:fs";
-import { join, dirname } from "node:path";
+import { join } from "node:path";
 import { networkInterfaces } from "node:os";
 import type { Server, ServerWebSocket } from "bun";
 import { HerdrClient } from "./herdr-client";
 import { PairingManager } from "./pairing";
-import { PushManager } from "./push";
-import { WsServer, type ClientConnectionData } from "./ws-server";
+import { PushManager, type PushSubscriptionData } from "./push";
+import { WsServer, newConnectionId, SERVER_VERSION, type ClientConnectionData } from "./ws-server";
 import { EMBEDDED_HTML } from "./embedded-html";
 import { ConfigManager } from "./config-manager";
-import {
-  PWA_MANIFEST,
-  PWA_SW_SCRIPT,
-  PWA_ICON_SVG,
-  PWA_ICON_192_BASE64,
-  PWA_ICON_512_BASE64,
-} from "./pwa-assets";
+import { PWA_MANIFEST, PWA_SW_SCRIPT, PWA_ICON_SVG, PWA_ICON_192_BASE64, PWA_ICON_512_BASE64 } from "./pwa-assets";
 
 export interface DaemonConfig {
+  configManager: ConfigManager;
   port?: number;
-  host?: string;
   insecureDev?: boolean;
   publicBaseUrl?: string;
   herdrSocketPath?: string;
+  /** Overrides for tests; production derives these from the config's state directory. */
   adminSocketPath?: string;
   devicesFilePath?: string;
   vapidPath?: string;
   embeddedHtml?: string;
-  configManager?: ConfigManager;
-  configPath?: string;
 }
 
+export interface ResolvedDaemonConfig {
+  port: number;
+  host: string;
+  insecureDev: boolean;
+  publicBaseUrl: string;
+  herdrSocketPath: string;
+  adminSocketPath: string;
+  devicesFilePath: string;
+  vapidPath: string;
+}
+
+const VIRTUAL_IFACE_RE = /^(docker|br-|veth|virbr|vmnet|vboxnet|lo|tailscale|tun|tap|wg)/;
+const VITE_DEV_PORT = 5173;
+const COOKIE_MAX_AGE_S = 31536000; // security-and-pairing.md §2: 1-year session cookie
+
+function isPrivateIPv4(addr: string): boolean {
+  const [a, b] = addr.split(".").map(Number);
+  return a === 10 || (a === 192 && b === 168) || (a === 172 && b >= 16 && b <= 31);
+}
+
+/** LAN address for insecure-dev pairing links: a private IPv4 on a physical interface. */
 export function detectLocalIp(): string | null {
-  const ifaces = networkInterfaces();
-  for (const list of Object.values(ifaces)) {
-    if (!list) continue;
+  for (const [name, list] of Object.entries(networkInterfaces())) {
+    if (!list || VIRTUAL_IFACE_RE.test(name)) continue;
     for (const iface of list) {
-      if (iface.family === "IPv4" && !iface.internal) {
-        if (
-          iface.address.startsWith("192.168.") ||
-          iface.address.startsWith("10.") ||
-          iface.address.startsWith("172.")
-        ) {
-          return iface.address;
-        }
-      }
-    }
-  }
-  for (const list of Object.values(ifaces)) {
-    if (!list) continue;
-    for (const iface of list) {
-      if (iface.family === "IPv4" && !iface.internal) {
-        return iface.address;
-      }
+      if (iface.family === "IPv4" && !iface.internal && isPrivateIPv4(iface.address)) return iface.address;
     }
   }
   return null;
 }
 
+/** Tailscale MagicDNS name of this machine, or null when Tailscale is absent or not running. */
 export function detectTailscaleDns(): string | null {
+  let proc: ReturnType<typeof Bun.spawnSync>;
   try {
-    const proc = Bun.spawnSync(["tailscale", "status", "--json"]);
-    if (proc.exitCode === 0) {
-      const data = JSON.parse(proc.stdout.toString());
-      if (data.Self?.DNSName) {
-        return data.Self.DNSName.replace(/\.+$/, "");
-      }
-    }
-  } catch {}
-  return null;
+    proc = Bun.spawnSync(["tailscale", "status", "--json"], { timeout: 2000, stderr: "ignore" });
+  } catch {
+    return null; // tailscale binary not installed
+  }
+  if (proc.exitCode !== 0 || !proc.stdout) return null;
+  const dns: string | undefined = JSON.parse(proc.stdout.toString()).Self?.DNSName;
+  return dns ? dns.replace(/\.+$/, "") : null;
+}
+
+/**
+ * Works out where the phone will reach the daemon. Without Tailscale or an explicit URL, a
+ * non-dev daemon (bound to loopback) cannot be reached from a phone, so that is an error rather
+ * than a QR code that never opens.
+ */
+export function resolvePublicBaseUrl(
+  opts: { configured?: string; insecureDev: boolean; port: number },
+  detectTs: () => string | null = detectTailscaleDns
+): string {
+  if (opts.configured) return opts.configured.replace(/\/+$/, "");
+  if (opts.insecureDev) {
+    const ip = detectLocalIp();
+    if (!ip) throw new Error("--insecure-dev needs a private LAN IPv4 address, but none was found. Pass --public-url.");
+    return `http://${ip}:${opts.port}`;
+  }
+  const ts = detectTs();
+  if (ts) return `https://${ts}`;
+  throw new Error(
+    "No phone-reachable address: Tailscale is not running and no publicBaseUrl is configured.\n" +
+      "Use one of: run `tailscale serve` and start again, pass --public-url <https-url>, or use --insecure-dev on a trusted LAN."
+  );
+}
+
+function hostOf(hostHeader: string): string | null {
+  try {
+    return new URL(`http://${hostHeader}`).hostname; // keeps IPv6 brackets: "[::1]"
+  } catch {
+    return null;
+  }
 }
 
 export class PigeonDaemon {
-  public config: Required<DaemonConfig>;
+  public config: ResolvedDaemonConfig;
   public configManager: ConfigManager;
   public herdrClient: HerdrClient;
   public pairingManager: PairingManager;
   public pushManager: PushManager;
   public wsServer: WsServer;
   private bunServer: Server<ClientConnectionData> | null = null;
-  private htmlContent: string;
+  private html: string;
+  private allowedHosts: Set<string>;
+  private allowedOrigins: Set<string>;
+  private icon192 = Buffer.from(PWA_ICON_192_BASE64, "base64");
+  private icon512 = Buffer.from(PWA_ICON_512_BASE64, "base64");
 
-  constructor(config: DaemonConfig = {}) {
-    this.configManager = config.configManager || new ConfigManager(config.configPath);
+  constructor(opts: DaemonConfig) {
+    this.configManager = opts.configManager;
     const serverCfg = this.configManager.getServerConfig();
-
-    const port = config.port !== undefined ? config.port : (serverCfg.port || 4100);
-    const insecureDev = config.insecureDev !== undefined ? config.insecureDev : (serverCfg.insecureDev || false);
-    const host = config.host !== undefined ? config.host : (serverCfg.host || "");
-
-    let publicBaseUrl = config.publicBaseUrl || serverCfg.publicBaseUrl;
-    if (!publicBaseUrl) {
-      if (!insecureDev) {
-        const tsDns = detectTailscaleDns();
-        if (tsDns) {
-          publicBaseUrl = `https://${tsDns}`;
-        }
-      }
-      if (!publicBaseUrl) {
-        const localIp = detectLocalIp() || "localhost";
-        publicBaseUrl = `http://${localIp}:${port}`;
-      }
-    }
+    const port = opts.port ?? serverCfg.port;
+    const insecureDev = opts.insecureDev ?? serverCfg.insecureDev;
 
     this.config = {
       port,
-      host,
+      host: serverCfg.host,
       insecureDev,
-      publicBaseUrl,
-      herdrSocketPath:
-        config.herdrSocketPath ||
-        serverCfg.herdrSocketPath ||
-        (process.env.HOME ? `${process.env.HOME}/.config/herdr/herdr.sock` : "/tmp/herdr.sock"),
-      adminSocketPath:
-        config.adminSocketPath ||
-        serverCfg.adminSocketPath ||
-        (process.env.XDG_RUNTIME_DIR
-          ? `${process.env.XDG_RUNTIME_DIR}/pigeon.sock`
-          : `${process.env.HOME}/.local/state/pigeon/admin.sock`),
-      devicesFilePath: config.devicesFilePath,
-      vapidPath:
-        config.vapidPath ||
-        (process.env.HOME
-          ? `${process.env.HOME}/.local/state/pigeon/vapid.json`
-          : "/tmp/pigeon_vapid.json"),
-      embeddedHtml: config.embeddedHtml || "",
-      configManager: this.configManager,
-      configPath: this.configManager.getConfigPath(),
+      publicBaseUrl: resolvePublicBaseUrl({ configured: opts.publicBaseUrl || serverCfg.publicBaseUrl, insecureDev, port }),
+      herdrSocketPath: opts.herdrSocketPath || serverCfg.herdrSocketPath,
+      adminSocketPath: opts.adminSocketPath || serverCfg.adminSocketPath,
+      devicesFilePath: opts.devicesFilePath || join(serverCfg.stateDir, "devices.json"),
+      vapidPath: opts.vapidPath || join(serverCfg.stateDir, "vapid.json"),
     };
 
-    this.herdrClient = new HerdrClient({
-      socketPath: this.config.herdrSocketPath,
-    });
-    this.herdrClient.on("error", () => {});
+    // Only the HTML compiled into this build is served (never a file found via the cwd).
+    this.html = opts.embeddedHtml || EMBEDDED_HTML;
 
+    const publicUrl = new URL(this.config.publicBaseUrl);
+    this.allowedHosts = new Set(["localhost", "127.0.0.1", "[::1]", publicUrl.hostname]);
+    this.allowedOrigins = new Set([publicUrl.origin]);
+    if (insecureDev) {
+      for (const h of ["localhost", "127.0.0.1", "[::1]"]) {
+        this.allowedOrigins.add(`http://${h}:${port}`);
+        this.allowedOrigins.add(`http://${h}:${VITE_DEV_PORT}`); // vite dev server proxying /ws
+      }
+      this.allowedOrigins.add(`http://${publicUrl.hostname}:${VITE_DEV_PORT}`);
+    }
+
+    this.herdrClient = new HerdrClient({ socketPath: this.config.herdrSocketPath });
     this.pairingManager = new PairingManager({
       publicBaseUrl: this.config.publicBaseUrl,
-      insecureDev: this.config.insecureDev,
+      insecureDev,
       adminSocketPath: this.config.adminSocketPath,
       devicesFilePath: this.config.devicesFilePath,
     });
-
     this.pushManager = new PushManager(this.config.vapidPath);
-
     this.wsServer = new WsServer({
       herdrClient: this.herdrClient,
-      pairingManager: this.pairingManager,
       pushManager: this.pushManager,
-      insecureDev: this.config.insecureDev,
       configManager: this.configManager,
     });
-
-    this.pairingManager.on("device_revoked", (deviceId) => {
-      this.wsServer.closeDevice(deviceId);
-    });
-
-    this.htmlContent = this.resolveHtml();
-  }
-
-  private resolveHtml(): string {
-    const candidatePaths = [
-      join(process.cwd(), "dist", "index.html"),
-      join(dirname(Bun.main), "dist", "index.html"),
-      join(dirname(Bun.main), "index.html"),
-      join(dirname(dirname(Bun.main)), "dist", "index.html"),
-    ];
-
-    for (const p of candidatePaths) {
-      if (existsSync(p)) {
-        try {
-          const content = readFileSync(p, "utf-8");
-          if (content.length > 1000) return content;
-        } catch {}
-      }
-    }
-
-    if (this.config.embeddedHtml) {
-      return this.config.embeddedHtml;
-    }
-
-    if (EMBEDDED_HTML && EMBEDDED_HTML.length > 1000) {
-      return EMBEDDED_HTML;
-    }
-
-    return `<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, interactive-widget=resizes-content">
-  <title>Pigeon Mobile</title>
-  <style>
-    body { margin: 0; background: #0B0F14; color: #F0F6FC; font-family: system-ui, sans-serif; display: flex; align-items: center; justify-content: center; height: 100vh; }
-  </style>
-</head>
-<body>
-  <div id="root"><h3>Pigeon Server Running</h3></div>
-</body>
-</html>`;
+    this.pairingManager.on("device_revoked", (deviceId) => this.wsServer.closeDevice(deviceId));
   }
 
   public parseCookie(req: Request): Record<string, string> {
-    const cookieHeader = req.headers.get("cookie");
-    if (!cookieHeader) return {};
-
     const cookies: Record<string, string> = {};
-    for (const pair of cookieHeader.split(";")) {
+    for (const pair of (req.headers.get("cookie") || "").split(";")) {
       const idx = pair.indexOf("=");
-      if (idx > 0) {
-        const key = pair.slice(0, idx).trim();
-        const val = pair.slice(idx + 1).trim();
-        try {
-          cookies[key] = decodeURIComponent(val);
-        } catch {
-          cookies[key] = val;
-        }
-      }
+      if (idx > 0) cookies[pair.slice(0, idx).trim()] = pair.slice(idx + 1).trim();
     }
     return cookies;
   }
 
-  public async start(): Promise<void> {
-    try {
-      await this.herdrClient.connect();
-    } catch {}
+  /** security-and-pairing.md §4: exact Host and Origin match, against CSWSH and DNS rebinding. */
+  private checkHostAndOrigin(req: Request): Response | null {
+    const host = hostOf(req.headers.get("host") || "");
+    if (!host || !this.allowedHosts.has(host)) return new Response("Forbidden Host", { status: 403 });
+    const origin = req.headers.get("origin");
+    if (!origin || !this.allowedOrigins.has(origin)) return new Response("Forbidden Origin", { status: 403 });
+    return null;
+  }
 
-    try {
-      await this.pairingManager.startAdminSocket();
-    } catch {}
+  public async start(): Promise<void> {
+    await this.pairingManager.startAdminSocket();
+    await this.herdrClient.connect();
+
+    if (this.config.insecureDev) {
+      console.warn(
+        "\n\x1b[41;97m WARNING \x1b[0m --insecure-dev: serving plain HTTP on every interface. Anyone on this network who\n" +
+          "obtains the pairing link can control your terminals. Web Push is disabled in this mode.\n"
+      );
+    }
 
     const self = this;
     const cookieName = this.pairingManager.getCookieName();
+    const isHttps = this.config.publicBaseUrl.startsWith("https://");
+    const csp =
+      "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' ws: wss:; frame-ancestors 'none'; base-uri 'none'; object-src 'none';";
+    const htmlResponse = () =>
+      new Response(self.html, { headers: { "Content-Type": "text/html; charset=utf-8", "Content-Security-Policy": csp } });
+    const sessionOf = (req: Request) => self.pairingManager.validateSession(self.parseCookie(req)[cookieName]);
 
     this.bunServer = Bun.serve<ClientConnectionData>({
       port: this.config.port,
-      hostname: this.config.host || (this.config.insecureDev ? "0.0.0.0" : "127.0.0.1"),
+      // No hostname: Bun listens dual-stack on every interface (LESSONS: Chromium resolves
+      // localhost to ::1). `server.host` pins one address. Host/Origin checks still gate /ws.
+      ...(this.config.host ? { hostname: this.config.host } : {}),
 
       async fetch(req, server) {
         const url = new URL(req.url);
 
-        const csp =
-          "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' ws: wss:; frame-ancestors 'none'; base-uri 'none'; object-src 'none';";
-
-        // WebSocket Upgrade endpoint
         if (url.pathname === "/ws") {
-          // Check Origin & Host per security-and-pairing.md §4 (anti-CSWSH & DNS rebinding)
-          const allowedHosts = new Set([
-            "localhost",
-            "127.0.0.1",
-            "::1",
-          ]);
-          if (self.config.publicBaseUrl) {
-            try {
-              allowedHosts.add(new URL(self.config.publicBaseUrl).hostname);
-            } catch {}
-          }
-          if (self.config.insecureDev) {
-            const localIp = detectLocalIp();
-            if (localIp) allowedHosts.add(localIp);
-          }
-          if (self.config.host && self.config.host !== "0.0.0.0") {
-            allowedHosts.add(self.config.host);
-          }
-
-          // Check Host header
-          const hostHeader = req.headers.get("host") || "";
-          const hostOnly = hostHeader.split(":")[0];
-          if (hostOnly && !allowedHosts.has(hostOnly)) {
-            return new Response("Forbidden Host", { status: 403 });
-          }
-
-          // Check Origin header
-          const origin = req.headers.get("origin");
-          if (origin) {
-            try {
-              const originUrl = new URL(origin);
-              if (!allowedHosts.has(originUrl.hostname)) {
-                return new Response("Forbidden Origin", { status: 403 });
-              }
-            } catch {
-              return new Response("Forbidden Origin", { status: 403 });
-            }
-          }
-
-          const cookies = self.parseCookie(req);
-          const sessionToken = cookies[cookieName];
-
-          // Note: ?token= query parameter authentication is strictly disallowed per P0-3
-          // to prevent session credential exposure in query strings and server access logs.
-
-          const session = self.pairingManager.validateSession(sessionToken);
-          if (!session) {
-            return new Response("Unauthorized", {
-              status: 401,
-              statusText: "ERR_UNAUTHORIZED",
-              headers: { "Content-Type": "text/plain" },
-            });
-          }
-
+          const rejected = self.checkHostAndOrigin(req);
+          if (rejected) return rejected;
+          const session = sessionOf(req);
+          if (!session) return new Response("Unauthorized", { status: 401, statusText: "ERR_UNAUTHORIZED" });
           const upgraded = server.upgrade(req, {
-            data: {
-              session,
-              subscribedPaneId: url.searchParams.get("paneId") || null,
-              lastPingTime: Date.now(),
-            },
+            data: { session, connectionId: newConnectionId(), subscribedPaneId: null, lastPingTime: Date.now() },
           });
-
-          if (upgraded) return undefined;
-          return new Response("WebSocket upgrade failed", { status: 400 });
+          return upgraded ? undefined : new Response("WebSocket upgrade failed", { status: 400 });
         }
 
-        // POST /api/pair
         if (url.pathname === "/api/pair" && req.method === "POST") {
+          let body: any;
           try {
-            const body = await req.json();
-            const { code, deviceName } = body;
-            const res = self.pairingManager.exchangeToken(code, deviceName);
-
-            if (!res.success) {
-              return Response.json(
-                { success: false, error: res.error },
-                { status: 400 }
-              );
-            }
-
-            const isHttps = self.config.publicBaseUrl.startsWith("https://");
-            const secureFlag = isHttps ? "; Secure" : "";
-            const setCookie = `${cookieName}=${res.sessionToken}; HttpOnly; SameSite=Strict; Path=/; Max-Age=2592000${secureFlag}`;
-
-            return Response.json(
-              { success: true, deviceId: res.deviceId },
-              {
-                headers: {
-                  "Set-Cookie": setCookie,
-                  "Content-Type": "application/json",
-                },
-              }
-            );
-          } catch (e: any) {
-            return Response.json({ success: false, error: e.message }, { status: 400 });
+            body = await req.json();
+          } catch {
+            return Response.json({ success: false, error: "Body must be JSON" }, { status: 400 });
           }
+          const { code, deviceName } = body || {};
+          if (typeof code !== "string" || code.length > 64 || (deviceName !== undefined && (typeof deviceName !== "string" || deviceName.length > 128))) {
+            return Response.json({ success: false, error: "Expected { code: string, deviceName?: string }" }, { status: 400 });
+          }
+          const res = self.pairingManager.exchangeToken(code, deviceName || "Mobile Chrome");
+          if (!res.success) return Response.json({ success: false, error: res.error }, { status: 400 });
+          const secureFlag = isHttps ? "; Secure" : "";
+          return Response.json(
+            { success: true, deviceId: res.deviceId },
+            { headers: { "Set-Cookie": `${cookieName}=${res.sessionToken}; HttpOnly; SameSite=Strict; Path=/; Max-Age=${COOKIE_MAX_AGE_S}${secureFlag}` } }
+          );
         }
 
-        // GET /api/version
-        if (url.pathname === "/api/version") {
-          return Response.json({ version: "0.1.0", name: "pigeon" });
-        }
+        if (url.pathname === "/api/version") return Response.json({ version: SERVER_VERSION, name: "pigeon" });
 
-        // GET /api/auth/status
         if (url.pathname === "/api/auth/status") {
-          const cookies = self.parseCookie(req);
-          const session = self.pairingManager.validateSession(cookies[cookieName]);
-          return Response.json({
-            authenticated: !!session,
-            deviceId: session?.deviceId || null,
-          });
+          const session = sessionOf(req);
+          return Response.json({ authenticated: !!session, deviceId: session?.deviceId || null });
         }
 
-        // GET /api/push/vapid-public-key
-        if (url.pathname === "/api/push/vapid-public-key") {
-          return Response.json({ publicKey: self.pushManager.getPublicKey() });
-        }
+        if (url.pathname === "/api/push/vapid-public-key") return Response.json({ publicKey: self.pushManager.getPublicKey() });
 
-        // POST /api/push/subscribe (Authenticated per P0-3)
         if (url.pathname === "/api/push/subscribe" && req.method === "POST") {
-          const cookies = self.parseCookie(req);
-          const session = self.pairingManager.validateSession(cookies[cookieName]);
-          if (!session) {
-            return new Response("Unauthorized", { status: 401 });
-          }
+          if (!sessionOf(req)) return new Response("Unauthorized", { status: 401 });
+          let sub: any;
           try {
-            const body = await req.json();
-            self.pushManager.addSubscription(body);
-            return Response.json({ success: true });
-          } catch (e: any) {
-            return Response.json({ success: false, error: e.message }, { status: 400 });
+            sub = await req.json();
+          } catch {
+            return Response.json({ success: false, error: "Body must be JSON" }, { status: 400 });
           }
+          if (!isPushSubscription(sub)) return Response.json({ success: false, error: "Invalid push subscription" }, { status: 400 });
+          self.pushManager.addSubscription(sub);
+          return Response.json({ success: true });
         }
 
-        // PWA Web App Manifest
         if (url.pathname === "/manifest.webmanifest" || url.pathname === "/manifest.json") {
           return Response.json(PWA_MANIFEST, {
-            headers: {
-              "Content-Type": "application/manifest+json; charset=utf-8",
-              "Cache-Control": "public, max-age=3600",
-            },
+            headers: { "Content-Type": "application/manifest+json; charset=utf-8", "Cache-Control": "public, max-age=3600" },
           });
         }
-
-        // PWA Service Worker
         if (url.pathname === "/sw.js") {
           return new Response(PWA_SW_SCRIPT, {
-            headers: {
-              "Content-Type": "application/javascript; charset=utf-8",
-              "Cache-Control": "no-cache, no-store, must-revalidate",
-            },
+            headers: { "Content-Type": "application/javascript; charset=utf-8", "Cache-Control": "no-cache, no-store, must-revalidate" },
           });
         }
-
-        // PWA Icons
         if (url.pathname === "/icon.svg") {
-          return new Response(PWA_ICON_SVG, {
-            headers: {
-              "Content-Type": "image/svg+xml; charset=utf-8",
-              "Cache-Control": "public, max-age=86400",
-            },
-          });
+          return new Response(PWA_ICON_SVG, { headers: { "Content-Type": "image/svg+xml; charset=utf-8", "Cache-Control": "public, max-age=86400" } });
         }
-
         if (url.pathname === "/icon-192.png") {
-          const buf = Buffer.from(PWA_ICON_192_BASE64, "base64");
-          return new Response(buf, {
-            headers: {
-              "Content-Type": "image/png",
-              "Cache-Control": "public, max-age=86400",
-            },
-          });
+          return new Response(self.icon192, { headers: { "Content-Type": "image/png", "Cache-Control": "public, max-age=86400" } });
         }
-
         if (url.pathname === "/icon-512.png") {
-          const buf = Buffer.from(PWA_ICON_512_BASE64, "base64");
-          return new Response(buf, {
-            headers: {
-              "Content-Type": "image/png",
-              "Cache-Control": "public, max-age=86400",
-            },
-          });
+          return new Response(self.icon512, { headers: { "Content-Type": "image/png", "Cache-Control": "public, max-age=86400" } });
         }
-
-        // Serve PWA SPA html for root, index.html, or /pair
-        if (url.pathname === "/" || url.pathname === "/index.html" || url.pathname === "/pair") {
-          return new Response(self.resolveHtml(), {
-            headers: {
-              "Content-Type": "text/html; charset=utf-8",
-              "Content-Security-Policy": csp,
-            },
-          });
-        }
+        if (url.pathname === "/" || url.pathname === "/index.html" || url.pathname === "/pair") return htmlResponse();
 
         return new Response("Not Found", { status: 404 });
       },
@@ -444,7 +287,7 @@ export class PigeonDaemon {
           self.wsServer.handleOpen(ws);
         },
         message(ws, msg) {
-          self.wsServer.handleMessage(ws, msg);
+          self.wsServer.handleMessage(ws, msg).catch((err) => console.error("[pigeon] WebSocket message handling crashed:", err));
         },
         close(ws) {
           self.wsServer.handleClose(ws);
@@ -454,12 +297,18 @@ export class PigeonDaemon {
   }
 
   public stop(): void {
-    if (this.bunServer) {
-      this.bunServer.stop();
-      this.bunServer = null;
-    }
+    this.bunServer?.stop(true);
+    this.bunServer = null;
     this.herdrClient.disconnect();
     this.pairingManager.stopAdminSocket();
-    this.configManager.destroy();
+    this.wsServer.destroy();
   }
+}
+
+function isPushSubscription(v: any): v is PushSubscriptionData {
+  return (
+    typeof v === "object" && v !== null &&
+    typeof v.endpoint === "string" && v.endpoint.startsWith("https://") && v.endpoint.length < 2048 &&
+    typeof v.keys?.p256dh === "string" && typeof v.keys?.auth === "string"
+  );
 }

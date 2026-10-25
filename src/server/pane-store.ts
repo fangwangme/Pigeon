@@ -58,11 +58,7 @@ export class PaneStore extends EventEmitter {
       return;
     }
 
-    if (existing?.watcher) {
-      try {
-        existing.watcher.close();
-      } catch {}
-    }
+    existing?.watcher?.close();
 
     const state: PaneSessionState = {
       paneId,
@@ -73,22 +69,16 @@ export class PaneStore extends EventEmitter {
     };
     this.paneStates.set(paneId, state);
 
-    // Initial load
     this.refreshPaneTurns(paneId);
 
-    // Watch files if AGY
-    if (agent.toLowerCase() === "agy") {
-      const home = process.env.HOME || "";
-      const sessionDir = `${home}/.gemini/antigravity/brain/${sessionId}`;
-      const logFile = `${sessionDir}/.system_generated/logs/transcript.jsonl`;
-      if (existsSync(logFile)) {
-        try {
-          const watcher = watch(logFile, () => {
-            this.refreshPaneTurns(paneId);
-          });
-          state.watcher = watcher;
-        } catch {}
-      }
+    // Log changes drive turn updates directly instead of riding on screen polls.
+    const watchPath = this.adapters.getWatchPath(agent, sessionId);
+    if (watchPath && existsSync(watchPath)) {
+      let timer: ReturnType<typeof setTimeout> | null = null;
+      state.watcher = watch(watchPath, () => {
+        if (timer) clearTimeout(timer);
+        timer = setTimeout(() => this.refreshPaneTurns(paneId), 100);
+      });
     }
   }
 
@@ -96,9 +86,15 @@ export class PaneStore extends EventEmitter {
     const state = this.paneStates.get(paneId);
     if (!state || !this.adapters.isSupported(state.agent)) return;
 
+    let result: ReturnType<AgentAdapterManager["getTurns"]>;
     try {
-      const { turns, stats, sessionTitle } = this.adapters.getTurns(state.agent, state.sessionId, false);
-      if (!turns) return;
+      result = this.adapters.getTurns(state.agent, state.sessionId, false);
+    } catch (err) {
+      console.error(`[pigeon] reading ${state.agent} session ${state.sessionId} failed:`, err);
+      return;
+    }
+    {
+      const { turns, stats, sessionTitle } = result;
 
       const oldTurns = state.turns;
       const oldLen = oldTurns.length;
@@ -171,7 +167,7 @@ export class PaneStore extends EventEmitter {
         };
         this.emit("turns_delta", delta);
       }
-    } catch {}
+    }
   }
 
   public getPaneTurns(paneId: string): { turns: NormalizedTurn[]; stats?: SessionStats; sessionTitle?: string; seqWatermark: number } {
@@ -186,23 +182,16 @@ export class PaneStore extends EventEmitter {
   }
 
   public closePane(paneId: string): void {
-    const state = this.paneStates.get(paneId);
-    if (state?.watcher) {
-      try {
-        state.watcher.close();
-      } catch {}
-    }
+    this.paneStates.get(paneId)?.watcher?.close();
     this.paneStates.delete(paneId);
   }
 
+  public trackedPaneIds(): string[] {
+    return Array.from(this.paneStates.keys());
+  }
+
   public destroy(): void {
-    for (const state of this.paneStates.values()) {
-      if (state.watcher) {
-        try {
-          state.watcher.close();
-        } catch {}
-      }
-    }
+    for (const state of this.paneStates.values()) state.watcher?.close();
     this.paneStates.clear();
   }
 }

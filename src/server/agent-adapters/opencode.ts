@@ -177,7 +177,7 @@ export class OpenCodeAdapter {
               }
 
               const toolCall: NormalizedToolCall = {
-                id: item.id || item.callID || `tool_${Date.now()}_${Math.random()}`,
+                id: item.id || item.callID || `tool_${msg.id}_${currentTurn.toolCalls?.length ?? 0}`,
                 name: item.name || item.tool || "tool",
                 input: toolState.input || item.input || {},
                 output: outputStr || undefined,
@@ -217,14 +217,8 @@ export class OpenCodeAdapter {
       }
 
       return { turns, stats };
-    } catch {
-      return { turns: [] };
     } finally {
-      if (db) {
-        try {
-          db.close();
-        } catch {}
-      }
+      db?.close();
     }
   }
 }
