@@ -6,7 +6,12 @@ Pigeon provides a Web Push notification subsystem to alert developers when an AI
 
 This allows developers to pocket their mobile phone while a long-running agent performs autonomous tasks, receiving an instant haptic push notification the moment an authorization prompt or question dialog appears.
 
-**Status (v0.1)**: Keys, subscriptions, triggers and presence suppression are implemented. **Delivery to the browser push service (RFC 8291 encryption and VAPID JWT) is not implemented yet**: a trigger computes whether it would be suppressed and reports `delivered: false`. Nothing in the UI claims that notifications work.
+**Status (v0.1)**: The daemon side of §3 (VAPID keys, the two HTTP endpoints, the subscription store) and the triggers and presence suppression of §4 are implemented. **Not implemented yet** (planned for M1):
+- the client half of the handshake (requesting permission, calling `PushManager.subscribe`, posting the subscription);
+- the service worker's `push` and `notificationclick` handlers;
+- delivery to the browser push service (RFC 8291 encryption and VAPID JWT).
+
+Until then a trigger only computes whether it would be suppressed and reports `delivered: false`. Nothing in the UI claims that notifications work.
 
 ## 2. Push Delivery Constraints
 

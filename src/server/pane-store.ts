@@ -77,18 +77,22 @@ export class PaneStore extends EventEmitter {
       let timer: ReturnType<typeof setTimeout> | null = null;
       state.watcher = watch(watchPath, () => {
         if (timer) clearTimeout(timer);
-        timer = setTimeout(() => this.refreshPaneTurns(paneId), 100);
+        timer = setTimeout(() => this.refreshPaneTurns(paneId, true), 100);
       });
     }
   }
 
-  public refreshPaneTurns(paneId: string): void {
+  /**
+   * Re-reads a pane's session. The first read after registration is full; reads triggered by the
+   * log watcher are incremental so appends cost only the new bytes (agent-session-normalization.md §5).
+   */
+  public refreshPaneTurns(paneId: string, incremental = false): void {
     const state = this.paneStates.get(paneId);
     if (!state || !this.adapters.isSupported(state.agent)) return;
 
     let result: ReturnType<AgentAdapterManager["getTurns"]>;
     try {
-      result = this.adapters.getTurns(state.agent, state.sessionId, false);
+      result = this.adapters.getTurns(state.agent, state.sessionId, incremental);
     } catch (err) {
       console.error(`[pigeon] reading ${state.agent} session ${state.sessionId} failed:`, err);
       return;

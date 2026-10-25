@@ -14,7 +14,8 @@ export interface HerdrCall {
   params: Record<string, any>;
 }
 
-type Handler = (params: Record<string, any>) => { result?: any; error?: { code: string; message: string } } | undefined;
+/** "no-reply" leaves the request unanswered, like a Herdr call still in progress. */
+type Handler = (params: Record<string, any>) => { result?: any; error?: { code: string; message: string } } | "no-reply" | undefined;
 
 /**
  * A stand-in for the Herdr Unix socket: newline-delimited JSON requests, one response each.
@@ -42,6 +43,7 @@ export class FakeHerdr {
           this.calls.push({ method: req.method, params: req.params || {} });
           if (req.method === "events.subscribe") continue;
           const res = this.handlers[req.method]?.(req.params || {}) ?? { result: {} };
+          if (res === "no-reply") continue;
           socket.write(JSON.stringify({ id: req.id, ...res }) + "\n");
         }
       });

@@ -82,7 +82,7 @@ Pigeon implements a **Dual-Track Architecture** (detailed in `agent-session-norm
 
 ### 4.5 Mobile Presence and Notification Milestone
 - Application-level heartbeats (`ping` every 15s; server replies `pong`).
-- Web Push delivery (RFC 8291 encryption and VAPID JWT) is not implemented yet (`push.md`). Keys, subscriptions, triggers and presence suppression are in place.
+- Web Push is partly implemented (`push.md` status): the daemon side, triggers and presence suppression are in place; the client subscription, service-worker handlers and delivery are not.
 
 ### 4.6 Local CLI Admin Channel
 Pigeon daemon listens on an isolated local Unix socket:

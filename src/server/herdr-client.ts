@@ -77,6 +77,8 @@ export class HerdrClient extends EventEmitter {
   private snapshotPollTimer: ReturnType<typeof setInterval> | null = null;
   private panePollTimer: ReturnType<typeof setInterval> | null = null;
 
+  // Settles every one-shot request still waiting, so disconnect() leaves no socket or timer behind.
+  private pendingRequests = new Set<(err: Error) => void>();
   private paneStates = new Map<string, PaneStatePayload>();
   private paneContentHashes = new Map<string, string>();
   private paneReadsInFlight = new Map<string, Promise<PaneStatePayload>>();
@@ -183,6 +185,8 @@ export class HerdrClient extends EventEmitter {
     this.snapshotTimer = null;
     this.subSocket?.destroy();
     this.subSocket = null;
+    for (const cancel of Array.from(this.pendingRequests)) cancel(new HerdrError("closed", "Herdr client disconnected"));
+    this.paneReadsInFlight.clear();
     this.setConnected(false);
   }
 
@@ -199,6 +203,7 @@ export class HerdrClient extends EventEmitter {
       const finish = (err: Error | null, result?: T) => {
         if (settled) return;
         settled = true;
+        this.pendingRequests.delete(finish);
         clearTimeout(timer);
         socket.destroy();
         if (err) reject(err);
@@ -208,6 +213,7 @@ export class HerdrClient extends EventEmitter {
       const timer = setTimeout(() => {
         finish(new HerdrError("timeout", `Herdr request ${method} timed out`));
       }, REQUEST_TIMEOUT_MS);
+      this.pendingRequests.add(finish);
 
       const parse = () => {
         let res: any;

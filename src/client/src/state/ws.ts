@@ -105,6 +105,9 @@ export async function initWebSocket(): Promise<void> {
 
 /** Clears everything that belongs to the pane being left, so nothing from it is shown under the next one. */
 function resetPaneView(paneId: string): void {
+  // The server re-sends the pane's cached state with its current revision (protocol.md §3.3);
+  // a high-water mark kept from an earlier visit would drop it.
+  paneRevisions.delete(paneId);
   setState({
     activePaneId: paneId,
     cards: [],
@@ -132,9 +135,14 @@ function applyPaneState(p: PaneStatePayload): void {
   });
 }
 
-function handleServerMessage(msg: ServerMessage): void {
+/** Exported for tests; the socket's onmessage is the only production caller. */
+export function handleServerMessage(msg: ServerMessage): void {
   switch (msg.type) {
     case "welcome":
+      // A new server process (daemon restart) numbers pane revisions and config versions from
+      // scratch, so marks from the previous connection must not filter its messages.
+      paneRevisions.clear();
+      configVersion = 0;
       applySyncedClientConfig(msg.payload.clientConfig);
       setState("recipes", msg.payload.recipes);
       return;

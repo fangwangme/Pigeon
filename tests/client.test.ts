@@ -43,6 +43,13 @@ describe("Markdown rendering (mobile-ui-and-themes.md §3.1)", () => {
     expect(html).toContain("<code");
   });
 
+  test("links open outside the app with noopener (architecture.md §5)", () => {
+    const html = renderMarkdown("[docs](https://example.com)");
+    expect(html).toContain('target="_blank"');
+    expect(html).toContain('rel="noopener noreferrer"');
+    expect(html).toContain('href="https://example.com"');
+  });
+
   test.each([
     ['<img src="x" onerror="alert(1)">', "onerror"],
     ["<script>window.pwned = true;</script>", "<script"],

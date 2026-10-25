@@ -137,6 +137,21 @@ describe("connection lifecycle (herdr-adapter.md §3)", () => {
     expect([internals.reconnectTimer, internals.snapshotTimer, internals.panePollTimer, internals.snapshotPollTimer]).toEqual([null, null, null, null]);
   });
 
+  test("disconnect settles requests still in flight and emits no late connected", async () => {
+    herdr.handlers["pane.read"] = () => "no-reply";
+    await client.connect();
+    await Bun.sleep(30);
+    const events: string[] = [];
+    client.on("connected", () => events.push("connected"));
+    const pending = client.request("pane.read", { pane_id: "p1" });
+    await Bun.sleep(30); // the request has reached the fake Herdr
+    client.disconnect();
+    await expect(pending).rejects.toMatchObject({ code: "closed" });
+    await Bun.sleep(30);
+    expect(events).toEqual([]);
+    expect(client.isConnected()).toBe(false);
+  });
+
   test("subscribes to status changes of every agent pane", async () => {
     herdr.handlers["session.snapshot"] = () => ({ result: snapshotOf([{ paneId: "p1", agent: "claude" }, { paneId: "p2" }]) });
     await client.connect();
