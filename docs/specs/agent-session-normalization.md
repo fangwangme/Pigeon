@@ -28,6 +28,8 @@ Herdr's `pane_list` and `snapshot` provide the exact agent identity and session 
 
 Pigeon resolves and tails each agent's native session records according to the following contracts:
 
+**Status (v0.1)**: The OpenCode (§2.1) and AGY (§2.2) adapters are implemented. Claude Code, Codex and Pi (§2.3–§2.5) are planned for M2; until then their panes show the classified screen cards (Track 2).
+
 ### 2.1 OpenCode (`opencode`)
 * **Storage**: SQLite 3 database at `~/.local/share/opencode/opencode.db`.
 * **Session ID**: Matched against `session_v2.id` (e.g. `ses_e9b2e23adffeQnsWp6LzXPX3tA`).

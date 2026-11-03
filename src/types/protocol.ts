@@ -206,7 +206,7 @@ export type ClientMessage =
 
 // Server -> Client messages
 export type ServerMessage =
-  | { type: "welcome"; replyTo: string; payload: { protocolVersion: string; serverVersion: string; deviceId: string; clientConfig: ClientConfig; recipes: Record<string, AgentRecipeSummary> } }
+  | { type: "welcome"; replyTo: string; payload: { protocolVersion: string; serverVersion: string; buildId: string; deviceId: string; clientConfig: ClientConfig; recipes: Record<string, AgentRecipeSummary> } }
   | { type: "pong"; timestamp: number }
   | { type: "ack"; replyTo: string; payload: { status: "ok"; [key: string]: any } }
   | { type: "error"; replyTo?: string; error: { code: string; message: string; details?: any } }

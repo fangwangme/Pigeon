@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { join } from "node:path";
 import { HerdrClient, HerdrError } from "../src/server/herdr-client";
+import type { PaneStatePayload } from "../src/types/protocol";
 import { FakeHerdr, snapshotOf, tempDir } from "./helpers/fixtures";
 
 // herdr-adapter.md: §3 subscription and lifecycle, §4 agent states, §5 tab creation, §6 prompting.
@@ -150,6 +151,33 @@ describe("connection lifecycle (herdr-adapter.md §3)", () => {
     await Bun.sleep(30);
     expect(events).toEqual([]);
     expect(client.isConnected()).toBe(false);
+  });
+
+  // §3.2 + §3.3: a status event alone must reach viewers, even when the screen did not change.
+  async function viewPaneThenChangeStatus(screen: string, from: string, to: string): Promise<PaneStatePayload[]> {
+    let status = from;
+    herdr.handlers["session.snapshot"] = () => ({ result: snapshotOf([{ paneId: "p1", agent: "claude", status }]) });
+    herdr.handlers["pane.read"] = () => ({ result: { read: { text: screen } } });
+    await client.connect();
+    await Bun.sleep(50);
+    await client.readAndClassifyPane("p1");
+    const updates: PaneStatePayload[] = [];
+    client.on("cards_updated", (s: PaneStatePayload) => updates.push(s));
+    status = to;
+    herdr.emitEvent("pane_agent_status_changed", { pane_id: "p1", agent_status: to });
+    await Bun.sleep(50);
+    return updates;
+  }
+
+  test("a status change on an unchanged screen still sends the new status", async () => {
+    const updates = await viewPaneThenChangeStatus("$ bun test\n", "working", "idle");
+    expect(updates.at(-1)?.agentStatus).toBe("idle");
+  });
+
+  test("Herdr turning blocked on an unchanged screen still yields the raw key pad", async () => {
+    const updates = await viewPaneThenChangeStatus("some custom TUI question\n", "working", "blocked");
+    expect(updates.at(-1)?.agentStatus).toBe("blocked");
+    expect(updates.at(-1)?.pendingInteraction?.options).toEqual([]);
   });
 
   test("subscribes to status changes of every agent pane", async () => {

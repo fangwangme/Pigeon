@@ -80,7 +80,8 @@ export class HerdrClient extends EventEmitter {
   // Settles every one-shot request still waiting, so disconnect() leaves no socket or timer behind.
   private pendingRequests = new Set<(err: Error) => void>();
   private paneStates = new Map<string, PaneStatePayload>();
-  private paneContentHashes = new Map<string, string>();
+  // Screen hash plus the Herdr status each pane's current state was classified under.
+  private paneClassifyKeys = new Map<string, string>();
   private paneReadsInFlight = new Map<string, Promise<PaneStatePayload>>();
   private paneDebounceTimers = new Map<string, ReturnType<typeof setTimeout>>();
   // Facts from the latest Herdr snapshot; rebuilt on every snapshot so closed panes drop out.
@@ -330,10 +331,9 @@ export class HerdrClient extends EventEmitter {
       const status = this.normalizeStatus(data.agent_status);
       const known = this.knownPanes.get(paneId);
       if (known) known.herdrStatus = status;
-      const state = this.paneStates.get(paneId);
-      if (state && !state.pendingInteraction) state.agentStatus = status;
       this.emit("pane_status_changed", { paneId, status });
-      if (status === "blocked" || state) this.scheduleDebouncedRead(paneId);
+      // The read re-classifies under the new status, which reaches viewers as a new pane_state.
+      if (status === "blocked" || this.paneStates.has(paneId)) this.scheduleDebouncedRead(paneId);
       this.scheduleSnapshot();
       return;
     }
@@ -396,7 +396,7 @@ export class HerdrClient extends EventEmitter {
     for (const id of Array.from(this.paneStates.keys())) {
       if (!nextKnown.has(id)) {
         this.paneStates.delete(id);
-        this.paneContentHashes.delete(id);
+        this.paneClassifyKeys.delete(id);
       }
     }
     this.knownPanes = nextKnown;
@@ -537,10 +537,9 @@ export class HerdrClient extends EventEmitter {
     const known = this.knownPanes.get(paneId);
     if (!known) throw new HerdrError("pane_not_found", `Pane ${paneId} is not in the Herdr snapshot`);
     const existing = this.paneStates.get(paneId);
-    const contentHash = createHash("sha256").update(rawScreen).digest("hex");
-    if (existing && this.paneContentHashes.get(paneId) === contentHash && existing.agentStatus === this.statusFor(existing, known.herdrStatus)) {
-      return existing;
-    }
+    // herdr-adapter.md §3.3: a new Herdr status alone is classified again, even on an unchanged screen.
+    const classifyKey = `${createHash("sha256").update(rawScreen).digest("hex")}|${known.herdrStatus}`;
+    if (existing && this.paneClassifyKeys.get(paneId) === classifyKey) return existing;
 
     let { cards, pendingInteraction } = this.classifier.classifyScreen(rawScreen);
     if (!pendingInteraction && known.herdrStatus === "blocked") {
@@ -557,14 +556,10 @@ export class HerdrClient extends EventEmitter {
       rawScreen,
       revision: (existing?.revision || 0) + 1,
     };
-    this.paneContentHashes.set(paneId, contentHash);
+    this.paneClassifyKeys.set(paneId, classifyKey);
     this.paneStates.set(paneId, payload);
     this.emit("cards_updated", payload);
     return payload;
-  }
-
-  private statusFor(state: PaneStatePayload, herdrStatus: AgentStatus): AgentStatus {
-    return state.pendingInteraction ? "blocked" : herdrStatus;
   }
 
   /** Latest classified state of a known pane, or null when it has not been read yet. */

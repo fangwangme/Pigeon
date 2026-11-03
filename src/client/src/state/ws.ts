@@ -11,7 +11,15 @@ let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 let lastPongTime = Date.now();
 let msgId = 0;
 let configVersion = 0;
+// The client bundle this page was loaded with, as named by its first `welcome` (protocol.md §3.2).
+let loadedBuildId: string | null = null;
 const paneRevisions = new Map<string, number>();
+const RECONNECT_MS = 3000;
+
+function scheduleReconnect(): void {
+  if (reconnectTimer) clearTimeout(reconnectTimer);
+  reconnectTimer = setTimeout(() => void initWebSocket(), RECONNECT_MS);
+}
 
 function nextId(): string {
   return `cli_${++msgId}`;
@@ -46,7 +54,15 @@ export async function isAuthenticated(): Promise<boolean> {
 /** Connects unless already paired-and-connected; shows pairing guidance when not paired. */
 export async function initWebSocket(): Promise<void> {
   if (socket && (socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CONNECTING)) return;
-  if (!(await isAuthenticated())) {
+  let paired: boolean;
+  try {
+    paired = await isAuthenticated();
+  } catch {
+    // protocol.md §2.2: the daemon is restarting or the network is down; try again shortly.
+    scheduleReconnect();
+    return;
+  }
+  if (!paired) {
     setState("paired", false);
     openPairingModal();
     return;
@@ -92,14 +108,14 @@ export async function initWebSocket(): Promise<void> {
     setState("connected", false);
     if (pingInterval) clearInterval(pingInterval);
     pingInterval = null;
-    if (reconnectTimer) clearTimeout(reconnectTimer);
     if (TERMINAL_CLOSE_CODES.has(event.code)) {
+      if (reconnectTimer) clearTimeout(reconnectTimer);
       setState("paired", event.code !== 4401 && event.code !== 4403 && event.code !== 1008);
       if (event.code !== 4409) openPairingModal();
       return;
     }
     // An HTTP 401 on the upgrade surfaces as a plain close; initWebSocket re-checks pairing first.
-    reconnectTimer = setTimeout(() => void initWebSocket(), 3000);
+    scheduleReconnect();
   };
 }
 
@@ -139,6 +155,9 @@ function applyPaneState(p: PaneStatePayload): void {
 export function handleServerMessage(msg: ServerMessage): void {
   switch (msg.type) {
     case "welcome":
+      // A rebuilt daemon serves a newer client than this page runs; offer the reload (protocol.md §3.2).
+      if (loadedBuildId === null) loadedBuildId = msg.payload.buildId;
+      else if (msg.payload.buildId !== loadedBuildId) setState("updateAvailable", true);
       // A new server process (daemon restart) numbers pane revisions and config versions from
       // scratch, so marks from the previous connection must not filter its messages.
       paneRevisions.clear();

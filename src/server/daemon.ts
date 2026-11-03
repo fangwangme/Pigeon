@@ -1,5 +1,6 @@
 import { join } from "node:path";
 import { networkInterfaces } from "node:os";
+import { createHash } from "node:crypto";
 import type { Server, ServerWebSocket } from "bun";
 import { HerdrClient } from "./herdr-client";
 import { PairingManager } from "./pairing";
@@ -67,8 +68,8 @@ export function detectTailscaleDns(): string | null {
 }
 
 /**
- * Works out where the phone will reach the daemon. Without Tailscale or an explicit URL, a
- * non-dev daemon (bound to loopback) cannot be reached from a phone, so that is an error rather
+ * Works out where the phone will reach the daemon. Without Tailscale or an explicit URL there is
+ * no HTTPS origin the Host/Origin checks would accept from a phone, so that is an error rather
  * than a QR code that never opens.
  */
 export function resolvePublicBaseUrl(
@@ -151,6 +152,7 @@ export class PigeonDaemon {
     });
     this.pushManager = new PushManager(this.config.vapidPath);
     this.wsServer = new WsServer({
+      buildId: createHash("sha256").update(this.html).digest("hex").slice(0, 12),
       herdrClient: this.herdrClient,
       pushManager: this.pushManager,
       configManager: this.configManager,

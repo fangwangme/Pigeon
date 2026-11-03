@@ -19,18 +19,22 @@ type Handler = (params: Record<string, any>) => { result?: any; error?: { code: 
 
 /**
  * A stand-in for the Herdr Unix socket: newline-delimited JSON requests, one response each.
- * `events.subscribe` connections are kept open and never answered with data.
+ * `events.subscribe` connections are kept open and only receive what `emitEvent` sends.
  */
 export class FakeHerdr {
   public calls: HerdrCall[] = [];
   public handlers: Record<string, Handler> = { "session.snapshot": () => ({ result: snapshotOf([]) }) };
   private server: Server;
   private sockets = new Set<Socket>();
+  private subscribers = new Set<Socket>();
 
   constructor(public socketPath: string) {
     this.server = createServer((socket) => {
       this.sockets.add(socket);
-      socket.on("close", () => this.sockets.delete(socket));
+      socket.on("close", () => {
+        this.sockets.delete(socket);
+        this.subscribers.delete(socket);
+      });
       socket.on("error", () => undefined); // the client destroys sockets after each answer
       let buffer = "";
       socket.on("data", (chunk) => {
@@ -41,7 +45,10 @@ export class FakeHerdr {
           buffer = buffer.slice(idx + 1);
           const req = JSON.parse(line);
           this.calls.push({ method: req.method, params: req.params || {} });
-          if (req.method === "events.subscribe") continue;
+          if (req.method === "events.subscribe") {
+            this.subscribers.add(socket);
+            continue;
+          }
           const res = this.handlers[req.method]?.(req.params || {}) ?? { result: {} };
           if (res === "no-reply") continue;
           socket.write(JSON.stringify({ id: req.id, ...res }) + "\n");
@@ -61,6 +68,11 @@ export class FakeHerdr {
 
   callsOf(method: string): HerdrCall[] {
     return this.calls.filter((c) => c.method === method);
+  }
+
+  /** Pushes a Herdr event (`{ event, data }`) to every open `events.subscribe` connection. */
+  emitEvent(event: string, data: Record<string, any>): void {
+    for (const s of this.subscribers) s.write(JSON.stringify({ event, data }) + "\n");
   }
 }
 

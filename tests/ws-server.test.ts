@@ -24,6 +24,7 @@ beforeEach(async () => {
   client.applySnapshot(snapshotOf([{ paneId: "p1", agent: "claude", cwd: dir }, { paneId: "p2", agent: "codex", cwd: dir }]));
   config = new ConfigManager(join(dir, "config.json"), { HOME: dir });
   server = new WsServer({
+    buildId: "build_test",
     herdrClient: client,
     pushManager: new PushManager(join(dir, "vapid.json")),
     configManager: config,
@@ -47,6 +48,7 @@ describe("handshake (protocol.md §3)", () => {
     await send(c.ws, { type: "hello", id: "h1", payload: { protocolVersion: "1.0.0", subscribePaneId: "p1" } });
     const types = c.sent.map((m) => m.type);
     expect(types.slice(0, 3)).toEqual(["welcome", "upstream_status", "snapshot_update"]);
+    expect(c.ofType("welcome")[0].payload.buildId).toBe("build_test");
     // Health may be re-broadcast once the pane read reaches Herdr; the pane data comes exactly once each.
     expect(types.slice(3).filter((t) => t !== "upstream_status")).toEqual(["normalized_turns", "skills_sync", "pane_state"]);
     expect(c.ofType("normalized_turns")[0].payload).toMatchObject({ paneId: "p1", turns: [] });
@@ -141,6 +143,19 @@ describe("answering prompts (protocol.md §4.1)", () => {
     await send(c.ws, { type: "interaction_respond", id: "r1", payload: { targetPaneId: "p1", interactionId: pending.interactionId, fingerprint: "fp_old", optionId: "opt_1" } });
     expect(lastError(c.sent)).toBe(ProtocolErrors.ERR_INTERACTION_STALE);
     expect(herdr.callsOf("pane.send_keys")).toHaveLength(0);
+  });
+
+  test("a second answer while the first is still being sent (double tap) is stale and sends no key", async () => {
+    const pending = pendingOf();
+    const c = fakeWs();
+    const payload = { targetPaneId: "p1", interactionId: pending.interactionId, fingerprint: pending.fingerprint, optionId: "opt_1" };
+    await Promise.all([
+      send(c.ws, { type: "interaction_respond", id: "r1", payload }),
+      send(c.ws, { type: "interaction_respond", id: "r2", payload }),
+    ]);
+    expect(herdr.callsOf("pane.send_keys").map((x) => x.params.keys)).toEqual([["1"]]);
+    expect(c.ofType("error")).toMatchObject([{ replyTo: "r2", error: { code: ProtocolErrors.ERR_INTERACTION_STALE } }]);
+    expect(c.ofType("ack")[0].replyTo).toBe("r1");
   });
 
   test("an unknown option is rejected with ERR_INVALID_PAYLOAD", async () => {

@@ -52,6 +52,7 @@ The entire application (daemon + embedded PWA static assets) compiles into a sin
    `scripts/embed-html.ts` generates `src/server/embedded-html.ts` from `dist/index.html` and `src/server/pwa-assets.ts` from `public/`. Both are build outputs (gitignored), and `public/` is the only source of the PWA assets. `bun test` rebuilds them first (test preload), so the tests always run against the current client.
 3. **Execution**: Running `pigeon start` immediately serves the PWA and API without external `node_modules` or runtime filesystem dependencies.
 4. **PWA Updates**: A new service worker installs and then waits. The page shows an "update available" banner. Tapping it posts `SKIP_WAITING`, the worker activates and claims clients, and the page reloads once. An update therefore never reloads the app while the user is typing.
+   The app shell is fetched network-first, so a daemon rebuilt with a new client usually leaves `sw.js` unchanged. The page therefore also compares the `buildId` of each `welcome` with the first one it saw (`protocol.md` §3.2). On a mismatch it shows the same banner, and tapping it reloads the page. A standalone PWA has no reload button, so this is how a rebuilt daemon reaches an open phone.
 5. **Type Checking**: The whole repository (daemon, client, tests, scripts) is one strict TypeScript project (`tsconfig.json`), and `bun test` fails on any `tsc --noEmit` error.
 
 ### 4.2 Access Layer & Networking
@@ -62,12 +63,12 @@ The entire application (daemon + embedded PWA static assets) compiles into a sin
   - Automatically derives `publicBaseUrl` from `tailscale status --json` (using `.Self.DNSName`).
 - **Development Mode (`--insecure-dev`)**:
   - Explicit flag required for non-Tailscale local network testing (`http://192.168.x.x:4100`).
-  - Binds to `0.0.0.0`, displays a prominent terminal security warning, issues non-Secure session cookies, and explicitly disables Web Push (as browsers reject Service Worker push on non-localhost HTTP).
+  - Serves plain HTTP (the daemon listens on every interface in every mode, `security-and-pairing.md` §5), displays a prominent terminal security warning, issues non-Secure session cookies, and explicitly disables Web Push (as browsers reject Service Worker push on non-localhost HTTP).
 
 ### 4.3 Robust Herdr Adapter Strategy
 Herdr has no global "output changed" event. Pigeon combines events, snapshots and targeted polling (details in `herdr-adapter.md` §3):
 1. **Topology**: Herdr topology events trigger a debounced `session.snapshot`. A snapshot also runs every 30 seconds as reconciliation.
-2. **Viewed Pane Reading**: The panes that phones are viewing are read with `pane.read` (`source: "recent_unwrapped"`) once per second. Unchanged screens (same SHA-256) are dropped before classification.
+2. **Viewed Pane Reading**: The panes that phones are viewing are read with `pane.read` (`source: "recent_unwrapped"`) once per second. A read whose screen (same SHA-256) and Herdr status are both unchanged is dropped before classification.
 3. **Agent Status**: Pigeon subscribes to `pane.agent_status_changed` for every agent pane, so a transition into `blocked` is seen at once, even for panes nobody is viewing.
 
 ### 4.4 Dual-Track Session Rendering (Structured Stream vs Terminal Fallback)

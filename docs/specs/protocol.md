@@ -20,7 +20,7 @@ Key Protocol Principles:
 - With every heartbeat, and whenever visibility or the viewed pane changes, the client sends `{ "type": "presence_update", "isVisible": true, "viewingPaneId": "w1:p2" }`. This message has no `id` and gets no reply.
 
 ### 2.2 Refusals and Closure Codes
-- A WebSocket upgrade without a valid session cookie is refused with HTTP **401**. A wrong `Host` or `Origin` is refused with HTTP **403** (`security-and-pairing.md` §4). In the browser, both show up as a plain close. Before reconnecting, the client checks `GET /api/auth/status` and shows the pairing guidance when it is not paired.
+- A WebSocket upgrade without a valid session cookie is refused with HTTP **401**. A wrong `Host` or `Origin` is refused with HTTP **403** (`security-and-pairing.md` §4). In the browser, both show up as a plain close. Before reconnecting, the client checks `GET /api/auth/status` and shows the pairing guidance when it is not paired. When that check cannot reach the daemon (it is restarting, or the network is down), the client tries again 3 seconds later.
 - `4403`: The device was revoked (`pigeon devices revoke`). The client shows the pairing guidance and does not reconnect.
 - `4409`: Incompatible protocol major version. The client does not reconnect.
 - The client also treats `4401` and `1008` as final.
@@ -41,13 +41,16 @@ If the major version differs from the server's, the server answers `ERR_INCOMPAT
   "payload": {
     "protocolVersion": "1.0.0",
     "serverVersion": "0.1.0",
+    "buildId": "3f9a0c21d7e4",
     "deviceId": "6f1c…",
     "clientConfig": { "themeKey": "gruvbox", "themeMode": "system", "macros": [] },
     "recipes": { "claude": { "kind": "claude", "label": "Claude Code", "models": [], "interruptKeys": ["esc"] } }
   }
 }
 ```
-Then come, in this order, `upstream_status` (§5.7) and `snapshot_update` (§5.3).
+Then come, in this order, `upstream_status` (§5.5) and `snapshot_update` (§5.3).
+
+`buildId` identifies the client bundle the daemon serves (the first 12 hex digits of its SHA-256). The first `welcome` a page receives records it. When a later `welcome` (after a reconnect) carries a different `buildId`, the daemon was rebuilt and restarted: the page shows the update banner, and tapping it reloads the page (`architecture.md` §4.1).
 
 ### 3.3 Initial Pane Data (`server -> client`)
 The server picks a pane. It uses `subscribePaneId` when Herdr knows that pane, otherwise Herdr's focused pane. It subscribes the connection to that pane and sends:
@@ -70,7 +73,7 @@ Every command except `ping` and `presence_update` carries a string `id`. Success
 }
 ```
 *Server Behavior*:
-1. If the pane has no pending prompt, or its `interactionId` or `fingerprint` differs, the server rejects with `ERR_INTERACTION_STALE` and sends no key. The client then re-selects the pane to get fresh state.
+1. If the pane has no pending prompt, or its `interactionId` or `fingerprint` differs, or another answer for that pane is still being sent (a double tap), the server rejects with `ERR_INTERACTION_STALE` and sends no key. The client then re-selects the pane to get fresh state.
 2. If `optionId` is not one of the prompt's options, the server rejects with `ERR_INVALID_PAYLOAD`.
 3. The server sends exactly the option's `keyShortcut`, which is its digit (`herdr-adapter.md` §8), once through `pane.send_keys`. A failed send is never retried, because a timed-out send may already have landed.
 4. After about 300 ms the server re-reads the screen. It acks `{ "approved": true, "interactionId": … }` when that prompt is gone, or `{ "approved": false, … }` when it is still showing. On `approved: false` the client opens the raw terminal sheet.
@@ -260,7 +263,7 @@ The client part of `config.json` (theme, macros, display options) is shared by a
 | :--- | :--- | :--- |
 | `ERR_INVALID_PAYLOAD` | Frame failed validation, unknown type, unknown option/model/key | Fix the request; nothing was executed |
 | `ERR_NOT_FOUND` | Targeted pane is not in the Herdr snapshot | Wait for the next `snapshot_update` |
-| `ERR_INTERACTION_STALE` | Prompt changed or was already answered | Re-select the pane for fresh state |
+| `ERR_INTERACTION_STALE` | Prompt changed, was already answered, or is being answered | Re-select the pane for fresh state |
 | `ERR_AGENT_NOT_READY` | Herdr: agent not ready for input | Retry once the agent is idle |
 | `ERR_AGENT_BLOCKED` | Herdr: agent is waiting on a prompt | Answer the prompt first |
 | `ERR_TIMEOUT` | Herdr request or prompt submission timed out | Check the pane before retrying; the action may have landed |

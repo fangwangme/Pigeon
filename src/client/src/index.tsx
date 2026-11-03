@@ -17,8 +17,10 @@ import { initWebSocket, checkPairingFromUrlHash } from "./state/ws";
 let waitingWorker: ServiceWorker | null = null;
 
 function applyUpdate() {
-  // The new service worker takes over; `controllerchange` then reloads once.
-  waitingWorker?.postMessage({ type: "SKIP_WAITING" });
+  // A waiting service worker takes over and `controllerchange` reloads once. Without one, the
+  // daemon was rebuilt with an unchanged sw.js: reload, and the network-first shell is the new one.
+  if (waitingWorker) waitingWorker.postMessage({ type: "SKIP_WAITING" });
+  else window.location.reload();
 }
 
 function registerServiceWorker() {

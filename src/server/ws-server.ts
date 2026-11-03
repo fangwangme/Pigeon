@@ -23,6 +23,8 @@ export const SERVER_VERSION = "0.1.0";
 const PUSH_DEDUPE_MS = 60_000;
 
 export interface WsServerOptions {
+  /** Identifies the client bundle being served (protocol.md §3.2). */
+  buildId: string;
   herdrClient: HerdrClient;
   pushManager: PushManager;
   configManager: ConfigManager;
@@ -53,6 +55,7 @@ export function newConnectionId(): string {
 }
 
 export class WsServer {
+  private buildId: string;
   private herdrClient: HerdrClient;
   private pushManager: PushManager;
   public configManager: ConfigManager;
@@ -63,8 +66,11 @@ export class WsServer {
   private configVersion = 1;
   private lastStatus = new Map<string, string>();
   private lastPushAt = new Map<string, number>();
+  // Panes whose prompt answer is still being sent; a second answer meanwhile is stale (protocol.md §4.1).
+  private answeringPanes = new Set<string>();
 
   constructor(options: WsServerOptions) {
+    this.buildId = options.buildId;
     this.herdrClient = options.herdrClient;
     this.pushManager = options.pushManager;
     this.configManager = options.configManager;
@@ -179,6 +185,7 @@ export class WsServer {
           payload: {
             protocolVersion: PROTOCOL_VERSION,
             serverVersion: SERVER_VERSION,
+            buildId: this.buildId,
             deviceId: data.session.deviceId,
             clientConfig: this.configManager.getClientConfig(),
             recipes: this.recipeSummaries(),
@@ -232,6 +239,10 @@ export class WsServer {
       case "interaction_respond": {
         const { targetPaneId, interactionId, fingerprint, optionId } = msg.payload;
         if (!this.requireKnownPane(ws, msg.id, targetPaneId)) return;
+        if (this.answeringPanes.has(targetPaneId)) {
+          this.sendError(ws, msg.id, ProtocolErrors.ERR_INTERACTION_STALE, "This prompt is already being answered.");
+          return;
+        }
         const pending = this.herdrClient.getPaneState(targetPaneId)?.pendingInteraction;
         if (!pending || pending.interactionId !== interactionId || pending.fingerprint !== fingerprint) {
           this.sendError(ws, msg.id, ProtocolErrors.ERR_INTERACTION_STALE, "The prompt changed or was already answered.");
@@ -244,7 +255,13 @@ export class WsServer {
         }
         // protocol.md §4.1: send exactly the option's key; a prompt still on screen afterwards
         // is reported as not approved so the client falls back to the terminal view.
-        const approved = await this.herdrClient.answerInteraction(targetPaneId, interactionId, [option.keyShortcut]);
+        this.answeringPanes.add(targetPaneId);
+        let approved: boolean;
+        try {
+          approved = await this.herdrClient.answerInteraction(targetPaneId, interactionId, [option.keyShortcut]);
+        } finally {
+          this.answeringPanes.delete(targetPaneId);
+        }
         this.sendAck(ws, msg.id, { approved, interactionId });
         return;
       }

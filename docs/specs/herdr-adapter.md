@@ -32,7 +32,7 @@ A `pane_agent_status_changed` event updates that pane's status at once, notifies
 ### 3.3 Screen Reads
 Herdr has no "output changed" event. The panes that connected clients are viewing (the union over all connections) are therefore read once per second with `pane.read` (`source: "recent_unwrapped"`, last 200 lines).
 - A pane is not polled while a read of it is still in flight.
-- A screen whose hash is unchanged is dropped before classification.
+- A read is dropped before classification when both the screen hash and the pane's Herdr status are unchanged. A status change alone is therefore classified again and reaches viewers (§3.2), even when the screen did not change.
 - A changed screen produces a new `PaneStatePayload` with the next `revision`.
 - Reads after sending keys always read fresh and never reuse a read already in flight.
 
