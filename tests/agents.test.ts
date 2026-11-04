@@ -9,7 +9,7 @@ import { tempDir } from "./helpers/fixtures";
 describe("launch arguments (herdr-adapter.md §5)", () => {
   test.each([
     ["claude", ["--model", "opus", "--effort", "high"]],
-    ["codex", ["-m", "opus", "-c", 'model_reasoning_effort="high"']],
+    ["codex", ["--no-daemon", "-m", "opus", "-c", 'model_reasoning_effort="high"']],
     ["agy", ["--model", "opus", "--effort", "high"]],
     ["pi", ["--model", "opus", "--thinking", "high"]],
     ["opencode", []],

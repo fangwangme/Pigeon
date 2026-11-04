@@ -15,7 +15,8 @@ export interface DaemonConfig {
   port?: number;
   insecureDev?: boolean;
   publicBaseUrl?: string;
-  herdrSocketPath?: string;
+  herdrAppSocketPath?: string;
+  herdrCoreSocketPath?: string;
   /** Overrides for tests; production derives these from the config's state directory. */
   adminSocketPath?: string;
   devicesFilePath?: string;
@@ -28,7 +29,8 @@ export interface ResolvedDaemonConfig {
   host: string;
   insecureDev: boolean;
   publicBaseUrl: string;
-  herdrSocketPath: string;
+  herdrAppSocketPath: string;
+  herdrCoreSocketPath: string;
   adminSocketPath: string;
   devicesFilePath: string;
   vapidPath: string;
@@ -123,7 +125,8 @@ export class PigeonDaemon {
       host: serverCfg.host,
       insecureDev,
       publicBaseUrl: resolvePublicBaseUrl({ configured: opts.publicBaseUrl || serverCfg.publicBaseUrl, insecureDev, port }),
-      herdrSocketPath: opts.herdrSocketPath || serverCfg.herdrSocketPath,
+      herdrAppSocketPath: opts.herdrAppSocketPath || serverCfg.herdrAppSocketPath,
+      herdrCoreSocketPath: opts.herdrCoreSocketPath || serverCfg.herdrCoreSocketPath,
       adminSocketPath: opts.adminSocketPath || serverCfg.adminSocketPath,
       devicesFilePath: opts.devicesFilePath || join(serverCfg.stateDir, "devices.json"),
       vapidPath: opts.vapidPath || join(serverCfg.stateDir, "vapid.json"),
@@ -143,7 +146,13 @@ export class PigeonDaemon {
       this.allowedOrigins.add(`http://${publicUrl.hostname}:${VITE_DEV_PORT}`);
     }
 
-    this.herdrClient = new HerdrClient({ socketPath: this.config.herdrSocketPath });
+    if (!this.config.herdrCoreSocketPath) {
+      throw new Error("Cannot locate the Herdr Core socket: set HC_TERMINAL_SOCKET or XDG_RUNTIME_DIR, or pass --herdr-core-sock");
+    }
+    this.herdrClient = new HerdrClient({
+      appSocketPath: this.config.herdrAppSocketPath,
+      coreSocketPath: this.config.herdrCoreSocketPath,
+    });
     this.pairingManager = new PairingManager({
       publicBaseUrl: this.config.publicBaseUrl,
       insecureDev,

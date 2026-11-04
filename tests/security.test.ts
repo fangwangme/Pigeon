@@ -88,10 +88,12 @@ describe("admin channel (security-and-pairing.md §5)", () => {
 describe("configuration file (architecture.md §4.7)", () => {
   test("a fresh config holds the defaults but not the environment-derived socket paths", () => {
     const dir = tempDir("cfg");
-    const cfg = new ConfigManager(join(dir, "config.json"), { HOME: dir, HERDR_SOCKET_PATH: "/run/h.sock" });
-    expect(cfg.getServerConfig().herdrSocketPath).toBe("/run/h.sock");
+    const cfg = new ConfigManager(join(dir, "config.json"), { HOME: dir, HERDR_APP_HOME: "/app-home", XDG_RUNTIME_DIR: "/run/u" });
+    expect(cfg.getServerConfig().herdrAppSocketPath).toBe("/app-home/herdr-app.sock");
+    expect(cfg.getServerConfig().herdrCoreSocketPath).toBe("/run/u/herdr-core/default.sock");
     const stored = JSON.parse(readFileSync(join(dir, "config.json"), "utf-8"));
-    expect(stored.server.herdrSocketPath).toBeUndefined();
+    expect(stored.server.herdrAppSocketPath).toBeUndefined();
+    expect(stored.server.herdrCoreSocketPath).toBeUndefined();
     expect(stored.server.port).toBe(4100);
   });
 
@@ -119,13 +121,11 @@ describe("configuration file (architecture.md §4.7)", () => {
     expect([macro.type, macro.payload]).toEqual(["text", "/model"]);
   });
 
-  test("socket paths an older build wrote automatically are dropped, hand-set ones are kept", () => {
+  test("the old terminal Herdr socket path is dropped; a hand-set admin path is kept", () => {
     const dir = tempDir("cfg");
     const path = join(dir, "config.json");
-    const env = { HOME: dir, XDG_RUNTIME_DIR: join(dir, "run") };
-    writeFileSync(path, JSON.stringify({ server: { herdrSocketPath: join(dir, ".config", "herdr", "herdr.sock"), adminSocketPath: "/srv/my-admin.sock" } }));
-    const cfg = new ConfigManager(path, { ...env, HERDR_SOCKET_PATH: "/run/session.sock" });
-    expect(cfg.getServerConfig().herdrSocketPath).toBe("/run/session.sock");
+    writeFileSync(path, JSON.stringify({ server: { herdrSocketPath: "/srv/herdr.sock", adminSocketPath: "/srv/my-admin.sock" } }));
+    const cfg = new ConfigManager(path, { HOME: dir, XDG_RUNTIME_DIR: join(dir, "run") });
     expect(cfg.getServerConfig().adminSocketPath).toBe("/srv/my-admin.sock");
     const stored = JSON.parse(readFileSync(path, "utf-8"));
     expect(stored.server.herdrSocketPath).toBeUndefined();
@@ -185,7 +185,8 @@ describe("HTTP and WebSocket gate (security-and-pairing.md §3, §4)", () => {
       configManager: new ConfigManager(join(dir, "config.json"), { HOME: dir }),
       port,
       publicBaseUrl: PUBLIC,
-      herdrSocketPath: join(dir, "no-herdr.sock"),
+      herdrAppSocketPath: join(dir, "no-app.sock"),
+      herdrCoreSocketPath: join(dir, "no-core.sock"),
       adminSocketPath: join(dir, "admin.sock"),
       devicesFilePath: join(dir, "devices.json"),
       vapidPath: join(dir, "vapid.json"),

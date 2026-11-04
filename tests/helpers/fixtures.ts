@@ -2,7 +2,7 @@ import { mkdtempSync } from "node:fs";
 import { createServer, type Server, type Socket } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { HerdrSnapshotResult } from "../../src/types/herdr";
+import type { HerdrTopology } from "../../src/types/herdr";
 
 /** A fresh directory under $TMPDIR (the only writable temp location in sandboxed runs). */
 export function tempDir(prefix: string): string {
@@ -10,26 +10,49 @@ export function tempDir(prefix: string): string {
 }
 
 export interface HerdrCall {
+  /** Core JSON-RPC method, App request (`ls`, `status`) or App command (`tab.new`). */
   method: string;
   params: Record<string, any>;
 }
 
-/** "no-reply" leaves the request unanswered, like a Herdr call still in progress. */
-type Handler = (params: Record<string, any>) => { result?: any; error?: { code: string; message: string } } | "no-reply" | undefined;
+/**
+ * `error` is a Core error kind on the Core socket and the error text on the App socket.
+ * "no-reply" leaves the request unanswered, like a Herdr call still in progress.
+ */
+type Handler = (params: Record<string, any>) => { result?: any; error?: string } | "no-reply" | undefined;
 
 /**
- * A stand-in for the Herdr Unix socket: newline-delimited JSON requests, one response each.
- * `events.subscribe` connections are kept open and only receive what `emitEvent` sends.
+ * A stand-in for Herdr: the App window socket (`{"ls":{}}`, `{"do":…}` → result or
+ * `{"error":"…"}`) and the Core socket (JSON-RPC 2.0). Core `events.subscribe` connections are
+ * kept open and only receive what `emitEvent` sends.
  */
 export class FakeHerdr {
   public calls: HerdrCall[] = [];
-  public handlers: Record<string, Handler> = { "session.snapshot": () => ({ result: snapshotOf([]) }) };
-  private server: Server;
+  public handlers: Record<string, Handler> = {};
+  public readonly appSocketPath: string;
+  public readonly coreSocketPath: string;
+  private servers: Server[] = [];
   private sockets = new Set<Socket>();
   private subscribers = new Set<Socket>();
 
-  constructor(public socketPath: string) {
-    this.server = createServer((socket) => {
+  constructor(dir: string) {
+    this.appSocketPath = join(dir, "app.sock");
+    this.coreSocketPath = join(dir, "core.sock");
+    this.serve([]);
+    this.servers.push(this.lineServer((socket, req) => this.answerApp(socket, req)));
+    this.servers.push(this.lineServer((socket, req) => this.answerCore(socket, req)));
+  }
+
+  /** Answers `ls`, `status` and `terminal.list` with one space and one tab holding these panes. */
+  serve(panes: FakePane[]): void {
+    const topology = topologyOf(panes);
+    this.handlers.ls = () => ({ result: topology.ls });
+    this.handlers.status = () => ({ result: topology.status });
+    this.handlers["terminal.list"] = () => ({ result: { terminals: topology.terminals, hidden_finished: 0, machines: [] } });
+  }
+
+  private lineServer(onRequest: (socket: Socket, req: any) => void): Server {
+    return createServer((socket) => {
       this.sockets.add(socket);
       socket.on("close", () => {
         this.sockets.delete(socket);
@@ -43,81 +66,92 @@ export class FakeHerdr {
         while ((idx = buffer.indexOf("\n")) !== -1) {
           const line = buffer.slice(0, idx);
           buffer = buffer.slice(idx + 1);
-          const req = JSON.parse(line);
-          this.calls.push({ method: req.method, params: req.params || {} });
-          if (req.method === "events.subscribe") {
-            this.subscribers.add(socket);
-            continue;
-          }
-          const res = this.handlers[req.method]?.(req.params || {}) ?? { result: {} };
-          if (res === "no-reply") continue;
-          socket.write(JSON.stringify({ id: req.id, ...res }) + "\n");
+          onRequest(socket, JSON.parse(line));
         }
       });
     });
   }
 
-  listen(): Promise<void> {
-    return new Promise((resolve) => this.server.listen(this.socketPath, resolve));
+  private answerApp(socket: Socket, req: any): void {
+    const method = typeof req.do === "string" ? req.do : Object.keys(req)[0];
+    const params = typeof req.do === "string" ? req.args || {} : req[method] || {};
+    this.calls.push({ method, params });
+    const res = this.handlers[method]?.(params) ?? { result: {} };
+    if (res === "no-reply") return;
+    socket.write(JSON.stringify(res.error !== undefined ? { error: res.error } : res.result) + "\n");
+  }
+
+  private answerCore(socket: Socket, req: any): void {
+    this.calls.push({ method: req.method, params: req.params || {} });
+    if (req.method === "events.subscribe") {
+      this.subscribers.add(socket);
+      socket.write(JSON.stringify({ jsonrpc: "2.0", id: req.id, result: { seq: 0, terminals: [] } }) + "\n");
+      return;
+    }
+    const res = this.handlers[req.method]?.(req.params || {}) ?? { result: {} };
+    if (res === "no-reply") return;
+    const body =
+      res.error !== undefined
+        ? { error: { code: -32000, message: res.error, data: { kind: res.error } } }
+        : { result: res.result };
+    socket.write(JSON.stringify({ jsonrpc: "2.0", id: req.id, ...body }) + "\n");
+  }
+
+  async listen(): Promise<void> {
+    await Promise.all(
+      this.servers.map((s, i) => new Promise<void>((resolve) => s.listen(i === 0 ? this.appSocketPath : this.coreSocketPath, resolve)))
+    );
   }
 
   close(): Promise<void> {
     for (const s of this.sockets) s.destroy();
-    return new Promise((resolve) => this.server.close(() => resolve()));
+    return Promise.all(this.servers.map((s) => new Promise<void>((resolve) => s.close(() => resolve())))).then(() => undefined);
   }
 
   callsOf(method: string): HerdrCall[] {
     return this.calls.filter((c) => c.method === method);
   }
 
-  /** Pushes a Herdr event (`{ event, data }`) to every open `events.subscribe` connection. */
-  emitEvent(event: string, data: Record<string, any>): void {
-    for (const s of this.subscribers) s.write(JSON.stringify({ event, data }) + "\n");
+  /** Pushes a Core event notification to every open `events.subscribe` connection. */
+  emitEvent(type: string, terminal: string, data: Record<string, any>): void {
+    const line = JSON.stringify({ jsonrpc: "2.0", method: "event", params: { type, terminal, seq: 1, data } });
+    for (const s of this.subscribers) s.write(line + "\n");
   }
 }
 
 export interface FakePane {
+  /** Core terminal address, used as the pane id. */
   paneId: string;
-  agent?: string | null;
-  status?: string;
+  /** The status record's `app` (`claude-code`, `codex`, …); absent for a plain terminal. */
+  app?: string;
+  /** The status record's `state`; defaults to `idle` for an agent. */
+  state?: string;
   cwd?: string;
-  session?: { agent: string; value: string };
 }
 
-/** A `session.snapshot` result with one workspace and one tab holding the given panes. */
-export function snapshotOf(panes: FakePane[]): HerdrSnapshotResult {
+/** A topology with one space (`w1`, "proj") and one tab (`tab1`) holding the given panes. */
+export function topologyOf(panes: FakePane[]): HerdrTopology {
   return {
-    snapshot: {
-      version: "0.9.5",
-      protocol: 22,
-      focused_pane_id: panes[0]?.paneId ?? null,
-      workspaces: [
-        { workspace_id: "w1", number: 1, label: "proj", focused: true, pane_count: panes.length, tab_count: 1, active_tab_id: "t1", agent_status: "idle" },
+    ls: {
+      spaces: [
+        {
+          id: "w1",
+          name: "proj",
+          folder: "/work",
+          active: true,
+          tabs: [{ id: "tab1", name: "1", active: true, terminals: panes.map((p) => ({ terminal: p.paneId, pane: `pane-${p.paneId}` })) }],
+        },
       ],
-      tabs: [{ tab_id: "t1", workspace_id: "w1", number: 1, label: "1", focused: true, pane_count: panes.length, agent_status: "idle" }],
-      panes: panes.map((p) => ({
-        pane_id: p.paneId,
-        workspace_id: "w1",
-        tab_id: "t1",
-        focused: false,
-        agent: p.agent ?? null,
-        agent_status: (p.status as any) || "idle",
-        cwd: p.cwd ?? "/work",
-        agent_session: p.session ? { source: "herdr", agent: p.session.agent, kind: "id", value: p.session.value } : null,
-        revision: 1,
-      })),
-      agents: panes
-        .filter((p) => p.agent)
-        .map((p) => ({
-          pane_id: p.paneId,
-          workspace_id: "w1",
-          tab_id: "t1",
-          agent: p.agent,
-          name: p.agent,
-          agent_status: (p.status as any) || "idle",
-          cwd: p.cwd ?? "/work",
-        })),
     },
+    status: { focused_pane: panes[0] ? `pane-${panes[0].paneId}` : null },
+    terminals: panes.map((p) => ({
+      address: p.paneId,
+      cwd: "/launch",
+      state: "live" as const,
+      foreground: { cwd: p.cwd ?? "/work" },
+      status: p.app ? { state: p.state ?? "idle", app: p.app } : null,
+      title: "",
+    })),
   };
 }
 

@@ -75,14 +75,14 @@ Every command except `ping` and `presence_update` carries a string `id`. Success
 *Server Behavior*:
 1. If the pane has no pending prompt, or its `interactionId` or `fingerprint` differs, or another answer for that pane is still being sent (a double tap), the server rejects with `ERR_INTERACTION_STALE` and sends no key. The client then re-selects the pane to get fresh state.
 2. If `optionId` is not one of the prompt's options, the server rejects with `ERR_INVALID_PAYLOAD`.
-3. The server sends exactly the option's `keyShortcut`, which is its digit (`herdr-adapter.md` §8), once through `pane.send_keys`. A failed send is never retried, because a timed-out send may already have landed.
+3. The server sends exactly the option's `keyShortcut`, which is its digit (`herdr-adapter.md` §8), once through Herdr Core `terminal.keys`. A failed send is never retried, because a timed-out send may already have landed.
 4. After about 300 ms the server re-reads the screen. It acks `{ "approved": true, "interactionId": … }` when that prompt is gone, or `{ "approved": false, … }` when it is still showing. On `approved: false` the client opens the raw terminal sheet.
 
 ### 4.2 Submit Prompt (`agent_prompt`)
 ```json
 { "type": "agent_prompt", "id": "cli_8", "payload": { "targetPaneId": "w1:p2", "text": "Fix the unit tests in auth.test.ts" } }
 ```
-*Server Behavior*: For a pane with a detected agent, the server calls Herdr's `agent.prompt`, which handles bracketed paste and submission. For a plain shell pane, it sends the text followed by Enter. Herdr's `agent_blocked` surfaces as `ERR_AGENT_BLOCKED`, `agent_not_ready` as `ERR_AGENT_NOT_READY`, and `agent_prompt_stalled` as `ERR_TIMEOUT`. Agent slash commands (`/model`, `/compact`, a skill's invocation) are ordinary prompt text.
+*Server Behavior*: The server calls Herdr Core's `terminal.send`, which pastes the text and presses Enter, for agents and plain shells alike. Herdr's `blocked` surfaces as `ERR_AGENT_BLOCKED`, `unavailable` as `ERR_AGENT_NOT_READY`, and a timed-out request as `ERR_TIMEOUT` (`herdr-adapter.md` §6). Agent slash commands (`/model`, `/compact`, a skill's invocation) are ordinary prompt text.
 
 ### 4.3 Dispatch Raw Keys (`agent_send_keys`)
 ```json

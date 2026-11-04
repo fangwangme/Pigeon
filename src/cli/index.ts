@@ -51,7 +51,7 @@ const USAGE = `
 Pigeon — Mobile Remote Client for Herdr
 
 Usage:
-  pigeon start [--port <n>] [--insecure-dev] [--herdr-sock <path>] [--public-url <url>]
+  pigeon start [--port <n>] [--insecure-dev] [--herdr-app-sock <path>] [--herdr-core-sock <path>] [--public-url <url>]
   pigeon pair [--ephemeral] [--json]
   pigeon devices [revoke <id>]
   pigeon status
@@ -71,7 +71,8 @@ async function main() {
   if (command === "start") {
     let port: number | undefined;
     let insecureDev: boolean | undefined;
-    let herdrSocketPath: string | undefined;
+    let herdrAppSocketPath: string | undefined;
+    let herdrCoreSocketPath: string | undefined;
     let publicUrl: string | undefined;
 
     for (let i = 1; i < args.length; i++) {
@@ -82,8 +83,11 @@ async function main() {
         i++;
       } else if (args[i] === "--insecure-dev") {
         insecureDev = true;
-      } else if (args[i] === "--herdr-sock" && value) {
-        herdrSocketPath = value;
+      } else if (args[i] === "--herdr-app-sock" && value) {
+        herdrAppSocketPath = value;
+        i++;
+      } else if (args[i] === "--herdr-core-sock" && value) {
+        herdrCoreSocketPath = value;
         i++;
       } else if (args[i] === "--public-url" && value) {
         publicUrl = value;
@@ -93,7 +97,7 @@ async function main() {
       }
     }
 
-    const daemon = new PigeonDaemon({ configManager, port, insecureDev, herdrSocketPath, publicBaseUrl: publicUrl });
+    const daemon = new PigeonDaemon({ configManager, port, insecureDev, herdrAppSocketPath, herdrCoreSocketPath, publicBaseUrl: publicUrl });
     await daemon.start();
     console.log(`Pigeon daemon listening on port ${daemon.config.port} (insecureDev=${daemon.config.insecureDev})`);
 

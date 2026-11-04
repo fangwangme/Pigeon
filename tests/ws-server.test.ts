@@ -6,7 +6,7 @@ import { PushManager } from "../src/server/push";
 import { SkillScanner } from "../src/server/skill-scanner";
 import { WsServer } from "../src/server/ws-server";
 import { ProtocolErrors } from "../src/types/protocol";
-import { FakeHerdr, fakeWs, snapshotOf, tempDir } from "./helpers/fixtures";
+import { FakeHerdr, fakeWs, tempDir, topologyOf } from "./helpers/fixtures";
 
 // protocol.md: §3 handshake, §4 client commands, §6 configuration sync, §7 error codes.
 const PROMPT = "Do you want to proceed?\n1. Yes\n2. No\n";
@@ -17,11 +17,11 @@ let server: WsServer;
 
 beforeEach(async () => {
   const dir = tempDir("ws");
-  herdr = new FakeHerdr(join(dir, "herdr.sock"));
+  herdr = new FakeHerdr(dir);
   await herdr.listen();
-  herdr.handlers["pane.read"] = () => ({ result: { read: { text: "$ ls\n" } } });
-  client = new HerdrClient({ socketPath: herdr.socketPath, debounceMs: 5, panePollMs: 60_000 });
-  client.applySnapshot(snapshotOf([{ paneId: "p1", agent: "claude", cwd: dir }, { paneId: "p2", agent: "codex", cwd: dir }]));
+  herdr.handlers["terminal.read"] = () => ({ result: { text: "$ ls\n", complete: true, how: "history" } });
+  client = new HerdrClient({ appSocketPath: herdr.appSocketPath, coreSocketPath: herdr.coreSocketPath, debounceMs: 5, panePollMs: 60_000 });
+  client.applySnapshot(topologyOf([{ paneId: "p1", app: "claude-code", cwd: dir }, { paneId: "p2", app: "codex", cwd: dir }]));
   config = new ConfigManager(join(dir, "config.json"), { HOME: dir });
   server = new WsServer({
     buildId: "build_test",
@@ -86,7 +86,7 @@ describe("input validation (protocol.md §7, architecture.md §5)", () => {
     const c = fakeWs();
     await send(c.ws, { type: "agent_send_keys", id: "k1", payload: { targetPaneId: "p1", keys: ["\u001b[A"] } });
     expect(lastError(c.sent)).toBe(ProtocolErrors.ERR_INVALID_PAYLOAD);
-    expect(herdr.callsOf("pane.send_keys")).toHaveLength(0);
+    expect(herdr.callsOf("terminal.keys")).toHaveLength(0);
   });
 
   test("commands for an unknown pane get ERR_NOT_FOUND", async () => {
@@ -95,8 +95,8 @@ describe("input validation (protocol.md §7, architecture.md §5)", () => {
     expect(lastError(c.sent)).toBe(ProtocolErrors.ERR_NOT_FOUND);
   });
 
-  test("Herdr's agent_blocked becomes ERR_AGENT_BLOCKED", async () => {
-    herdr.handlers["agent.prompt"] = () => ({ error: { code: "agent_blocked", message: "blocked" } });
+  test("Herdr Core's blocked becomes ERR_AGENT_BLOCKED", async () => {
+    herdr.handlers["terminal.send"] = () => ({ error: "blocked" });
     const c = fakeWs();
     await send(c.ws, { type: "agent_prompt", id: "a1", payload: { targetPaneId: "p1", text: "hi" } });
     expect(lastError(c.sent)).toBe(ProtocolErrors.ERR_AGENT_BLOCKED);
@@ -106,7 +106,7 @@ describe("input validation (protocol.md §7, architecture.md §5)", () => {
     const c = fakeWs();
     await send(c.ws, { type: "create_tab_and_agent", id: "c1", payload: { workspaceId: "w1", agentKind: "claude", modelId: "gpt-x" } });
     expect(lastError(c.sent)).toBe(ProtocolErrors.ERR_INVALID_PAYLOAD);
-    expect(herdr.callsOf("tab.create")).toHaveLength(0);
+    expect(herdr.callsOf("tab.new")).toHaveLength(0);
   });
 });
 
@@ -117,13 +117,13 @@ describe("answering prompts (protocol.md §4.1)", () => {
     const pending = pendingOf();
     const c = fakeWs();
     await send(c.ws, { type: "interaction_respond", id: "r1", payload: { targetPaneId: "p1", interactionId: pending.interactionId, fingerprint: pending.fingerprint, optionId: "opt_2" } });
-    expect(herdr.callsOf("pane.send_keys").map((x) => x.params.keys)).toEqual([["2"]]);
+    expect(herdr.callsOf("terminal.keys").map((x) => x.params.keys)).toEqual([["2"]]);
     expect(c.ofType("ack")[0].payload).toMatchObject({ approved: true, interactionId: pending.interactionId });
   });
 
   test("a prompt still on screen afterwards is acked as not approved", async () => {
     const pending = pendingOf();
-    herdr.handlers["pane.read"] = () => ({ result: { read: { text: PROMPT } } });
+    herdr.handlers["terminal.read"] = () => ({ result: { text: PROMPT, complete: true, how: "history" } });
     const c = fakeWs();
     await send(c.ws, { type: "interaction_respond", id: "r1", payload: { targetPaneId: "p1", interactionId: pending.interactionId, fingerprint: pending.fingerprint, optionId: "opt_1" } });
     expect(c.ofType("ack")[0].payload.approved).toBe(false);
@@ -142,7 +142,7 @@ describe("answering prompts (protocol.md §4.1)", () => {
     const c = fakeWs();
     await send(c.ws, { type: "interaction_respond", id: "r1", payload: { targetPaneId: "p1", interactionId: pending.interactionId, fingerprint: "fp_old", optionId: "opt_1" } });
     expect(lastError(c.sent)).toBe(ProtocolErrors.ERR_INTERACTION_STALE);
-    expect(herdr.callsOf("pane.send_keys")).toHaveLength(0);
+    expect(herdr.callsOf("terminal.keys")).toHaveLength(0);
   });
 
   test("a second answer while the first is still being sent (double tap) is stale and sends no key", async () => {
@@ -153,7 +153,7 @@ describe("answering prompts (protocol.md §4.1)", () => {
       send(c.ws, { type: "interaction_respond", id: "r1", payload }),
       send(c.ws, { type: "interaction_respond", id: "r2", payload }),
     ]);
-    expect(herdr.callsOf("pane.send_keys").map((x) => x.params.keys)).toEqual([["1"]]);
+    expect(herdr.callsOf("terminal.keys").map((x) => x.params.keys)).toEqual([["1"]]);
     expect(c.ofType("error")).toMatchObject([{ replyTo: "r2", error: { code: ProtocolErrors.ERR_INTERACTION_STALE } }]);
     expect(c.ofType("ack")[0].replyTo).toBe("r1");
   });

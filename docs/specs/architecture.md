@@ -26,17 +26,19 @@ Rather than exposing a raw VT100 character-grid terminal over SSH/Mosh—which s
 ┌────────────────────────────▼────────────────────────────┐
 │                  Pigeon Bridge Daemon                   │
 │  - Runtime: Bun                                         │
-│  - Herdr Event-Driven Adapter (events.subscribe)        │
+│  - Herdr Adapter (App + Core, events.subscribe)         │
 │  - Line Pattern Card Classifier (150-250ms Debounce)   │
 │  - Pairing & Security Guard (QR Code Only)              │
 │  - Web Push Notification Subsystem                      │
 │  - Local Admin Socket ($XDG_RUNTIME_DIR/pigeon.sock)    │
 └─────────────▲──────────────────────────────┬────────────┘
-              │ Admin IPC (0600)             │ Unix Domain Socket (~/.config/herdr/herdr.sock)
-┌─────────────▼─────────────┐                │ Events: events.subscribe (with revisions)
+              │ Admin IPC (0600)             │ Unix sockets: herdr-app.sock (spaces, tabs)
+┌─────────────▼─────────────┐                │   + herdr-core default.sock (terminals, events)
 │     Pigeon CLI Admin      │ ┌──────────────▼─────────────┐
-│ (pigeon pair/devices/...) │ │    Herdr Runtime Server    │
-└───────────────────────────┘ │    Workspaces, Tabs, Panes │
+│ (pigeon pair/devices/...) │ │ Herdr App  (window: spaces,│
+└───────────────────────────┘ │            tabs, panes)    │
+                              │ Herdr Core (hc: terminals, │
+                              │   status, screen, input)   │
                               └────────────────────────────┘
 ```
 
@@ -67,14 +69,14 @@ The entire application (daemon + embedded PWA static assets) compiles into a sin
 
 ### 4.3 Robust Herdr Adapter Strategy
 Herdr has no global "output changed" event. Pigeon combines events, snapshots and targeted polling (details in `herdr-adapter.md` §3):
-1. **Topology**: Herdr topology events trigger a debounced `session.snapshot`. A snapshot also runs every 30 seconds as reconciliation.
-2. **Viewed Pane Reading**: The panes that phones are viewing are read with `pane.read` (`source: "recent_unwrapped"`) once per second. A read whose screen (same SHA-256) and Herdr status are both unchanged is dropped before classification.
-3. **Agent Status**: Pigeon subscribes to `pane.agent_status_changed` for every agent pane, so a transition into `blocked` is seen at once, even for panes nobody is viewing.
+1. **Topology**: Herdr Core terminal events trigger a debounced snapshot (Herdr App `ls` and `status` joined with Core `terminal.list`). A snapshot also runs every 30 seconds as reconciliation.
+2. **Viewed Pane Reading**: The panes that phones are viewing are read with Core `terminal.read` once per second (only the visible screen for full-screen programs). A read whose screen (same SHA-256) and Herdr status are both unchanged is dropped before classification.
+3. **Agent Status**: Pigeon subscribes to every Core terminal's events, so a transition into `blocked` is seen at once, even for panes nobody is viewing.
 
 ### 4.4 Dual-Track Session Rendering (Structured Stream vs Terminal Fallback)
 Pigeon implements a **Dual-Track Architecture** (detailed in `agent-session-normalization.md`):
 1. **Track 1 (Structured Agent Stream)**:
-   - When a Herdr pane contains a recognized `agent_session` (OpenCode, AGY, Claude Code, Codex, Pi), Pigeon's `AgentSessionAdapter` reads the agent's native local storage (SQLite or JSONL) incrementally.
+   - When a pane has a recognized agent session (OpenCode, AGY, Claude Code, Codex, Pi), Pigeon's `AgentSessionAdapter` reads the agent's native local storage (SQLite or JSONL) incrementally.
    - Pushes standardized `NormalizedTurn` streams to the mobile client with accordion folding for reasoning/thinking, structured tool call cards, and table horizontal overflow protection.
 2. **Track 2 (PTY Raw Terminal Fallback)**:
    - When a pane runs a generic CLI shell (`bash`, `zsh`, `htop`, `vim`, etc.), or has no structured session, Pigeon shows the classified screen cards. The raw screen text (`pane_state.rawScreen`) is always available in the terminal sheet.
@@ -96,9 +98,9 @@ Pigeon uses a centralized, structured JSON configuration file to support pre-con
    - Location: `$XDG_CONFIG_HOME/pigeon/config.json` (defaults to `~/.config/pigeon/config.json`).
    - If the configuration file does not exist upon daemon startup, Pigeon automatically generates a default `config.json` with standard presets.
    - A file that is not valid JSON, or not a JSON object, stops startup with an error naming the file. It is never overwritten with defaults, so hand edits are not lost.
-   - Values written by older builds are upgraded on load and the file is rewritten: the old `模型` key macro becomes the text `/model`, and a Herdr or admin socket path equal to one an older build wrote automatically is removed, so the environment decides again. A path the user set to anything else is kept.
+   - Values written by older builds are upgraded on load and the file is rewritten: the old `模型` key macro becomes the text `/model`, an admin socket path equal to one an older build wrote automatically is removed, so the environment decides again, and the obsolete `herdrSocketPath` (the old TUI Herdr socket) is removed. An admin socket path the user set to anything else is kept.
 2. **Configuration Namespaces**:
-   - `server`: Daemon-level settings (`port`, `host`, `insecureDev`, `publicBaseUrl`). CLI flags override them at runtime without changing the file. The Herdr socket path, admin socket path and state directory are derived from the environment (`HERDR_SOCKET_PATH`, `XDG_RUNTIME_DIR`, `XDG_STATE_HOME`, `HOME`) at every start, and a fresh config does not contain them. A value set by hand in `server` still wins.
+   - `server`: Daemon-level settings (`port`, `host`, `insecureDev`, `publicBaseUrl`). CLI flags override them at runtime without changing the file. The Herdr App and Herdr Core socket paths (`herdrAppSocketPath`, `herdrCoreSocketPath`), the admin socket path and the state directory are derived from the environment (`HERDR_APP_HOME`, `HC_TERMINAL_SOCKET`, `XDG_RUNTIME_DIR`, `XDG_STATE_HOME`, `HOME`) at every start, and a fresh config does not contain them. A value set by hand in `server` still wins.
    - `client`: Mobile client preferences (`themeKey`, `themeMode`, `themeId`, `confirmCtrlC`, `defaultView`, `macros`).
 3. **Partial Patch & Deep-Merge Persistence**:
    - Mobile clients synchronize settings via `config_patch` messages carrying only the modified delta (e.g. `{ "client": { "themeKey": "monokai-pro" } }`).

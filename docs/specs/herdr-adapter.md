@@ -2,80 +2,108 @@
 
 ## 1. Scope and Isolation Contract
 
-`src/server/herdr-client.ts` (`HerdrClient`) is the only Pigeon component that talks to the Herdr daemon. The rest of the daemon (WebSocket server, pane store, UI) consumes its domain objects (`SnapshotPayload`, `PaneStatePayload`) and its events. It never sees Herdr's wire format.
+`src/server/herdr-client.ts` (`HerdrClient`) is the only Pigeon component that talks to Herdr. The rest of the daemon (WebSocket server, pane store, UI) consumes its domain objects (`SnapshotPayload`, `PaneStatePayload`) and its events. It never sees Herdr's wire format.
+
+Herdr is two programs, and Pigeon needs both:
+- **Herdr App** (`herdr-app`), the desktop window. It owns spaces and tabs: their names, which terminals sit in which tab, focus, and creating and closing tabs.
+- **Herdr Core** (`hc`, `herdr-core`), the daemon that runs the terminals and keeps them alive when the window closes. It owns each terminal's program, folder, status, screen and input.
 
 Herdr is the source of truth for topology, agent identity and agent status. Pigeon adds exactly one thing on top: it classifies the screen text of the panes a phone is looking at into cards and prompts (§8).
 
-## 2. API Contract-First and Herdr Compatibility
+The older terminal multiplexer `herdr` (TUI, 0.9.x, `~/.config/herdr/herdr.sock`) is not supported.
 
-- **No version pinning**: Pigeon does not assert a Herdr version. It relies on the socket API documented by `herdr api schema --json`, and was developed against Herdr 0.9.5 (protocol 22).
-- **Unknown fields are ignored** when reading snapshots and responses.
-- **Channel**: the Unix socket at `$HERDR_SOCKET_PATH`, or `~/.config/herdr/herdr.sock` by default, carrying newline-delimited JSON. This path is resolved from the environment at every start and never written to `config.json`.
-- **One request per connection**: Every RPC opens a fresh connection, sends one request, reads one response and closes. The event subscription has its own long-lived connection, and no other request is ever sent on it (Herdr resets a subscription socket that receives one).
-- **Errors**: A Herdr `{"error":{code,message}}` response, or a socket failure, becomes a `HerdrError(code)`. The socket failures `ECONNREFUSED`, `ENOENT`, `ECONNRESET` and `EPIPE` mean "Herdr not reachable". They change connection state (§3.4) and are not logged as bugs. Every other failure is logged with its stack trace.
+## 2. Channels and Herdr Compatibility
 
-## 3. Event Subscription & Lifecycle Synchronization
+- **No version pinning**: Pigeon does not assert a Herdr version. It relies on the App's socket commands (`herdr-app commands`) and the Core's OpenRPC API (`hc schema`), and was developed against Herdr App 0.1.13 and Herdr Core 0.1.18 (protocol generation 1). Unknown fields are ignored.
+- **App channel**: the Unix socket `herdr-app.sock` in `$HERDR_APP_HOME`, or in `~/.config/herdr-app` by default. It exists only while the window runs. One JSON object per line: `{"ls":{}}`, `{"status":{}}` or `{"do":"<command>","args":{…}}`. The reply is the result object, or `{"error":"<text>"}`.
+- **Core channel**: the Unix socket `$HC_TERMINAL_SOCKET`, or `$XDG_RUNTIME_DIR/herdr-core/default.sock` by default, carrying newline-delimited JSON-RPC 2.0. An error carries its stable kind in `error.data.kind`.
+- Both paths are resolved from the environment at every start (or from `--herdr-app-sock` / `--herdr-core-sock`) and never written to `config.json`. When the Core path cannot be resolved (no flag, `HC_TERMINAL_SOCKET` or `XDG_RUNTIME_DIR`), the daemon refuses to start.
+- **One request per connection**: Every request opens a fresh connection, sends one request, reads one response and closes. The Core event subscription has its own long-lived connection, which carries nothing but the subscription.
+- **Errors**: A Core error becomes a `HerdrError(<kind>)`. An App `{"error":…}` reply becomes a `HerdrError("app_error")` carrying the App's text. The socket failures `ECONNREFUSED`, `ENOENT`, `ECONNRESET` and `EPIPE` mean "not reachable". They change connection state (§3.4) and are not logged as bugs. Every other failure is logged with its stack trace.
+
+## 3. Topology, Events and Screen Reads
 
 ### 3.1 Snapshot
-`session.snapshot` is the baseline. It returns workspaces, tabs, panes and agents.
-- Each snapshot rebuilds the pane facts: workspace, tab, agent kind, `cwd`, Herdr status and agent session.
-- State for panes missing from the snapshot is dropped, so a reused pane id never shows old data.
-- A snapshot is taken at startup, shortly after every topology event (debounced), every time the subscription (re)connects, and every 30 seconds as reconciliation.
+A snapshot joins three answers: App `ls` (spaces, their tabs, and each tab's terminals), App `status` (the focused pane) and Core `terminal.list` (every live terminal's facts). They are joined by the terminal address.
+
+| Herdr | Pigeon |
+| :--- | :--- |
+| space `id`, `name` (or the last segment of its `folder` when unnamed), `active` | workspace `id`, `label`, `isFocused` |
+| tab `id`, `name`, `active` | tab `id`, `label`, the workspace's `activeTabId` |
+| tab terminal `terminal` (an address such as `t7`) | pane `id` |
+| Core terminal `foreground.cwd` (else `cwd`), `status`, `title` | pane folder, agent kind and status (§4), summary |
+
+- A tab named only by its number is labelled after its first pane's agent recipe, else `Tab <n>`.
+- Each snapshot rebuilds the pane facts. State for panes missing from the snapshot is dropped, so a reused address never shows old data.
+- A terminal the App shows but the Core does not list (it finished, or its machine is not connected) is a pane without an agent and with status `unknown`.
+- A snapshot is taken at startup, shortly after every topology event (debounced), every time the subscription (re)connects, and every 30 seconds as reconciliation. The reconciliation also picks up renames in the App, which no Core event reports.
 
 ### 3.2 Subscription
-`events.subscribe` is sent with:
-- the global events `workspace.{created,updated,renamed,closed,focused}`, `tab.{created,closed,focused,renamed,moved}` and `pane.{created,closed,focused,moved,exited,agent_detected}`, each of which schedules a snapshot;
-- one `pane.agent_status_changed` subscription per pane that has an agent. When the set of agent panes changes, the subscription is rebuilt.
+Core `events.subscribe {}` covers every terminal. Its notifications are `{"method":"event","params":{"type","terminal","data"}}`:
+- `status`: `data.status` is the terminal's new root status record. It updates that pane's status at once, notifies the push logic (`push.md` §4), schedules a screen read when the pane is blocked or already being watched, and schedules a snapshot.
+- `created`, `removed`, `finished`, `lost`, `restarted` and `labels` schedule a snapshot. The App places a terminal in a tab through its `herdr.space` / `herdr.tab` labels.
+- A `missed` notification (the subscriber fell behind) schedules a snapshot.
+- Every other notification, including the 15-second `heartbeat`, is ignored.
 
-A `pane_agent_status_changed` event updates that pane's status at once, notifies the push logic (`push.md` §4), and schedules a screen read when the pane is blocked or already being watched.
+Status events for terminals the window does not show (hidden workers) change nothing.
 
 ### 3.3 Screen Reads
-Herdr has no "output changed" event. The panes that connected clients are viewing (the union over all connections) are therefore read once per second with `pane.read` (`source: "recent_unwrapped"`, last 200 lines).
+Herdr has no "output changed" event. The panes that connected clients are viewing (the union over all connections) are therefore read once per second with Core `terminal.read { terminal, lines: 200 }`.
+- **Full-screen programs**: Reading history of a full-screen program scrolls it on the desktop and back. Once a read answers `how: "stitched"`, Pigeon reads that terminal with `lines: 0` (the visible screen only) for as long as it exists.
 - A pane is not polled while a read of it is still in flight.
 - A read is dropped before classification when both the screen hash and the pane's Herdr status are unchanged. A status change alone is therefore classified again and reaches viewers (§3.2), even when the screen did not change.
 - A changed screen produces a new `PaneStatePayload` with the next `revision`.
 - Reads after sending keys always read fresh and never reuse a read already in flight.
 
 ### 3.4 Connection State
-The client is connected while requests or the subscription reach Herdr. Losing Herdr is an expected state:
-- it is reported through `upstream_status`;
-- the subscription reconnects every 3 seconds;
+Herdr is connected while both the App and the Core answer. Losing either one is an expected state:
+- it is reported through `upstream_status` (`herdrConnected: false`), so a closed Herdr window shows as Herdr offline even though the Core keeps the terminals running;
+- the subscription reconnects every 3 seconds, and the 30-second snapshot retries the App;
 - startup does not fail when Herdr is not running.
 
 `disconnect()` stops every timer and socket. Before `connect()`, the client opens no sockets and starts no timers.
 
-## 4. Agent Lifecycle States
+## 4. Agent Identity and States
 
-Pigeon uses Herdr's agent states unchanged: `idle`, `working`, `blocked`, `done` and `unknown` (no agent detected).
+A terminal is an agent while its program reports a status to the Core (OSC 7501). Its agent kind comes from the status record's `app`: `claude-code` is `claude`, `antigravity` is `agy`, and other words (`codex`, `opencode`, `pi`) are used as they are. A terminal without a status is a plain terminal.
 
-A pane's effective status is Herdr's status, with one override: a prompt recognized on screen (§8.2) makes it `blocked`. When Herdr says `blocked` but no prompt is recognized, the pane still gets a pending interaction. That interaction has no options, so the phone shows the raw key pad instead of hiding the fact that the agent is waiting.
+| Core `status.state` | Pigeon status |
+| :--- | :--- |
+| `idle`, `working`, `blocked`, `done` | the same |
+| `error` | `blocked`: a person has to look |
+| no status | `unknown` |
 
-Prompts are not refused while an agent is `working`: the agents queue typed input. A prompt sent while `blocked` is refused by Herdr (`agent_blocked`).
+A pane's effective status is that status, with one override: a prompt recognized on screen (§8.2) makes it `blocked`. When the status is `blocked` but no prompt is recognized, the pane still gets a pending interaction. That interaction has no options, so the phone shows the raw key pad instead of hiding the fact that the agent is waiting.
 
-## 5. Tab Creation and Agent Launch Sequence
+Prompts are not refused while an agent is `working`: the agents queue typed input. A prompt sent while `blocked` is refused by the Core (`blocked`).
 
-1. **Create tab**: `tab.create { workspace_id, cwd? }` returns `tab.tab_id` and `root_pane.pane_id`.
-2. **Name**: `p-<kind>-<6 hex>`, which matches Herdr's `^[a-z][a-z0-9_-]{0,31}$`.
-3. **Start agent**: `agent.start { pane_id, kind, name, args? }`. `args` come from the agent recipe (`src/server/agent-recipes.ts`): only flags the CLI documents, built by the server from validated model and thinking choices, never from client text.
-4. **Failure**: If `agent.start` fails, the new tab is closed with `tab.close` and the error is returned. No empty tab is left behind.
-5. **Startup prompts** (directory trust, login) appear as ordinary prompts on the new pane (§8.2), or as the raw key pad.
+The Core reports no agent session id, so no pane has a structured agent session (`agent-session-normalization.md` §2).
 
-The `terminal` recipe creates the tab without starting an agent.
+## 5. Tab Creation and Closing
+
+1. **Create**: App `do tab.new { space, name, folder?, argv? }`. `space` is the workspace id, `name` the recipe's label, `folder` the requested `cwd`. `argv` is the recipe's command followed by its arguments (`src/server/agent-recipes.ts`): only flags the CLI documents, built by the server from validated model and thinking choices, never from client text. Codex always gets `--no-daemon`, without which its commands would run outside the Core.
+2. **Result**: The reply names the new `terminal`. Pigeon takes a snapshot and answers with that terminal as the pane and the tab that holds it. A reply without a terminal, or a terminal in no tab, is `invalid_response`.
+3. **Failure**: When `tab.new` fails, the App has created nothing. A program that exits right after launch is shown by the App as an error toast, and its pane has no agent.
+4. **Startup prompts** (directory trust, login) appear as ordinary prompts on the new pane (§8.2), or as the raw key pad.
+
+The `terminal` recipe sends no `argv`, so the tab starts the machine's shell.
+
+**Close**: App `do tab.close { id, confirmed: true }` ends the tab's terminals. The phone's close dialog is the confirmation. Closing a space's last tab also closes the space.
 
 ## 6. Prompting and Command Execution
 
-- **Prompt**: For a pane with an agent, Pigeon uses `agent.prompt { target, text }`, which handles bracketed paste and submission. For a plain pane, it uses `pane.send_text` followed by `pane.send_keys ["enter"]`.
-- **Keys**: `pane.send_keys { pane_id, keys }`.
-- **Answer**: The option's digit is sent with `pane.send_keys`, exactly once. A failed or timed-out send is **not retried**, because it may already have landed. The screen is re-read after about 300 ms to report whether the prompt went away (`protocol.md` §4.1).
+- **Prompt**: Core `terminal.send { terminal, text }` for every pane. It pastes the text and presses Enter once nobody has typed for about 3 seconds.
+- **Keys**: Core `terminal.keys { terminal, keys }`. Key names are the Core's (`enter`, `esc`, `up`, `ctrl+c`, `1`, …).
+- **Interrupt**: The phone sends the recipe's interrupt keys (`esc` for agents, `ctrl+c` for a terminal) as keys, the same key the Core's own `terminal.interrupt` would choose.
+- **Answer**: The option's digit is sent with `terminal.keys`, exactly once. A failed or timed-out send is **not retried**, because it may already have landed. The screen is re-read after about 300 ms to report whether the prompt went away (`protocol.md` §4.1).
 - **Error translation**:
 
   | Herdr | Protocol |
   | :--- | :--- |
-  | `agent_blocked` | `ERR_AGENT_BLOCKED` |
-  | `agent_not_ready` | `ERR_AGENT_NOT_READY` |
-  | `agent_prompt_stalled` | `ERR_TIMEOUT` |
+  | `blocked` | `ERR_AGENT_BLOCKED` |
+  | `unavailable` | `ERR_AGENT_NOT_READY` |
+  | `not_found`, `finished` | `ERR_NOT_FOUND` |
   | `timeout` | `ERR_TIMEOUT` |
-  | `pane_not_found` | `ERR_NOT_FOUND` |
   | anything else | `ERR_INTERNAL` |
 
 ## 7. Agent Menus and Slash Commands

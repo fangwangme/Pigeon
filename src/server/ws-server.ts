@@ -42,12 +42,13 @@ export interface ClientConnectionData {
 type Ws = ServerWebSocket<ClientConnectionData>;
 
 /** Herdr error codes the spec lists (herdr-adapter.md §6) and the protocol code each maps to. */
+// herdr-adapter.md §6: Herdr Core error kinds.
 const HERDR_ERROR_MAP: Record<string, string> = {
-  agent_blocked: ProtocolErrors.ERR_AGENT_BLOCKED,
-  agent_not_ready: ProtocolErrors.ERR_AGENT_NOT_READY,
-  agent_prompt_stalled: ProtocolErrors.ERR_TIMEOUT,
+  blocked: ProtocolErrors.ERR_AGENT_BLOCKED,
+  unavailable: ProtocolErrors.ERR_AGENT_NOT_READY,
+  not_found: ProtocolErrors.ERR_NOT_FOUND,
+  finished: ProtocolErrors.ERR_NOT_FOUND,
   timeout: ProtocolErrors.ERR_TIMEOUT,
-  pane_not_found: ProtocolErrors.ERR_NOT_FOUND,
 };
 
 export function newConnectionId(): string {
@@ -319,12 +320,9 @@ export class WsServer {
     ws.data.subscribedPaneId = paneId;
     this.syncMonitoredPanes();
 
-    const session = this.herdrClient.getPaneAgentSession(paneId);
-    if (session && this.agentAdapters.isSupported(session.agent)) {
-      this.paneStore.registerPaneSession(paneId, session.agent, session.sessionId);
-    }
-    // Always sent, empty for panes without a structured session, so the client never keeps
-    // showing the previous pane's conversation.
+    // Herdr Core reports no agent session (herdr-adapter.md §4), so the turns stay empty until a
+    // session source exists. Always sent, so the client never keeps showing the previous pane's
+    // conversation.
     const { turns, stats, sessionTitle } = this.paneStore.getPaneTurns(paneId);
     this.send(ws, { type: "normalized_turns", payload: { paneId, turns, sessionStats: stats, sessionTitle } });
 

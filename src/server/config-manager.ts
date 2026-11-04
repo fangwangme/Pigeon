@@ -10,14 +10,18 @@ const STATIC_SERVER_DEFAULTS = { port: 4100, host: "", insecureDev: false, publi
 
 /**
  * Environment-derived defaults. Resolved on every start and never written to disk, so a later
- * change of `XDG_RUNTIME_DIR` or `HERDR_SOCKET_PATH` is picked up.
+ * change of `XDG_RUNTIME_DIR`, `HERDR_APP_HOME` or `HC_TERMINAL_SOCKET` is picked up.
  */
-export function resolveRuntimeServerDefaults(env: NodeJS.ProcessEnv = process.env): Pick<ServerConfig, "herdrSocketPath" | "adminSocketPath" | "stateDir"> {
+export function resolveRuntimeServerDefaults(
+  env: NodeJS.ProcessEnv = process.env
+): Pick<ServerConfig, "herdrAppSocketPath" | "herdrCoreSocketPath" | "adminSocketPath" | "stateDir"> {
   const home = env.HOME;
-  if (!home) throw new Error("HOME is not set; Pigeon cannot locate its state and the Herdr socket");
+  if (!home) throw new Error("HOME is not set; Pigeon cannot locate its state and the Herdr sockets");
   const stateDir = env.XDG_STATE_HOME ? join(env.XDG_STATE_HOME, "pigeon") : join(home, ".local", "state", "pigeon");
   return {
-    herdrSocketPath: env.HERDR_SOCKET_PATH || join(home, ".config", "herdr", "herdr.sock"),
+    herdrAppSocketPath: join(env.HERDR_APP_HOME || join(home, ".config", "herdr-app"), "herdr-app.sock"),
+    // Empty when neither is set; the daemon then refuses to start (herdr-adapter.md §2).
+    herdrCoreSocketPath: env.HC_TERMINAL_SOCKET || (env.XDG_RUNTIME_DIR ? join(env.XDG_RUNTIME_DIR, "herdr-core", "default.sock") : ""),
     adminSocketPath: env.XDG_RUNTIME_DIR ? join(env.XDG_RUNTIME_DIR, "pigeon.sock") : join(stateDir, "admin.sock"),
     stateDir,
   };
@@ -131,33 +135,27 @@ export class ConfigManager {
 }
 
 /**
- * Socket paths that builds before 0.1 computed and wrote into a fresh config. Such a value was
- * never chosen by the user, yet it would override the environment, so it is dropped on load.
+ * Admin socket paths that builds before 0.1 computed and wrote into a fresh config. Such a value
+ * was never chosen by the user, yet it would override the environment, so it is dropped on load.
  */
-function oldAutoSocketPaths(env: NodeJS.ProcessEnv): { herdr: Set<string>; admin: Set<string> } {
-  const home = env.HOME;
-  const herdr = new Set(["/tmp/herdr.sock"]);
+function oldAutoAdminSocketPaths(env: NodeJS.ProcessEnv): Set<string> {
   const admin = new Set(["/tmp/pigeon.sock"]);
-  if (env.HERDR_SOCKET_PATH) herdr.add(env.HERDR_SOCKET_PATH);
   if (env.XDG_RUNTIME_DIR) admin.add(join(env.XDG_RUNTIME_DIR, "pigeon.sock"));
-  if (home) {
-    herdr.add(join(home, ".config", "herdr", "herdr.sock"));
-    admin.add(join(home, ".local", "state", "pigeon", "admin.sock"));
-  }
-  return { herdr, admin };
+  if (env.HOME) admin.add(join(env.HOME, ".local", "state", "pigeon", "admin.sock"));
+  return admin;
 }
 
 /** Upgrades values written by older builds; `changed` says whether the file needs rewriting. */
 function migrate(stored: StoredConfig, env: NodeJS.ProcessEnv): { stored: StoredConfig; changed: boolean } {
   let changed = false;
-  const server = stored.server;
+  const server = stored.server as (Partial<ServerConfig> & { herdrSocketPath?: string }) | undefined;
   if (server) {
-    const old = oldAutoSocketPaths(env);
-    if (server.herdrSocketPath !== undefined && old.herdr.has(server.herdrSocketPath)) {
+    // The old terminal Herdr's socket; Herdr App and Herdr Core replaced it (herdr-adapter.md §1).
+    if (server.herdrSocketPath !== undefined) {
       delete server.herdrSocketPath;
       changed = true;
     }
-    if (server.adminSocketPath !== undefined && old.admin.has(server.adminSocketPath)) {
+    if (server.adminSocketPath !== undefined && oldAutoAdminSocketPaths(env).has(server.adminSocketPath)) {
       delete server.adminSocketPath;
       changed = true;
     }

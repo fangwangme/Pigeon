@@ -144,7 +144,10 @@ export interface ServerConfig {
   host: string;
   insecureDev: boolean;
   publicBaseUrl: string;
-  herdrSocketPath: string;
+  /** Herdr App window socket (`herdr-adapter.md` §2). */
+  herdrAppSocketPath: string;
+  /** Herdr Core socket (`herdr-adapter.md` §2). */
+  herdrCoreSocketPath: string;
   adminSocketPath: string;
   /** Directory for devices.json and vapid.json. */
   stateDir: string;

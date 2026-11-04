@@ -1,6 +1,7 @@
 import { connect, type Socket } from "node:net";
 import { EventEmitter } from "node:events";
-import { createHash, randomBytes } from "node:crypto";
+import { createHash } from "node:crypto";
+import { basename } from "node:path";
 import { CardClassifier, buildUnrecognizedPrompt } from "./card-classifier";
 import { getAgentRecipe } from "./agent-recipes";
 import type {
@@ -12,15 +13,29 @@ import type {
   PaneSummary,
   WorkingAgentSummary,
 } from "../types/protocol";
-import type { HerdrSnapshotResult } from "../types/herdr";
+import type {
+  HerdrAppLsResult,
+  HerdrAppStatusResult,
+  HerdrCoreListResult,
+  HerdrCoreReadResult,
+  HerdrCoreStatus,
+  HerdrCoreTerminal,
+  HerdrTopology,
+} from "../types/herdr";
 
 export interface HerdrClientOptions {
-  socketPath: string;
+  /** Herdr App window socket (`herdr-app.sock`): spaces, tabs, creating and closing tabs. */
+  appSocketPath: string;
+  /** Herdr Core socket (JSON-RPC 2.0): terminals, status, screen, input, events. */
+  coreSocketPath: string;
   debounceMs?: number;
   panePollMs?: number;
 }
 
-/** An error returned by Herdr (`{"error":{"code","message"}}`) or by the socket itself. */
+/**
+ * An error returned by Herdr or by a socket. `code` is the Core's stable error kind, `app_error`
+ * for an App `{"error": …}` reply, or the socket error code.
+ */
 export class HerdrError extends Error {
   constructor(public readonly code: string, message: string) {
     super(message);
@@ -28,31 +43,20 @@ export class HerdrError extends Error {
   }
 }
 
+type Channel = "app" | "core";
+
 // Socket-level failures that mean Herdr is not reachable (as opposed to a rejected request).
 const UNREACHABLE_CODES = new Set(["ECONNREFUSED", "ENOENT", "ECONNRESET", "EPIPE"]);
 const READ_LINES = 200;
 const REQUEST_TIMEOUT_MS = 8000;
 const SNAPSHOT_RECONCILE_MS = 30000;
 const RECONNECT_MS = 3000;
+const SUBSCRIPTION_ID = "sub-pigeon";
 
-const GLOBAL_SUBSCRIPTIONS = [
-  "workspace.created",
-  "workspace.updated",
-  "workspace.renamed",
-  "workspace.closed",
-  "workspace.focused",
-  "tab.created",
-  "tab.closed",
-  "tab.focused",
-  "tab.renamed",
-  "tab.moved",
-  "pane.created",
-  "pane.closed",
-  "pane.focused",
-  "pane.moved",
-  "pane.exited",
-  "pane.agent_detected",
-];
+// herdr-adapter.md §3.2: Core events that change which terminals exist or which tab holds them.
+const TOPOLOGY_EVENTS = new Set(["created", "removed", "finished", "lost", "restarted", "labels"]);
+// herdr-adapter.md §4: Core `status.app` words that differ from Pigeon's recipe kinds.
+const APP_TO_AGENT_KIND: Record<string, string> = { "claude-code": "claude", antigravity: "agy" };
 
 interface KnownPane {
   workspaceId: string;
@@ -60,14 +64,16 @@ interface KnownPane {
   agentKind: string | null;
   cwd: string | null;
   herdrStatus: AgentStatus;
+  title: string | undefined;
 }
 
 export class HerdrClient extends EventEmitter {
-  private socketPath: string;
+  private appSocketPath: string;
+  private coreSocketPath: string;
   private debounceMs: number;
   private panePollMs: number;
   private subSocket: Socket | null = null;
-  private subscribedStatusPanes = "";
+  private reachable: Record<Channel, boolean> = { app: false, core: false };
   private connected = false;
   private stopped = true; // until connect(): nothing opens sockets or timers before then
   private requestId = 0;
@@ -84,16 +90,18 @@ export class HerdrClient extends EventEmitter {
   private paneClassifyKeys = new Map<string, string>();
   private paneReadsInFlight = new Map<string, Promise<PaneStatePayload>>();
   private paneDebounceTimers = new Map<string, ReturnType<typeof setTimeout>>();
-  // Facts from the latest Herdr snapshot; rebuilt on every snapshot so closed panes drop out.
+  // Terminals whose read answered `how: "stitched"`; read without history from then on (§3.3).
+  private fullScreenPanes = new Set<string>();
+  // Facts from the latest snapshot; rebuilt on every snapshot so closed panes drop out.
   private knownPanes = new Map<string, KnownPane>();
-  private paneAgentSessions = new Map<string, { agent: string; sessionId: string }>();
   private currentSnapshot: SnapshotPayload = { workspaces: [], workingAgents: [] };
   private focusedPaneId: string | null = null;
   private monitoredPaneIds = new Set<string>();
 
   constructor(options: HerdrClientOptions) {
     super();
-    this.socketPath = options.socketPath;
+    this.appSocketPath = options.appSocketPath;
+    this.coreSocketPath = options.coreSocketPath;
     this.debounceMs = options.debounceMs ?? 200;
     this.panePollMs = options.panePollMs ?? 1000;
   }
@@ -106,15 +114,16 @@ export class HerdrClient extends EventEmitter {
       await this.refreshSnapshot();
     } catch (err) {
       // Herdr offline at startup is an expected state; it surfaces as `upstream_status` and the
-      // subscription loop keeps retrying.
+      // subscription and reconciliation loops keep retrying.
       if (!(err instanceof HerdrError) || !UNREACHABLE_CODES.has(err.code)) throw err;
     }
   }
 
   private startPolling(): void {
     this.stopPolling();
+    // Runs while disconnected too: it is how a reopened Herdr window is noticed (§3.4).
     this.snapshotPollTimer = setInterval(() => {
-      if (this.connected) this.refreshSnapshot().catch((err) => this.reportBackgroundError("session.snapshot", err));
+      this.refreshSnapshot().catch((err) => this.reportBackgroundError("snapshot", err));
     }, SNAPSHOT_RECONCILE_MS);
 
     // Herdr has no output-changed event, so the panes a client is looking at are polled;
@@ -123,7 +132,7 @@ export class HerdrClient extends EventEmitter {
       if (!this.connected) return;
       for (const paneId of this.monitoredPaneIds) {
         if (!this.knownPanes.has(paneId)) continue;
-        this.pollPane(paneId).catch((err) => this.reportBackgroundError("pane.read", err));
+        this.pollPane(paneId).catch((err) => this.reportBackgroundError("terminal.read", err));
       }
     }, this.panePollMs);
   }
@@ -136,15 +145,19 @@ export class HerdrClient extends EventEmitter {
   }
 
   /** Background poll failures: unreachable Herdr is reported through connection state; anything else is a bug. */
-  private reportBackgroundError(method: string, err: unknown): void {
+  private reportBackgroundError(what: string, err: unknown): void {
     if (err instanceof HerdrError && UNREACHABLE_CODES.has(err.code)) return;
-    console.error(`[pigeon] Herdr ${method} failed:`, err);
+    console.error(`[pigeon] Herdr ${what} failed:`, err);
   }
 
-  private setConnected(value: boolean): void {
-    if (this.connected === value) return;
-    this.connected = value;
-    this.emit(value ? "connected" : "disconnected");
+  /** herdr-adapter.md §3.4: connected while both the App and the Core answer. */
+  private setReachable(channel: Channel, value: boolean): void {
+    if (this.stopped) return;
+    this.reachable[channel] = value;
+    const connected = this.reachable.app && this.reachable.core;
+    if (this.connected === connected) return;
+    this.connected = connected;
+    this.emit(connected ? "connected" : "disconnected");
   }
 
   public setMonitoredPanes(paneIds: Iterable<string>): void {
@@ -153,10 +166,6 @@ export class HerdrClient extends EventEmitter {
 
   public getMonitoredPaneIds(): string[] {
     return Array.from(this.monitoredPaneIds);
-  }
-
-  public getPaneAgentSession(paneId: string): { agent: string; sessionId: string } | null {
-    return this.paneAgentSessions.get(paneId) || null;
   }
 
   public hasPane(paneId: string): boolean {
@@ -176,7 +185,6 @@ export class HerdrClient extends EventEmitter {
   }
 
   public disconnect(): void {
-    this.stopped = true;
     this.stopPolling();
     if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
     if (this.snapshotTimer) clearTimeout(this.snapshotTimer);
@@ -188,18 +196,41 @@ export class HerdrClient extends EventEmitter {
     this.subSocket = null;
     for (const cancel of Array.from(this.pendingRequests)) cancel(new HerdrError("closed", "Herdr client disconnected"));
     this.paneReadsInFlight.clear();
-    this.setConnected(false);
+    this.reachable = { app: false, core: false };
+    if (this.connected) {
+      this.connected = false;
+      this.emit("disconnected");
+    }
+    this.stopped = true;
   }
 
-  /** One-shot Herdr RPC: a fresh connection per request, never on the subscription socket. */
-  public request<T = any>(method: string, params: Record<string, any> = {}): Promise<T> {
+  /** One Herdr Core JSON-RPC request on a fresh connection, never on the subscription socket. */
+  public coreRequest<T = any>(method: string, params: Record<string, any> = {}): Promise<T> {
+    const id = ++this.requestId;
+    return this.oneShot("core", JSON.stringify({ jsonrpc: "2.0", id, method, params }), method, (res) => {
+      if (res.error) {
+        const kind = res.error.data?.kind || "core_error";
+        throw new HerdrError(kind, res.error.message || kind);
+      }
+      return res.result as T;
+    });
+  }
+
+  /** One Herdr App socket request (`{"ls":{}}`, `{"do":…}`); the reply is the result itself. */
+  public appRequest<T = any>(body: Record<string, any>): Promise<T> {
+    const label = typeof body.do === "string" ? body.do : Object.keys(body)[0];
+    return this.oneShot("app", JSON.stringify(body), label, (res) => {
+      if (typeof res.error === "string") throw new HerdrError("app_error", `Herdr App ${label}: ${res.error}`);
+      return res as T;
+    });
+  }
+
+  private oneShot<T>(channel: Channel, line: string, label: string, unwrap: (res: any) => T): Promise<T> {
+    const socketPath = channel === "app" ? this.appSocketPath : this.coreSocketPath;
     return new Promise((resolve, reject) => {
-      const id = `req_${++this.requestId}`;
       let buffer = "";
       let settled = false;
-      const socket = connect(this.socketPath, () => {
-        socket.write(JSON.stringify({ method, params, id }) + "\n");
-      });
+      const socket = connect(socketPath, () => socket.write(line + "\n"));
 
       const finish = (err: Error | null, result?: T) => {
         if (settled) return;
@@ -212,7 +243,7 @@ export class HerdrClient extends EventEmitter {
       };
 
       const timer = setTimeout(() => {
-        finish(new HerdrError("timeout", `Herdr request ${method} timed out`));
+        finish(new HerdrError("timeout", `Herdr ${channel} request ${label} timed out`));
       }, REQUEST_TIMEOUT_MS);
       this.pendingRequests.add(finish);
 
@@ -221,11 +252,14 @@ export class HerdrClient extends EventEmitter {
         try {
           res = JSON.parse(buffer.trim());
         } catch {
-          return finish(new HerdrError("invalid_response", `Herdr returned malformed JSON for ${method}`));
+          return finish(new HerdrError("invalid_response", `Herdr ${channel} returned malformed JSON for ${label}`));
         }
-        this.setConnected(true);
-        if (res.error) return finish(new HerdrError(res.error.code || "herdr_error", res.error.message || res.error.code));
-        finish(null, res.result);
+        this.setReachable(channel, true);
+        try {
+          finish(null, unwrap(res));
+        } catch (err) {
+          finish(err as Error);
+        }
       };
 
       socket.on("data", (chunk) => {
@@ -234,41 +268,30 @@ export class HerdrClient extends EventEmitter {
       });
       socket.on("end", () => {
         if (buffer.trim()) parse();
-        else finish(new HerdrError("closed", `Herdr closed the connection without answering ${method}`));
+        else finish(new HerdrError("closed", `Herdr ${channel} closed the connection without answering ${label}`));
       });
       socket.on("error", (err: NodeJS.ErrnoException) => {
         const code = err.code || "socket_error";
-        if (UNREACHABLE_CODES.has(code)) this.setConnected(false);
-        finish(new HerdrError(code, `Herdr socket error on ${method}: ${err.message}`));
+        if (UNREACHABLE_CODES.has(code)) this.setReachable(channel, false);
+        finish(new HerdrError(code, `Herdr ${channel} socket error on ${label}: ${err.message}`));
       });
     });
   }
 
   /**
-   * Event subscription on its own long-lived socket. Herdr resets a subscription socket that
-   * receives any other request, and `pane.agent_status_changed` needs one entry per pane, so the
-   * socket is rebuilt whenever the set of agent panes changes.
+   * herdr-adapter.md §3.2: Core `events.subscribe` for every terminal, on its own long-lived
+   * connection. After the reply it carries only notifications.
    */
   private startSubscription(): void {
     if (this.stopped) return;
-    const statusPanes = Array.from(this.knownPanes.entries())
-      .filter(([, p]) => p.agentKind)
-      .map(([id]) => id)
-      .sort();
-    this.subscribedStatusPanes = statusPanes.join(",");
-
-    const socket = connect(this.socketPath, () => {
-      const subscriptions = [
-        ...GLOBAL_SUBSCRIPTIONS.map((type) => ({ type })),
-        ...statusPanes.map((pane_id) => ({ type: "pane.agent_status_changed", pane_id })),
-      ];
-      socket.write(JSON.stringify({ method: "events.subscribe", params: { subscriptions }, id: "sub-pigeon" }) + "\n");
+    const socket = connect(this.coreSocketPath, () => {
+      socket.write(JSON.stringify({ jsonrpc: "2.0", id: SUBSCRIPTION_ID, method: "events.subscribe", params: {} }) + "\n");
     });
     this.subSocket = socket;
 
     let buffer = "";
     socket.on("connect", () => {
-      this.setConnected(true);
+      this.setReachable("core", true);
       // Events between the last snapshot and this subscription would otherwise be lost.
       this.scheduleSnapshot();
     });
@@ -282,13 +305,14 @@ export class HerdrClient extends EventEmitter {
       }
     });
     socket.on("error", (err: NodeJS.ErrnoException) => {
-      if (UNREACHABLE_CODES.has(err.code || "")) this.setConnected(false);
-      else console.error("[pigeon] Herdr subscription socket error:", err);
+      if (UNREACHABLE_CODES.has(err.code || "")) this.setReachable("core", false);
+      else console.error("[pigeon] Herdr Core subscription socket error:", err);
     });
     socket.on("close", () => {
-      if (this.subSocket !== socket) return; // replaced by a rebuild
+      if (this.subSocket !== socket) return;
       this.subSocket = null;
       if (this.stopped) return;
+      this.setReachable("core", false);
       this.reconnectTimer = setTimeout(() => {
         this.reconnectTimer = null;
         this.startSubscription();
@@ -296,169 +320,151 @@ export class HerdrClient extends EventEmitter {
     });
   }
 
-  private rebuildSubscriptionIfNeeded(): void {
-    const statusPanes = Array.from(this.knownPanes.entries())
-      .filter(([, p]) => p.agentKind)
-      .map(([id]) => id)
-      .sort()
-      .join(",");
-    if (statusPanes === this.subscribedStatusPanes && this.subSocket) return;
-    const old = this.subSocket;
-    this.subSocket = null;
-    old?.destroy();
-    this.startSubscription();
-  }
-
   private handleLine(line: string): void {
     let msg: any;
     try {
       msg = JSON.parse(line);
     } catch {
-      console.error("[pigeon] Herdr sent a malformed event line:", line.slice(0, 200));
+      console.error("[pigeon] Herdr Core sent a malformed event line:", line.slice(0, 200));
       return;
     }
-    if (msg.id === "sub-pigeon") {
-      if (msg.error) console.error("[pigeon] Herdr rejected events.subscribe:", msg.error);
+    if (msg.id === SUBSCRIPTION_ID) {
+      if (msg.error) console.error("[pigeon] Herdr Core rejected events.subscribe:", msg.error);
       return;
     }
-    if (msg.event) this.handleHerdrEvent(msg.event, msg.data || msg.params || {});
+    if (msg.method === "event") this.handleCoreEvent(msg.params);
+    else if (msg.method === "missed") this.scheduleSnapshot();
   }
 
-  private handleHerdrEvent(event: string, data: any): void {
-    const norm = event.replace(/_/g, ".");
-    if (norm === "pane.agent.status.changed") {
-      const paneId: string = data.pane_id;
-      const status = this.normalizeStatus(data.agent_status);
+  private handleCoreEvent(params: { type: string; terminal: string; data: any }): void {
+    if (params.type === "status") {
+      const paneId = params.terminal;
       const known = this.knownPanes.get(paneId);
-      if (known) known.herdrStatus = status;
+      if (!known) return; // a terminal the window does not show
+      const status = this.normalizeStatus(params.data.status);
+      known.herdrStatus = status;
       this.emit("pane_status_changed", { paneId, status });
       // The read re-classifies under the new status, which reaches viewers as a new pane_state.
       if (status === "blocked" || this.paneStates.has(paneId)) this.scheduleDebouncedRead(paneId);
       this.scheduleSnapshot();
       return;
     }
-    if (norm.startsWith("tab.") || norm.startsWith("workspace.") || norm.startsWith("pane.")) {
-      this.scheduleSnapshot();
-    }
+    if (TOPOLOGY_EVENTS.has(params.type)) this.scheduleSnapshot();
   }
 
   private scheduleSnapshot(): void {
+    if (this.stopped) return;
     if (this.snapshotTimer) clearTimeout(this.snapshotTimer);
     this.snapshotTimer = setTimeout(() => {
       this.snapshotTimer = null;
-      this.refreshSnapshot().catch((err) => this.reportBackgroundError("session.snapshot", err));
+      this.refreshSnapshot().catch((err) => this.reportBackgroundError("snapshot", err));
     }, this.debounceMs);
   }
 
+  /** herdr-adapter.md §3.1: App `ls` and `status` joined with Core `terminal.list`. */
   public async refreshSnapshot(): Promise<SnapshotPayload> {
-    const res: HerdrSnapshotResult = await this.request("session.snapshot", {});
-    return this.applySnapshot(res);
+    const [ls, status, list] = await Promise.all([
+      this.appRequest<HerdrAppLsResult>({ ls: {} }),
+      this.appRequest<HerdrAppStatusResult>({ status: {} }),
+      this.coreRequest<HerdrCoreListResult>("terminal.list", {}),
+    ]);
+    return this.applySnapshot({ ls, status, terminals: list.terminals });
   }
 
-  /** Rebuilds the pane-derived caches from a Herdr snapshot response. */
-  public applySnapshot(res: HerdrSnapshotResult): SnapshotPayload {
-    const snap = res.snapshot;
-    this.focusedPaneId = snap.focused_pane_id || null;
+  /** Rebuilds the pane-derived caches from one topology. */
+  public applySnapshot(topology: HerdrTopology): SnapshotPayload {
+    const terminals = new Map<string, HerdrCoreTerminal>();
+    for (const t of topology.terminals) terminals.set(t.address, t);
 
-    const agentMap = new Map<string, any>();
-    for (const ag of snap.agents || []) if (ag.pane_id) agentMap.set(ag.pane_id, ag);
-
-    const panesByTab = new Map<string, any[]>();
     const nextKnown = new Map<string, KnownPane>();
-    const nextSessions = new Map<string, { agent: string; sessionId: string }>();
-    for (const p of snap.panes || []) {
-      const list = panesByTab.get(p.tab_id) || [];
-      list.push(p);
-      panesByTab.set(p.tab_id, list);
-      const ag = agentMap.get(p.pane_id);
-      const agentKind = ag?.agent || p.agent || null;
-      nextKnown.set(p.pane_id, {
-        workspaceId: p.workspace_id,
-        tabId: p.tab_id,
-        agentKind,
-        cwd: ag?.cwd || p.cwd || null,
-        herdrStatus: this.normalizeStatus(ag?.agent_status || p.agent_status),
-      });
-      const sessionObj = p.agent_session || ag?.agent_session;
-      if (sessionObj?.value) {
-        nextSessions.set(p.pane_id, { agent: sessionObj.agent || agentKind || "unknown", sessionId: sessionObj.value });
+    let focusedPaneId: string | null = null;
+    for (const space of topology.ls.spaces) {
+      for (const tab of space.tabs) {
+        for (const ref of tab.terminals) {
+          const term = terminals.get(ref.terminal);
+          nextKnown.set(ref.terminal, {
+            workspaceId: space.id,
+            tabId: tab.id,
+            agentKind: this.agentKindOf(term?.status),
+            cwd: term ? term.foreground?.cwd || term.cwd : null,
+            herdrStatus: this.normalizeStatus(term?.status),
+            title: term?.title,
+          });
+          if (ref.pane === topology.status.focused_pane) focusedPaneId = ref.terminal;
+        }
       }
     }
 
-    const tabsByWs = new Map<string, any[]>();
-    for (const t of snap.tabs || []) {
-      const list = tabsByWs.get(t.workspace_id) || [];
-      list.push(t);
-      tabsByWs.set(t.workspace_id, list);
-    }
-
-    // Drop state for panes that no longer exist so a reused pane id never shows old data.
+    // Drop state for panes that no longer exist so a reused address never shows old data.
     for (const id of Array.from(this.paneStates.keys())) {
-      if (!nextKnown.has(id)) {
-        this.paneStates.delete(id);
-        this.paneClassifyKeys.delete(id);
-      }
+      if (nextKnown.has(id)) continue;
+      this.paneStates.delete(id);
+      this.paneClassifyKeys.delete(id);
     }
+    for (const id of Array.from(this.fullScreenPanes)) if (!nextKnown.has(id)) this.fullScreenPanes.delete(id);
     this.knownPanes = nextKnown;
-    this.paneAgentSessions = nextSessions;
+    this.focusedPaneId = focusedPaneId;
 
     const workingAgents: WorkingAgentSummary[] = [];
-    const workspaces: WorkspaceSummary[] = (snap.workspaces || []).map((w) => {
-      const rawTabs = w.tabs && w.tabs.length > 0 ? w.tabs : tabsByWs.get(w.workspace_id) || [];
-      let wsHasWarn = false;
-      let wsHasWorking = false;
-      const workspaceLabel = w.label || `Workspace ${w.number}`;
+    const workspaces: WorkspaceSummary[] = topology.ls.spaces.map((space) => {
+      let hasWarn = false;
+      let hasWorking = false;
+      const workspaceLabel = space.name || basename(space.folder);
 
-      const tabs: TabSummary[] = rawTabs.map((t: any) => {
-        const rawPanes = t.panes && t.panes.length > 0 ? t.panes : panesByTab.get(t.tab_id) || [];
-        const panes: PaneSummary[] = rawPanes.map((p: any, idx: number) => {
-          const ag = agentMap.get(p.pane_id);
-          const agentStatus = this.effectiveStatus(p.pane_id);
-          if (agentStatus === "blocked") wsHasWarn = true;
-          if (agentStatus === "working") wsHasWorking = true;
-          const agentName = ag?.name || p.title || p.pane_id;
-          const agentKind = nextKnown.get(p.pane_id)?.agentKind ?? null;
-
-          if (agentKind) {
+      const tabs: TabSummary[] = space.tabs.map((tab, tabIdx) => {
+        const panes: PaneSummary[] = tab.terminals.map((ref, idx) => {
+          const known = nextKnown.get(ref.terminal)!;
+          const agentStatus = this.effectiveStatus(ref.terminal);
+          if (agentStatus === "blocked") hasWarn = true;
+          if (agentStatus === "working") hasWorking = true;
+          const name = ref.name || terminals.get(ref.terminal)?.name || ref.terminal;
+          if (known.agentKind) {
             workingAgents.push({
-              agent: agentKind,
-              name: agentName,
+              agent: known.agentKind,
+              name,
               status: agentStatus,
-              workspaceId: w.workspace_id,
+              workspaceId: space.id,
               workspaceLabel,
-              tabId: t.tab_id,
-              paneId: p.pane_id,
-              summary: this.summarizePane(p.pane_id, ag?.terminal_title),
+              tabId: tab.id,
+              paneId: ref.terminal,
+              summary: this.summarizePane(ref.terminal, known.title),
             });
           }
-          return { id: p.pane_id, agent: agentKind, agentStatus, isPrimary: idx === 0, name: agentName };
+          return { id: ref.terminal, agent: known.agentKind, agentStatus, isPrimary: idx === 0, name };
         });
 
-        let tabLabel = t.label;
+        let tabLabel = tab.name;
         if (!tabLabel || /^\d+$/.test(tabLabel.trim())) {
           const primary = panes[0];
           const recipe = primary?.agent ? getAgentRecipe(primary.agent) : undefined;
-          tabLabel = recipe?.label || `Tab ${t.number || 1}`;
+          tabLabel = recipe?.label || `Tab ${tabIdx + 1}`;
         }
-        return { id: t.tab_id, label: tabLabel, paneCount: panes.length, panes };
+        return { id: tab.id, label: tabLabel, paneCount: panes.length, panes };
       });
 
       return {
-        id: w.workspace_id,
+        id: space.id,
         label: workspaceLabel,
         tabCount: tabs.length,
-        activeTabId: w.active_tab_id || (tabs[0]?.id ?? null),
-        hasWarn: wsHasWarn,
-        hasWorking: wsHasWorking,
-        isFocused: !!w.focused,
+        activeTabId: space.tabs.find((t) => t.active)?.id ?? tabs[0]?.id ?? null,
+        hasWarn,
+        hasWorking,
+        isFocused: space.active,
         tabs,
       };
     });
 
     this.currentSnapshot = { workspaces, workingAgents };
-    this.rebuildSubscriptionIfNeeded();
     this.emit("snapshot_updated", this.currentSnapshot);
     return this.currentSnapshot;
+  }
+
+  /** herdr-adapter.md §4: a terminal is an agent while its program reports a status. */
+  private agentKindOf(status: HerdrCoreStatus | null | undefined): string | null {
+    if (!status) return null;
+    const app = status.app?.toLowerCase();
+    if (!app) return null;
+    return APP_TO_AGENT_KIND[app] ?? app;
   }
 
   private summarizePane(paneId: string, terminalTitle?: string): string | undefined {
@@ -480,10 +486,12 @@ export class HerdrClient extends EventEmitter {
     return this.knownPanes.get(paneId)?.herdrStatus ?? "unknown";
   }
 
-  public normalizeStatus(rawStatus?: string | null): AgentStatus {
-    if (!rawStatus) return "unknown";
-    const s = rawStatus.toLowerCase();
+  /** herdr-adapter.md §4: the Core's `error` needs a person, like `blocked`. */
+  public normalizeStatus(status: HerdrCoreStatus | null | undefined): AgentStatus {
+    if (!status) return "unknown";
+    const s = status.state.toLowerCase();
     if (s === "idle" || s === "working" || s === "blocked" || s === "done") return s;
+    if (s === "error") return "blocked";
     return "unknown";
   }
 
@@ -503,7 +511,7 @@ export class HerdrClient extends EventEmitter {
       setTimeout(() => {
         this.paneDebounceTimers.delete(paneId);
         if (!this.knownPanes.has(paneId)) return;
-        this.readAndClassifyPane(paneId).catch((err) => this.reportBackgroundError("pane.read", err));
+        this.readAndClassifyPane(paneId).catch((err) => this.reportBackgroundError("terminal.read", err));
       }, this.debounceMs)
     );
   }
@@ -521,8 +529,11 @@ export class HerdrClient extends EventEmitter {
     const previous = this.paneReadsInFlight.get(paneId);
     const run = (async () => {
       if (previous) await previous.catch(() => undefined); // its failure is reported by its own caller
-      const readRes = await this.request("pane.read", { pane_id: paneId, source: "recent_unwrapped", lines: READ_LINES });
-      return this.applyScreen(paneId, readRes.read.text);
+      // herdr-adapter.md §3.3: history reads scroll a full-screen program on the desktop.
+      const lines = this.fullScreenPanes.has(paneId) ? 0 : READ_LINES;
+      const res = await this.coreRequest<HerdrCoreReadResult>("terminal.read", { terminal: paneId, lines });
+      if (res.how === "stitched") this.fullScreenPanes.add(paneId);
+      return this.applyScreen(paneId, res.text);
     })();
     this.paneReadsInFlight.set(paneId, run);
     try {
@@ -535,7 +546,7 @@ export class HerdrClient extends EventEmitter {
   /** Classifies a screen for a known pane. Split from the read so it can be driven directly. */
   public applyScreen(paneId: string, rawScreen: string): PaneStatePayload {
     const known = this.knownPanes.get(paneId);
-    if (!known) throw new HerdrError("pane_not_found", `Pane ${paneId} is not in the Herdr snapshot`);
+    if (!known) throw new HerdrError("not_found", `Pane ${paneId} is not in the Herdr snapshot`);
     const existing = this.paneStates.get(paneId);
     // herdr-adapter.md §3.3: a new Herdr status alone is classified again, even on an unchanged screen.
     const classifyKey = `${createHash("sha256").update(rawScreen).digest("hex")}|${known.herdrStatus}`;
@@ -567,17 +578,9 @@ export class HerdrClient extends EventEmitter {
     return this.paneStates.get(paneId) || null;
   }
 
-  /**
-   * Sends a prompt. Agent panes go through `agent.prompt` (Herdr handles bracketed paste and
-   * submission); plain shell panes get the text followed by Enter.
-   */
+  /** herdr-adapter.md §6: the Core pastes the text and presses Enter, for agents and shells alike. */
   public async sendPrompt(paneId: string, text: string): Promise<void> {
-    if (this.getPaneAgentKind(paneId)) {
-      await this.request("agent.prompt", { target: paneId, text });
-    } else {
-      await this.request("pane.send_text", { pane_id: paneId, text });
-      await this.request("pane.send_keys", { pane_id: paneId, keys: ["enter"] });
-    }
+    await this.coreRequest("terminal.send", { terminal: paneId, text });
     this.scheduleDebouncedRead(paneId);
   }
 
@@ -587,62 +590,49 @@ export class HerdrClient extends EventEmitter {
    * a timed-out send may already have landed.
    */
   public async answerInteraction(paneId: string, interactionId: string, keys: string[]): Promise<boolean> {
-    await this.request("pane.send_keys", { pane_id: paneId, keys });
+    await this.coreRequest("terminal.keys", { terminal: paneId, keys });
     await new Promise((r) => setTimeout(r, 300));
     const state = await this.readAndClassifyPane(paneId);
     return state.pendingInteraction?.interactionId !== interactionId;
   }
 
   public async sendKeys(paneId: string, keys: string[]): Promise<void> {
-    await this.request("pane.send_keys", { pane_id: paneId, keys });
+    await this.coreRequest("terminal.keys", { terminal: paneId, keys });
     this.scheduleDebouncedRead(paneId);
   }
 
-  public static validateAgentName(name: string): boolean {
-    return /^[a-z][a-z0-9_-]{0,31}$/.test(name);
-  }
-
   /**
-   * Creates a tab and starts an agent in its root pane. `agentKind` must already be a known
-   * recipe kind (checked at the WebSocket boundary). If the agent fails to start, the new tab
-   * is closed again so no empty tab is left behind.
+   * herdr-adapter.md §5: the App creates the tab and its terminal (running the recipe's command,
+   * or the shell for the terminal recipe). `agentKind` is a known recipe kind (checked at the
+   * WebSocket boundary).
    */
   public async createTabAndAgent(
     workspaceId: string,
     agentKind: string,
     options: { modelId?: string; thinking?: string; cwd?: string } = {}
   ): Promise<{ tabId: string; paneId: string }> {
-    const tabRes = await this.request("tab.create", {
-      workspace_id: workspaceId,
-      ...(options.cwd ? { cwd: options.cwd } : {}),
+    const recipe = getAgentRecipe(agentKind)!;
+    const argv = recipe.command ? [recipe.command, ...recipe.launchArgs({ modelId: options.modelId, thinking: options.thinking })] : null;
+    const created = await this.appRequest<{ terminal?: string }>({
+      do: "tab.new",
+      args: {
+        space: workspaceId,
+        name: recipe.label,
+        ...(options.cwd ? { folder: options.cwd } : {}),
+        ...(argv ? { argv } : {}),
+      },
     });
-    const tabId: string = tabRes?.tab?.tab_id;
-    const paneId: string = tabRes?.root_pane?.pane_id;
-    if (!tabId || !paneId) throw new HerdrError("invalid_response", "tab.create did not return tab.tab_id and root_pane.pane_id");
-
-    const recipe = getAgentRecipe(agentKind);
-    if (recipe && recipe.kind !== "terminal") {
-      const name = `p-${recipe.kind}-${randomBytes(3).toString("hex")}`;
-      const args = recipe.launchArgs({ modelId: options.modelId, thinking: options.thinking });
-      try {
-        await this.request("agent.start", {
-          pane_id: paneId,
-          kind: recipe.kind,
-          name,
-          ...(args.length > 0 ? { args } : {}),
-        });
-      } catch (err) {
-        await this.request("tab.close", { tab_id: tabId });
-        throw err;
-      }
-    }
-
+    const paneId = created.terminal;
+    if (!paneId) throw new HerdrError("invalid_response", "Herdr App tab.new did not name the new terminal");
     await this.refreshSnapshot();
+    const tabId = this.knownPanes.get(paneId)?.tabId;
+    if (!tabId) throw new HerdrError("invalid_response", `The new terminal ${paneId} is in no Herdr tab`);
     return { tabId, paneId };
   }
 
+  /** The phone's close dialog is the confirmation the App would otherwise ask for. */
   public async closeTab(tabId: string): Promise<void> {
-    await this.request("tab.close", { tab_id: tabId });
+    await this.appRequest({ do: "tab.close", args: { id: tabId, confirmed: true } });
     await this.refreshSnapshot();
   }
 }

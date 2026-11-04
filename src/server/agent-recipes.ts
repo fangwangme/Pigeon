@@ -13,6 +13,8 @@ export type { ModelOption };
 export interface AgentRecipe {
   kind: string;
   label: string;
+  /** Program started in the new tab (`herdr-adapter.md` §5); none starts the machine's shell. */
+  command?: string;
   models(): ModelOption[];
   defaultModel?: string;
   defaultThinking?: string;
@@ -39,6 +41,7 @@ export const AGENT_RECIPES: Record<string, AgentRecipe> = {
   claude: {
     kind: "claude",
     label: "Claude Code",
+    command: "claude",
     models: () => [
       { id: "opus", label: "Opus", thinkingLevels: EFFORT_LADDER },
       { id: "sonnet", label: "Sonnet", thinkingLevels: EFFORT_LADDER },
@@ -52,15 +55,18 @@ export const AGENT_RECIPES: Record<string, AgentRecipe> = {
   codex: {
     kind: "codex",
     label: "Codex",
+    command: "codex",
     models: codexModels,
     launchArgs(o) {
-      return [...(o?.modelId ? ["-m", o.modelId] : []), ...(o?.thinking ? ["-c", `model_reasoning_effort="${o.thinking}"`] : [])];
+      // Without --no-daemon Codex runs its commands outside Herdr Core.
+      return ["--no-daemon", ...(o?.modelId ? ["-m", o.modelId] : []), ...(o?.thinking ? ["-c", `model_reasoning_effort="${o.thinking}"`] : [])];
     },
     interruptKeys: ["esc"],
   },
   agy: {
     kind: "agy",
     label: "Antigravity",
+    command: "agy",
     models: () => [],
     launchArgs(o) {
       return [...(o?.modelId ? ["--model", o.modelId] : []), ...(o?.thinking ? ["--effort", o.thinking] : [])];
@@ -70,6 +76,7 @@ export const AGENT_RECIPES: Record<string, AgentRecipe> = {
   opencode: {
     kind: "opencode",
     label: "OpenCode",
+    command: "opencode",
     models: () => [],
     launchArgs: () => [],
     interruptKeys: ["esc"],
@@ -77,6 +84,7 @@ export const AGENT_RECIPES: Record<string, AgentRecipe> = {
   pi: {
     kind: "pi",
     label: "pi",
+    command: "pi",
     models: () => [],
     launchArgs(o) {
       return [...(o?.modelId ? ["--model", o.modelId] : []), ...(o?.thinking ? ["--thinking", o.thinking] : [])];

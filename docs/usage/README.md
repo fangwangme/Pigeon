@@ -4,7 +4,7 @@ How to run Pigeon on your own machine and phone, and how to ship a fix to the ph
 
 ## Prerequisites
 
-- Herdr running on this machine (`~/.config/herdr/herdr.sock`).
+- The Herdr desktop app (`herdr-app`) open on this machine. Pigeon reads spaces and tabs from its window (`~/.config/herdr-app/herdr-app.sock`) and drives the terminals through Herdr Core (`$XDG_RUNTIME_DIR/herdr-core/default.sock`). With the window closed, the phone shows Herdr offline although the terminals keep running. The old terminal `herdr` is not supported.
 - Tailscale on this machine and on the phone, both logged into the same tailnet. Tailscale gives the phone an HTTPS address, which the PWA install, the service worker and (later) Web Push need (`architecture.md` §4.2).
 - Chrome on Android.
 

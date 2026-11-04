@@ -17,7 +17,7 @@ To solve this, Pigeon adopts a **Dual-Track Architecture (双轨制)**:
 
 ## 2. Supported Local Agent Engines & Native Storage Contracts
 
-Herdr's `pane_list` and `snapshot` provide the exact agent identity and session identifier for each pane:
+The old terminal Herdr (0.9.x) reported the agent identity and session identifier for each pane as below. Herdr Core reports the agent identity only (`herdr-adapter.md` §4):
 ```json
 "agent_session": {
   "agent": "opencode" | "agy" | "claude" | "codex" | "pi",
@@ -28,7 +28,7 @@ Herdr's `pane_list` and `snapshot` provide the exact agent identity and session 
 
 Pigeon resolves and tails each agent's native session records according to the following contracts:
 
-**Status (v0.1)**: The OpenCode (§2.1) and AGY (§2.2) adapters are implemented. Claude Code, Codex and Pi (§2.3–§2.5) are planned for M2; until then their panes show the classified screen cards (Track 2).
+**Status (v0.1)**: The OpenCode (§2.1) and AGY (§2.2) adapters are implemented. Claude Code, Codex and Pi (§2.3–§2.5) are planned for M2. Herdr Core (the current Herdr) reports no session identifier (`herdr-adapter.md` §4), so no pane is bound to a session and every pane shows the classified screen cards (Track 2) until a session source exists.
 
 ### 2.1 OpenCode (`opencode`)
 * **Storage**: SQLite 3 database at `~/.local/share/opencode/opencode.db`.
