@@ -56,7 +56,7 @@ How to run Pigeon on your own machine and phone, and how to ship a fix to the ph
    ```bash
    bun run build && install -m 755 dist/pigeon ~/.local/bin/pigeon && systemctl --user restart pigeon
    ```
-3. The phone reconnects by itself. When the daemon now serves a different client build, the phone shows "有新版本可用 · 点击刷新"; tap it to load the new client (`protocol.md` §3.2). A standalone PWA has no reload button, so this banner is how an update reaches it.
+3. The phone reconnects by itself. When the daemon now serves a different client build, the phone shows an "Update available" banner (in Chinese, "有新版本可用"); tap Reload to load the new client (`protocol.md` §3.2). A standalone PWA has no reload button, so this banner is how an update reaches it.
 
 ## Without Tailscale
 
