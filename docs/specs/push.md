@@ -20,7 +20,7 @@ Until then a trigger only computes whether it would be suppressed and reports `d
 
 ## 3. Subscription Protocol
 
-1. **VAPID Keys**: On first start, the daemon generates a P-256 keypair in `<stateDir>/vapid.json` (mode `0600`). The public key is the 65-byte uncompressed point in base64url, which is the form `PushManager.subscribe({ applicationServerKey })` accepts. A key file from older builds that holds an SPKI-encoded key is regenerated.
+1. **VAPID Keys**: On first start, the daemon generates a P-256 keypair in `<stateDir>/vapid.json` (mode `0600`). The public key is the 65-byte uncompressed point in base64url, which is the form `PushManager.subscribe({ applicationServerKey })` accepts.
 2. **Subscription Handshake**:
    - The client fetches the VAPID public key via `GET /api/push/vapid-public-key`.
    - The browser asks for notification permission and creates a `PushSubscription`.

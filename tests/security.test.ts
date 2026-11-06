@@ -114,24 +114,6 @@ describe("configuration file (architecture.md §4.7)", () => {
     expect(readFileSync(join(dir, "config.json"), "utf-8")).toBe("{ broken");
   });
 
-  test("client keys this version no longer has are removed on load", () => {
-    const dir = tempDir("cfg");
-    const path = join(dir, "config.json");
-    writeFileSync(path, JSON.stringify({ client: { themeKey: "gruvbox", macros: [], showMacroDock: true, confirmCtrlC: true, themeMode: "dark" } }));
-    expect(new ConfigManager(path, { HOME: dir }).getClientConfig()).toEqual({ themeMode: "dark", accent: "blue" });
-    expect(JSON.parse(readFileSync(path, "utf-8")).client).toEqual({ themeMode: "dark" });
-  });
-
-  test("the old terminal Herdr socket path is dropped; a hand-set admin path is kept", () => {
-    const dir = tempDir("cfg");
-    const path = join(dir, "config.json");
-    writeFileSync(path, JSON.stringify({ server: { herdrSocketPath: "/srv/herdr.sock", adminSocketPath: "/srv/my-admin.sock" } }));
-    const cfg = new ConfigManager(path, { HOME: dir, XDG_RUNTIME_DIR: join(dir, "run") });
-    expect(cfg.getServerConfig().adminSocketPath).toBe("/srv/my-admin.sock");
-    const stored = JSON.parse(readFileSync(path, "utf-8"));
-    expect(stored.server.herdrSocketPath).toBeUndefined();
-    expect(stored.server.adminSocketPath).toBe("/srv/my-admin.sock");
-  });
 });
 
 describe("push keys and presence (push.md §3, §4)", () => {
@@ -141,12 +123,6 @@ describe("push keys and presence (push.md §3, §4)", () => {
     expect(key.length).toBe(65);
     expect(key[0]).toBe(0x04);
     expect(statSync(path).mode & 0o777).toBe(0o600);
-  });
-
-  test("a key file in the old SPKI format is replaced", () => {
-    const path = join(tempDir("push"), "vapid.json");
-    writeFileSync(path, JSON.stringify({ publicKey: "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE", privateKey: "x" }));
-    expect(Buffer.from(new PushManager(path).getPublicKey(), "base64url").length).toBe(65);
   });
 
   test("a notification is suppressed only while some connection visibly shows that pane", () => {

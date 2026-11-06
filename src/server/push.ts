@@ -43,14 +43,7 @@ export class PushManager {
   }
 
   private loadOrCreateVapidKeys(): VapidKeys {
-    if (existsSync(this.vapidPath)) {
-      const data = JSON.parse(readFileSync(this.vapidPath, "utf-8"));
-      // Files from older builds stored an SPKI DER key, which browsers reject; regenerate those.
-      if (typeof data.publicKey === "string" && /^[A-Za-z0-9_-]{87}$/.test(data.publicKey) && data.privateKey) {
-        chmodSync(this.vapidPath, 0o600);
-        return data;
-      }
-    }
+    if (existsSync(this.vapidPath)) return JSON.parse(readFileSync(this.vapidPath, "utf-8"));
 
     const { publicKey, privateKey } = generateKeyPairSync("ec", {
       namedCurve: "prime256v1",

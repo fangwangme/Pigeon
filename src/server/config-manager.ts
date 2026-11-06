@@ -1,7 +1,7 @@
 import { existsSync, readFileSync, writeFileSync, mkdirSync, renameSync } from "node:fs";
 import { dirname, join } from "node:path";
 import type { ClientConfig, ServerConfig, PigeonConfig } from "../types/protocol";
-import { DEFAULT_CLIENT_CONFIG, REMOVED_CLIENT_KEYS } from "../shared/defaults";
+import { DEFAULT_CLIENT_CONFIG } from "../shared/defaults";
 
 /** Server settings that do not depend on the environment, written into a fresh config file. */
 const STATIC_SERVER_DEFAULTS = { port: 4100, host: "", insecureDev: false, publicBaseUrl: "" };
@@ -64,13 +64,11 @@ interface StoredConfig {
  */
 export class ConfigManager {
   private configPath: string;
-  private env: NodeJS.ProcessEnv;
   private stored: StoredConfig;
   private config: PigeonConfig;
 
   constructor(customPath?: string, env: NodeJS.ProcessEnv = process.env) {
     this.configPath = resolveConfigPath(customPath, env);
-    this.env = env;
     this.stored = this.loadOrCreate();
     this.config = {
       server: { ...STATIC_SERVER_DEFAULTS, ...resolveRuntimeServerDefaults(env), ...(this.stored.server || {}) } as ServerConfig,
@@ -94,9 +92,7 @@ export class ConfigManager {
     if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
       throw new Error(`Pigeon config ${this.configPath} must contain a JSON object`);
     }
-    const { stored, changed } = migrate(parsed as StoredConfig, this.env);
-    if (changed) this.write(stored);
-    return stored;
+    return parsed as StoredConfig;
   }
 
   public getClientConfig(): ClientConfig {
@@ -124,41 +120,3 @@ export class ConfigManager {
   }
 }
 
-/**
- * Admin socket paths that builds before 0.1 computed and wrote into a fresh config. Such a value
- * was never chosen by the user, yet it would override the environment, so it is dropped on load.
- */
-function oldAutoAdminSocketPaths(env: NodeJS.ProcessEnv): Set<string> {
-  const admin = new Set(["/tmp/pigeon.sock"]);
-  if (env.XDG_RUNTIME_DIR) admin.add(join(env.XDG_RUNTIME_DIR, "pigeon.sock"));
-  if (env.HOME) admin.add(join(env.HOME, ".local", "state", "pigeon", "admin.sock"));
-  return admin;
-}
-
-/** Upgrades values written by older builds; `changed` says whether the file needs rewriting. */
-function migrate(stored: StoredConfig, env: NodeJS.ProcessEnv): { stored: StoredConfig; changed: boolean } {
-  let changed = false;
-  const server = stored.server as (Partial<ServerConfig> & { herdrSocketPath?: string }) | undefined;
-  if (server) {
-    // The old terminal Herdr's socket; Herdr App and Herdr Core replaced it (herdr-adapter.md §1).
-    if (server.herdrSocketPath !== undefined) {
-      delete server.herdrSocketPath;
-      changed = true;
-    }
-    if (server.adminSocketPath !== undefined && oldAutoAdminSocketPaths(env).has(server.adminSocketPath)) {
-      delete server.adminSocketPath;
-      changed = true;
-    }
-  }
-  const client = stored.client as Record<string, unknown> | undefined;
-  if (client) {
-    // Theme packs, macros and display options of the v1 UI (architecture.md §4.7).
-    for (const key of REMOVED_CLIENT_KEYS) {
-      if (key in client) {
-        delete client[key];
-        changed = true;
-      }
-    }
-  }
-  return { stored, changed };
-}
