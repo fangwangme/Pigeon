@@ -4,13 +4,13 @@ Specs describe what the system does and why. They are the authoritative standard
 
 ## Specification Index
 
-1. [`architecture.md`](architecture.md) — System topology, Bun runtime daemon, Solid.js PWA, single-binary distribution, Tailscale serve HTTPS access, and line-pattern card classifier.
-2. [`protocol.md`](protocol.md) — Typed JSON message protocol over WebSocket (heartbeat, `interaction_respond` safe answering, commands, server events, error codes).
-3. [`herdr-adapter.md`](herdr-adapter.md) — Herdr integration contract: the Herdr App and Herdr Core channels, event subscription plus viewed-pane polling, agent states, tab and agent launch, prompting and answering, screen parse rules, and per-agent skills.
+1. [`architecture.md`](architecture.md) — System topology, Bun daemon and Solid.js PWA, single-binary distribution and update flow, Tailscale Serve HTTPS access, dual-track session rendering, configuration persistence and multi-device sync, and trust boundaries / CSP.
+2. [`protocol.md`](protocol.md) — Typed JSON message protocol over WebSocket (handshake, heartbeat, safe prompt answering, prompt queueing, session/model/tab/device commands, server events, error codes) and HTTP file uploads (`POST /api/uploads`).
+3. [`herdr-adapter.md`](herdr-adapter.md) — Herdr integration contract: the Herdr App and Herdr Core channels, event subscription plus viewed-pane polling, agent states, tab and agent launch, prompting and answering, screen parse rules, and per-agent skills and commands.
 4. [`security-and-pairing.md`](security-and-pairing.md) — Security model: QR-code-only pairing via URL fragment (`#code=...`), Base32 token, HttpOnly cookies, Origin/Host validation, and local admin IPC socket.
-5. [`mobile-ui-and-themes.md`](mobile-ui-and-themes.md) — Mobile UX: workspace and all-agents lists, the conversation page, prompt cards, composer, new and resumed sessions, settings, light/dark themes with accent, and Liquid Glass.
+5. [`mobile-ui-and-themes.md`](mobile-ui-and-themes.md) — Mobile UX: workspace and all-agents lists, the conversation page, prompt cards, composer, new and resumed sessions, settings, light/dark themes with accent, Liquid Glass, and English/Chinese localization.
 6. [`push.md`](push.md) — Web Push notification subsystem (VAPID keypair, presence-based push suppression, and privacy-preserving alerts).
-7. [`agent-session-normalization.md`](agent-session-normalization.md) — Binding panes to agent sessions, the Claude Code, Codex, Pi, OpenCode and AGY record formats, the NormalizedTurn model, todos and session diffs.
+7. [`agent-session-normalization.md`](agent-session-normalization.md) — Binding panes to agent sessions, the Claude Code, Codex, Pi, OpenCode, and AGY record formats, the NormalizedTurn model, todos, and session diffs.
 
 ## Core Rules for Spec Integrity
 - **Spec Lead**: Any behavior change updates the spec first in the change's own branch.
