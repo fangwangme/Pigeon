@@ -8,7 +8,7 @@ Herdr is two programs, and Pigeon needs both:
 - **Herdr App** (`herdr-app`), the desktop window. It owns spaces and tabs: their names, which terminals sit in which tab, focus, and creating and closing tabs.
 - **Herdr Core** (`hc`, `herdr-core`), the daemon that runs the terminals and keeps them alive when the window closes. It owns each terminal's program, folder, status, screen and input.
 
-Herdr is the source of truth for topology, agent identity and agent status. Pigeon adds exactly one thing on top: it classifies the screen text of the panes a phone is looking at into cards and prompts (§8).
+Herdr is the source of truth for topology, agent identity and agent status. Pigeon adds two things on top: it classifies the screen text of the panes a phone is looking at into cards and prompts (§8), and it binds agent panes to the agents' own session records (`agent-session-normalization.md` §2.0) using the process facts the Core reports.
 
 The older terminal multiplexer `herdr` (TUI, 0.9.x, `~/.config/herdr/herdr.sock`) is not supported.
 
@@ -28,14 +28,16 @@ A snapshot joins three answers: App `ls` (spaces, their tabs, and each tab's ter
 
 | Herdr | Pigeon |
 | :--- | :--- |
-| space `id`, `name` (or the last segment of its `folder` when unnamed), `active` | workspace `id`, `label`, `isFocused` |
+| space `id`, `name` (or the last segment of its `folder` when unnamed), `folder`, `active` | workspace `id`, `label`, `folder`, `isFocused` |
 | tab `id`, `name`, `active` | tab `id`, `label`, the workspace's `activeTabId` |
 | tab terminal `terminal` (an address such as `t7`) | pane `id` |
 | Core terminal `foreground.cwd` (else `cwd`), `status`, `title` | pane folder, agent kind and status (§4), summary |
+| Core terminal `foreground.name`, `foreground.pid`, `created_ms` | pane `program`; the process id and start time used for session binding |
 
 - A tab named only by its number is labelled after its first pane's agent recipe, else `Tab <n>`.
 - Each snapshot rebuilds the pane facts. State for panes missing from the snapshot is dropped, so a reused address never shows old data.
 - A terminal the App shows but the Core does not list (it finished, or its machine is not connected) is a pane without an agent and with status `unknown`.
+- **Branch**: a workspace's `branch` is read from its folder, a tab's from its first pane's folder: walk up to the nearest `.git` (a directory, or a worktree's `.git` file naming its `gitdir`), read its `HEAD`, and take the name after `ref: refs/heads/`. A detached HEAD or no repository gives no branch. Read failures other than a missing file fail loudly.
 - A snapshot is taken at startup, shortly after every topology event (debounced), every time the subscription (re)connects, and every 30 seconds as reconciliation. The reconciliation also picks up renames in the App, which no Core event reports.
 
 ### 3.2 Subscription
@@ -77,11 +79,12 @@ A pane's effective status is that status, with one override: a prompt recognized
 
 Prompts are not refused while an agent is `working`: the agents queue typed input. A prompt sent while `blocked` is refused by the Core (`blocked`).
 
-The Core reports no agent session id, so no pane has a structured agent session (`agent-session-normalization.md` §2).
+The Core reports no agent session id. Pigeon binds a pane to its session from the pane's agent kind, foreground process id, folder and creation time (`agent-session-normalization.md` §2.0).
 
 ## 5. Tab Creation and Closing
 
-1. **Create**: App `do tab.new { space, name, folder?, argv? }`. `space` is the workspace id, `name` the recipe's label, `folder` the requested `cwd`. `argv` is the recipe's command followed by its arguments (`src/server/agent-recipes.ts`): only flags the CLI documents, built by the server from validated model and thinking choices, never from client text. Codex always gets `--no-daemon`, without which its commands would run outside the Core.
+1. **Create**: App `do tab.new { space, name, folder, argv?, task? }`. `space` is the workspace id; `name` is the first line of the first message (at most 40 characters), else the recipe's label; `folder` is the requested `cwd`, else the workspace's folder. `task` is the first message, which Herdr sends once the agent is ready. `argv` is the recipe's command followed by its arguments (`src/server/agent-recipes.ts`): only flags the CLI documents, built by the server from validated choices, never from client text. Codex always gets `--no-daemon`, without which its commands would run outside the Core.
+   - **Resume**: with `resumeSessionId`, the recipe adds its resume arguments: claude `--resume <id>`, codex `resume <id>` (after `--no-daemon`), opencode `--session <id>`, pi `--session <file>` (the session file the id names, `agent-session-normalization.md` §2.6). AGY and a plain terminal cannot resume.
 2. **Result**: The reply names the new `terminal`. Pigeon takes a snapshot and answers with that terminal as the pane and the tab that holds it. A reply without a terminal, or a terminal in no tab, is `invalid_response`.
 3. **Failure**: When `tab.new` fails, the App has created nothing. A program that exits right after launch is shown by the App as an error toast, and its pane has no agent.
 4. **Startup prompts** (directory trust, login) appear as ordinary prompts on the new pane (§8.2), or as the raw key pad.
@@ -89,6 +92,8 @@ The Core reports no agent session id, so no pane has a structured agent session 
 The `terminal` recipe sends no `argv`, so the tab starts the machine's shell.
 
 **Close**: App `do tab.close { id, confirmed: true }` ends the tab's terminals. The phone's close dialog is the confirmation. Closing a space's last tab also closes the space.
+
+**Rename**: App `do tab.rename { id, name }`, then a snapshot.
 
 ## 6. Prompting and Command Execution
 
@@ -112,7 +117,7 @@ Pigeon does not drive agent menus with a state machine. An agent command such as
 - a recognized numbered prompt (§8.2), answered with one tap; or
 - a menu without numbers, answered with the raw key pad (arrows, Enter, Esc).
 
-The default "模型" macro is the text `/model`.
+**Runtime model switch** (`protocol.md` §4.9): claude accepts `/model <id>` as prompt text. No other recipe declares a runtime model or effort command, so the phone offers those values only when creating a session.
 
 ## 8. Screen Parse Rules
 
@@ -140,15 +145,35 @@ The prompt is pending only when it sits at the bottom of the screen. After its o
 - **Key pad**: `fallbackKeys` is `["y","n","enter","esc"]` for y/n prompts and `["enter","esc","up","down"]` otherwise.
 - **Identity**: `interactionId` is a hash of the question and the option labels, and `fingerprint` also covers the payload lines. Both stay the same while unrelated output scrolls away, and both change when the prompt changes.
 
-### 8.3 Skills
-Skills come from each agent's own skill directories: project directories first, so a project skill shadows a user skill of the same name. Each skill is offered with the agent's own invocation syntax.
+### 8.3 Skills and commands
+Entries come from each agent's own directories, in the order below: project directories first, then the user's, then plugins, then built-in commands. An earlier entry shadows a later one with the same invocation. Within each source, entries are sorted by invocation; built-in commands keep the order of the table. Each entry is offered with the agent's own invocation syntax.
 
-| Agent | Directories (project, then user) | Invocation |
+**Project root**: `<root>` is the nearest folder at or above the pane's folder that contains `.git`; without one it is the pane's folder.
+
+| Agent | Skills (project, then user) | Invocation |
 | :--- | :--- | :--- |
-| claude | `<cwd>/.claude/skills`, `~/.claude/skills` | `/name` |
-| codex | `<cwd>/.agents/skills`, `~/.agents/skills`, `~/.codex/skills` | `$name` |
-| pi | `<cwd>/.pi/skills`, `~/.pi/agent/skills` | `/skill:name` |
-| agy | `<cwd>/.agents/skills`, `~/.gemini/antigravity-cli/skills`, Antigravity builtin skills | `/name` |
-| opencode | `<cwd>/.opencode/skills`, `~/.config/opencode/skills` | `/name` |
+| claude | `<root>/.claude/skills`, `~/.claude/skills` | `/name` |
+| codex | `<root>/.agents/skills`, `~/.agents/skills`, `~/.codex/skills` | `$name` |
+| pi | `<root>/.pi/skills`, `~/.pi/agent/skills` | `/skill:name` |
+| agy | `<root>/.agents/skills`, `~/.gemini/antigravity-cli/skills`, Antigravity builtin skills | `/name` |
+| opencode | `<root>/.opencode/skills`, `~/.config/opencode/skills` | `/name` |
 
-A skill is a directory containing `SKILL.md`. Its description is the front matter `description:`. Skill files are untrusted and are rendered as text.
+| Agent | Custom commands (project, then user) | Invocation |
+| :--- | :--- | :--- |
+| claude | `<root>/.claude/commands`, `~/.claude/commands` | `/name`; a file in a subfolder `a/b.md` is `/a:b` |
+| codex | `~/.codex/prompts` | `/prompts:name` |
+| pi | `<root>/.pi/prompts`, `~/.pi/agent/prompts` | `/name` |
+| opencode | `<root>/.opencode/command`, `~/.config/opencode/command` | `/name` |
+
+**Claude plugins**: every plugin in `~/.claude/plugins/installed_plugins.json` (key `<plugin>@<marketplace>`, entries with an `installPath`) contributes its `skills/*/SKILL.md` and `commands/*.md` with source `plugin`, invoked as `/<plugin>:<name>`. A missing install path contributes nothing; an unparseable file fails loudly.
+
+**Built-in commands** (source `builtin`, kind `command`): a short list of commands that make sense from a phone. Commands the phone already has native UI for (`/model`) are not listed.
+
+| Agent | Built-in commands |
+| :--- | :--- |
+| claude | `/compact`, `/clear`, `/init` |
+| codex | `/compact`, `/new`, `/init`, `/review` |
+| opencode | `/compact`, `/new`, `/init` |
+| pi | `/compact`, `/new` |
+
+A skill is a directory containing `SKILL.md`; a command is a `.md` file. The description is the front matter `description:` (else the first non-empty body line, for commands). These files are untrusted and are rendered as text.

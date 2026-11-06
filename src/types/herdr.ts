@@ -48,7 +48,10 @@ export interface HerdrCoreTerminal {
   name?: string | null;
   cwd: string;
   state: "live" | "finished";
-  foreground?: { cwd: string } | null;
+  /** When the terminal was started (milliseconds since the epoch). */
+  created_ms?: number;
+  /** What runs in it now: the foreground process group leader. */
+  foreground?: { cwd: string; pid?: number; name?: string; argv?: string[] } | null;
   status?: HerdrCoreStatus | null;
   title?: string;
 }

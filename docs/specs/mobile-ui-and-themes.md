@@ -1,129 +1,168 @@
 # Mobile UI and Theming Specification
 
-## 1. Ergonomic Principles for Mobile Development
+## 1. Principles
 
-Pigeon is designed explicitly for single-handed mobile thumb usage on Chrome/Chromium mobile browsers, replacing raw SSH terminals with structured cards and native voice input.
+Pigeon is a phone app for Herdr, written as a PWA. It follows the interaction model of a native iOS chat app (Claude Code for iOS is the reference), and keeps Herdr's own structure: workspace → tab → pane.
 
-### 1.1 Touch Targets and Hit Areas
-- **Minimum Hit Target**: All interactive elements (buttons, tab pills, selection options, macro chips) must have an active clickable hit area of at least **44px × 44px**.
-  - Elements with smaller visual footprints (e.g. 32px or 36px pills) must utilize negative margins, pseudo-elements (`::after`), or transparent padding to ensure the physical hit bounding box satisfies the 44px touch requirement.
-- **Visual Feedback**: All interactable surfaces provide immediate active/pressed visual feedback (`--accents`, `--warns`).
-- **Contrast Standard**: All text tokens must satisfy WCAG AA contrast (minimum 4.5:1 for regular text, 3:1 for graphical/decorative elements).
+- **A conversation, not a terminal.** The session page shows the agent's transcript (`agent-session-normalization.md`). Raw keys and the terminal screen appear only when the user asks for them (§5). No key pads, macro bars or double-tap guards on the main screens.
+- **One status, one place.** A pane's status is shown by its row icon on the lists and by the title of its session page.
+- **Summary first, detail on demand.** Consecutive tool calls collapse into one line; a tap opens the group, another tap the detail.
+- **When the agent needs you, the composer steps aside.** A prompt card takes the composer's place (§4).
+- **One-handed.** Primary actions sit at the bottom; every hit target is at least 44 × 44 px (smaller visuals extend their hit area with padding or a pseudo-element).
+- **UI language.** The UI text is Simplified Chinese.
 
-### 1.2 Viewport and Keyboard Adaptation (Chromium Standard)
-- Viewport declaration:
-  ```html
-  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
-  ```
-- Because Chromium mobile browsers natively honor `interactive-widget=resizes-content`, the layout viewport smoothly resizes above the software keyboard without requiring complex JavaScript visual-viewport listeners.
-- The main card container uses `flex: 1; overflow-y: auto; -webkit-overflow-scrolling: touch;`.
-- The Macro Dock and Voice Input bar remain firmly pinned directly above the virtual keyboard.
+### 1.1 Viewport and keyboard
+- Viewport: `width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content`. Chromium resizes the layout above the keyboard, so the composer stays above it without visual-viewport code.
+- Safe areas use `env(safe-area-inset-*)`.
 
-### 1.3 Voice & Text Input Rules (IME Safety)
-- **Input Component**: Pure native HTML `<textarea rows="1">` with auto-expanding height (max 120px).
-- **IME Composition Guard**: Submissions are strictly prohibited between `compositionstart` and `compositionend`. Pressing Enter while an input method editor (IME) or voice-to-text dictation buffer is active will never submit the prompt.
-- **Submission Trigger**: Prompts are sent solely by tapping the Send button or pressing Enter outside of active composition.
-- **Draft Persistence**: Unsent input drafts are saved to `localStorage` per pane to prevent accidental loss if the tab reloads.
+### 1.2 Text input
+- The composer is a native `<textarea>` that grows to at most 6 lines.
+- **IME safety**: between `compositionstart` and `compositionend` (including system dictation) Enter never sends and the `/` list (§6.2) never opens.
+- Enter outside composition sends on a hardware keyboard only; on a touch device Enter inserts a newline and the send button sends.
+- **Drafts** are kept per pane in `localStorage` and survive reloads, offline periods and failed sends.
+- **Voice**: Pigeon records no audio. Voice input is the system keyboard's dictation.
 
-## 2. Navigation Architecture
+## 2. Home
 
-### 2.1 Slide-Out Navigation Drawer
-- **Trigger**: Swipe right from the left screen edge or tap the hamburger icon in the top header.
-- **Top Half (Workspaces)**:
-  - Vertical list of all active Herdr workspaces.
-  - Displays workspace name, tab count, and status badges (`--accent` for working, `--warn` for blocked).
-  - Tapping a workspace switches the active context and closes the drawer.
-- **Bottom Half (Working Agents Radar)**:
-  - Global list of all agents currently in `working` or `blocked` states across the entire machine.
-  - Tapping any agent immediately navigates to its corresponding workspace and tab.
-- **Footer**: Access to Settings (`快捷操作栏` Macros, `外观` Appearance, `连接与配对` Pairing).
+### 2.1 Workspaces (the start screen)
+- A large title "Pigeon". Top right, one glass capsule with **filter** (§2.3) and **settings** (§8.1). There is no ☰, no device row, no tab bar, no pane row and no drawer.
+- An **所有 Agent** summary row (count of agents, and of those waiting) opens §2.2.
+- One collapsible group per Herdr workspace, in Herdr's order. The group header shows the workspace name, its git branch when it has one, and its tab count; its `+` opens a new session (§7.1) in that workspace. Collapsed state is kept in this browser.
+- One row per tab. The left icon is the tab's status (its primary pane's): amber dot = waiting for you (`blocked`), spinner = working, check = done, hollow circle = idle, `>_` = plain terminal. The title is the tab label; the subtitle names the agent and, when the tab has more than one pane, the pane count.
+- A blue dot marks a tab whose agent finished (`done`) while this browser was not viewing it. Viewing the pane clears it. Kept in this browser only.
+- Swiping a row left reveals **重命名** and **关闭**; both use the same flows as the ⋯ menu (§6.1, §6.4).
+- Bottom left, a search button filters rows by tab label and workspace name. Bottom right, a **新会话** button opens §7.1 for the workspace Herdr has focused.
+- While the daemon or Herdr is unreachable, the connection banner (§8.3) sits above the list.
 
-### 2.2 Horizontal Tab Bar & Multi-Pane Split Support
-- Pinned below the header, displaying active tabs in the current workspace.
-- **Split Pane Chips**: In Herdr, a Tab may contain split panes (e.g. `pane_count > 1`).
-  - Mobile view defaults to the primary agent pane.
-  - If multiple panes exist within the tab, sub-pane pill chips (`[Claude c1] [Shell]`) are rendered directly beneath the tab bar, allowing one-tap switching between split panes without mutating desktop layout.
-- Includes a dashed `[+]` button to launch a new Tab and select an agent.
+### 2.2 All agents
+Every pane with an agent, across workspaces, grouped by status in this order: **等待你** → **工作中** → **已完成** → **空闲**. The idle group starts collapsed. Each row's subtitle names the workspace and the agent; a waiting row adds one amber line saying what it waits for (the pane's summary). A tap opens that session; back returns here.
 
-## 3. Card Stream & Interactive Controls
+### 2.3 Filter
+A sheet shared by §2.1 and §2.2: status (等待你, 工作中, 已完成, 空闲, 终端), agent kind, and display options (show plain terminals, show idle tabs). While a filter is active the filter button carries a dot. Stored in this browser's `localStorage` only, never synced.
 
-### 3.1 Card Types, Turn-Based Flow, and Markdown
-1. **Thought / Reasoning Block**: Displays agent internal thinking (`▸ Thought for Xs, Y tokens`). Collapsed by default via an accordion toggle with a subtle single-line preview beneath, expanding to show full reasoning text.
-2. **Tool Execution Block & Display Density**:
-   - **Compact Single-Line Mode (Antigravity-style, default)**: Condenses each command or file operation into a single-line item (e.g. `● Read(path)`, `● Edit(path)`, `● Bash(cmd)`), avoiding vertical screen waste. Tapping the line smoothly expands input parameters and terminal output logs.
-   - **Aggregated Mode (OpenCode-style)**: Summarizes consecutive tool invocations into an ultra-compact summary line (e.g. `→ Explored: 4 reads, 1 search`), expandable on demand.
-   - **Detailed Mode**: Full card presentation with discrete monospaced blocks.
-3. **Full GFM Markdown Rendering**: Assistant responses and markdown cards render standard GitHub Flavored Markdown (headers, bullet/ordered lists, blockquotes, code blocks with syntax styling, inline code, and links) via `marked`.
-4. **Table Anti-Wrap Standard**: To prevent Markdown tables from breaking on narrow 360–412px mobile screens, tables must use `display: block; overflow-x: auto; white-space: nowrap; -webkit-overflow-scrolling: touch;`. Table columns maintain natural widths and scroll smoothly horizontally without vertical character folding.
-5. **Session Diff Drawer**: A top navigation badge `[ 📝 N files · +X -Y ]` opens a dedicated slide-out drawer showing per-file change statistics and unified line diffs with red/green syntax highlighting.
-6. **Interactive Question Action Sheet**: When an agent transitions to `blocked` awaiting user input or permission, Pigeon elevates an Action Sheet highlighted with `--warn` borders, offering touch buttons (>= 44px) for each option plus fallback keys (`Enter`, `Esc`, `↑`, `↓`) and a "查看原始终端画面" (View Raw Terminal) sheet link.
-7. **Skill Completion**: Typing `/` at the start of the composer lists the current pane's skills (`protocol.md` §5.7). Choosing one inserts its agent-specific invocation.
+## 3. Session page
 
-### 3.2 Scroll Anchoring, Floating Controls, and Jump to Bottom
-- **Anchoring**: When new stream chunks arrive, the viewport auto-scrolls to the bottom **only if** the user is already within 40px of the bottom.
-- **Auto Jump-to-Bottom Button**: If the user scrolls upward (> 60px from the bottom), a floating "回到底部 ⇣" (Jump to Bottom) pill button smoothly fades in centered above the bottom dock. Tapping it smoothly scrolls directly to the bottom.
-- **Right Floating Quick-Scroll Bar**: Pinned vertically to the right-center edge of the screen, providing one-touch access to `⤒ Top` (回顶部), `↑ Page Up` (上一页), `↓ Page Down` (下一页), and `⤓ Bottom` (到底部). The strip displays a faint border and low opacity (`0.35`) by default so as not to obstruct reading, transitioning to full prominence (`0.95`) on hover or touch. Users can disable this control strip in Settings.
+### 3.1 Layout
+- A glass header: back, the session title (tab label; a spinner while working, an amber dot while waiting), the pane in the subtitle when the tab has several, and ⋯ (§6.1). Tapping the title switches pane when there are several (§6.8).
+- The body is the transcript (§3.2) when the pane has a structured session, else the screen cards (§3.6). A plain terminal tab shows the terminal view (§5) as its body.
+- The composer (§6) floats at the bottom.
 
-### 3.3 Contextual Safeguards for Destructive Actions
-- **Interactive Approvals**: All authorization prompts are handled directly via elevated Interactive Question Cards and native Action Sheets with dedicated choice buttons. Redundant toolbar macro chips are eliminated to keep the bottom dock lean.
-- **Terminating Action (`Ctrl+C`)**: **Double-tap protection**. A macro marked `confirm` (the default Ctrl+C macro) needs a second tap within 2 seconds; the first tap changes its label to a confirmation prompt. The setting `confirmCtrlC: false` turns this off.
-- **Interrupt**: The interrupt button sends the current agent recipe's `interruptKeys` (Esc for agents, Ctrl+C for a plain terminal).
-- **Unsent drafts**: When a prompt cannot be sent (offline), the composer keeps the text and an error toast explains why.
+### 3.2 Messages
+- A user message is a right-aligned bubble; attachments show as thumbnails above it.
+- Assistant text is GitHub-flavored Markdown laid out on the page, not in a card: headings, lists, inline code, code blocks with a copy button, links that open outside the app. Tables keep their column widths and scroll horizontally (`display:block; overflow-x:auto; white-space:nowrap`).
+- The last reply of a finished turn has a copy button.
+- Reasoning collapses to one line, "思考了 N 秒" (or "思考" when no duration is known); a tap shows the full text.
+- Agent output is untrusted: Markdown is sanitized (`architecture.md` §5).
 
-### 3.4 Mobile Shell Layout Invariants
-- **Feed must scroll, never compress**: the card feed is a fixed-height flex column with `overflow-y: auto`. Its direct children are scroll content, so they must not participate in flex shrinking (`flex: 0 0 auto`). Cards with `overflow: hidden` otherwise collapse to a few pixels and overlap.
-- **One status, one place**: agent status is shown once, in the session strip (workspace › tab › agent + status + model). The feed footer must not repeat it.
-- **Top chrome budget**: header (52px) + tab bar (46px) + optional split-pane row (44px). Session strip stays under 92px so the feed keeps the majority of an 844px-tall viewport.
-- **Terminal output**: rendered as a panel with a mobile header (title, line count, copy, expand). macOS traffic lights are not used. When structured cards exist, the raw screen collapses to a single-line "终端 · 最近一行 · N 行" row that opens the full-screen terminal sheet.
-- **Tool cards**: header shows the tool name and exit status; the command renders on its own mono line; output is capped at five lines with an explicit expand control.
-- **Bottom composer & Unified Input Area (D3, D7)**: Replaces persistent macro toolbars with an all-in-one input composer area to maximize the viewport available for agent cards. It incorporates:
-  - An inline model and thinking level capsule indicator.
-  - Native `/` local Skill completion popup with zero-latency fuzzy search.
-  - An Options button (`[···]`) that elevates an on-demand Option Sheet housing interrupts (`[🛑 中断 / Esc]`, double-tap `[Ctrl+C]`), raw virtual keys (`Tab`, `Enter`, arrows), and user macros. The Options trigger can be toggled in Settings (`showMacroDock`).
-  - Strict respect for `interactive-widget=resizes-content` and `env(safe-area-inset-bottom)`.
-- **Tab Lifecycle Safeguard (D5)**: Closing an active Tab triggers a double-confirmation modal warning that the agent process and session will terminate, synchronizing real destruction to Herdr (`tab.close`).
-- **Truncation**: workspace names, server host and long card titles use ellipsis, never hard clipping without an indication.
+### 3.3 Tool calls
+- Consecutive tool calls of a turn collapse into one summary line that counts them by verb, e.g. "读取了 4 个文件，编辑了 3 个文件", with the added/removed line totals of its edits. A group of one shows that call's own icon and label and opens its detail directly.
+- **Group sheet**: the summary as its title, then a timeline of the calls. Each item shows its verb (运行, 编辑, 创建, 读取, 搜索, or the tool name) and its object; a command shows the agent's own description of it when the transcript has one, else the command.
+- **Detail** (pushed inside the sheet, with back instead of close):
+  - Command: description, command (wrapped, copyable), output (monospace, wrapped, copyable, truncated with "展开" past 40 lines), then exit code and duration; a non-zero exit code is red.
+  - Edit / write: the file path (copyable) and the change as a diff with line numbers and add/remove bars. Diff lines do not wrap; the block scrolls horizontally.
+  - Other tools: parameters above, result below.
 
-## 4. Theming and Color Tokens
+### 3.4 Todo
+When the session has a todo list (`agent-session-normalization.md` §3), a capsule at the bottom left shows "done/total"; a tap opens a sheet with every item and its state. A todo update in the transcript shows as one line "☰ 任务 n/m" that opens the same sheet. Agents without a todo tool show no capsule.
 
-All UI components reference semantic CSS variables exclusively. Hardcoded hex colors in components are forbidden.
+### 3.5 Running state and scrolling
+- While working, the last turn ends with an animated "思考中…" line, and the send button becomes **■ 停止**.
+- **Stop** sends the recipe's `interruptKeys` (Esc for agents, Ctrl+C for a plain terminal) at once, without confirmation.
+- A message sent while the agent is working is queued by the daemon (`protocol.md` §4.2). Queued messages show as dashed bubbles below the last turn, each with **撤销**; they are sent in order when the turn ends.
+- New content scrolls the page to the bottom only when the page was within 40 px of the bottom. Otherwise a round ↓ button appears above the composer and scrolls to the newest message.
 
-### 4.1 Token Schema
-- **Backgrounds**: `--bg`, `--surface`, `--sheet`, `--inset`, `--scrim`
-- **Lines & Borders**: `--line`, `--border`, `--border2`
-- **Typography**: `--fg`, `--muted`, `--faint`
-- **Selections**: `--sel`, `--selb`
-- **Accent (Working/Primary)**: `--accent`, `--onaccent`, `--accentt`, `--accentbg`, `--accents`, `--accentl`
-- **Warning (Blocked/Prompt)**: `--warn`, `--onwarn`, `--warnt`, `--warnbg`, `--warnb`, `--warns`, `--warnl`, `--warnk`
-- **Code & Diffs**: `--code`, `--codeb`, `--codefg`, `--addbg`, `--addfg`, `--delbg`, `--delfg`, `--badge`
+### 3.6 Screen-card fallback
+A pane with an agent but no bound session shows the classified screen cards (`herdr-adapter.md` §8.1) in the same message style: markdown text, tool lines, diffs, thoughts.
 
-### 4.2 Contrast Calibration
-In the Pigeon Light theme variant, `--faint` is calibrated to `#5C6675` against `--bg` (`#F6F7F9`), producing a contrast ratio of **5.2:1**, strictly satisfying the WCAG AA 4.5:1 threshold.
+## 4. Prompt cards
 
-### 4.3 Preset Theme Packs
-The system supports 6 curated theme packs, each providing paired Light and Dark variants:
-1. **Tokyo Night** (Tokyo Night / Tokyo Night Day)
-2. **Claude** (Claude Slate Dark / Claude Ivory Light)
-3. **GitHub** (GitHub Dark / GitHub Light)
-4. **Gruvbox** (Gruvbox Dark / Gruvbox Light)
-5. **Catppuccin** (Mocha Dark / Latte Light)
-6. **Pigeon** (Default Slate Dark / Pigeon Light)
+When the pane has a `pendingInteraction` (`protocol.md` §5.4), a floating card replaces the composer, the header shows the amber dot and, if this phone is not viewing the pane, a push is sent (`push.md`).
 
-### 4.4 Prevent Theme Flash on Load
-The HTML header embeds an inline render-blocking script that reads `localStorage.getItem('pigeon_theme')` and immediately sets CSS root attributes before body rendering:
-```html
-<script>
-  (function(){
-    const t = localStorage.getItem('pigeon_theme') || 'pigeon';
-    const m = localStorage.getItem('pigeon_mode') || 'dark';
-    document.documentElement.setAttribute('data-theme', t);
-    document.documentElement.setAttribute('data-mode', m);
-  })();
-</script>
-```
+### 4.1 Permission
+- Title "需要授权", the question, and the tool call it is about when the transcript has it pending: the command, or a mini diff for an edit (a tap opens §3.3's detail).
+- One button per numbered option, labels and order exactly as on screen. A tap sends that option (`interaction_respond`); the button shows "发送中…" and further taps do nothing until the answer is acked. The card goes away when the prompt leaves the screen.
+- An option whose label asks to tell the agent something ("No, and tell …") is sent, then the composer returns with focus so the user can write the reason.
+- **在终端中处理** opens the terminal view (§5). So does an ack with `approved: false`.
 
-## 5. Internationalization (i18n)
+### 4.2 Questions
+When the transcript has a pending question tool call (Claude `AskUserQuestion`), the card uses it: a large question title, options as "label + description", and **其他…** last, which focuses the composer. With several questions the card pages with "‹ 1/4 ›"; the last page's button is **提交**. **下一题** stays disabled until an option is picked. ✕ collapses the card into a capsule "n 个问题等你回答" above the composer, which reopens it.
+Answers are sent as the screen's numbered options: the card matches the current screen prompt to its question by text and sends the digit of the option with the same label. Without a transcript question, the card is the plain §4.1 card.
 
-- **Source Language**: English (`en`). All fallback strings and key schemas are authored in English.
-- **Initial Translations**: Simplified Chinese (`zh-CN`).
-- Location: `src/web/i18n/{en,zh-CN}.json`. Hardcoded UI strings in Solid components are forbidden.
+### 4.3 Plan approval
+When the transcript has a pending plan tool call (Claude `ExitPlanMode`), the card shows the plan as Markdown, faded past the card height with **全文** to read it in a sheet, and the screen's options as buttons. An option that asks to keep planning returns the composer like §4.1.
+
+### 4.4 No numbered options
+A prompt without numbered options, or `blocked` with nothing recognized, shows its question (or "Agent 在等待") and **在终端中处理** only.
+
+## 5. Terminal view
+
+- Reached only from a prompt card's **在终端中处理** or the ⋯ menu's **查看终端**. It is a sheet with the pane's current screen (`pane_state.rawScreen`, monospace, no wrapping) and a key row: ↑ ↓ ← → Enter Esc Tab Ctrl+C, plus the prompt's `fallbackKeys`.
+- Keys go through `agent_send_keys`. Desktop focus is never moved.
+- A plain terminal tab's session page is this view, and its composer sends command lines (`agent_prompt`).
+
+## 6. Composer and session actions
+
+### 6.1 Composer
+- Collapsed: a glass capsule with `+`, a text field and send. Focused: attachment thumbnails, the model capsule (§6.4) and send.
+- **+ sheet**: 相机, 照片, 文件 (the system pickers; files are uploaded at once, `protocol.md` §7), **Skills 与命令** (§6.3), **从历史会话恢复** (§7.2).
+- Sending with attachments passes their upload ids; the daemon writes them into the prompt (`protocol.md` §4.2).
+
+### 6.2 `/` at line start
+Typing `/` as the first character of a line (outside IME composition) opens a popover above the composer with the same list as §6.3, filtered by what follows. Choosing an entry replaces the `/…` text with the entry's `invocation` followed by a space; it stays editable text.
+
+### 6.3 Skills and commands
+A sheet of the pane's entries (`protocol.md` §5.7), grouped by source: 项目 → 用户 → 插件 → 命令, with segment buttons to narrow. Each row shows the name and description. Choosing one inserts its invocation into the composer.
+
+### 6.4 Model and effort
+A sheet listing the recipe's models and, for the chosen model, its effort levels. It shows the current values and their source: **启动参数** (from Pigeon's launch), **日志** (the transcript names the model) or **未知**. Changing them sends the recipe's runtime command as a prompt (`protocol.md` §4.9); when the agent has no such command the sheet says that the value can be chosen in a new session and changes nothing.
+
+### 6.5 ⋯ menu
+重命名 (renames the Herdr tab), 复制分支 (copies the tab's git branch; shown when there is one), 本会话的变更 (§6.6), 切换 pane (shown with several panes, §6.8), 查看终端 (§5), and **关闭会话** in red (§6.7).
+
+### 6.6 Session changes
+Every edit in the session's transcript, summed per file: path, added and removed lines. A tap opens that file's diffs (§3.3 edit detail). Empty when the pane has no bound session.
+
+### 6.7 Close
+A confirmation sheet that states: the tab on the computer will close, which programs end (each pane's agent or shell), and whether one is working. It also says the agent's session log is kept. Confirming sends `close_tab`.
+
+### 6.8 Switch pane
+A sheet listing the tab's panes (agent or shell, status). The session page defaults to the tab's first pane with an agent. Switching never changes the desktop.
+
+## 7. New session
+
+### 7.1 New
+A blank session page: segments **新建 / 恢复**, chips for **工作区** (Herdr's workspaces; preset from where it was opened), **Agent** (recipes) and **模型** (with effort), then the composer for the first message. Sending creates the tab with the first message (`protocol.md` §4.5) and opens it; the title starts as the first message and can be renamed. Creating a Herdr workspace is not offered.
+
+### 7.2 Resume
+The **恢复** segment (also reached from `+`) lists the agent's past sessions for the chosen workspace's folder (`protocol.md` §4.10): title or first message, and age. A tap opens a new tab that resumes it (`protocol.md` §4.5 `resumeSessionId`) and goes there. Resuming always opens a new tab.
+
+## 8. Settings, pairing and connection
+
+### 8.1 Settings (gear on home)
+- **外观**: 跟随系统 / 浅色 / 深色; **降低透明度** (§9.2); **强调色**.
+- **通知**: the push switches (`push.md` §5). Until delivery exists they are shown disabled with the note "推送投递尚未接通".
+- **设备与配对**: the connection to the computer and to Herdr; paired devices with **移除** (revokes at once, `protocol.md` §4.12); how to pair another phone (`pigeon pair` on the computer).
+- **关于**: version; install-as-app hint.
+
+### 8.2 Unpaired
+Without a valid pairing only the pairing guide shows: scan the QR code from `pigeon pair`. It does not reconnect in a loop. Opening `/pair#code=…` pairs and goes to home (`security-and-pairing.md` §2).
+
+### 8.3 Connection
+- Daemon unreachable or Herdr offline: a banner at the top ("电脑未连接" / "Herdr 没有响应"), retried every 3 s, gone when back.
+- A failed send keeps the draft and shows a toast with the reason.
+- A new client build shows **有新版本 · 重新加载** (`architecture.md` §4.1).
+
+## 9. Themes
+
+### 9.1 Appearance
+- Two palettes, light and dark; **跟随系统** follows `prefers-color-scheme`. No third-party branding.
+- **Accent** (blue, purple, green, orange, pink) drives buttons, links and the working state. Waiting is always amber; errors red.
+- Components use semantic tokens only: `--bg`, `--surface`, `--elev`, `--fg`, `--muted`, `--faint`, `--line`, `--accent`, `--onaccent`, `--accentbg`, `--warn`, `--warnbg`, `--danger`, `--addbg`, `--addfg`, `--delbg`, `--delfg`, `--code`.
+- Text tokens meet WCAG AA: `--fg`, `--muted` and `--faint` reach 4.5:1 against `--bg` in both palettes.
+- The theme is applied before first paint from `localStorage` (keys `pigeon_mode`, `pigeon_accent`), so the page never flashes the wrong palette.
+
+### 9.2 Liquid Glass
+- Glass is used only on the floating control layer: header buttons and capsules, the composer, the todo capsule, the ↓ button, menus, sheets, prompt cards and the `/` popover. Messages and lists stay opaque.
+- Glass = a translucent fill with `backdrop-filter: blur() saturate()`, a light inner top edge, a dark inner bottom edge, and a soft diagonal highlight. The session header is a progressive blur fading into the content rather than a bar.
+- WebKit cannot refract inside `backdrop-filter`, so there is no lens distortion.
+- **降低透明度** replaces every glass surface with an opaque `--elev` surface. It defaults to on when `prefers-reduced-transparency: reduce` matches. Stored in this browser.

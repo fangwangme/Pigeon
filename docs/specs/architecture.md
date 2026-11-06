@@ -17,9 +17,9 @@ Rather than exposing a raw VT100 character-grid terminal over SSH/Mosh—which s
 ┌─────────────────────────────────────────────────────────┐
 │              Mobile Client (Chrome Mobile PWA)          │
 │  - Solid.js Reactive UI                                 │
-│  - Native Voice-Ready Textarea (IME Composition Safe)   │
-│  - Contextual Safeguards (Double-tap Ctrl+C)            │
-│  - Sub-pane Pill Chips for Split Tabs                   │
+│  - Native-style conversation UI (transcripts)          │
+│  - Workspace → tab lists, all-agents view               │
+│  - IME-safe composer, prompt cards, uploads             │
 └────────────────────────────┬────────────────────────────┘
                              │ HTTPS + WSS (Tailscale Serve / Insecure Dev)
                              │ Wire Protocol: Typed JSON Message Protocol
@@ -76,12 +76,12 @@ Herdr has no global "output changed" event. Pigeon combines events, snapshots an
 ### 4.4 Dual-Track Session Rendering (Structured Stream vs Terminal Fallback)
 Pigeon implements a **Dual-Track Architecture** (detailed in `agent-session-normalization.md`):
 1. **Track 1 (Structured Agent Stream)**:
-   - When a pane has a recognized agent session (OpenCode, AGY, Claude Code, Codex, Pi), Pigeon's `AgentSessionAdapter` reads the agent's native local storage (SQLite or JSONL) incrementally.
-   - Pushes standardized `NormalizedTurn` streams to the mobile client with accordion folding for reasoning/thinking, structured tool call cards, and table horizontal overflow protection.
+   - Pigeon binds each agent pane to the agent's own session records from the process facts Herdr Core reports (`agent-session-normalization.md` §2.0), and reads those records (SQLite or JSONL) incrementally for Claude Code, Codex, Pi, OpenCode and AGY.
+   - Pushes standardized `NormalizedTurn` streams, which the phone renders as a conversation (`mobile-ui-and-themes.md` §3).
 2. **Track 2 (PTY Raw Terminal Fallback)**:
    - When a pane runs a generic CLI shell (`bash`, `zsh`, `htop`, `vim`, etc.), or has no structured session, Pigeon shows the classified screen cards. The raw screen text (`pane_state.rawScreen`) is always available in the terminal sheet.
-3. **Voice Input Policy**:
-   - In-app microphone audio recording is deliberately avoided. Pigeon relies 100% on the mobile device's system keyboard voice input (Gboard, WeChat input method, iOS Dictation). The composer enforces strict IME composition protection (`isComposing`) to prevent accidental submission while voice candidate text is streaming.
+3. **Voice Input Policy** (user decision, 2026-11-06):
+   - Pigeon records no audio. Voice input is the phone's system dictation. Bridging the phone's microphone to an agent's own voice mode, or recognizing speech on the computer, is out of scope for now. The composer's IME protection keeps dictation from sending early (`mobile-ui-and-themes.md` §1.2).
 
 ### 4.5 Mobile Presence and Notification Milestone
 - Application-level heartbeats (`ping` every 15s; server replies `pong`).
@@ -98,12 +98,12 @@ Pigeon uses a centralized, structured JSON configuration file to support pre-con
    - Location: `$XDG_CONFIG_HOME/pigeon/config.json` (defaults to `~/.config/pigeon/config.json`).
    - If the configuration file does not exist upon daemon startup, Pigeon automatically generates a default `config.json` with standard presets.
    - A file that is not valid JSON, or not a JSON object, stops startup with an error naming the file. It is never overwritten with defaults, so hand edits are not lost.
-   - Values written by older builds are upgraded on load and the file is rewritten: the old `模型` key macro becomes the text `/model`, an admin socket path equal to one an older build wrote automatically is removed, so the environment decides again, and the obsolete `herdrSocketPath` (the old TUI Herdr socket) is removed. An admin socket path the user set to anything else is kept.
+   - Values written by older builds are upgraded on load and the file is rewritten: client keys this version no longer has (`themeKey`, `themeId`, `confirmCtrlC`, `defaultView`, `macros`, `displayDensity`, `showScrollControls`, `showMacroDock`) are removed, an admin socket path equal to one an older build wrote automatically is removed, so the environment decides again, and the obsolete `herdrSocketPath` (the old TUI Herdr socket) is removed. An admin socket path the user set to anything else is kept.
 2. **Configuration Namespaces**:
    - `server`: Daemon-level settings (`port`, `host`, `insecureDev`, `publicBaseUrl`). CLI flags override them at runtime without changing the file. The Herdr App and Herdr Core socket paths (`herdrAppSocketPath`, `herdrCoreSocketPath`), the admin socket path and the state directory are derived from the environment (`HERDR_APP_HOME`, `HC_TERMINAL_SOCKET`, `XDG_RUNTIME_DIR`, `XDG_STATE_HOME`, `HOME`) at every start, and a fresh config does not contain them. A value set by hand in `server` still wins.
-   - `client`: Mobile client preferences (`themeKey`, `themeMode`, `themeId`, `confirmCtrlC`, `defaultView`, `macros`).
+   - `client`: Appearance shared by all paired phones (`themeMode`, `accent`). Per-browser conveniences (filters, collapsed groups, unread marks, drafts, reduced transparency) stay in that browser's `localStorage`.
 3. **Partial Patch & Deep-Merge Persistence**:
-   - Mobile clients synchronize settings via `config_patch` messages carrying only the modified delta (e.g. `{ "client": { "themeKey": "monokai-pro" } }`).
+   - Mobile clients synchronize settings via `config_patch` messages carrying only the modified delta (e.g. `{ "client": { "accent": "green" } }`).
    - The daemon validates the patch (`protocol.md` §6.3), deep-merges it, and writes the file atomically before replying. A write failure is reported to the client.
    - All unmodified configuration fields (including server networking and other client settings) are strictly preserved across sessions and updates.
 4. **Multi-Device State Broadcast**:

@@ -1,108 +1,93 @@
-# Agent Session Normalization & Structured Rendering Specification
+# Agent Session Normalization Specification
 
-## 1. Overview and Purpose
+## 1. Purpose
 
-Pigeon provides a mobile-first mirror client for developers running AI coding agents inside [Herdr](https://herdr.dev). 
+A terminal screen loses what a phone needs: where a tool call starts and ends, what an edit changed, which text is reasoning. Each supported agent writes its own session records to disk. Pigeon reads them, normalizes them into one model (`NormalizedTurn`, §3), and the phone renders that as a conversation (`mobile-ui-and-themes.md` §3).
 
-While raw VT100 character scraping works for traditional CLI tools, it is fundamentally ill-suited for AI coding agents on mobile screens (360–412px wide):
-1. **Semantic Deprivation**: Plain terminal text loses semantic boundaries, making it impossible to distinguish between thought processes, tool parameters, file diffs, and assistant conclusions.
-2. **Table Wrapping Catastrophe**: 80-column Markdown tables are forcibly soft-wrapped into 35-column mobile terminal grids, turning structured tables into unreadable vertical garbage.
-3. **Screen Real Estate Waste**: Large Chain-of-Thought (CoT) reasoning blocks and verbose tool execution logs flood the mobile viewport, burying the agent's actual responses.
+- **Track 1 (structured)**: a pane bound to a session (§2.0) shows its turns.
+- **Track 2 (screen)**: a pane with an agent but no bound session shows the classified screen cards (`herdr-adapter.md` §8). A plain terminal shows the terminal view.
 
-To solve this, Pigeon adopts a **Dual-Track Architecture (双轨制)**:
-- **Track 1 (Structured Agent Stream)**: When a Herdr pane runs a supported AI coding agent, Pigeon attaches an `AgentSessionAdapter` directly to the agent's native local storage (SQLite or JSONL) and streams a standardized `NormalizedTurn` event stream to the mobile PWA.
-- **Track 2 (PTY Raw Terminal Stream)**: When a pane runs a generic interactive shell (`bash`, `zsh`, `htop`, `vim`, etc.), Pigeon falls back smoothly to its streaming PTY terminal view.
+Prompts are always detected on the screen (`herdr-adapter.md` §8.2), because the records do not contain a prompt until it is answered. Pending tool calls in the records only enrich the prompt card (`mobile-ui-and-themes.md` §4).
 
----
+Session records are files written by other programs: they are a trust boundary. Each record is parsed on its own; a record that is not valid JSON or has an unknown shape is skipped, and its text is never interpreted as markup or commands.
 
-## 2. Supported Local Agent Engines & Native Storage Contracts
+## 2. Sessions
 
-The old terminal Herdr (0.9.x) reported the agent identity and session identifier for each pane as below. Herdr Core reports the agent identity only (`herdr-adapter.md` §4):
-```json
-"agent_session": {
-  "agent": "opencode" | "agy" | "claude" | "codex" | "pi",
-  "kind": "id",
-  "value": "<session-id>"
-}
-```
+### 2.0 Binding a pane to its session
+Herdr Core reports no session id (`herdr-adapter.md` §4). Pigeon binds each agent pane from what the Core does report: the agent kind, the foreground process id (`foreground.pid`), the pane's folder (`foreground.cwd`, else `cwd`) and the terminal's creation time (`created_ms`).
 
-Pigeon resolves and tails each agent's native session records according to the following contracts:
+1. **Exact (claude)**: `~/.claude/sessions/<pid>.json` names `sessionId` and `cwd`. The session is `~/.claude/projects/<slug(cwd)>/<sessionId>.jsonl`.
+2. **Folder and time (every agent, and claude without the file)**: the newest session of that agent whose folder is the pane's folder and that was last written at or after the terminal's creation time. AGY records carry no folder, so for AGY the newest session written since the creation time is used.
+3. A session already bound to another pane is skipped by rule 2, so two panes in the same folder do not show the same conversation.
+4. No match leaves the pane unbound (Track 2).
 
-**Status (v0.1)**: The OpenCode (§2.1) and AGY (§2.2) adapters are implemented. Claude Code, Codex and Pi (§2.3–§2.5) are planned for M2. Herdr Core (the current Herdr) reports no session identifier (`herdr-adapter.md` §4), so no pane is bound to a session and every pane shows the classified screen cards (Track 2) until a session source exists.
+Binding is re-evaluated on every snapshot (`herdr-adapter.md` §3.1). When the result changes (the agent started a new session, `/clear`, a resume), the pane switches session and its viewers get a fresh `normalized_turns` (`protocol.md` §5.6). A session is read only while its pane is viewed or bound; closing the pane drops it.
+
+`slug(path)` replaces every character outside `[A-Za-z0-9]` with `-` (`/home/u/My.Proj` → `-home-u-My-Proj`).
 
 ### 2.1 OpenCode (`opencode`)
-* **Storage**: SQLite 3 database at `~/.local/share/opencode/opencode.db`.
-* **Session ID**: Matched against `session_v2.id` (e.g. `ses_e9b2e23adffeQnsWp6LzXPX3tA`).
-* **Tables Queried**:
-  - `session_v2`: Metadata, title, active model, token statistics, and total cost.
-  - `session_message`: Message ordering and sequence (`id`, `session_id`, `type`, `seq`, `data`).
-  - `part`: Message content components (`text`, `tool_use`, `tool_result`, `reasoning`, `permission`).
-* **Concurrency Rules**: The database **MUST** be opened in read-only mode (`Database(path, { readonly: true })`) with WAL mode enabled to prevent database locking against the active OpenCode daemon.
+- **Storage**: SQLite at `~/.local/share/opencode/opencode.db`, opened read-only with `PRAGMA query_only = ON` and `PRAGMA busy_timeout = 2000`, so the running OpenCode is never locked.
+- **Session**: `session_v2` (`id`, `directory`, `title`, `time_updated`, summary columns); messages in `session_message`, parts in `part` (`text`, `tool`, `reasoning`, …).
+- **Binding and listing** use `directory` and `time_updated` (milliseconds).
 
-### 2.2 Antigravity CLI (`agy`)
-* **Storage**: NDJSON append log at `~/.gemini/antigravity-cli/brain/<session-id>/.system_generated/logs/transcript.jsonl`.
-* **Session ID**: Direct 1:1 match with `<session-id>` directory in `brain/`.
-* **Record Types**:
-  - `USER_INPUT`: Raw user request content (`<USER_REQUEST>...`).
-  - `PLANNER_RESPONSE`: Contains raw `thinking` string, `tool_calls` array, and final assistant `content`.
-  - `GENERIC`: Tool execution output, command results, and line diffs.
-  - Full content lookup: If `truncated_fields` is present on a line, the adapter reads the corresponding line from `transcript_full.jsonl`.
+### 2.2 Antigravity (`agy`)
+- **Storage**: `~/.gemini/antigravity-cli/brain/<id>/.system_generated/logs/transcript.jsonl` (NDJSON). Title from `~/.gemini/antigravity-cli/annotations/<id>.pbtxt` (`title: "…"`).
+- **Records**: `USER_INPUT`, `PLANNER_RESPONSE` (`thinking`, `tool_calls`, `content`), `GENERIC` (tool output). When a line has `truncated_fields`, the full line is read from `transcript_full.jsonl`.
+- **Binding** uses the transcript's modification time (no folder, §2.0).
 
 ### 2.3 Claude Code (`claude`)
-* **Storage**: NDJSON append log at `~/.claude/projects/<slug>/<session-id>.jsonl`.
-* **Session ID**: Direct match with the `<session-id>.jsonl` filename.
-* **Slug Resolution**: Project directory slug (e.g. `/home/fangwang/Projects/Pigeon` -> `-home-fangwang-Projects-Pigeon`).
-* **Record Types**:
-  - `user`: User prompt and invocation metadata.
-  - `assistant`: Array of content blocks:
-    - `{ type: "thinking", thinking: "..." }`
-    - `{ type: "text", text: "..." }`
-    - `{ type: "tool_use", id: "...", name: "...", input: {...} }`
-  - `tool_result`: Output content, exit codes, and diff results.
+- **Storage**: `~/.claude/projects/<slug(cwd)>/<id>.jsonl` (NDJSON); live process map `~/.claude/sessions/<pid>.json`.
+- **Records used**:
+  - `user` with string `message.content`, or text blocks: a user prompt. Lines with `isMeta: true`, or whose text starts with `<command-`, `<local-command-` or `<system-reminder>`, are not prompts. Image blocks become attachments (`files`).
+  - `user` whose content holds `tool_result` blocks: the result of the tool call with that `tool_use_id` (`content` as text; `is_error` marks failure). `toolUseResult.structuredPatch` (when present) gives the edit's hunks.
+  - `assistant`: content blocks `thinking` (reasoning text; empty thinking is not shown), `text` (assistant Markdown), `tool_use` (`id`, `name`, `input`). `message.model` is the model in use (source `log`).
+  - `custom-title` / `ai-title`: the session title (the latest wins).
+  - Every other record type is ignored.
+- **Turns**: a turn starts at each user prompt and holds everything up to the next one. `isSidechain: true` records (sub-agents) are not shown.
+- **Tool calls**: a `tool_use` without a result yet is `running`; with an `is_error` result `failed`; else `completed`. `Bash` input `description` is the call's description, `command` its command. `Edit`, `MultiEdit`, `Write` and `NotebookEdit` produce a `FileDiffSummary` (§3.1). `TodoWrite` input `todos` (`content`, `status`, `activeForm`) is the todo list (§3.2). A pending `AskUserQuestion` (input `questions`: `question`, `header`, `options` with `label` and `description`, `multiSelect`) is the turn's `pendingQuestion`; a pending `ExitPlanMode` (input `plan`) is the turn's `pendingPlan`.
 
-### 2.4 Codex CLI (`codex`)
-* **Storage**: NDJSON log at `~/.codex/sessions/YYYY/MM/DD/rollout-*-<session-id>.jsonl`.
-* **Session ID**: Matches the UUID suffix of the rollout filename. Indexed via `~/.codex/session_index.jsonl`.
-* **Record Types**: `session_meta`, `turn_start`, `event_msg`, `user_msg`, `agent_msg` (with reasoning payload), and tool blocks.
+### 2.4 Codex (`codex`)
+- **Storage**: `~/.codex/sessions/YYYY/MM/DD/rollout-<time>-<id>.jsonl` (NDJSON). The first record is `session_meta` (`payload.id`, `payload.cwd`).
+- **Records used** (`response_item` payloads): `message` with role `user` (`input_text` blocks; text starting with `<environment_context>`, `<user_instructions>` or `<user_action>` is not a prompt) or `assistant` (`output_text` blocks); `reasoning` (`summary[].text`); `function_call` (`name`, `arguments` JSON text, `call_id`) and `function_call_output` (`call_id`, `output`); `custom_tool_call` (`name`, `input`, `call_id`) and `custom_tool_call_output`. `event_msg` with `thread_settings_applied` names the model (`thread_settings.model`, source `log`). Others are ignored.
+- **Tools**: `shell` / `exec_command` (`command` as an array or a string, or `cmd`) are commands; `apply_patch` input is a patch whose `*** Update File:`, `*** Add File:` and `*** Delete File:` sections produce one `FileDiffSummary` each; `update_plan` (`plan[]` with `step`, `status`) is the todo list.
+- **Listing and binding** read the newest rollouts first and only their first line for the folder.
 
 ### 2.5 Pi (`pi`)
-* **Storage**: NDJSON log at `~/.pi/agent/sessions/<slug>/<timestamp>_<session-id>.jsonl`.
-* **Session ID**: Direct match with the `<session-id>` in the filename.
-* **Record Types**: `message` with roles `user` and `assistant`, containing `thinking`, `text`, `tool_call`, and `tool_result`.
+- **Storage**: `~/.pi/agent/sessions/--<path>--/<time>_<id>.jsonl`, where `<path>` is the folder without its leading `/` and with `/` replaced by `-`.
+- **Records used**: `message` records with `message.role` `user` (text blocks), `assistant` (`text`, `thinking`, `toolCall` blocks with `id`, `name`, `arguments`) and `toolResult` (`toolCallId`, `content` text, `isError`). `bash` tool calls are commands; `edit` (`path`, `oldText`, `newText`) and `write` (`path`, `content`) produce file diffs. Others are ignored.
 
----
+### 2.6 Listing past sessions
+`sessions_list` (`protocol.md` §4.10) lists, newest first and at most 50, an agent's sessions whose folder is the workspace's folder or inside it:
+- claude: the `.jsonl` files of every `~/.claude/projects/<slug>` directory whose slug starts with `slug(folder)`; folder confirmed from the records' `cwd`. Title: the latest `custom-title`/`ai-title`, else the first prompt. `updatedAt`: file modification time.
+- codex: rollouts whose `session_meta.cwd` is the folder or inside it; title from the first prompt. At most 2000 rollouts are inspected.
+- opencode: `session_v2` rows by `directory`, not archived.
+- pi: files of the folder's session directory; the id is the file name without `.jsonl`.
+- agy: not listed (it cannot be resumed, `herdr-adapter.md` §5).
 
-## 3. Canonical Normalized Data Model
-
-Regardless of the underlying agent engine, the `AgentSessionAdapter` normalizes session records into an unambiguous, strongly typed sequence of `NormalizedTurn` objects:
+## 3. Normalized model
 
 ```typescript
-export interface NormalizedTurn {
+interface NormalizedTurn {
   turnId: string;
   turnNumber: number;
   timestamp: number;
-  userPrompt?: {
-    text: string;
-    files?: string[];
-  };
-  reasoning?: {
-    text: string;
-    durationMs?: number;
-    tokens?: number;
-    isStreaming?: boolean;
-  };
+  userPrompt?: { text: string; files?: string[] };
+  reasoning?: { text: string; durationMs?: number; isStreaming?: boolean };
+  /** Text and tool calls in the order the agent produced them. */
+  items?: Array<{ kind: "text"; markdown: string } | { kind: "tool"; call: NormalizedToolCall } | { kind: "todo"; done: number; total: number }>;
   toolCalls?: NormalizedToolCall[];
-  assistantResponse?: {
-    markdown: string;
-    isStreaming?: boolean;
-  };
+  assistantResponse?: { markdown: string; isStreaming?: boolean };
   pendingQuestion?: NormalizedQuestion;
+  pendingPlan?: { markdown: string };
 }
 
-export interface NormalizedToolCall {
+interface NormalizedToolCall {
   id: string;
-  name: string; // e.g. "Bash", "edit_file", "read_file"
-  input: Record<string, any> | string;
+  name: string;            // the agent's tool name
+  verb: "run" | "edit" | "create" | "read" | "search" | "other";
+  target?: string;         // file path, pattern or command shown next to the verb
+  description?: string;    // the agent's own description (Claude Bash `description`)
+  input: Record<string, unknown> | string;
   output?: string;
   exitCode?: number;
   status: "running" | "completed" | "failed";
@@ -110,78 +95,29 @@ export interface NormalizedToolCall {
   diff?: FileDiffSummary;
 }
 
-export interface FileDiffSummary {
-  filePath: string;
-  status: "modified" | "created" | "deleted";
-  additions: number;
-  deletions: number;
-  patch?: string; // Unified diff chunk
-}
-
-export interface NormalizedQuestion {
+interface NormalizedQuestion {
   id: string;
-  question: string;
-  options: {
-    id: string;
-    label: string;
-    keyShortcut?: string;
-  }[];
-  multiSelect?: boolean;
+  questions: Array<{ question: string; header?: string; multiSelect?: boolean; options: Array<{ label: string; description?: string }> }>;
 }
+
+interface TodoItem { text: string; status: "pending" | "in_progress" | "completed" }
 ```
 
----
+- `toolCalls` lists the turn's calls; `items` keeps their order relative to the text, and `assistantResponse` is the turn's last text.
+- **Verbs**: run = a shell command; edit = a change to an existing file; create = a new file; read = reading a file; search = grep/glob/web search; other = everything else.
+- `exitCode` is set only when the agent recorded it.
 
-## 4. Mobile Typesetting and Component Rendering Rules
+### 3.1 File diffs and session changes
+`FileDiffSummary { filePath, status: "modified" | "created" | "deleted", additions, deletions, patch? }`. `patch` is a unified diff. For an edit given as old and new text, the diff is computed from the two texts (line based); a write of a new file counts every line as added.
+`sessionStats { filesModified, additions, deletions, diffs }` sums the session's completed edits per file, in first-touched order; `diffs` holds one summary per file whose `patch` concatenates that file's patches.
 
-### 4.1 Table Horizontal Overflow Protection (Table Anti-Wrap)
-To completely prevent Markdown tables from breaking and turning into vertical single-character text on 360px mobile screens, the mobile renderer enforces:
+### 3.2 Todos
+The session's todo list is the input of its latest todo tool call (Claude `TodoWrite`, Codex `update_plan`), mapped to `TodoItem`. A todo call also appears in the turn's `items` as `{ kind: "todo", done, total }`.
 
-```css
-.markdown-body table {
-  display: block;
-  width: 100%;
-  overflow-x: auto;
-  -webkit-overflow-scrolling: touch;
-  border-collapse: collapse;
-  white-space: nowrap; /* Prevents cell text from wrapping; preserves column widths */
-  margin: 10px 0;
-}
+## 4. Reading and streaming
 
-.markdown-body th,
-.markdown-body td {
-  padding: 6px 10px;
-  min-width: 72px;
-  border: 1px solid var(--color-border);
-  font-size: 13px;
-}
-```
-
-### 4.2 Thought Chain & Tool Call Folding
-* **Reasoning (Thinking)**: Rendered as an accordion. Default state is **collapsed**, displaying an indicator pill: `▸ Thought for 8s (895 tokens)`. Tapping the pill smoothly expands the reasoning text in faint text with a left accent border.
-* **Tool Call**: Collapsed by default as a single-line status pill: `✓ $ bun test · exit 0 (42ms)`. Tapping expands the tool invocation arguments and full stdout/stderr output.
-
-### 4.3 Session Diff / Review Drawer
-The top app bar includes a session-wide code change summary badge:
-- **Badge Format**: `[ 📝 3 files · +42 -18 ]`.
-- **Drawer Interaction**: Tapping the badge slides open a dedicated full-screen or half-sheet **Session Diff Drawer**:
-  - Displays a clean list of touched files with addition/deletion bars.
-  - Tapping a file expands its unified diff with line numbers and green (`+`) / red (`-`) highlighted background lines.
-
-### 4.4 Interactive Question Action Sheet
-When `pendingQuestion` is present (or Herdr reports `agent_status === "blocked"` with an interactive prompt):
-- Pigeon suppresses inline terminal keyboard menus.
-- Renders a native mobile **Action Sheet** anchored at the bottom:
-  - Displays the question in bold text.
-  - Renders each option as a prominent touch target (height `>= 44px`).
-  - Clicking an option dispatches the corresponding key shortcut via Herdr and dismisses the Action Sheet upon verified disappearance (`protocol.md` §4.1). If the prompt is still showing afterwards, the raw terminal sheet opens.
-  - A prompt without numbered options shows no option buttons, only a raw key pad built from `fallbackKeys` (`herdr-adapter.md` §8.2).
-
----
-
-## 5. Streaming Ingestion & Performance Safeguards
-
-1. **Incremental Byte-Offset Tracking**: The JSONL adapter maintains an in-memory map of `fileDescriptor -> lastReadByteOffset`. When filesystem notification fires (`fs.watch` / polling), the adapter reads only the appended bytes, avoiding O(N) re-reads of multi-megabyte transcripts.
-2. **Partial-Line EOF Protection**: When reading JSONL streams while an agent is actively writing, the final line may be truncated. The adapter buffers unclosed lines and parses them only once a newline (`\n`) is observed.
-3. **SQLite Read-Only Isolation**: OpenCode queries are wrapped with `PRAGMA query_only = ON;` and `PRAGMA busy_timeout = 2000;`.
-4. **Debounced UI Updates**: Streaming tokens and tool output chunks are throttled at 60–100ms intervals before pushing to WebSocket clients to preserve mobile 60fps rendering performance.
+1. **Incremental reads**: JSONL sessions keep a byte offset per file; a change notification reads only the appended bytes. A full read starts from scratch.
+2. **Partial lines**: the last line of a file being written may be incomplete; it is kept until its newline arrives.
+3. **Change notification**: the session file is watched (`fs.watch`), debounced by 100 ms. OpenCode watches its `-wal` file.
+4. **Deltas**: a change emits `turns_delta` (`protocol.md` §5.6) with the changed last turn and any appended turns.
+5. A read error other than a missing file is logged with its stack and the pane keeps its last turns.

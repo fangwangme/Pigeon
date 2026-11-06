@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { PALETTES } from "../src/client/src/themes";
+import { ACCENTS, PALETTES } from "../src/client/src/themes";
 import { renderMarkdown } from "../src/client/src/utils/markdown";
 
 const rootDir = join(import.meta.dir, "..");
@@ -20,18 +20,18 @@ function contrast(a: string, b: string): number {
   return (hi + 0.05) / (lo + 0.05);
 }
 
-describe("themes (mobile-ui-and-themes.md §4)", () => {
-  test("every preset pack named by the spec has a light and a dark variant", () => {
-    for (const key of ["tokyo-night", "claude", "github", "gruvbox", "catppuccin", "pigeon"]) {
-      expect(PALETTES[key]?.light.bg).toMatch(/^#[0-9A-Fa-f]{6}$/);
-      expect(PALETTES[key]?.dark.bg).toMatch(/^#[0-9A-Fa-f]{6}$/);
-    }
+describe("themes (mobile-ui-and-themes.md §9.1)", () => {
+  test.each(["light", "dark"] as const)("%s: text tokens meet WCAG AA against the background", (mode) => {
+    const p = PALETTES[mode];
+    for (const token of [p.fg, p.muted, p.faint]) expect(contrast(p.bg, token)).toBeGreaterThanOrEqual(4.5);
   });
 
-  test("Pigeon Light's faint text meets WCAG AA against its background (§4.2)", () => {
-    const light = PALETTES.pigeon.light;
-    expect(contrast(light.bg, light.faint)).toBeGreaterThanOrEqual(4.5);
-    expect(contrast(light.bg, light.fg)).toBeGreaterThanOrEqual(4.5);
+  test("the five accents exist for both palettes", () => {
+    expect(Object.keys(ACCENTS).sort()).toEqual(["blue", "green", "orange", "pink", "purple"]);
+    for (const a of Object.values(ACCENTS)) {
+      expect(a.light).toMatch(/^#[0-9A-Fa-f]{6}$/);
+      expect(a.dark).toMatch(/^#[0-9A-Fa-f]{6}$/);
+    }
   });
 });
 

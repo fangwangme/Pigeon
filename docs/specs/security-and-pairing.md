@@ -49,13 +49,14 @@ The HTTP server answers only the routes below. Every other path is 404, and noth
   - `GET /api/version` and `GET /api/push/vapid-public-key`: public constants.
 - **Strictly Authenticated**:
   - `POST /api/push/subscribe` (HTTP 401 without a session).
+  - `POST /api/uploads` (HTTP 401 without a session; the Origin and Host checks of §4 apply too, `protocol.md` §7).
   - WebSocket upgrades (`/ws`) must present a valid session cookie; otherwise the upgrade is rejected with HTTP 401. A session token in the query string is not accepted.
 
 ## 4. Host and Origin Validation
 
 To protect against Cross-Site WebSocket Hijacking (CSWSH) and DNS Rebinding attacks:
 
-Both checks run on the WebSocket upgrade, before the session check:
+Both checks run on the WebSocket upgrade and on `POST /api/uploads`, before the session check:
 - **Origin Check**: The `Origin` header must be present and must equal, exactly (scheme, host and port), the origin of `publicBaseUrl`. In `--insecure-dev`, the origins `http://{localhost,127.0.0.1,[::1]}` on the daemon port and on the Vite dev port 5173 are also accepted, as is the LAN host on port 5173. Anything else is HTTP 403.
 - **Host Whitelist**: The host name in `Host`, compared without its port and with IPv6 brackets kept, must be `localhost`, `127.0.0.1`, `[::1]`, or the host of `publicBaseUrl`. Anything else is HTTP 403. This defeats DNS rebinding.
 - **Proxy Headers**: `X-Forwarded-*` headers are ignored.

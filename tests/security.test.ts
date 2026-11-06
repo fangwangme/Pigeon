@@ -100,10 +100,10 @@ describe("configuration file (architecture.md §4.7)", () => {
   test("a client patch is written to disk and keeps other settings", () => {
     const dir = tempDir("cfg");
     const path = join(dir, "config.json");
-    new ConfigManager(path, { HOME: dir }).patchClientConfig({ themeKey: "nord" });
+    new ConfigManager(path, { HOME: dir }).patchClientConfig({ accent: "green" });
     const reloaded = new ConfigManager(path, { HOME: dir });
-    expect(reloaded.getClientConfig().themeKey).toBe("nord");
-    expect(reloaded.getClientConfig().macros.length).toBeGreaterThan(0);
+    expect(reloaded.getClientConfig().accent).toBe("green");
+    expect(reloaded.getClientConfig().themeMode).toBe("system");
     expect(reloaded.getServerConfig().port).toBe(4100);
   });
 
@@ -114,11 +114,12 @@ describe("configuration file (architecture.md §4.7)", () => {
     expect(readFileSync(join(dir, "config.json"), "utf-8")).toBe("{ broken");
   });
 
-  test("the old `model` key macro is upgraded to the /model text command", () => {
+  test("client keys this version no longer has are removed on load", () => {
     const dir = tempDir("cfg");
-    writeFileSync(join(dir, "config.json"), JSON.stringify({ client: { macros: [{ id: "m_model", name: "模型", type: "key", payload: "model" }] } }));
-    const macro = new ConfigManager(join(dir, "config.json"), { HOME: dir }).getClientConfig().macros[0];
-    expect([macro.type, macro.payload]).toEqual(["text", "/model"]);
+    const path = join(dir, "config.json");
+    writeFileSync(path, JSON.stringify({ client: { themeKey: "gruvbox", macros: [], showMacroDock: true, confirmCtrlC: true, themeMode: "dark" } }));
+    expect(new ConfigManager(path, { HOME: dir }).getClientConfig()).toEqual({ themeMode: "dark", accent: "blue" });
+    expect(JSON.parse(readFileSync(path, "utf-8")).client).toEqual({ themeMode: "dark" });
   });
 
   test("the old terminal Herdr socket path is dropped; a hand-set admin path is kept", () => {
@@ -253,6 +254,30 @@ describe("HTTP and WebSocket gate (security-and-pairing.md §3, §4)", () => {
     expect((await fetch(`${base}/`)).status).toBe(200);
     expect((await fetch(`${base}/pair`)).status).toBe(200);
     expect((await fetch(`${base}/review`)).status).toBe(404);
+  });
+
+  const upload = (headers: Record<string, string>, body: Uint8Array | string = "hello") =>
+    fetch(`${base}/api/uploads`, { method: "POST", headers: { "Content-Type": "text/plain", "X-Pigeon-Filename": encodeURIComponent("my notes.txt"), ...headers }, body });
+
+  test("an upload needs a session, the exact Origin and an allowed Host (protocol.md §7)", async () => {
+    expect((await upload({ Origin: PUBLIC })).status).toBe(401);
+    expect((await upload({ Origin: "https://evil.example", Cookie: pairedCookie() })).status).toBe(403);
+    expect((await upload({ Origin: PUBLIC, Host: "evil.example", Cookie: pairedCookie() })).status).toBe(403);
+  });
+
+  test("an upload is stored privately and answered with its id", async () => {
+    const res = await upload({ Origin: PUBLIC, Cookie: pairedCookie() });
+    expect(res.status).toBe(200);
+    const info = await res.json();
+    expect(info).toMatchObject({ name: "my_notes.txt", size: 5, mime: "text/plain" });
+    expect(info.id).toMatch(/^up_[0-9a-f]{16}$/);
+  });
+
+  test("an empty, unnamed or oversized upload is refused", async () => {
+    const cookie = pairedCookie();
+    expect((await upload({ Origin: PUBLIC, Cookie: cookie }, "")).status).toBe(400);
+    expect((await fetch(`${base}/api/uploads`, { method: "POST", headers: { Origin: PUBLIC, Cookie: cookie }, body: "x" })).status).toBe(400);
+    expect((await upload({ Origin: PUBLIC, Cookie: cookie }, new Uint8Array(20 * 1024 * 1024 + 1))).status).toBe(413);
   });
 
   test("push subscription requires a session", async () => {

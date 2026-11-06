@@ -34,6 +34,10 @@ To prevent duplicate or irritating notifications:
 2. **Presence Suppression**: The notification is suppressed while any live connection reports (`presence_update`, `protocol.md` §2.1) that it is visible and viewing that pane. Presence is tracked per connection and dropped when the connection closes; a report older than the staleness window no longer counts.
 3. **De-duplication**: At most one trigger per pane per 60 seconds.
 4. **Payload Privacy**:
-   - By default, the notification body contains **no raw command text** (e.g. `codex · x2 in Pigeon requires confirmation`).
+   - By default, the notification names only the agent, the workspace and the tab title, and contains **no raw command or prompt text** (e.g. title `Claude Code 等你确认`, body `Pigeon · auth tests`).
    - Including command text is an opt-in toggle in `~/.config/pigeon/config.json`.
 5. **Deep Linking**: Tapping the notification opens or focuses the Pigeon PWA and navigates directly to the targeted workspace, tab, and pane.
+
+## 5. Settings
+
+The phone's settings (`mobile-ui-and-themes.md` §8.1) show a master switch and one switch per event (waiting for you; finished). Until delivery (§1 status) exists, these switches are shown disabled with a note that delivery is not connected, so the UI never claims that notifications work.

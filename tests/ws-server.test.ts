@@ -50,7 +50,7 @@ describe("handshake (protocol.md §3)", () => {
     expect(types.slice(0, 3)).toEqual(["welcome", "upstream_status", "snapshot_update"]);
     expect(c.ofType("welcome")[0].payload.buildId).toBe("build_test");
     // Health may be re-broadcast once the pane read reaches Herdr; the pane data comes exactly once each.
-    expect(types.slice(3).filter((t) => t !== "upstream_status")).toEqual(["normalized_turns", "skills_sync", "pane_state"]);
+    expect(types.slice(3).filter((t) => t !== "upstream_status")).toEqual(["normalized_turns", "skills_sync", "prompt_queue", "pane_state"]);
     expect(c.ofType("normalized_turns")[0].payload).toMatchObject({ paneId: "p1", turns: [] });
     expect(c.ofType("pane_state")[0].payload.paneId).toBe("p1");
   });
@@ -172,12 +172,12 @@ describe("configuration sync (protocol.md §6)", () => {
     const b = fakeWs("d2");
     server.handleOpen(a.ws);
     server.handleOpen(b.ws);
-    await send(a.ws, { type: "config_patch", id: "p1", payload: { client: { themeKey: "nord" } } });
+    await send(a.ws, { type: "config_patch", id: "p1", payload: { client: { accent: "green" } } });
     const ack = a.ofType("ack")[0];
-    expect(ack.payload.client.themeKey).toBe("nord");
+    expect(ack.payload.client.accent).toBe("green");
     expect(a.ofType("config_updated")).toHaveLength(0);
-    expect(b.ofType("config_updated")[0].payload).toMatchObject({ version: ack.payload.version, client: { themeKey: "nord" } });
-    expect(config.getClientConfig().themeKey).toBe("nord");
+    expect(b.ofType("config_updated")[0].payload).toMatchObject({ version: ack.payload.version, client: { accent: "green" } });
+    expect(config.getClientConfig().accent).toBe("green");
   });
 
   test("a patch with an unknown key is rejected and nothing is saved", async () => {
@@ -188,9 +188,11 @@ describe("configuration sync (protocol.md §6)", () => {
     expect(JSON.stringify(config.getClientConfig())).toBe(before);
   });
 
-  test("a key macro with an invalid key name is rejected", async () => {
+  test("a removed key or an unknown accent is rejected", async () => {
     const c = fakeWs();
-    await send(c.ws, { type: "config_patch", id: "p1", payload: { client: { macros: [{ id: "m", name: "x", type: "key", payload: "rm -rf" }] } } });
+    await send(c.ws, { type: "config_patch", id: "p1", payload: { client: { themeKey: "gruvbox" } } });
+    expect(lastError(c.sent)).toBe(ProtocolErrors.ERR_INVALID_PAYLOAD);
+    await send(c.ws, { type: "config_patch", id: "p2", payload: { client: { accent: "chartreuse" } } });
     expect(lastError(c.sent)).toBe(ProtocolErrors.ERR_INVALID_PAYLOAD);
   });
 });

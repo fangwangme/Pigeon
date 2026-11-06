@@ -78,15 +78,36 @@ describe("client pane state (protocol.md §5.4)", () => {
 describe("client config versions (protocol.md §6.3)", () => {
   test("a late, older config broadcast is ignored", () => {
     welcome();
-    handleServerMessage({ type: "config_updated", payload: { version: 3, client: { showMacroDock: false } as any } });
-    handleServerMessage({ type: "config_updated", payload: { version: 2, client: { showMacroDock: true } as any } });
-    expect(state.showMacroDock).toBe(false);
+    handleServerMessage({ type: "config_updated", payload: { version: 3, client: { themeMode: "dark", accent: "green" } } });
+    handleServerMessage({ type: "config_updated", payload: { version: 2, client: { themeMode: "dark", accent: "pink" } } });
+    expect(state.accent).toBe("green");
   });
 
   test("after a daemon restart, the new server's low versions are accepted", () => {
-    handleServerMessage({ type: "config_updated", payload: { version: 9, client: { showScrollControls: false } as any } });
+    handleServerMessage({ type: "config_updated", payload: { version: 9, client: { themeMode: "dark", accent: "orange" } } });
     welcome();
-    handleServerMessage({ type: "config_updated", payload: { version: 2, client: { showScrollControls: true } as any } });
-    expect(state.showScrollControls).toBe(true);
+    handleServerMessage({ type: "config_updated", payload: { version: 2, client: { themeMode: "dark", accent: "purple" } } });
+    expect(state.accent).toBe("purple");
+  });
+});
+
+describe("queue and session info (protocol.md §5.6, §5.8)", () => {
+  test("the viewed pane's queue is shown; another pane's is ignored", () => {
+    selectPane("q1");
+    handleServerMessage({ type: "prompt_queue", payload: { paneId: "q1", items: [{ queueId: "q_a", text: "later", attachments: [], createdAt: 1 }] } });
+    handleServerMessage({ type: "prompt_queue", payload: { paneId: "other", items: [] } });
+    expect(state.queue.map((i) => i.text)).toEqual(["later"]);
+    selectPane("q2");
+    expect(state.queue).toEqual([]);
+  });
+
+  test("todos and the session's model come with the turns", () => {
+    selectPane("t1");
+    handleServerMessage({
+      type: "normalized_turns",
+      payload: { paneId: "t1", turns: [], todos: [{ text: "Ship", status: "pending" }], session: { bound: true, agent: "claude", sessionId: "s", model: { value: "opus", source: "launch" } } },
+    });
+    expect(state.todos).toEqual([{ text: "Ship", status: "pending" }]);
+    expect(state.session?.model).toEqual({ value: "opus", source: "launch" });
   });
 });

@@ -2,7 +2,7 @@
 
 ## 1. Overview and Design Principles
 
-The phone and the Pigeon daemon talk through **typed JSON messages over one WebSocket** (`/ws`). Pairing goes through one HTTP endpoint (`POST /api/pair`, see `security-and-pairing.md`). The TypeScript source of truth is `src/types/protocol.ts`. Runtime validation of every client frame lives in `src/server/ws-validate.ts`.
+The phone and the Pigeon daemon talk through **typed JSON messages over one WebSocket** (`/ws`). Pairing goes through `POST /api/pair` (`security-and-pairing.md`) and attachments through `POST /api/uploads` (§7). The TypeScript source of truth is `src/types/protocol.ts`. Runtime validation of every client frame lives in `src/server/ws-validate.ts`.
 
 Key Protocol Principles:
 1. **No guessed keys**: A prompt is answered with `interaction_respond`, which names an `interactionId`, a screen `fingerprint` and an `optionId`. The server sends exactly that option's key, and only while the same prompt is still on screen. Anything without a structured option goes through the raw key pad (`agent_send_keys`).
@@ -43,7 +43,7 @@ If the major version differs from the server's, the server answers `ERR_INCOMPAT
     "serverVersion": "0.1.0",
     "buildId": "3f9a0c21d7e4",
     "deviceId": "6f1c…",
-    "clientConfig": { "themeKey": "gruvbox", "themeMode": "system", "macros": [] },
+    "clientConfig": { "themeMode": "system", "accent": "blue" },
     "recipes": { "claude": { "kind": "claude", "label": "Claude Code", "models": [], "interruptKeys": ["esc"] } }
   }
 }
@@ -54,11 +54,12 @@ Then come, in this order, `upstream_status` (§5.5) and `snapshot_update` (§5.3
 
 ### 3.3 Initial Pane Data (`server -> client`)
 The server picks a pane. It uses `subscribePaneId` when Herdr knows that pane, otherwise Herdr's focused pane. It subscribes the connection to that pane and sends:
-1. `normalized_turns` (§5.6). This is always sent, with `turns: []` for panes without a structured session, so the client never keeps the previous pane's conversation.
-2. `skills_sync` (§5.8) for that pane's agent and project directory.
-3. `pane_state` (§5.4): the cached state at once if the pane was read before, then a fresh screen read. The fresh read reaches the client as another `pane_state` only if the screen changed.
+1. `normalized_turns` (§5.6). This is always sent, with `turns: []` and `session.bound: false` for panes without a structured session, so the client never keeps the previous pane's conversation.
+2. `skills_sync` (§5.7) for that pane's agent and project directory.
+3. `prompt_queue` (§5.8) for that pane, empty when nothing is queued.
+4. `pane_state` (§5.4): the cached state at once if the pane was read before, then a fresh screen read. The fresh read reaches the client as another `pane_state` only if the screen changed.
 
-`select_view` (§4.4) runs the same three steps for a different pane.
+`select_view` (§4.4) runs the same four steps for a different pane.
 
 ## 4. Client Commands (`client -> server`)
 
@@ -80,15 +81,19 @@ Every command except `ping` and `presence_update` carries a string `id`. Success
 
 ### 4.2 Submit Prompt (`agent_prompt`)
 ```json
-{ "type": "agent_prompt", "id": "cli_8", "payload": { "targetPaneId": "w1:p2", "text": "Fix the unit tests in auth.test.ts" } }
+{ "type": "agent_prompt", "id": "cli_8", "payload": { "targetPaneId": "w1:p2", "text": "Fix the unit tests in auth.test.ts", "attachments": ["up_3f9a0c21d7e4b5a6"] } }
 ```
-*Server Behavior*: The server calls Herdr Core's `terminal.send`, which pastes the text and presses Enter, for agents and plain shells alike. Herdr's `blocked` surfaces as `ERR_AGENT_BLOCKED`, `unavailable` as `ERR_AGENT_NOT_READY`, and a timed-out request as `ERR_TIMEOUT` (`herdr-adapter.md` §6). Agent slash commands (`/model`, `/compact`, a skill's invocation) are ordinary prompt text.
+- `text` may be empty only when `attachments` is not. `attachments` holds at most 10 upload ids from §7. An id the daemon does not know is `ERR_INVALID_PAYLOAD`, and nothing is sent.
+- **Attachments**: the daemon appends one line per attachment after a blank line: the file's absolute path, prefixed with the recipe's file-mention prefix (`@` for claude, opencode, pi and agy; none for codex and a plain terminal).
+- **Queue**: when the pane's Herdr status is `working`, or the pane already has queued prompts, the prompt is queued instead of sent (user decision, 2026-11-06). The ack carries `{ "queued": true, "queueId": "q_…" }`, and every viewer of the pane gets `prompt_queue` (§5.8). When the pane's status next becomes `idle` or `done`, the daemon sends the oldest queued prompt; the next one waits for the next `idle` or `done`. A queued prompt that fails to send is dropped from the queue and reported to the viewers as `error` with that prompt's `queueId` in `details`. The queue lives in daemon memory: a daemon restart drops it, and closing the pane drops its queue.
+- **Immediate send**: otherwise the server calls Herdr Core's `terminal.send`, which pastes the text and presses Enter, for agents and plain shells alike, and acks `{ "queued": false }`. Herdr's `blocked` surfaces as `ERR_AGENT_BLOCKED`, `unavailable` as `ERR_AGENT_NOT_READY`, and a timed-out request as `ERR_TIMEOUT` (`herdr-adapter.md` §6).
+- Agent slash commands (`/compact`, a skill's invocation) are ordinary prompt text.
 
 ### 4.3 Dispatch Raw Keys (`agent_send_keys`)
 ```json
 { "type": "agent_send_keys", "id": "cli_9", "payload": { "targetPaneId": "w1:p2", "keys": ["ctrl+c"] } }
 ```
-`keys` holds 1–16 Herdr key names. Each matches `^[a-z0-9+_-]{1,24}$` (case-insensitive). This command serves the raw key pad, the interrupt button and key macros.
+`keys` holds 1–16 Herdr key names. Each matches `^[a-z0-9+_-]{1,24}$` (case-insensitive). This command serves the terminal view's keys and the stop button (`mobile-ui-and-themes.md` §3.5, §5).
 
 ### 4.4 Switch Mobile View (`select_view`)
 ```json
@@ -101,16 +106,18 @@ This moves the connection's subscription and sends the pane data from §3.3. Des
 {
   "type": "create_tab_and_agent",
   "id": "cli_11",
-  "payload": { "workspaceId": "w1", "agentKind": "claude", "modelId": "opus", "thinking": "high", "cwd": "/home/user/project" }
+  "payload": { "workspaceId": "w1", "agentKind": "claude", "modelId": "opus", "thinking": "high", "cwd": "/home/user/project", "firstMessage": "Fix the flaky test", "resumeSessionId": "2c9ad7c8-eac4-4643-82f8-51bf56057348" }
 }
 ```
 *Server Behavior*: The server checks the request against the recipe:
 - `agentKind` must be a known recipe.
 - `modelId`, if given, must be one of the recipe's models.
 - `thinking`, if given, must be one of that model's levels.
-- `cwd`, if given, must be absolute.
+- `cwd`, if given, must be absolute. Without it the tab starts in the workspace's folder.
+- `firstMessage`, if given, is 1–100 000 characters. It is handed to Herdr as the tab's first message, and the tab is named after its first line (at most 40 characters).
+- `resumeSessionId`, if given, matches `^[A-Za-z0-9._-]{1,128}$` and the recipe must support resuming (`herdr-adapter.md` §5).
 
-Any violation gets `ERR_INVALID_PAYLOAD` before anything is created. The launch sequence is in `herdr-adapter.md` §5. The ack carries `{ "workspaceId", "tabId", "paneId" }`, and the client switches to the new pane.
+Any violation gets `ERR_INVALID_PAYLOAD` before anything is created. The launch sequence is in `herdr-adapter.md` §5. The daemon remembers the launch model and thinking level for the new pane (shown as source `launch`, §5.6). The ack carries `{ "workspaceId", "tabId", "paneId" }`, and the client switches to the new pane.
 
 ### 4.6 Close Tab (`close_tab`)
 ```json
@@ -126,6 +133,33 @@ The server answers with `skills_sync` for the connection's current pane.
 
 ### 4.8 Configuration (`config_get`, `config_patch`)
 See §6.
+
+### 4.9 Change Model or Effort (`agent_set_model`)
+```json
+{ "type": "agent_set_model", "id": "cli_14", "payload": { "targetPaneId": "w1:p2", "modelId": "sonnet", "thinking": "high" } }
+```
+At least one of `modelId` and `thinking` is given. Each must be one the pane's recipe offers (`thinking` for the given model, else for the pane's current model). The daemon builds the agent's own runtime command from the recipe (`herdr-adapter.md` §7) and submits it like §4.2, queueing included. A recipe without a runtime command for that value answers `ERR_INVALID_PAYLOAD` and sends nothing. The client never builds the command text.
+
+### 4.10 List Past Sessions (`sessions_list`)
+```json
+{ "type": "sessions_list", "id": "cli_15", "payload": { "workspaceId": "w1", "agentKind": "claude" } }
+```
+The ack carries `{ "sessions": [ { "id", "title", "updatedAt" } ] }`: the agent's own sessions whose project folder is the workspace's folder or below it, newest first, at most 50 (`agent-session-normalization.md` §2.6). `title` is the session's title, else its first user message (at most 120 characters). An agent kind without a session store answers with an empty list; an unknown workspace is `ERR_NOT_FOUND`.
+
+### 4.11 Rename Tab (`tab_rename`)
+```json
+{ "type": "tab_rename", "id": "cli_16", "payload": { "tabId": "tab1", "name": "auth tests" } }
+```
+`name` is 1–80 characters after trimming. The tab is renamed in Herdr and the snapshot refreshed; the ack carries `{ "tabId", "name" }`. An unknown tab is `ERR_NOT_FOUND`.
+
+### 4.12 Devices (`devices_list`, `device_revoke`)
+`devices_list` acks `{ "devices": [ { "deviceId", "deviceName", "createdAt", "lastUsedAt", "isThisDevice" } ] }`. `device_revoke { deviceId }` revokes that device exactly like `pigeon devices revoke` (`security-and-pairing.md` §5): its connections close with `4403`. An unknown device is `ERR_NOT_FOUND`. Revoking this device acks first, then closes this connection.
+
+### 4.13 Cancel a Queued Prompt (`queue_cancel`)
+```json
+{ "type": "queue_cancel", "id": "cli_17", "payload": { "targetPaneId": "w1:p2", "queueId": "q_1a2b3c" } }
+```
+Removes the prompt from the pane's queue and sends `prompt_queue` to the viewers. A `queueId` that is no longer queued (it was already sent, or the queue was dropped) is `ERR_NOT_FOUND`.
 
 ## 5. Server Events (`server -> client`)
 
@@ -148,11 +182,11 @@ Broadcast to every client whenever the Herdr snapshot changes:
   "payload": {
     "workspaces": [
       {
-        "id": "w1", "label": "Pigeon", "tabCount": 1, "activeTabId": "w1:t1", "hasWarn": true, "hasWorking": false, "isFocused": true,
+        "id": "w1", "label": "Pigeon", "folder": "/home/user/Pigeon", "branch": "main", "tabCount": 1, "activeTabId": "w1:t1", "hasWarn": true, "hasWorking": false, "isFocused": true,
         "tabs": [
-          { "id": "w1:t1", "label": "Claude Code", "paneCount": 2, "panes": [
-            { "id": "w1:p2", "agent": "claude", "agentStatus": "blocked", "isPrimary": true, "name": "claude" },
-            { "id": "w1:p3", "agent": null, "agentStatus": "unknown", "isPrimary": false }
+          { "id": "w1:t1", "label": "Claude Code", "branch": "feat/1-ui", "paneCount": 2, "panes": [
+            { "id": "w1:p2", "agent": "claude", "agentStatus": "blocked", "isPrimary": true, "name": "claude", "program": "claude", "summary": "Do you want to proceed?" },
+            { "id": "w1:p3", "agent": null, "agentStatus": "unknown", "isPrimary": false, "program": "zsh" }
           ] }
         ]
       }
@@ -194,6 +228,9 @@ Sent to the clients viewing a pane whenever its classified screen or status chan
 - `pendingInteraction.options` is empty when the prompt has no numbered options, or when Herdr reports `blocked` but no prompt was recognized. The client then shows `fallbackKeys` as a raw key pad.
 - `exitCode` on a tool card is present only when the screen shows it.
 
+- `folder` is the Herdr workspace's folder. `branch` (workspace: of its folder; tab: of its first pane's folder) is the checked-out git branch, absent outside a git repository or on a detached HEAD.
+- `program` is the name of the pane's foreground program, absent when the Core does not list the terminal. `summary` is the pane's one-line summary (also in `workingAgents`).
+
 ### 5.5 Upstream Status (`upstream_status`)
 ```json
 { "type": "upstream_status", "payload": { "herdrConnected": true, "lastSyncTimestamp": 1729650000000 } }
@@ -201,7 +238,15 @@ Sent to the clients viewing a pane whenever its classified screen or status chan
 This is sent in the handshake and broadcast whenever the daemon's connection to Herdr goes up or down.
 
 ### 5.6 Normalized Turns (`normalized_turns`, `turns_delta`)
-`normalized_turns` carries the whole conversation of a pane's structured session (`agent-session-normalization.md`): `{ paneId, turns, sessionStats?, sessionTitle? }`.
+`normalized_turns` carries the whole conversation of a pane's structured session (`agent-session-normalization.md`): `{ paneId, turns, sessionStats?, sessionTitle?, todos?, session }`.
+```json
+"session": { "bound": true, "agent": "claude", "sessionId": "2c9ad7c8-…", "model": { "value": "opus", "source": "launch" }, "thinking": { "value": "high", "source": "launch" } }
+```
+- `bound` says whether the pane has a structured session (`agent-session-normalization.md` §2.0).
+- `model` and `thinking` name the current value and its source: `log` (the session records name it), else `launch` (Pigeon started the pane with it), else `unknown` (value absent). A later `agent_set_model` changes the shown value only once the session records confirm it.
+- `todos` is the session's latest todo list (`agent-session-normalization.md` §3); absent when the session has none.
+
+A pane that becomes bound or switches session (for example after the agent's `/clear`) gets a fresh `normalized_turns`.
 
 `turns_delta` streams later changes to the viewing clients:
 ```json
@@ -217,7 +262,7 @@ This is sent in the handshake and broadcast whenever the daemon's connection to 
   }
 }
 ```
-`sinceTurnIndex: 0` without `patchLastTurn` replaces the whole list. Otherwise `patchLastTurn` replaces the last known turn, and `appendTurns` is placed from `sinceTurnIndex` on.
+`sinceTurnIndex: 0` without `patchLastTurn` replaces the whole list. Otherwise `patchLastTurn` replaces the last known turn, and `appendTurns` is placed from `sinceTurnIndex` on. `todos` and `session` ride along when they changed.
 
 ### 5.7 Skills and Agent Recipes (`skills_sync`)
 ```json
@@ -225,16 +270,27 @@ This is sent in the handshake and broadcast whenever the daemon's connection to 
   "type": "skills_sync",
   "payload": {
     "paneId": "w1:p2",
-    "skills": [ { "name": "review", "description": "Review code", "source": "project", "invocation": "/review" } ],
+    "skills": [
+      { "name": "review", "description": "Review code", "source": "project", "kind": "skill", "invocation": "/review" },
+      { "name": "compact", "description": "压缩上下文", "source": "builtin", "kind": "command", "invocation": "/compact" }
+    ],
     "recipes": { "claude": { "kind": "claude", "label": "Claude Code", "models": [ { "id": "opus", "label": "Opus", "thinkingLevels": ["low", "medium", "high", "xhigh", "max"] } ], "interruptKeys": ["esc"] } }
   }
 }
 ```
-Skills are per pane: they depend on the pane's agent kind and project directory (`herdr-adapter.md` §8.3). The client ignores skills for a pane it is no longer viewing. Typing `/` in the composer completes skills by inserting their `invocation`.
+Skills are per pane: they depend on the pane's agent kind and project directory (`herdr-adapter.md` §8.3). `source` is `project`, `user`, `plugin` or `builtin`; `kind` is `skill` or `command`. The client ignores skills for a pane it is no longer viewing. Choosing an entry inserts its `invocation` as prompt text.
+
+Each recipe summary also carries `resumable` (the recipe can resume a session) and `runtimeSwitch: { model, thinking }` (whether §4.9 can change each value).
+
+### 5.8 Queue (`prompt_queue`)
+```json
+{ "type": "prompt_queue", "payload": { "paneId": "w1:p2", "items": [ { "queueId": "q_1a2b3c", "text": "also run lint", "attachments": [], "createdAt": 1729650000000 } ] } }
+```
+The pane's whole queue, oldest first. Sent on pane selection (§3.3) and to the pane's viewers whenever its queue changes.
 
 ## 6. Configuration Synchronization Protocol
 
-The client part of `config.json` (theme, macros, display options) is shared by all paired devices.
+The client part of `config.json` (appearance) is shared by all paired devices.
 
 ### 6.1 Handshake Delivery
 `welcome.payload.clientConfig` carries the current client config.
@@ -244,25 +300,34 @@ The client part of `config.json` (theme, macros, display options) is shared by a
 { "type": "config_get", "id": "cli_20" }
 ```
 ```json
-{ "type": "config_sync", "replyTo": "cli_20", "payload": { "version": 3, "client": { "themeKey": "gruvbox", "macros": [] } } }
+{ "type": "config_sync", "replyTo": "cli_20", "payload": { "version": 3, "client": { "themeMode": "system", "accent": "blue" } } }
 ```
 
 ### 6.3 Patch (`config_patch`)
 ```json
-{ "type": "config_patch", "id": "cli_21", "payload": { "client": { "themeKey": "nord" } } }
+{ "type": "config_patch", "id": "cli_21", "payload": { "client": { "accent": "green" } } }
 ```
 *Server Behavior*:
-1. The patch is validated against a whitelist of keys and value types. Key macros must name a valid key (§4.3). Any unknown key or bad value rejects the whole patch with `ERR_INVALID_PAYLOAD`, and nothing is saved.
+1. The patch is validated against a whitelist of keys and value types: `themeMode` (`system`, `light`, `dark`) and `accent` (`blue`, `purple`, `green`, `orange`, `pink`). Any unknown key or bad value rejects the whole patch with `ERR_INVALID_PAYLOAD`, and nothing is saved.
 2. The patch is deep-merged and written to `config.json` before the reply. A write error is reported as `ERR_INTERNAL`.
-3. The config version is bumped. The sender gets `ack` with `{ "version", "client" }`.
+3. Defaults are `themeMode: "system"` and `accent: "blue"`. The config version is bumped. The sender gets `ack` with `{ "version", "client" }`.
 4. Every other client gets `{ "type": "config_updated", "payload": { "version", "client" } }`. Clients ignore a `config_sync` or `config_updated` whose version is older than one they have already applied.
 
-## 7. Error Code Registry
+## 7. Uploads (`POST /api/uploads`)
+
+Attachments are uploaded before the prompt that uses them.
+- **Gate**: a valid session cookie (else HTTP 401) and the same exact `Origin` and `Host` checks as the WebSocket upgrade (`security-and-pairing.md` §4, else HTTP 403).
+- **Request**: the raw file bytes as the body, `Content-Type` the file's type, and `X-Pigeon-Filename` the URI-encoded original name (1–200 characters after decoding).
+- **Validation** (trust boundary): a body over 20 MiB is HTTP 413; an empty body, a missing or bad file name is HTTP 400. The stored name keeps only `[A-Za-z0-9._-]` of the original (others become `_`, a leading dot is dropped).
+- **Storage**: `<stateDir>/uploads/<id>-<name>`, mode `0600`, where `id` is `up_` + 16 random hex digits. Uploads older than 7 days are deleted when the daemon starts.
+- **Reply**: `{ "id", "name", "size", "mime" }`. The phone then names `id` in `agent_prompt.attachments` (§4.2).
+
+## 8. Error Code Registry
 
 | Error Code | Meaning | Recovery Action |
 | :--- | :--- | :--- |
 | `ERR_INVALID_PAYLOAD` | Frame failed validation, unknown type, unknown option/model/key | Fix the request; nothing was executed |
-| `ERR_NOT_FOUND` | Targeted pane is not in the Herdr snapshot | Wait for the next `snapshot_update` |
+| `ERR_NOT_FOUND` | Targeted pane, tab, workspace or device is unknown, or a queued prompt is no longer queued | Wait for the next `snapshot_update`, or refresh the list |
 | `ERR_INTERACTION_STALE` | Prompt changed, was already answered, or is being answered | Re-select the pane for fresh state |
 | `ERR_AGENT_NOT_READY` | Herdr: agent not ready for input | Retry once the agent is idle |
 | `ERR_AGENT_BLOCKED` | Herdr: agent is waiting on a prompt | Answer the prompt first |

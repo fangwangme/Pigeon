@@ -44,8 +44,8 @@ export class FakeHerdr {
   }
 
   /** Answers `ls`, `status` and `terminal.list` with one space and one tab holding these panes. */
-  serve(panes: FakePane[]): void {
-    const topology = topologyOf(panes);
+  serve(panes: FakePane[], options: TopologyOptions = {}): void {
+    const topology = topologyOf(panes, options);
     this.handlers.ls = () => ({ result: topology.ls });
     this.handlers.status = () => ({ result: topology.status });
     this.handlers["terminal.list"] = () => ({ result: { terminals: topology.terminals, hidden_finished: 0, machines: [] } });
@@ -127,17 +127,27 @@ export interface FakePane {
   /** The status record's `state`; defaults to `idle` for an agent. */
   state?: string;
   cwd?: string;
+  /** Foreground process id and name (`herdr-adapter.md` §3.1). */
+  pid?: number;
+  program?: string;
+  /** Terminal creation time; defaults to one hour ago. */
+  createdMs?: number;
+}
+
+export interface TopologyOptions {
+  /** The space folder; defaults to `/work`. */
+  folder?: string;
 }
 
 /** A topology with one space (`w1`, "proj") and one tab (`tab1`) holding the given panes. */
-export function topologyOf(panes: FakePane[]): HerdrTopology {
+export function topologyOf(panes: FakePane[], options: TopologyOptions = {}): HerdrTopology {
   return {
     ls: {
       spaces: [
         {
           id: "w1",
           name: "proj",
-          folder: "/work",
+          folder: options.folder ?? "/work",
           active: true,
           tabs: [{ id: "tab1", name: "1", active: true, terminals: panes.map((p) => ({ terminal: p.paneId, pane: `pane-${p.paneId}` })) }],
         },
@@ -148,7 +158,8 @@ export function topologyOf(panes: FakePane[]): HerdrTopology {
       address: p.paneId,
       cwd: "/launch",
       state: "live" as const,
-      foreground: { cwd: p.cwd ?? "/work" },
+      created_ms: p.createdMs ?? Date.now() - 3_600_000,
+      foreground: { cwd: p.cwd ?? "/work", pid: p.pid ?? 0, name: p.program ?? (p.app ? p.app : "zsh"), argv: [] },
       status: p.app ? { state: p.state ?? "idle", app: p.app } : null,
       title: "",
     })),
