@@ -103,4 +103,12 @@ describe("skills per pane (herdr-adapter.md §8.3)", () => {
       ["/init", "command"],
     ]);
   });
+
+  test("built-in commands carry a description id and an English description (herdr-adapter.md §8.3, protocol.md §5.7)", () => {
+    const scanner = new SkillScanner(tempDir("home"));
+    const ids = (agent: string) => scanner.listSkills(agent, tempDir("proj")).filter((s) => s.source === "builtin").map((s) => [s.name, s.descriptionId]);
+    expect(ids("claude")).toEqual([["compact", "compact"], ["clear", "clear"], ["init", "init_claude_md"]]);
+    expect(ids("codex")).toEqual([["compact", "compact"], ["new", "new"], ["init", "init_agents_md"], ["review", "review"]]);
+    for (const s of scanner.listSkills("codex", tempDir("proj")).filter((s) => s.source === "builtin")) expect(s.description).toMatch(/^[\x20-\x7e]+$/);
+  });
 });

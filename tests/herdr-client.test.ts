@@ -89,6 +89,20 @@ describe("agent identity and states (herdr-adapter.md §4)", () => {
     expect(state.pendingInteraction?.options).toEqual([]);
   });
 
+  test("a prompt without a title or question line carries no daemon-written text (protocol.md §5.4)", () => {
+    client.applySnapshot(topologyOf([{ paneId: "t1", app: "claude-code", state: "blocked" }]));
+    const blank = client.applyScreen("t1", "").pendingInteraction!;
+    expect([blank.title, blank.question]).toEqual(["", ""]);
+    expect(client.applyScreen("t1", "some custom TUI question\n").pendingInteraction!.title).toBe("");
+  });
+
+  test("a running command and thinking are summarized as data, not text (protocol.md §5.3)", () => {
+    client.applySnapshot(topologyOf([{ paneId: "t1", app: "claude-code", state: "working" }]));
+    client.applyScreen("t1", "$ bun test\n");
+    const pane = client.applySnapshot(topologyOf([{ paneId: "t1", app: "claude-code", state: "working" }])).workspaces[0].tabs[0].panes[0];
+    expect([pane.summary, pane.summaryKind]).toEqual(["bun test", "run"]);
+  });
+
   test("an unchanged screen does not bump the revision", () => {
     client.applySnapshot(topologyOf([{ paneId: "t1", app: "claude-code" }]));
     const first = client.applyScreen("t1", "$ ls\n");

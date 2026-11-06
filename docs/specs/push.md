@@ -35,6 +35,7 @@ To prevent duplicate or irritating notifications:
 3. **De-duplication**: At most one trigger per pane per 60 seconds.
 4. **Payload Privacy**:
    - By default, the notification names only the agent, the workspace and the tab title, and contains **no raw command or prompt text** (e.g. title `Claude Code 等你确认`, body `Pigeon · auth tests`).
+   - The push message carries data, not text: the event (`blocked`), the agent kind, the workspace and tab names, and the pane id. The service worker composes the title and body in the language the phone last used (`mobile-ui-and-themes.md` §10).
    - Including command text is an opt-in toggle in `~/.config/pigeon/config.json`.
 5. **Deep Linking**: Tapping the notification opens or focuses the Pigeon PWA and navigates directly to the targeted workspace, tab, and pane.
 

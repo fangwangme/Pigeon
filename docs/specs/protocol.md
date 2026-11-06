@@ -185,14 +185,14 @@ Broadcast to every client whenever the Herdr snapshot changes:
         "id": "w1", "label": "Pigeon", "folder": "/home/user/Pigeon", "branch": "main", "tabCount": 1, "activeTabId": "w1:t1", "hasWarn": true, "hasWorking": false, "isFocused": true,
         "tabs": [
           { "id": "w1:t1", "label": "Claude Code", "branch": "feat/1-ui", "paneCount": 2, "panes": [
-            { "id": "w1:p2", "agent": "claude", "agentStatus": "blocked", "isPrimary": true, "name": "claude", "program": "claude", "summary": "Do you want to proceed?" },
+            { "id": "w1:p2", "agent": "claude", "agentStatus": "blocked", "isPrimary": true, "name": "claude", "program": "claude", "summary": "Do you want to proceed?", "summaryKind": "text" },
             { "id": "w1:p3", "agent": null, "agentStatus": "unknown", "isPrimary": false, "program": "zsh" }
           ] }
         ]
       }
     ],
     "workingAgents": [
-      { "agent": "claude", "name": "claude", "status": "blocked", "workspaceId": "w1", "workspaceLabel": "Pigeon", "tabId": "w1:t1", "paneId": "w1:p2", "summary": "Do you want to proceed?" }
+      { "agent": "claude", "name": "claude", "status": "blocked", "workspaceId": "w1", "workspaceLabel": "Pigeon", "tabId": "w1:t1", "paneId": "w1:p2", "summary": "Do you want to proceed?", "summaryKind": "text" }
     ]
   }
 }
@@ -214,7 +214,7 @@ Sent to the clients viewing a pane whenever its classified screen or status chan
       "id": "card_interaction_…",
       "kind": "interaction",
       "interactionId": "int_4ae721c8e2",
-      "title": "需要授权",
+      "title": "",
       "question": "Do you want to proceed?",
       "fingerprint": "fp_88a7b9c1d2e3",
       "options": [ { "id": "opt_1", "label": "Yes", "keyShortcut": "1" }, { "id": "opt_2", "label": "No", "keyShortcut": "2" } ],
@@ -227,9 +227,10 @@ Sent to the clients viewing a pane whenever its classified screen or status chan
 - `revision` increases per pane, and the client drops any `pane_state` whose revision is not newer than the last one it applied.
 - `pendingInteraction.options` is empty when the prompt has no numbered options, or when Herdr reports `blocked` but no prompt was recognized. The client then shows `fallbackKeys` as a raw key pad.
 - `exitCode` on a tool card is present only when the screen shows it.
+- `pendingInteraction.title` is a title the screen showed for the prompt, else empty; `question` is empty when the screen showed no question line. The phone then shows its own label (`mobile-ui-and-themes.md` §10.2).
 
 - `folder` is the Herdr workspace's folder. `branch` (workspace: of its folder; tab: of its first pane's folder) is the checked-out git branch, absent outside a git repository or on a detached HEAD.
-- `program` is the name of the pane's foreground program, absent when the Core does not list the terminal. `summary` is the pane's one-line summary (also in `workingAgents`).
+- `program` is the name of the pane's foreground program, absent when the Core does not list the terminal. `summary` is the pane's one-line summary (also in `workingAgents`), and `summaryKind` says how to show it: `text` is shown as is (a prompt's question, the start of the last message, or the terminal title); `run` holds only the running command, which the phone prefixes with its own word for "running"; `thinking` holds the thought's title, or is empty when the agent shows none, and the phone shows its own word for "thinking" in that case. The daemon composes no UI text of its own (`mobile-ui-and-themes.md` §10.2).
 
 ### 5.5 Upstream Status (`upstream_status`)
 ```json
@@ -272,13 +273,13 @@ A pane that becomes bound or switches session (for example after the agent's `/c
     "paneId": "w1:p2",
     "skills": [
       { "name": "review", "description": "Review code", "source": "project", "kind": "skill", "invocation": "/review" },
-      { "name": "compact", "description": "压缩上下文", "source": "builtin", "kind": "command", "invocation": "/compact" }
+      { "name": "compact", "description": "Compact the context", "descriptionId": "compact", "source": "builtin", "kind": "command", "invocation": "/compact" }
     ],
     "recipes": { "claude": { "kind": "claude", "label": "Claude Code", "models": [ { "id": "opus", "label": "Opus", "thinkingLevels": ["low", "medium", "high", "xhigh", "max"] } ], "interruptKeys": ["esc"] } }
   }
 }
 ```
-Skills are per pane: they depend on the pane's agent kind and project directory (`herdr-adapter.md` §8.3). `source` is `project`, `user`, `plugin` or `builtin`; `kind` is `skill` or `command`. The client ignores skills for a pane it is no longer viewing. Choosing an entry inserts its `invocation` as prompt text.
+Skills are per pane: they depend on the pane's agent kind and project directory (`herdr-adapter.md` §8.3). `source` is `project`, `user`, `plugin` or `builtin`; `kind` is `skill` or `command`. A built-in command also carries `descriptionId` (`herdr-adapter.md` §8.3), and the phone shows its own text for that id, falling back to the English `description`. The client ignores skills for a pane it is no longer viewing. Choosing an entry inserts its `invocation` as prompt text.
 
 Each recipe summary also carries `resumable` (the recipe can resume a session) and `runtimeSwitch: { model, thinking }` (whether §4.9 can change each value).
 

@@ -9,7 +9,7 @@ Pigeon is a phone app for Herdr, written as a PWA. It follows the interaction mo
 - **Summary first, detail on demand.** Consecutive tool calls collapse into one line; a tap opens the group, another tap the detail.
 - **When the agent needs you, the composer steps aside.** A prompt card takes the composer's place (§4).
 - **One-handed.** Primary actions sit at the bottom; every hit target is at least 44 × 44 px (smaller visuals extend their hit area with padding or a pseudo-element).
-- **UI language.** The UI text is Simplified Chinese.
+- **UI language.** Simplified Chinese and English, chosen per browser (§10). Labels quoted in this spec are the Chinese strings; English has an equivalent for each.
 
 ### 1.1 Viewport and keyboard
 - Viewport: `width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content`. Chromium resizes the layout above the keyboard, so the composer stays above it without visual-viewport code.
@@ -140,6 +140,7 @@ The **恢复** segment (also reached from `+`) lists the agent's past sessions f
 
 ### 8.1 Settings (gear on home)
 - **外观**: 跟随系统 / 浅色 / 深色; **降低透明度** (§9.2); **强调色**.
+- **语言**: 跟随系统 / 中文 / English (§10).
 - **通知**: the push switches (`push.md` §5). Until delivery exists they are shown disabled with the note "推送投递尚未接通".
 - **设备与配对**: the connection to the computer and to Herdr; paired devices, newest paired first, each with **移除** (revokes at once, `protocol.md` §4.12). The five newest show; any others sit behind one row that expands them; how to pair another phone (`pigeon pair` on the computer).
 - **关于**: version; install-as-app hint.
@@ -166,3 +167,21 @@ Without a valid pairing only the pairing guide shows: scan the QR code from `pig
 - Glass = a translucent fill with `backdrop-filter: blur() saturate()`, a light inner top edge, a dark inner bottom edge, and a soft diagonal highlight. The session header is a progressive blur fading into the content rather than a bar.
 - WebKit cannot refract inside `backdrop-filter`, so there is no lens distortion.
 - **降低透明度** replaces every glass surface with an opaque `--elev` surface. It defaults to on when `prefers-reduced-transparency: reduce` matches. Stored in this browser.
+
+## 10. Language
+
+### 10.1 Choosing the language
+- The setting (§8.1) is **跟随系统**, **中文** or **English**, stored in this browser's `localStorage` (key `pigeon_locale`) and never synced to other phones.
+- **跟随系统** walks the browser's preferred languages (`navigator.languages`) in order and takes the first one Pigeon has: a `zh` tag gives Chinese, an `en` tag English. When none matches, the UI is English.
+- `<html lang>` follows the language in use (`zh-CN` or `en`), and a change applies at once without a reload.
+
+### 10.2 What is translated
+- Every string the PWA shows itself: labels, buttons, notes, empty states, toasts, error messages (`protocol.md` §8) and relative times ("2 小时前" / "2 hours ago").
+- Text the daemon would otherwise compose is sent as data and rendered by the phone: built-in command descriptions (`protocol.md` §5.7), the pane summary of a running command or thinking (§5.3), the title of a prompt that carries none (§5.4), and push text (`push.md` §4).
+- Not translated: anything the agent or the terminal wrote (transcripts, screen text, prompt questions and options), names (workspaces, tabs, agents, models), and the CLI on the computer.
+
+### 10.3 Adding a language
+- Each language is one dictionary of messages keyed by the same ids, plus one entry in the list of languages. English is the reference: it has every message.
+- Another language may lack messages; a missing message shows the English text, never the id.
+- A message's placeholders are named (`{count}`, `{name}`) and every language uses the same set. A message that depends on a count has plural forms chosen by `Intl.PluralRules`.
+

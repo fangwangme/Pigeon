@@ -170,11 +170,13 @@ Entries come from each agent's own directories, in the order below: project dire
 
 **Built-in commands** (source `builtin`, kind `command`): a short list of commands that make sense from a phone. Commands the phone already has native UI for (`/model`) are not listed.
 
-| Agent | Built-in commands |
+| Agent | Built-in commands (`descriptionId`) |
 | :--- | :--- |
-| claude | `/compact`, `/clear`, `/init` |
-| codex | `/compact`, `/new`, `/init`, `/review` |
-| opencode | `/compact`, `/new`, `/init` |
-| pi | `/compact`, `/new` |
+| claude | `/compact` (`compact`), `/clear` (`clear`), `/init` (`init_claude_md`) |
+| codex | `/compact` (`compact`), `/new` (`new`), `/init` (`init_agents_md`), `/review` (`review`) |
+| opencode | `/compact` (`compact`), `/new` (`new`), `/init` (`init_agents_md`) |
+| pi | `/compact` (`compact`), `/new` (`new`) |
+
+A built-in command's `description` is English; the phone shows its own text for the `descriptionId` (`protocol.md` §5.7).
 
 A skill is a directory containing `SKILL.md`; a command is a `.md` file. The description is the front matter `description:` (else the first non-empty body line, for commands). These files are untrusted and are rendered as text.
