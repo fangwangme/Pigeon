@@ -116,7 +116,7 @@ const AGENT_RECIPES: Record<string, AgentRecipe> = {
   },
   terminal: {
     kind: "terminal",
-    label: "Terminal 终端",
+    label: "Terminal",
     models: () => [],
     launchArgs: () => [],
     interruptKeys: ["ctrl+c"],

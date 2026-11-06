@@ -127,7 +127,8 @@ function parseTailPrompt(lines: string[], start: number): PromptParse | null {
   };
 }
 
-function buildInteraction(prompt: PromptParse, title = "需要授权"): InteractionCardData {
+/** `protocol.md` §5.4: `title` and `question` hold only what the screen showed. */
+function buildInteraction(prompt: PromptParse, title = ""): InteractionCardData {
   const optionKey = prompt.options.map((o) => o.label).join("|");
   const interactionId = "int_" + createHash("sha256").update(`${prompt.question}|${optionKey}`).digest("hex").slice(0, 10);
   return {
@@ -153,11 +154,8 @@ export function buildUnrecognizedPrompt(rawScreen: string): InteractionCardData 
     .map((l) => l.trimEnd())
     .filter((l) => l.trim() && !BORDER_ONLY_RE.test(l.trim()))
     .slice(-6);
-  const question = tail.length > 0 ? unbox(tail[tail.length - 1]).trim() : "Agent 正在等待输入";
-  return buildInteraction(
-    { question, payload: tail.slice(0, -1).map((l) => unbox(l)).join("\n"), options: [], fallbackKeys: DEFAULT_FALLBACK_KEYS },
-    "等待输入"
-  );
+  const question = tail.length > 0 ? unbox(tail[tail.length - 1]).trim() : "";
+  return buildInteraction({ question, payload: tail.slice(0, -1).map((l) => unbox(l)).join("\n"), options: [], fallbackKeys: DEFAULT_FALLBACK_KEYS });
 }
 
 export class CardClassifier {

@@ -5,6 +5,7 @@ import type { InteractionCardData, NormalizedQuestion, NormalizedToolCall } from
 import { focusComposer } from "./Composer";
 import { Markdown, openToolDetail } from "./Transcript";
 import { DiffBadge, Icon, Sheet } from "./ui";
+import { t } from "../i18n";
 
 /** Options that hand the turn back to the user to write something (§4.1, §4.3). */
 const TELL_RE = /tell|keep planning|告诉|说明|继续规划/i;
@@ -18,8 +19,8 @@ function lastTurn() {
 
 /** The transcript's pending tool call the permission prompt is about. */
 function pendingCall(): NormalizedToolCall | undefined {
-  const t = lastTurn();
-  const calls = (t?.items ?? []).flatMap((i) => (i.kind === "tool" ? [i.call] : [])).concat(t?.items?.length ? [] : t?.toolCalls ?? []);
+  const turn = lastTurn();
+  const calls = (turn?.items ?? []).flatMap((i) => (i.kind === "tool" ? [i.call] : [])).concat(turn?.items?.length ? [] : turn?.toolCalls ?? []);
   return [...calls].reverse().find((c) => c.status === "running");
 }
 
@@ -32,7 +33,7 @@ function useAnswer(p: () => InteractionCardData) {
       .then((ack) => {
         if (ack?.approved !== false && TELL_RE.test(label)) focusComposer();
       })
-      .catch((e) => showToast(e.message || "没有发出"))
+      .catch((e) => showToast(e.message || t("prompt.notSent")))
       .finally(() => setSending(null));
   };
   return { sending, answer };
@@ -42,7 +43,7 @@ function TerminalLink() {
   return (
     <button class="btn ghost blk" onClick={openTerminal}>
       <Icon name="term" sm />
-      在终端中处理
+      {t("prompt.inTerminal")}
     </button>
   );
 }
@@ -54,7 +55,7 @@ function Options(props: { p: InteractionCardData }) {
       <For each={props.p.options}>
         {(o, i) => (
           <button class={`btn blk${i() === 0 ? " pri" : ""}`} disabled={!!sending() && sending() !== o.id} onClick={() => answer(o.id, o.label)}>
-            {sending() === o.id ? "发送中…" : o.label}
+            {sending() === o.id ? t("common.sending") : o.label}
           </button>
         )}
       </For>
@@ -77,11 +78,11 @@ function PermissionCard(props: { p: InteractionCardData }) {
       <div class="qtop">
         <span class="wbadge">
           <span class="wd" />
-          {props.p.options.length ? "需要授权" : "Agent 在等待"}
+          {props.p.options.length ? t("prompt.permission") : t("prompt.waiting")}
         </span>
       </div>
       <div class="qbody">
-        <div class="qtitle">{props.p.question || props.p.title || "Agent 在等待"}</div>
+        <div class="qtitle">{props.p.question || props.p.title || t("prompt.waiting")}</div>
         <Show when={call()?.diff} fallback={<Show when={command()}><button class="qcmd mono" onClick={() => call() && openToolDetail(call()!)}>{command()}</button></Show>}>
           <button class="qcmd mono" onClick={() => openToolDetail(call()!)} style={{ display: "flex", "align-items": "center", gap: "8px" }}>
             <span style={{ flex: 1, overflow: "hidden", "text-overflow": "ellipsis", "white-space": "nowrap" }}>{call()!.target}</span>
@@ -115,7 +116,7 @@ function QuestionCard(props: { p: InteractionCardData; q: NormalizedQuestion; on
     const label = picked()[cur()];
     const opt = label ? screenOption(label) : undefined;
     if (!opt) {
-      showToast("屏幕上的选项和问题对不上，请在终端中处理");
+      showToast(t("prompt.mismatch"));
       openTerminal();
       return;
     }
@@ -127,13 +128,13 @@ function QuestionCard(props: { p: InteractionCardData; q: NormalizedQuestion; on
       <div class="qtop">
         <div class="pg">
           <Show when={qs().length > 1}>
-            <button aria-label="上一题" disabled={cur() === 0} onClick={() => setPage(Math.max(0, cur() - 1))}>
+            <button aria-label={t("prompt.prev")} disabled={cur() === 0} onClick={() => setPage(Math.max(0, cur() - 1))}>
               <Icon name="chevL" sm />
             </button>
             <span>
               {cur() + 1}/{qs().length}
             </span>
-            <button aria-label="下一题" disabled={cur() === qs().length - 1} onClick={() => setPage(Math.min(qs().length - 1, cur() + 1))}>
+            <button aria-label={t("prompt.next")} disabled={cur() === qs().length - 1} onClick={() => setPage(Math.min(qs().length - 1, cur() + 1))}>
               <Icon name="chevR" sm />
             </button>
           </Show>
@@ -143,7 +144,7 @@ function QuestionCard(props: { p: InteractionCardData; q: NormalizedQuestion; on
             </span>
           </Show>
         </div>
-        <button class="x" aria-label="收起" onClick={props.onCollapse}>
+        <button class="x" aria-label={t("common.collapse")} onClick={props.onCollapse}>
           <Icon name="x" sm />
         </button>
       </div>
@@ -172,16 +173,16 @@ function QuestionCard(props: { p: InteractionCardData; q: NormalizedQuestion; on
           }}
         >
           <span class="rd" style={{ visibility: "hidden" }} />
-          <div class="tx">其他…</div>
+          <div class="tx">{t("prompt.other")}</div>
         </button>
       </div>
       <div class="qfoot">
         <button class="lnk" onClick={openTerminal}>
           <Icon name="term" sm />
-          终端
+          {t("agent.terminal")}
         </button>
         <button class="btn acc" disabled={!picked()[cur()] || !!sending() || cur() !== onScreen()} onClick={submit}>
-          {sending() ? "发送中…" : cur() === qs().length - 1 ? "提交" : "下一题"}
+          {sending() ? t("common.sending") : cur() === qs().length - 1 ? t("prompt.submit") : t("prompt.nextShort")}
         </button>
       </div>
     </div>
@@ -196,11 +197,11 @@ function PlanCard(props: { p: InteractionCardData; markdown: string }) {
       <div class="qtop">
         <span class="wbadge">
           <span class="wd" />
-          计划待批准
+          {t("prompt.planPending")}
         </span>
         <span class="sp" style={{ flex: 1 }} />
         <button class="lnk" onClick={() => setFull(true)}>
-          全文
+          {t("prompt.fullText")}
         </button>
       </div>
       <div class="qbody">
@@ -214,7 +215,7 @@ function PlanCard(props: { p: InteractionCardData; markdown: string }) {
         </Show>
       </div>
       <Show when={full()}>
-        <Sheet title="计划" full onClose={() => setFull(false)}>
+        <Sheet title={t("prompt.plan")} full onClose={() => setFull(false)}>
           <Markdown md={props.markdown} />
         </Sheet>
       </Show>
@@ -233,7 +234,7 @@ export function PromptCard(props: { collapsed: boolean; onCollapse: () => void; 
       fallback={
         <button class="qcap" onClick={props.onExpand}>
           <span class="wd" />
-          {question()!.questions.length} 个问题等你回答
+          {t("prompt.questionsWaiting", { count: question()!.questions.length })}
         </button>
       }
     >

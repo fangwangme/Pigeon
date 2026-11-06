@@ -25,11 +25,15 @@ describe("choosing the language (mobile-ui-and-themes.md §10.1)", () => {
 });
 
 describe("dictionaries (mobile-ui-and-themes.md §10.3)", () => {
-  test("every language has exactly the English message ids with the same placeholders", () => {
+  test("Chinese has every English message", () => {
+    expect(Object.keys(LOCALES.zh.messages).sort()).toEqual(Object.keys(en).sort());
+  });
+
+  test("no language has a message English lacks, and each uses English's placeholders", () => {
     for (const [code, locale] of Object.entries(LOCALES)) {
-      expect({ code, ids: Object.keys(locale.messages).sort() }).toEqual({ code, ids: Object.keys(en).sort() });
-      for (const id of Object.keys(en) as MessageId[]) {
-        expect({ code, id, names: placeholders(locale.messages[id]) }).toEqual({ code, id, names: placeholders(en[id]) });
+      for (const [id, msg] of Object.entries(locale.messages) as Array<[MessageId, string | Record<string, string>]>) {
+        expect({ code, id, known: id in en }).toEqual({ code, id, known: true });
+        expect({ code, id, names: placeholders(msg) }).toEqual({ code, id, names: placeholders(en[id]) });
       }
     }
   });

@@ -72,7 +72,12 @@ export interface PaneSummary {
   /** The pane's foreground program (`protocol.md` §5.3). */
   program?: string;
   summary?: string;
+  /** How the phone shows `summary` (`protocol.md` §5.3). */
+  summaryKind?: SummaryKind;
 }
+
+/** `text`: shown as is; `run`: the running command; `thinking`: the thought's title, or empty. */
+export type SummaryKind = "text" | "run" | "thinking";
 
 export interface TabSummary {
   id: string;
@@ -104,6 +109,7 @@ export interface WorkingAgentSummary {
   tabId: string;
   paneId: string;
   summary?: string;
+  summaryKind?: SummaryKind;
 }
 
 export interface SnapshotPayload {
@@ -152,6 +158,8 @@ export interface SkillEntry {
   kind: "skill" | "command";
   /** Text to insert into the prompt to invoke the skill in this agent (e.g. "/name", "$name"). */
   invocation: string;
+  /** Built-in commands only: the id the phone translates; `description` is the English fallback. */
+  descriptionId?: string;
 }
 
 export interface ModelOption {

@@ -4,6 +4,7 @@ import { request, selectPane } from "../state/ws";
 import type { PastSession } from "../../../types/protocol";
 import { Composer, ModelSheet } from "./Composer";
 import { ago, agentLabel, Icon, Sheet } from "./ui";
+import { t } from "../i18n";
 
 function defaultAgent(): string | null {
   const kinds = Object.keys(state.recipes);
@@ -48,7 +49,7 @@ export function NewSession(props: { workspaceId: string | null; mode: "new" | "r
         .then((ack) => setPast(ack.sessions ?? []))
         .catch((e) => {
           setPast([]);
-          showToast(e.message || "读取历史会话失败");
+          showToast(e.message || t("new.listFailed"));
         });
     })
   );
@@ -59,7 +60,7 @@ export function NewSession(props: { workspaceId: string | null; mode: "new" | "r
   };
 
   const create = (extra: { firstMessage?: string; resumeSessionId?: string }) => {
-    if (!wsId() || !agent()) return Promise.reject({ message: "先选择工作区和 Agent" });
+    if (!wsId() || !agent()) return Promise.reject({ message: t("new.pickFirst") });
     const payload = {
       workspaceId: wsId()!,
       agentKind: agent()!,
@@ -75,27 +76,27 @@ export function NewSession(props: { workspaceId: string | null; mode: "new" | "r
   return (
     <div class="page">
       <div class="hdr">
-        <button class="cbtn" aria-label="返回" onClick={() => navigate({ name: "home" })}>
+        <button class="cbtn" aria-label={t("common.back")} onClick={() => navigate({ name: "home" })}>
           <Icon name="chevL" />
         </button>
         <div class="ht">
-          <div class="t">新会话</div>
+          <div class="t">{t("new.title")}</div>
         </div>
         <div style={{ width: "44px" }} />
       </div>
       <div style={{ padding: "0 16px" }}>
         <div class="seg">
           <button class={mode() === "new" ? "on" : ""} onClick={() => setMode("new")}>
-            新建
+            {t("new.segNew")}
           </button>
           <button class={mode() === "resume" ? "on" : ""} onClick={() => setMode("resume")}>
-            恢复
+            {t("new.segResume")}
           </button>
         </div>
         <div class="chipr" style={{ "margin-top": "10px", "flex-wrap": "wrap" }}>
           <button class="chip" onClick={() => setSheet("ws")}>
             <Icon name="folder" />
-            {ws()?.label ?? "选择工作区"}
+            {ws()?.label ?? t("new.pickWorkspace")}
             <Icon name="chevD" />
           </button>
           <button class="chip" onClick={() => setSheet("agent")}>
@@ -106,7 +107,7 @@ export function NewSession(props: { workspaceId: string | null; mode: "new" | "r
           <Show when={mode() === "new" && recipe()?.models.length}>
             <button class="chip" onClick={() => setSheet("model")}>
               <Icon name="layers" />
-              {(recipe()!.models.find((m) => m.id === model())?.label ?? "默认模型") + thinkingLabel()}
+              {(recipe()!.models.find((m) => m.id === model())?.label ?? t("new.defaultModel")) + thinkingLabel()}
               <Icon name="chevD" />
             </button>
           </Show>
@@ -119,21 +120,21 @@ export function NewSession(props: { workspaceId: string | null; mode: "new" | "r
           fallback={
             <div class="newempty">
               <div class="logo">P</div>
-              <div class="big">开始新会话</div>
+              <div class="big">{t("new.start")}</div>
               <div class="mono" style={{ "font-size": "13px", "overflow-wrap": "anywhere" }}>
                 {ws()?.folder ?? ""}
               </div>
               <p class="note" style={{ "margin-top": "14px" }}>
-                发送第一条消息后，会在电脑上的 Herdr 里新开一个标签页。
+                {t("new.startHint")}
               </p>
             </div>
           }
         >
           <div class="reslist">
-            <Show when={recipe()?.resumable} fallback={<p class="note">{agentLabel(agent())} 不支持恢复历史会话。</p>}>
+            <Show when={recipe()?.resumable} fallback={<p class="note">{t("new.notResumable", { agent: agentLabel(agent()) })}</p>}>
               <Show when={past()} fallback={<div class="newempty"><span class="spin" style={{ margin: "0 auto" }} /></div>}>
-                <Show when={past()!.length} fallback={<p class="note">这个工作区还没有 {agentLabel(agent())} 的历史会话。</p>}>
-                  <p class="note">恢复会在电脑上新开一个标签页。</p>
+                <Show when={past()!.length} fallback={<p class="note">{t("new.noPast", { agent: agentLabel(agent()) })}</p>}>
+                  <p class="note">{t("new.resumeHint")}</p>
                   <div class="card">
                     <For each={past()!}>
                       {(s) => (
@@ -143,13 +144,13 @@ export function NewSession(props: { workspaceId: string | null; mode: "new" | "r
                           onClick={() => {
                             setBusy(s.id);
                             create({ resumeSessionId: s.id })
-                              .catch((e) => showToast(e.message || "恢复失败"))
+                              .catch((e) => showToast(e.message || t("new.resumeFailed")))
                               .finally(() => setBusy(null));
                           }}
                         >
                           <Icon name="clock" />
                           <div class="tx">
-                            <div style={{ overflow: "hidden", "text-overflow": "ellipsis", "white-space": "nowrap" }}>{s.title || "（无标题）"}</div>
+                            <div style={{ overflow: "hidden", "text-overflow": "ellipsis", "white-space": "nowrap" }}>{s.title || t("new.untitled")}</div>
                             <small>{ago(s.updatedAt)}</small>
                           </div>
                           <Show when={busy() === s.id} fallback={<Icon name="chevR" sm />}>
@@ -169,12 +170,12 @@ export function NewSession(props: { workspaceId: string | null; mode: "new" | "r
 
       <Show when={mode() === "new"}>
         <div class="dock">
-          <Composer draftId={null} placeholder="第一条消息…" onSend={(text) => create({ firstMessage: text })} />
+          <Composer draftId={null} placeholder={t("new.firstMessage")} onSend={(text) => create({ firstMessage: text })} />
         </div>
       </Show>
 
       <Show when={sheet() === "ws"}>
-        <Sheet title="工作区" onClose={() => setSheet(null)}>
+        <Sheet title={t("new.workspace")} onClose={() => setSheet(null)}>
           <div class="card">
             <For each={state.workspaces}>
               {(w) => (
@@ -199,7 +200,7 @@ export function NewSession(props: { workspaceId: string | null; mode: "new" | "r
               )}
             </For>
           </div>
-          <p class="note">新工作区需要在电脑上的 Herdr 里创建。</p>
+          <p class="note">{t("new.workspaceNote")}</p>
         </Sheet>
       </Show>
       <Show when={sheet() === "agent"}>

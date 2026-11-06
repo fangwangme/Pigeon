@@ -3,6 +3,7 @@ import { draftKey, readPref, showToast, state, writePref } from "../state/store"
 import { uploadFile } from "../state/ws";
 import type { AgentRecipeSummary, SkillEntry } from "../../../types/protocol";
 import { Icon, Sheet } from "./ui";
+import { t, type MessageId } from "../i18n";
 
 let textareaEl: HTMLTextAreaElement | undefined;
 
@@ -18,14 +19,29 @@ interface Attachment {
   id?: string;
 }
 
-const SOURCE_LABEL: Record<SkillEntry["source"], string> = { project: "项目", user: "用户", plugin: "插件", builtin: "内置" };
+const SOURCE_LABEL: Record<SkillEntry["source"], MessageId> = { project: "skills.project", user: "skills.user", plugin: "skills.plugin", builtin: "skills.builtin" };
+
+/** `protocol.md` §5.7: a built-in command's description in the current language, else the daemon's English. */
+const COMMAND_TEXT: Record<string, MessageId> = {
+  compact: "cmd.compact",
+  clear: "cmd.clear",
+  new: "cmd.new",
+  review: "cmd.review",
+  init_claude_md: "cmd.init_claude_md",
+  init_agents_md: "cmd.init_agents_md",
+};
+
+function skillDescription(s: SkillEntry): string {
+  const id = s.descriptionId && COMMAND_TEXT[s.descriptionId];
+  return id ? t(id) : s.description;
+}
 
 function groupOf(e: SkillEntry): "project" | "user" | "plugin" | "command" {
   if (e.source === "builtin") return "command";
   return e.source;
 }
 
-const GROUP_LABEL = { project: "项目", user: "用户", plugin: "插件", command: "命令" } as const;
+const GROUP_LABEL: Record<"project" | "user" | "plugin" | "command", MessageId> = { project: "skills.project", user: "skills.user", plugin: "skills.plugin", command: "skills.command" };
 const GROUP_ORDER = ["project", "user", "plugin", "command"] as const;
 
 /** §6.3 */
@@ -33,35 +49,35 @@ export function SkillsSheet(props: { onPick: (e: SkillEntry) => void; onClose: (
   const [seg, setSeg] = createSignal<"all" | (typeof GROUP_ORDER)[number]>("all");
   const present = () => GROUP_ORDER.filter((g) => state.skills.some((s) => groupOf(s) === g));
   return (
-    <Sheet title="Skills 与命令" onClose={props.onClose} full>
+    <Sheet title={t("skills.title")} onClose={props.onClose} full>
       <Show when={present().length > 1}>
         <div class="seg" style={{ margin: "2px 0 6px" }}>
           <button class={seg() === "all" ? "on" : ""} onClick={() => setSeg("all")}>
-            全部
+            {t("skills.all")}
           </button>
           <For each={present()}>
             {(g) => (
               <button class={seg() === g ? "on" : ""} onClick={() => setSeg(g)}>
-                {GROUP_LABEL[g]}
+                {t(GROUP_LABEL[g])}
               </button>
             )}
           </For>
         </div>
       </Show>
       <Show when={state.skills.length === 0}>
-        <p class="note">这个 Agent 没有可用的 Skill 或命令。</p>
+        <p class="note">{t("skills.none")}</p>
       </Show>
       <For each={present().filter((g) => seg() === "all" || seg() === g)}>
         {(g) => (
           <>
-            <div class="sec">{GROUP_LABEL[g]}</div>
+            <div class="sec">{t(GROUP_LABEL[g])}</div>
             <For each={state.skills.filter((s) => groupOf(s) === g)}>
               {(s) => (
                 <button class="sk" onClick={() => props.onPick(s)}>
                   <span class="nm mono">{s.invocation}</span>
-                  <span class="ds">{s.description}</span>
+                  <span class="ds">{skillDescription(s)}</span>
                   <Show when={s.kind === "command" && s.source !== "builtin"}>
-                    <span class="src">命令</span>
+                    <span class="src">{t("skills.command")}</span>
                   </Show>
                 </button>
               )}
@@ -89,14 +105,14 @@ export function ModelSheet(props: {
   const current = () => models().find((m) => m.id === props.model);
   const levels = () => current()?.thinkingLevels ?? [];
   return (
-    <Sheet title="模型与思考强度" sub={props.recipe?.label} onClose={props.onClose}>
+    <Sheet title={t("model.title")} sub={props.recipe?.label} onClose={props.onClose}>
       <div class="fl">
-        <span>模型</span>
+        <span>{t("model.model")}</span>
         <Show when={props.modelSource}>
-          <span style={{ "font-weight": 500 }}>来源：{props.modelSource}</span>
+          <span style={{ "font-weight": 500 }}>{t("model.source", { source: props.modelSource! })}</span>
         </Show>
       </div>
-      <Show when={models().length} fallback={<p class="note">这个 Agent 没有可选的模型。</p>}>
+      <Show when={models().length} fallback={<p class="note">{t("model.none")}</p>}>
         <div class="card">
           <For each={models()}>
             {(m) => (
@@ -120,9 +136,9 @@ export function ModelSheet(props: {
       </Show>
       <Show when={levels().length}>
         <div class="fl">
-          <span>思考强度</span>
+          <span>{t("model.effort")}</span>
           <Show when={props.thinkingSource}>
-            <span style={{ "font-weight": 500 }}>来源：{props.thinkingSource}</span>
+            <span style={{ "font-weight": 500 }}>{t("model.source", { source: props.thinkingSource! })}</span>
           </Show>
         </div>
         <div class="seg">
@@ -136,7 +152,7 @@ export function ModelSheet(props: {
         </div>
       </Show>
       <Show when={!props.canSwitchModel || (levels().length > 0 && !props.canSwitchThinking)}>
-        <p class="note">这个 Agent 不能在运行中切换{!props.canSwitchModel ? "模型" : "思考强度"}，可以在新会话里选择。</p>
+        <p class="note">{!props.canSwitchModel ? t("model.noSwitchModel") : t("model.noSwitchEffort")}</p>
       </Show>
     </Sheet>
   );
@@ -225,7 +241,7 @@ export function Composer(props: ComposerProps) {
     for (const f of Array.from(files)) {
       const key = ++keySeq;
       const preview = f.type.startsWith("image/") ? URL.createObjectURL(f) : undefined;
-      setAtts([...atts(), { key, name: f.name || "照片", preview }]);
+      setAtts([...atts(), { key, name: f.name || t("plus.photo"), preview }]);
       try {
         const res = await uploadFile(f);
         setAtts(atts().map((a) => (a.key === key ? { ...a, id: res.id } : a)));
@@ -252,7 +268,7 @@ export function Composer(props: ComposerProps) {
         setAtts([]);
         setTimeout(grow, 0);
       })
-      .catch((e) => showToast(e?.message ? `没有发出：${e.message}` : "没有发出，草稿已保留"))
+      .catch((e) => showToast(e?.message ? t("composer.notSentReason", { reason: e.message }) : t("composer.notSent")))
       .finally(() => setSending(false));
   };
 
@@ -271,8 +287,8 @@ export function Composer(props: ComposerProps) {
                 onClick={() => insert(s.invocation)}
               >
                 <span class="nm mono">{s.invocation}</span>
-                <span class="ds">{s.description}</span>
-                <span class="src">{SOURCE_LABEL[s.source]}</span>
+                <span class="ds">{skillDescription(s)}</span>
+                <span class="src">{t(SOURCE_LABEL[s.source])}</span>
               </button>
             )}
           </For>
@@ -292,7 +308,7 @@ export function Composer(props: ComposerProps) {
                   </Show>
                   <button
                     class="rm"
-                    aria-label="移除"
+                    aria-label={t("common.remove")}
                     onClick={() => {
                       if (a.preview) URL.revokeObjectURL(a.preview);
                       setAtts(atts().filter((x) => x.key !== a.key));
@@ -306,7 +322,7 @@ export function Composer(props: ComposerProps) {
           </div>
         </Show>
         <Show when={!open() && props.onPlus}>
-          <button class="rb" aria-label="添加" onClick={() => props.onPlus!()}>
+          <button class="rb" aria-label={t("plus.title")} onClick={() => props.onPlus!()}>
             <Icon name="plus" />
           </button>
         </Show>
@@ -344,7 +360,7 @@ export function Composer(props: ComposerProps) {
         <div class="compbar" style={{ display: open() ? "flex" : "contents" }}>
           <Show when={open()}>
             <Show when={props.onPlus}>
-              <button class="rb" aria-label="添加" onMouseDown={(e) => e.preventDefault()} onClick={() => props.onPlus!()}>
+              <button class="rb" aria-label={t("plus.title")} onMouseDown={(e) => e.preventDefault()} onClick={() => props.onPlus!()}>
                 <Icon name="plus" />
               </button>
             </Show>
@@ -354,14 +370,14 @@ export function Composer(props: ComposerProps) {
           <Show
             when={showStop()}
             fallback={
-              <button class="rb send" aria-label="发送" disabled={!canSend()} onMouseDown={(e) => e.preventDefault()} onClick={send}>
+              <button class="rb send" aria-label={t("composer.send")} disabled={!canSend()} onMouseDown={(e) => e.preventDefault()} onClick={send}>
                 <Show when={!sending()} fallback={<span class="spin" />}>
                   <Icon name="up" />
                 </Show>
               </button>
             }
           >
-            <button class="rb stop" aria-label="停止" onClick={() => props.onStop?.()}>
+            <button class="rb stop" aria-label={t("composer.stop")} onClick={() => props.onStop?.()}>
               <Icon name="stop" />
             </button>
           </Show>
@@ -381,37 +397,37 @@ export function PlusSheet(props: { onClose: () => void; onSkills?: () => void; o
     void addFilesHook?.(files);
   };
   return (
-    <Sheet title="添加" onClose={props.onClose}>
+    <Sheet title={t("plus.title")} onClose={props.onClose}>
       <div class="tile3">
         <label>
           <Icon name="camera" />
-          相机
+          {t("plus.camera")}
           <input type="file" accept="image/*" capture="environment" hidden onChange={picker} />
         </label>
         <label>
           <Icon name="image" />
-          照片
+          {t("plus.photo")}
           <input type="file" accept="image/*" multiple hidden onChange={picker} />
         </label>
         <label>
           <Icon name="upload" />
-          文件
+          {t("plus.file")}
           <input type="file" multiple hidden onChange={picker} />
         </label>
       </div>
-      <p class="note">文件选好后立即上传到电脑，单个不超过 20 MB。</p>
+      <p class="note">{t("plus.note")}</p>
       <div class="card" style={{ "margin-top": "6px" }}>
         <Show when={props.onSkills}>
           <button class="li" onClick={() => props.onSkills!()}>
             <Icon name="spark" />
-            <div class="tx">Skills 与命令</div>
+            <div class="tx">{t("skills.title")}</div>
             <Icon name="chevR" sm />
           </button>
         </Show>
         <Show when={props.onResume}>
           <button class="li" onClick={() => props.onResume!()}>
             <Icon name="clock" />
-            <div class="tx">从历史会话恢复</div>
+            <div class="tx">{t("plus.resume")}</div>
             <Icon name="chevR" sm />
           </button>
         </Show>

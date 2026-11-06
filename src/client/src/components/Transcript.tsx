@@ -5,23 +5,24 @@ import { renderMarkdown } from "../utils/markdown";
 import type { Card, FileDiffSummary, NormalizedToolCall, NormalizedTurn, ToolVerb, TurnItem } from "../../../types/protocol";
 import type { IconName } from "../icons";
 import { DiffBadge, Icon, Sheet } from "./ui";
+import { t, type MessageId } from "../i18n";
 
-const VERB_LABEL: Record<ToolVerb, string> = { run: "运行", edit: "编辑", create: "创建", read: "读取", search: "搜索", other: "" };
+const VERB_LABEL: Record<ToolVerb, MessageId | null> = { run: "verb.run", edit: "verb.edit", create: "verb.create", read: "verb.read", search: "verb.search", other: null };
 const VERB_ICON: Record<ToolVerb, IconName> = { run: "term", edit: "pencil", create: "fileplus", read: "read", search: "search", other: "layers" };
-const VERB_COUNT: Record<ToolVerb, (n: number) => string> = {
-  read: (n) => `读取了 ${n} 个文件`,
-  edit: (n) => `编辑了 ${n} 个文件`,
-  create: (n) => `创建了 ${n} 个文件`,
-  run: (n) => `运行了 ${n} 条命令`,
-  search: (n) => `搜索了 ${n} 次`,
-  other: (n) => `调用了 ${n} 个工具`,
+const VERB_COUNT: Record<ToolVerb, MessageId> = {
+  read: "transcript.readFiles",
+  edit: "transcript.editedFiles",
+  create: "transcript.createdFiles",
+  run: "transcript.ranCommands",
+  search: "transcript.searched",
+  other: "transcript.calledTools",
 };
 const VERB_ORDER: ToolVerb[] = ["read", "search", "edit", "create", "run", "other"];
 
 /** Wraps code blocks with a copy button (§3.2); clicks are handled by `onMarkdownClick`. */
 function markdownHtml(md: string): string {
   return renderMarkdown(md)
-    .replace(/<pre>/g, '<div class="cb"><button class="cpy" data-copy type="button">复制</button><pre>')
+    .replace(/<pre>/g, `<div class="cb"><button class="cpy" data-copy type="button">${t("common.copy")}</button><pre>`)
     .replace(/<\/pre>/g, "</pre></div>");
 }
 
@@ -37,7 +38,8 @@ export function Markdown(props: { md: string }) {
 }
 
 function verbLabel(c: NormalizedToolCall): string {
-  return VERB_LABEL[c.verb] || c.name;
+  const id = VERB_LABEL[c.verb];
+  return id ? t(id) : c.name;
 }
 
 /** One line for a call: a command with a description shows only the description (§3.3). */
@@ -65,8 +67,8 @@ function groupSummary(calls: NormalizedToolCall[]): string {
   const counts = new Map<ToolVerb, number>();
   for (const c of calls) counts.set(c.verb, (counts.get(c.verb) ?? 0) + 1);
   return VERB_ORDER.filter((v) => counts.has(v))
-    .map((v) => VERB_COUNT[v](counts.get(v)!))
-    .join("，");
+    .map((v) => t(VERB_COUNT[v], { count: counts.get(v)! }))
+    .join(t("transcript.listSep"));
 }
 
 // ---------- the tool sheet (§3.3) ----------
@@ -95,13 +97,13 @@ function Lines(props: { text: string; label: string }) {
         <span>{props.label}</span>
         <button onClick={() => copyText(props.text)}>
           <Icon name="copy" sm />
-          复制
+          {t("common.copy")}
         </button>
       </div>
       <div class="fbox mono">{shown()}</div>
       <Show when={!all() && lines().length > 40}>
         <button class="lnk" onClick={() => setAll(true)}>
-          展开全部 {lines().length} 行
+          {t("transcript.showAllLines", { count: lines().length })}
         </button>
       </Show>
     </>
@@ -163,9 +165,9 @@ function ToolDetail(props: { call: NormalizedToolCall }) {
     <Switch
       fallback={
         <>
-          <Lines label="参数" text={stringify(c().input)} />
+          <Lines label={t("tool.input")} text={stringify(c().input)} />
           <Show when={c().output}>
-            <Lines label="结果" text={c().output!} />
+            <Lines label={t("tool.result")} text={c().output!} />
           </Show>
         </>
       }
@@ -176,28 +178,28 @@ function ToolDetail(props: { call: NormalizedToolCall }) {
             {c().description}
           </div>
         </Show>
-        <Lines label="命令" text={command()} />
+        <Lines label={t("tool.command")} text={command()} />
         <Show when={c().output}>
-          <Lines label="输出" text={c().output!} />
+          <Lines label={t("tool.output")} text={c().output!} />
         </Show>
         <div class="meta">
           <Show when={c().exitCode !== undefined}>
-            <span class={c().exitCode !== 0 ? "bad" : ""}>退出码 {c().exitCode}</span>
+            <span class={c().exitCode !== 0 ? "bad" : ""}>{t("tool.exitCode", { code: c().exitCode! })}</span>
           </Show>
           <Show when={c().durationMs !== undefined}>
-            <span>{(c().durationMs! / 1000).toFixed(1)} 秒</span>
+            <span>{t("tool.seconds", { seconds: (c().durationMs! / 1000).toFixed(1) })}</span>
           </Show>
           <Show when={c().status === "running"}>
-            <span>运行中</span>
+            <span>{t("tool.running")}</span>
           </Show>
         </div>
       </Match>
       <Match when={c().verb === "edit" || c().verb === "create"}>
         <div class="fl">
-          <span>文件</span>
+          <span>{t("plus.file")}</span>
           <button onClick={() => copyText(c().target || "")}>
             <Icon name="copy" sm />
-            复制路径
+            {t("tool.copyPath")}
           </button>
         </div>
         <div class="fbox mono">{c().target}</div>
@@ -205,17 +207,17 @@ function ToolDetail(props: { call: NormalizedToolCall }) {
           {(d) => (
             <>
               <div class="fl">
-                <span>改动</span>
+                <span>{t("tool.changes")}</span>
                 <DiffBadge add={d.additions} del={d.deletions} />
               </div>
-              <Show when={d.patch} fallback={<p class="note">没有记录具体改动。</p>}>
+              <Show when={d.patch} fallback={<p class="note">{t("tool.noPatch")}</p>}>
                 <DiffView patch={d.patch!} />
               </Show>
             </>
           )}
         </For>
         <Show when={patches().length === 0}>
-          <Lines label="参数" text={stringify(c().input)} />
+          <Lines label={t("tool.input")} text={stringify(c().input)} />
         </Show>
       </Match>
     </Switch>
@@ -275,17 +277,17 @@ const openTodos = () => setTodoOpen(true);
 export function TodoSheet() {
   return (
     <Show when={todoOpen()}>
-      <Sheet title="任务" sub={`${(state.todos ?? []).filter((t) => t.status === "completed").length}/${(state.todos ?? []).length}`} onClose={() => setTodoOpen(false)}>
-        <For each={state.todos ?? []} fallback={<p class="note">没有任务列表。</p>}>
-          {(t) => (
+      <Sheet title={t("todo.title")} sub={`${(state.todos ?? []).filter((td) => td.status === "completed").length}/${(state.todos ?? []).length}`} onClose={() => setTodoOpen(false)}>
+        <For each={state.todos ?? []} fallback={<p class="note">{t("todo.none")}</p>}>
+          {(td) => (
             <div class="li" style={{ "padding-left": "4px" }}>
               <Switch>
-                <Match when={t.status === "completed"}>
+                <Match when={td.status === "completed"}>
                   <span class="si done">
                     <Icon name="check" sm />
                   </span>
                 </Match>
-                <Match when={t.status === "in_progress"}>
+                <Match when={td.status === "in_progress"}>
                   <span class="si">
                     <span class="spin" />
                   </span>
@@ -294,8 +296,8 @@ export function TodoSheet() {
                   <span class="si idle" />
                 </Match>
               </Switch>
-              <div class="tx" style={{ "text-decoration": t.status === "completed" ? "line-through" : undefined, color: t.status === "completed" ? "var(--muted)" : undefined }}>
-                {t.text}
+              <div class="tx" style={{ "text-decoration": td.status === "completed" ? "line-through" : undefined, color: td.status === "completed" ? "var(--muted)" : undefined }}>
+                {td.text}
               </div>
             </div>
           )}
@@ -306,9 +308,9 @@ export function TodoSheet() {
 }
 
 export function TodoCapsule() {
-  const done = () => (state.todos ?? []).filter((t) => t.status === "completed").length;
+  const done = () => (state.todos ?? []).filter((td) => td.status === "completed").length;
   const total = () => (state.todos ?? []).length;
-  const current = () => (state.todos ?? []).find((t) => t.status === "in_progress")?.text;
+  const current = () => (state.todos ?? []).find((td) => td.status === "in_progress")?.text;
   return (
     <Show when={total() > 0}>
       <button class="todo" onClick={openTodos}>
@@ -348,7 +350,7 @@ function ToolLine(props: { calls: NormalizedToolCall[] }) {
   const single = () => (props.calls.length === 1 ? props.calls[0] : null);
   const running = () => props.calls.some((c) => c.status === "running");
   const failed = () => props.calls.some((c) => c.status === "failed");
-  const t = () => totals(props.calls);
+  const tot = () => totals(props.calls);
   const label = () => (single() ? callLine(single()!) : groupSummary(props.calls));
   return (
     <button
@@ -359,7 +361,7 @@ function ToolLine(props: { calls: NormalizedToolCall[] }) {
         <Icon name={single() ? VERB_ICON[single()!.verb] : "layers"} sm />
       </Show>
       <span class="lab">{label()}</span>
-      <DiffBadge add={t().add} del={t().del} />
+      <DiffBadge add={tot().add} del={tot().del} />
       <Icon name="chevR" sm class="chev" />
     </button>
   );
@@ -367,7 +369,7 @@ function ToolLine(props: { calls: NormalizedToolCall[] }) {
 
 function Reasoning(props: { text: string; durationMs?: number; streaming?: boolean }) {
   const [open, setOpen] = createSignal(false);
-  const label = () => (props.streaming ? "思考中…" : props.durationMs ? `思考了 ${Math.max(1, Math.round(props.durationMs / 1000))} 秒` : "思考");
+  const label = () => (props.streaming ? t("transcript.thinkingNow") : props.durationMs ? t("transcript.thoughtFor", { seconds: Math.max(1, Math.round(props.durationMs / 1000)) }) : t("transcript.thought"));
   return (
     <>
       <button class="tool think" onClick={() => setOpen(!open())} aria-expanded={open()}>
@@ -433,7 +435,7 @@ export function Turn(props: { turn: NormalizedTurn; last: boolean; working: bool
               <button class="tool" onClick={openTodos}>
                 <Icon name="list" sm />
                 <span class="lab">
-                  任务 {(b as { done: number }).done}/{(b as { total: number }).total}
+                  {t("todo.progress", { done: (b as { done: number }).done, total: (b as { total: number }).total })}
                 </span>
                 <Icon name="chevR" sm class="chev" />
               </button>
@@ -443,7 +445,7 @@ export function Turn(props: { turn: NormalizedTurn; last: boolean; working: bool
       </For>
       <Show when={finished() && lastText(props.turn)}>
         <div class="acts">
-          <button aria-label="复制回复" onClick={() => copyText(lastText(props.turn))}>
+          <button aria-label={t("transcript.copyReply")} onClick={() => copyText(lastText(props.turn))}>
             <Icon name="copy" sm />
           </button>
         </div>
@@ -481,7 +483,7 @@ export function ScreenCard(props: { card: Card }) {
       return (
         <button class="tool" onClick={() => openDiffs(c.filePath, [{ filePath: c.filePath, status: "modified", additions: c.additions, deletions: c.deletions, patch: c.diff }])}>
           <Icon name="pencil" sm />
-          <span class="lab">编辑 {c.filePath}</span>
+          <span class="lab">{t("transcript.editFile", { path: c.filePath })}</span>
           <DiffBadge add={c.additions} del={c.deletions} />
           <Icon name="chevR" sm class="chev" />
         </button>

@@ -7,9 +7,10 @@ import { ConnectionBanner } from "./Home";
 import { openOverlay } from "./overlays";
 import { PromptCard } from "./PromptCard";
 import { openDiffs, ScreenCard, TodoCapsule, TodoSheet, ToolSheet, Turn } from "./Transcript";
-import { DiffBadge, findPane, Icon, paneLabel, paneStatus, Sheet, StatusIcon } from "./ui";
+import { DiffBadge, findPane, Icon, paneLabel, paneStatus, paneSummary, Sheet, StatusIcon } from "./ui";
+import { t, type MessageId } from "../i18n";
 
-const SOURCE_TEXT = { log: "日志", launch: "启动参数", unknown: "未知" } as const;
+const SOURCE_TEXT: Record<"log" | "launch" | "unknown", MessageId> = { log: "model.sourceLog", launch: "model.sourceLaunch", unknown: "model.sourceUnknown" };
 const TERMINAL_KEYS: Array<[string, string]> = [
   ["↑", "up"],
   ["↓", "down"],
@@ -33,7 +34,7 @@ function Screen(props: { scroll?: boolean }) {
   );
   return (
     <pre class="term mono" ref={el}>
-      {state.rawScreen || "（屏幕为空）"}
+      {state.rawScreen || t("terminal.empty")}
     </pre>
   );
 }
@@ -58,7 +59,7 @@ function Keys() {
 function TerminalSheet() {
   return (
     <Show when={state.terminalOpen}>
-      <Sheet title="终端" sub="按键直接发送到这个 pane" full onClose={() => setState("terminalOpen", false)}>
+      <Sheet title={t("agent.terminal")} sub={t("terminal.sub")} full onClose={() => setState("terminalOpen", false)}>
         <div style={{ display: "flex", "flex-direction": "column", height: "100%" }}>
           <Screen />
           <Keys />
@@ -82,8 +83,8 @@ function ChangesSheet(props: { onClose: () => void }) {
     return [...map.entries()];
   });
   return (
-    <Sheet title="本会话的变更" sub={files().length ? `${files().length} 个文件` : undefined} onClose={props.onClose} full>
-      <Show when={files().length} fallback={<p class="note">{state.session?.bound ? "这个会话还没有改动文件。" : "这个 pane 没有绑定会话记录。"}</p>}>
+    <Sheet title={t("changes.title")} sub={files().length ? t("changes.fileCount", { count: files().length }) : undefined} onClose={props.onClose} full>
+      <Show when={files().length} fallback={<p class="note">{state.session?.bound ? t("changes.none") : t("changes.unbound")}</p>}>
         <div class="card">
           <For each={files()}>
             {([path, f]) => (
@@ -106,7 +107,7 @@ function ChangesSheet(props: { onClose: () => void }) {
 function PaneSheet(props: { onClose: () => void }) {
   const found = () => findPane(state.activePaneId);
   return (
-    <Sheet title="切换 pane" sub={found()?.tab.label} onClose={props.onClose}>
+    <Sheet title={t("panes.title")} sub={found()?.tab.label} onClose={props.onClose}>
       <div class="card">
         <For each={found()?.tab.panes ?? []}>
           {(p) => (
@@ -120,7 +121,7 @@ function PaneSheet(props: { onClose: () => void }) {
               <StatusIcon status={paneStatus(p)} />
               <div class="tx">
                 {paneLabel(p)}
-                <small>{p.name || p.summary || p.id}</small>
+                <small>{p.name || paneSummary(p) || p.id}</small>
               </div>
               <Show when={p.id === state.activePaneId}>
                 <span class="ck">
@@ -131,7 +132,7 @@ function PaneSheet(props: { onClose: () => void }) {
           )}
         </For>
       </div>
-      <p class="note">只切换手机上看的 pane，电脑上的焦点不变。</p>
+      <p class="note">{t("panes.note")}</p>
     </Sheet>
   );
 }
@@ -202,7 +203,7 @@ export function SessionPage() {
   const modelChip = () => (
     <Show when={recipe() && recipe()!.models.length}>
       <button class="mc" onMouseDown={(e) => e.preventDefault()} onClick={() => setPanel("model")}>
-        {recipe()!.models.find((m) => m.id === modelValue())?.label ?? modelValue() ?? "模型"}
+        {recipe()!.models.find((m) => m.id === modelValue())?.label ?? modelValue() ?? t("model.model")}
         <Show when={thinkingValue()}>
           <em>· {thinkingValue()}</em>
         </Show>
@@ -217,7 +218,7 @@ export function SessionPage() {
   return (
     <div class="page">
       <div class="hdr float">
-        <button class="cbtn" aria-label="返回" onClick={back}>
+        <button class="cbtn" aria-label={t("common.back")} onClick={back}>
           <Icon name="chevL" />
         </button>
         <button class="ht" onClick={() => (tab()?.panes.length ?? 0) > 1 && setPanel("panes")}>
@@ -228,14 +229,14 @@ export function SessionPage() {
             <Show when={state.agentStatus === "blocked"}>
               <span class="wd" />
             </Show>
-            <span style={{ overflow: "hidden", "text-overflow": "ellipsis" }}>{tab()?.label ?? state.sessionTitle ?? "会话"}</span>
+            <span style={{ overflow: "hidden", "text-overflow": "ellipsis" }}>{tab()?.label ?? state.sessionTitle ?? t("session.fallbackTitle")}</span>
           </div>
           <div class="s">
             {pane() ? paneLabel(pane()!) : ""}
-            <Show when={(tab()?.panes.length ?? 0) > 1}> · {tab()!.panes.length} 个 pane ▾</Show>
+            <Show when={(tab()?.panes.length ?? 0) > 1}> · {t("home.paneCount", { count: tab()!.panes.length })} ▾</Show>
           </div>
         </button>
-        <button class="cbtn" aria-label="更多" onClick={() => setPanel("menu")}>
+        <button class="cbtn" aria-label={t("session.more")} onClick={() => setPanel("menu")}>
           <Icon name="more" />
         </button>
       </div>
@@ -270,14 +271,14 @@ export function SessionPage() {
                 <>
                   <For each={state.cards}>{(c) => <ScreenCard card={c} />}</For>
                   <Show when={state.cards.length === 0}>
-                    <div class="newempty">{state.connected ? "正在读取这个 pane…" : "离线"}</div>
+                    <div class="newempty">{state.connected ? t("session.loading") : t("common.offline")}</div>
                   </Show>
                 </>
               }
             >
-              <For each={state.normalizedTurns}>{(t, i) => <Turn turn={t} last={i() === state.normalizedTurns.length - 1} working={working()} />}</For>
+              <For each={state.normalizedTurns}>{(turn, i) => <Turn turn={turn} last={i() === state.normalizedTurns.length - 1} working={working()} />}</For>
               <Show when={state.normalizedTurns.length === 0}>
-                <div class="newempty">还没有消息。</div>
+                <div class="newempty">{t("session.noMessages")}</div>
               </Show>
             </Show>
             <Show when={working()}>
@@ -287,21 +288,21 @@ export function SessionPage() {
                   <i />
                   <i />
                 </span>
-                思考中…
+                {t("transcript.thinkingNow")}
               </div>
             </Show>
             <For each={state.queue}>
               {(q) => (
                 <>
-                  <div class="ub q">{q.text || `${q.attachments.length} 个附件`}</div>
+                  <div class="ub q">{q.text || t("session.attachments", { count: q.attachments.length })}</div>
                   <div class="ubm">
-                    排队中，这一轮结束后发送
+                    {t("session.queued")}
                     <button
                       onClick={() =>
-                        request({ type: "queue_cancel", payload: { targetPaneId: state.activePaneId!, queueId: q.queueId } }).catch((e) => showToast(e.message || "撤销失败"))
+                        request({ type: "queue_cancel", payload: { targetPaneId: state.activePaneId!, queueId: q.queueId } }).catch((e) => showToast(e.message || t("session.undoFailed")))
                       }
                     >
-                      撤销
+                      {t("session.undo")}
                     </button>
                   </div>
                 </>
@@ -316,7 +317,7 @@ export function SessionPage() {
         <div class="dockrow">
           <TodoCapsule />
           <Show when={!nearBottom()}>
-            <button class="jump" aria-label="到最新" onClick={() => toBottom(true)}>
+            <button class="jump" aria-label={t("session.jump")} onClick={() => toBottom(true)}>
               <Icon name="down" />
             </button>
           </Show>
@@ -328,7 +329,7 @@ export function SessionPage() {
           {(paneId) => (
             <Composer
               draftId={paneId}
-              placeholder={isTerminal() ? "输入命令" : working() ? "补充消息会排队发送" : "回复…"}
+              placeholder={isTerminal() ? t("composer.placeholderCommand") : working() ? t("composer.placeholderQueued") : t("composer.placeholderReply")}
               onSend={(text, ids) => sendPrompt(text, ids)}
               working={working()}
               onStop={stop}
@@ -350,7 +351,7 @@ export function SessionPage() {
               }}
             >
               <Icon name="edit" />
-              重命名
+              {t("common.rename")}
             </button>
             <Show when={tab()?.branch || found()?.ws.branch}>
               <button
@@ -362,7 +363,7 @@ export function SessionPage() {
               >
                 <Icon name="branch" />
                 <div>
-                  复制分支
+                  {t("menu.copyBranch")}
                   <small class="mono">{tab()?.branch || found()?.ws.branch}</small>
                 </div>
               </button>
@@ -370,13 +371,13 @@ export function SessionPage() {
             <Show when={!isTerminal()}>
               <button class="mi" onClick={() => setPanel("changes")}>
                 <Icon name="diff" />
-                本会话的变更
+                {t("changes.title")}
               </button>
             </Show>
             <Show when={(tab()?.panes.length ?? 0) > 1}>
               <button class="mi" onClick={() => setPanel("panes")}>
                 <Icon name="panes" />
-                切换 pane
+                {t("panes.title")}
               </button>
             </Show>
             <Show when={!isTerminal()}>
@@ -388,7 +389,7 @@ export function SessionPage() {
                 }}
               >
                 <Icon name="term" />
-                查看终端
+                {t("menu.viewTerminal")}
               </button>
             </Show>
             <div class="msep" />
@@ -400,7 +401,7 @@ export function SessionPage() {
               }}
             >
               <Icon name="xcircle" />
-              关闭会话
+              {t("close.title")}
             </button>
           </div>
         </div>
@@ -439,15 +440,15 @@ export function SessionPage() {
           recipe={recipe()}
           model={modelValue()}
           thinking={thinkingValue()}
-          modelSource={state.session ? SOURCE_TEXT[state.session.model.source] : undefined}
-          thinkingSource={state.session?.thinking.value ? SOURCE_TEXT[state.session.thinking.source] : undefined}
+          modelSource={state.session ? t(SOURCE_TEXT[state.session.model.source]) : undefined}
+          thinkingSource={state.session?.thinking.value ? t(SOURCE_TEXT[state.session.thinking.source]) : undefined}
           canSwitchModel={!!recipe()?.runtimeSwitch.model}
           canSwitchThinking={!!recipe()?.runtimeSwitch.thinking}
           onClose={() => setPanel(null)}
           onPick={(change) => {
             request({ type: "agent_set_model", payload: { targetPaneId: state.activePaneId!, ...change } })
-              .then(() => showToast(`已发送切换到 ${change.modelId ?? change.thinking}`))
-              .catch((e) => showToast(e.message || "切换失败"));
+              .then(() => showToast(t("model.switchSent", { value: (change.modelId ?? change.thinking)! })))
+              .catch((e) => showToast(e.message || t("model.switchFailed")));
             setPanel(null);
           }}
         />

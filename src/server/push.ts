@@ -21,6 +21,15 @@ export interface VapidKeys {
   privateKey: string;
 }
 
+/** `push.md` §4: data only; the service worker writes the text in the phone's language. */
+export interface PushMessage {
+  event: "blocked";
+  agent: string | null;
+  workspace: string;
+  tab: string;
+  paneId: string;
+}
+
 const PRESENCE_STALE_MS = 60_000;
 
 function base64url(buf: Buffer): string {
@@ -90,10 +99,7 @@ export class PushManager {
     return false;
   }
 
-  public sendNotification(
-    targetPaneId: string,
-    _notification: { title: string; body: string }
-  ): { suppressed: boolean; delivered: false } {
-    return { suppressed: this.shouldSuppressPush(targetPaneId), delivered: false };
+  public sendNotification(message: PushMessage): { suppressed: boolean; delivered: false } {
+    return { suppressed: this.shouldSuppressPush(message.paneId), delivered: false };
   }
 }

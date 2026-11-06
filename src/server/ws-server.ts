@@ -3,7 +3,7 @@ import type { ServerWebSocket } from "bun";
 import { HerdrError, type HerdrClient } from "./herdr-client";
 import type { DeviceSession, PairingManager } from "./pairing";
 import type { UploadStore } from "./uploads";
-import type { PushManager } from "./push";
+import type { PushManager, PushMessage } from "./push";
 import type { ConfigManager } from "./config-manager";
 import { AgentAdapterManager } from "./agent-adapters/index";
 import { PaneStore } from "./pane-store";
@@ -123,8 +123,19 @@ export class WsServer {
       const now = Date.now();
       if (now - (this.lastPushAt.get(paneId) || 0) < PUSH_DEDUPE_MS) return;
       this.lastPushAt.set(paneId, now);
-      this.pushManager.sendNotification(paneId, { title: "Agent 等待确认", body: "有一个 Agent 需要你的回应" });
+      this.pushManager.sendNotification(this.pushMessage(paneId));
     });
+  }
+
+  /** `push.md` §4: the blocked pane's agent, workspace and tab, as data. */
+  private pushMessage(paneId: string): PushMessage {
+    for (const ws of this.herdrClient.getSnapshot().workspaces) {
+      for (const tab of ws.tabs) {
+        const pane = tab.panes.find((p) => p.id === paneId);
+        if (pane) return { event: "blocked", agent: pane.agent, workspace: ws.label, tab: tab.label, paneId };
+      }
+    }
+    return { event: "blocked", agent: null, workspace: "", tab: "", paneId };
   }
 
   public handleOpen(ws: Ws): void {

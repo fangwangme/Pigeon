@@ -129,8 +129,9 @@ describe("push keys and presence (push.md §3, §4)", () => {
     const push = new PushManager(join(tempDir("push"), "vapid.json"));
     push.updatePresence("c1", true, "p1");
     push.updatePresence("c2", false, "p2");
-    expect(push.sendNotification("p1", { title: "t", body: "b" }).suppressed).toBe(true);
-    expect(push.sendNotification("p2", { title: "t", body: "b" }).suppressed).toBe(false);
+    const blocked = (paneId: string) => ({ event: "blocked" as const, agent: "claude", workspace: "w", tab: "t", paneId });
+    expect(push.sendNotification(blocked("p1")).suppressed).toBe(true);
+    expect(push.sendNotification(blocked("p2")).suppressed).toBe(false);
     push.removePresence("c1");
     expect(push.shouldSuppressPush("p1")).toBe(false);
   });

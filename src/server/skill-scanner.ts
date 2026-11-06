@@ -13,7 +13,8 @@ interface Layout {
   skillInvocation: string;
   commands?: (home: string, root?: string) => Array<{ dir: string; source: Source }>;
   commandInvocation?: string;
-  builtins?: Array<[string, string]>;
+  /** `[name, descriptionId, English description]` (`herdr-adapter.md` §8.3). */
+  builtins?: Array<[string, string, string]>;
   plugins?: boolean;
 }
 
@@ -31,9 +32,9 @@ const LAYOUTS: Record<string, Layout> = {
     ],
     commandInvocation: "/{name}",
     builtins: [
-      ["compact", "压缩上下文"],
-      ["clear", "清空对话，开始新会话"],
-      ["init", "生成项目说明 CLAUDE.md"],
+      ["compact", "compact", "Compact the context"],
+      ["clear", "clear", "Clear the conversation and start over"],
+      ["init", "init_claude_md", "Write CLAUDE.md for this project"],
     ],
     plugins: true,
   },
@@ -47,10 +48,10 @@ const LAYOUTS: Record<string, Layout> = {
     commands: (home) => [{ dir: join(home, ".codex", "prompts"), source: "user" }],
     commandInvocation: "/prompts:{name}",
     builtins: [
-      ["compact", "压缩上下文"],
-      ["new", "开始新会话"],
-      ["init", "生成项目说明 AGENTS.md"],
-      ["review", "审查当前改动"],
+      ["compact", "compact", "Compact the context"],
+      ["new", "new", "Start a new session"],
+      ["init", "init_agents_md", "Write AGENTS.md for this project"],
+      ["review", "review", "Review the current changes"],
     ],
   },
   pi: {
@@ -65,8 +66,8 @@ const LAYOUTS: Record<string, Layout> = {
     ],
     commandInvocation: "/{name}",
     builtins: [
-      ["compact", "压缩上下文"],
-      ["new", "开始新会话"],
+      ["compact", "compact", "Compact the context"],
+      ["new", "new", "Start a new session"],
     ],
   },
   agy: {
@@ -89,9 +90,9 @@ const LAYOUTS: Record<string, Layout> = {
     ],
     commandInvocation: "/{name}",
     builtins: [
-      ["compact", "压缩上下文"],
-      ["new", "开始新会话"],
-      ["init", "生成项目说明 AGENTS.md"],
+      ["compact", "compact", "Compact the context"],
+      ["new", "new", "Start a new session"],
+      ["init", "init_agents_md", "Write AGENTS.md for this project"],
     ],
   },
 };
@@ -174,7 +175,7 @@ export class SkillScanner {
     }
     if (layout.plugins) for (const e of this.claudePlugins()) add(e);
     for (const g of [groups.project, groups.user, groups.plugin, groups.builtin]) g.sort((a, b) => a.invocation.localeCompare(b.invocation));
-    for (const [name, description] of layout.builtins ?? []) add({ name, description, source: "builtin", kind: "command", invocation: `/${name}` });
+    for (const [name, descriptionId, description] of layout.builtins ?? []) add({ name, description, descriptionId, source: "builtin", kind: "command", invocation: `/${name}` });
 
     const entries = [...groups.project, ...groups.user, ...groups.plugin, ...groups.builtin];
     this.cache.set(key, { at: Date.now(), entries });

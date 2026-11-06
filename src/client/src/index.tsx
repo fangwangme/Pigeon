@@ -9,6 +9,7 @@ import { NewSession } from "./components/NewSession";
 import { Overlays } from "./components/overlays";
 import { SessionPage } from "./components/SessionPage";
 import { Pairing, Settings } from "./components/Settings";
+import { t } from "./i18n";
 
 applyTheme(state.themeMode, state.accent);
 
@@ -111,7 +112,7 @@ function App() {
       <Overlays />
       <Show when={state.updateAvailable}>
         <button class="toast update" onClick={applyUpdate}>
-          有新版本 · <b>重新加载</b>
+          {t("app.updateAvailable")} · <b>{t("app.reload")}</b>
         </button>
       </Show>
       <Toast />

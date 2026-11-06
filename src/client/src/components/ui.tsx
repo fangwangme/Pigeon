@@ -2,6 +2,7 @@ import { Show, type JSX } from "solid-js";
 import { ICONS, type IconName } from "../icons";
 import { state } from "../state/store";
 import type { AgentStatus, PaneSummary, TabSummary, WorkspaceSummary } from "../../../types/protocol";
+import { t } from "../i18n";
 
 export function Icon(props: { name: IconName; sm?: boolean; class?: string }) {
   return <svg class={`i${props.sm ? " sm" : ""}${props.class ? ` ${props.class}` : ""}`} viewBox="0 0 24 24" innerHTML={ICONS[props.name]} aria-hidden="true" />;
@@ -57,8 +58,16 @@ export function tabStatus(tab: TabSummary): RowStatus {
 }
 
 export function agentLabel(kind: string | null | undefined): string {
-  if (!kind) return "终端";
+  if (!kind || kind === "terminal") return t("agent.terminal");
   return state.recipes[kind]?.label ?? kind;
+}
+
+/** `protocol.md` §5.3: the pane's summary in the current language. */
+export function paneSummary(p: PaneSummary | undefined): string {
+  if (!p?.summaryKind) return "";
+  if (p.summaryKind === "run") return t("summary.run", { command: p.summary ?? "" });
+  if (p.summaryKind === "thinking") return p.summary || t("summary.thinking");
+  return p.summary ?? "";
 }
 
 export function paneLabel(p: PaneSummary): string {
@@ -85,14 +94,7 @@ export function findPane(paneId: string | null): { ws: WorkspaceSummary; tab: Ta
   return null;
 }
 
-export function ago(ts: number): string {
-  const s = Math.max(0, Math.round((Date.now() - ts) / 1000));
-  if (s < 60) return "刚刚";
-  if (s < 3600) return `${Math.floor(s / 60)} 分钟前`;
-  if (s < 86400) return `${Math.floor(s / 3600)} 小时前`;
-  if (s < 86400 * 30) return `${Math.floor(s / 86400)} 天前`;
-  return new Date(ts).toLocaleDateString("zh-CN");
-}
+export { ago } from "../i18n";
 
 /** A bottom sheet over a scrim; a tap on the scrim closes it. */
 export function Sheet(props: {
@@ -115,12 +117,12 @@ export function Sheet(props: {
             <Show
               when={props.onBack}
               fallback={
-                <button class="cbtn" aria-label="关闭" onClick={() => props.onClose()}>
+                <button class="cbtn" aria-label={t("common.close")} onClick={() => props.onClose()}>
                   <Icon name="x" />
                 </button>
               }
             >
-              <button class="cbtn" aria-label="返回" onClick={() => props.onBack!()}>
+              <button class="cbtn" aria-label={t("common.back")} onClick={() => props.onBack!()}>
                 <Icon name="chevL" />
               </button>
             </Show>

@@ -190,7 +190,7 @@ describe("tab creation and closing (herdr-adapter.md §5)", () => {
       return { result: { terminal: "t9" } };
     };
     await client.createTabAndAgent("w1", "terminal");
-    expect(herdr.callsOf("tab.new")[0].params).toEqual({ space: "w1", name: "Terminal 终端" });
+    expect(herdr.callsOf("tab.new")[0].params).toEqual({ space: "w1", name: "Terminal" });
   });
 
   test("an App error is a HerdrError carrying the App's text", async () => {

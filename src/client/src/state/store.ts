@@ -16,6 +16,7 @@ import type {
   WorkspaceSummary,
 } from "../../../types/protocol";
 import { applyTheme } from "../themes";
+import { resolveLocale, setLocale, LOCALES, type LocalePref } from "../i18n";
 
 export type { SkillEntry, AgentRecipeSummary };
 
@@ -64,6 +65,8 @@ export interface AppState {
   accent: AccentName;
   /** null: follow the system's reduce-transparency setting (§9.2). */
   reduceTransparency: boolean | null;
+  /** mobile-ui-and-themes.md §10.1: kept in this browser only. */
+  localePref: LocalePref;
   route: Route;
   terminalOpen: boolean;
   filter: FilterState;
@@ -101,6 +104,7 @@ function readJson<T>(key: string, fallback: T): T {
 }
 
 const storedRt = readPref("pigeon_reduce_transparency");
+const storedLocale = readPref("pigeon_locale");
 
 const [state, setState] = createStore<AppState>({
   connected: false,
@@ -128,6 +132,7 @@ const [state, setState] = createStore<AppState>({
   themeMode: (readPref("pigeon_mode") as ThemeMode | null) || "system",
   accent: (readPref("pigeon_accent") as AccentName | null) || "blue",
   reduceTransparency: storedRt === null ? null : storedRt === "1",
+  localePref: storedLocale && storedLocale in LOCALES ? (storedLocale as LocalePref) : "system",
   route: { name: "home" },
   terminalOpen: false,
   filter: readJson<FilterState>("pigeon_filter", EMPTY_FILTER),
@@ -137,6 +142,20 @@ const [state, setState] = createStore<AppState>({
 });
 
 export { state, setState };
+
+/** Applies the language choice, following the browser's languages for 跟随系统 (§10.1). */
+export function applyLocale(): void {
+  setLocale(resolveLocale(state.localePref, globalThis.navigator?.languages ?? []));
+}
+
+export function setLocalePref(pref: LocalePref): void {
+  setState("localePref", pref);
+  writePref("pigeon_locale", pref === "system" ? null : pref);
+  applyLocale();
+}
+
+applyLocale();
+if (typeof window !== "undefined") window.addEventListener("languagechange", applyLocale);
 
 /** Applies the appearance shared by all phones (`protocol.md` §6) and mirrors it for first paint. */
 export function applySyncedClientConfig(config: Partial<ClientConfig> | undefined): void {

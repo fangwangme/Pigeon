@@ -1,5 +1,6 @@
 import { state, setState, applySyncedClientConfig, openTerminal, setUnread, showToast } from "./store";
 import type { ClientMessage, ServerMessage, SnapshotPayload, PaneStatePayload, ClientConfig, AgentStatus } from "../../../types/protocol";
+import { t } from "../i18n";
 
 const PROTOCOL_VERSION = "1.0.0";
 // Close codes after which reconnecting cannot help (protocol.md §2.2).
@@ -109,7 +110,7 @@ export async function initWebSocket(): Promise<void> {
     setState("connected", false);
     if (pingInterval) clearInterval(pingInterval);
     pingInterval = null;
-    for (const p of pending.values()) p.reject({ code: "ERR_OFFLINE", message: "连接已断开" });
+    for (const p of pending.values()) p.reject({ code: "ERR_OFFLINE", message: t("error.disconnected") });
     pending.clear();
     if (TERMINAL_CLOSE_CODES.has(event.code)) {
       if (reconnectTimer) clearTimeout(reconnectTimer);
@@ -285,15 +286,15 @@ export function handleServerMessage(msg: ServerMessage): void {
 function errorText(code: string, message: string): string {
   switch (code) {
     case "ERR_AGENT_BLOCKED":
-      return "Agent 正在等你回答，先处理它的问题";
+      return t("error.agentBlocked");
     case "ERR_AGENT_NOT_READY":
-      return "Agent 还没准备好，稍后再试";
+      return t("error.agentNotReady");
     case "ERR_TIMEOUT":
-      return "Herdr 没有及时响应，先看看会话再重试";
+      return t("error.timeout");
     case "ERR_NOT_FOUND":
-      return "找不到它了，可能已经关闭";
+      return t("error.notFound");
     case "ERR_INTERACTION_STALE":
-      return "这个问题已经变了，已刷新";
+      return t("error.stale");
     default:
       return message;
   }
@@ -301,7 +302,7 @@ function errorText(code: string, message: string): string {
 
 function sendMessage(msg: ClientMessage): boolean {
   if (!socket || socket.readyState !== WebSocket.OPEN) {
-    setState("lastError", { code: "ERR_OFFLINE", message: "离线，消息没有发出，草稿已保留", at: Date.now() });
+    setState("lastError", { code: "ERR_OFFLINE", message: t("error.offlineDraftKept"), at: Date.now() });
     return false;
   }
   socket.send(JSON.stringify(msg));
@@ -316,7 +317,7 @@ export function request(msg: WithoutId<Command>): Promise<any> {
   const id = nextId();
   return new Promise((resolve, reject) => {
     if (!sendMessage({ ...msg, id } as ClientMessage)) {
-      reject({ code: "ERR_OFFLINE", message: "离线" });
+      reject({ code: "ERR_OFFLINE", message: t("common.offline") });
       return;
     }
     pending.set(id, { resolve, reject });
@@ -366,8 +367,8 @@ export async function uploadFile(file: File): Promise<{ id: string; name: string
     headers: { "Content-Type": file.type || "application/octet-stream", "X-Pigeon-Filename": encodeURIComponent(file.name || "photo.jpg") },
     body: file,
   });
-  if (res.status === 413) throw new Error("文件超过 20 MB");
-  if (!res.ok) throw new Error(`上传失败（${res.status}）`);
+  if (res.status === 413) throw new Error(t("error.fileTooLarge"));
+  if (!res.ok) throw new Error(t("error.uploadFailed", { status: res.status }));
   return res.json();
 }
 
@@ -384,8 +385,8 @@ export function reportPresence(): void {
 
 export function copyText(text: string): void {
   navigator.clipboard?.writeText(text).then(
-    () => showToast("已复制"),
-    () => showToast("复制失败")
+    () => showToast(t("common.copied")),
+    () => showToast(t("common.copyFailed"))
   );
 }
 

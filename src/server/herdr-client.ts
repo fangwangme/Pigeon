@@ -13,6 +13,7 @@ import type {
   TabSummary,
   PaneSummary,
   WorkingAgentSummary,
+  SummaryKind,
 } from "../types/protocol";
 import type {
   HerdrAppLsResult,
@@ -472,7 +473,7 @@ export class HerdrClient extends EventEmitter {
           if (agentStatus === "blocked") hasWarn = true;
           if (agentStatus === "working") hasWorking = true;
           const name = ref.name || terminals.get(ref.terminal)?.name || ref.terminal;
-          const summary = this.summarizePane(ref.terminal, known.title);
+          const { summary, summaryKind } = this.summarizePane(ref.terminal, known.title);
           if (known.agentKind) {
             workingAgents.push({
               agent: known.agentKind,
@@ -483,6 +484,7 @@ export class HerdrClient extends EventEmitter {
               tabId: tab.id,
               paneId: ref.terminal,
               summary,
+              summaryKind,
             });
           }
           return {
@@ -492,7 +494,7 @@ export class HerdrClient extends EventEmitter {
             isPrimary: idx === 0,
             name,
             ...(known.program ? { program: known.program } : {}),
-            ...(summary ? { summary } : {}),
+            ...(summaryKind ? { summary, summaryKind } : {}),
           };
         });
 
@@ -534,16 +536,17 @@ export class HerdrClient extends EventEmitter {
     return APP_TO_AGENT_KIND[app] ?? app;
   }
 
-  private summarizePane(paneId: string, terminalTitle?: string): string | undefined {
+  /** `protocol.md` §5.3: data the phone renders; the daemon writes no UI text. */
+  private summarizePane(paneId: string, terminalTitle?: string): { summary?: string; summaryKind?: SummaryKind } {
     const state = this.paneStates.get(paneId);
-    if (state?.pendingInteraction) return state.pendingInteraction.question;
+    if (state?.pendingInteraction?.question) return { summary: state.pendingInteraction.question, summaryKind: "text" };
     const last = state?.cards[state.cards.length - 1];
-    if (last?.kind === "tool_call") return `运行 ${last.command}`;
-    if (last?.kind === "thought") return last.title || "正在思考";
-    if (last?.kind === "markdown") return last.content.slice(0, 40);
+    if (last?.kind === "tool_call") return { summary: last.command, summaryKind: "run" };
+    if (last?.kind === "thought") return { summary: last.title || "", summaryKind: "thinking" };
+    if (last?.kind === "markdown") return { summary: last.content.slice(0, 40), summaryKind: "text" };
     const title = terminalTitle?.trim();
-    if (title && !["agy", "bash", "sh", "zsh", "opencode", "claude", "codex", "pi", "agent"].includes(title.toLowerCase())) return title;
-    return undefined;
+    if (title && !["agy", "bash", "sh", "zsh", "opencode", "claude", "codex", "pi", "agent"].includes(title.toLowerCase())) return { summary: title, summaryKind: "text" };
+    return {};
   }
 
   /** Herdr's status is authoritative; a recognized prompt on screen can only add `blocked`. */

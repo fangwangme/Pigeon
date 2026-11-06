@@ -3,7 +3,8 @@ import { filterActive, navigate, state, toggleCollapsed, type FilterState } from
 import { selectPane } from "../state/ws";
 import type { PaneSummary, TabSummary, WorkspaceSummary } from "../../../types/protocol";
 import { openOverlay } from "./overlays";
-import { agentLabel, Icon, paneStatus, primaryPane, StatusIcon, tabStatus, type RowStatus } from "./ui";
+import { agentLabel, Icon, paneStatus, paneSummary, primaryPane, StatusIcon, tabStatus, type RowStatus } from "./ui";
+import { t, type MessageId } from "../i18n";
 
 function passes(status: RowStatus, agent: string | null | undefined, f: FilterState): boolean {
   if (status === "terminal" && !f.showTerminals) return false;
@@ -25,7 +26,7 @@ export function ConnectionBanner() {
       <div class="banner" role="status">
         <Icon name="wifioff" sm />
         <span>
-          <b>{!state.connected ? "电脑未连接" : "Herdr 没有响应"}</b> · 每 3 秒重试
+          <b>{!state.connected ? t("conn.computerDown") : t("conn.herdrDown")}</b> · {t("conn.retrying")}
         </span>
       </div>
     </Show>
@@ -41,8 +42,8 @@ function TabRow(props: { ws: WorkspaceSummary; tab: TabSummary }) {
   const status = () => tabStatus(props.tab);
   const sub = () => {
     const p = pane();
-    const parts = [p?.agent ? agentLabel(p.agent) : p?.program || "终端"];
-    if (props.tab.panes.length > 1) parts.push(`${props.tab.panes.length} 个 pane`);
+    const parts = [p?.agent ? agentLabel(p.agent) : p?.program || t("agent.terminal")];
+    if (props.tab.panes.length > 1) parts.push(t("home.paneCount", { count: props.tab.panes.length }));
     return parts.join(" · ");
   };
   return (
@@ -55,7 +56,7 @@ function TabRow(props: { ws: WorkspaceSummary; tab: TabSummary }) {
             openOverlay({ kind: "rename", tabId: props.tab.id });
           }}
         >
-          重命名
+          {t("common.rename")}
         </button>
         <button
           class="cls"
@@ -64,7 +65,7 @@ function TabRow(props: { ws: WorkspaceSummary; tab: TabSummary }) {
             openOverlay({ kind: "close", tabId: props.tab.id });
           }}
         >
-          关闭
+          {t("common.close")}
         </button>
       </div>
       <button
@@ -94,12 +95,12 @@ function TabRow(props: { ws: WorkspaceSummary; tab: TabSummary }) {
         <div class="tx">
           <div class="t">{props.tab.label}</div>
           <div class="s">{sub()}</div>
-          <Show when={status() === "blocked" && pane()?.summary}>
-            <div class="p">{pane()!.summary}</div>
+          <Show when={status() === "blocked" && paneSummary(pane())}>
+            <div class="p">{paneSummary(pane())}</div>
           </Show>
         </div>
         <Show when={pane() && state.unread[pane()!.id]}>
-          <span class="udot" aria-label="有新结果" />
+          <span class="udot" aria-label={t("home.unread")} />
         </Show>
       </button>
     </div>
@@ -115,13 +116,13 @@ function agentPanes(): Array<{ ws: WorkspaceSummary; tab: TabSummary; pane: Pane
 function FilterButton() {
   return (
     <div class="cap">
-      <button aria-label="筛选" onClick={() => openOverlay({ kind: "filter" })}>
+      <button aria-label={t("filter.title")} onClick={() => openOverlay({ kind: "filter" })}>
         <Icon name="sliders" />
         <Show when={filterActive()}>
           <span class="dot" />
         </Show>
       </button>
-      <button aria-label="设置" onClick={() => navigate({ name: "settings" })}>
+      <button aria-label={t("settings.title")} onClick={() => navigate({ name: "settings" })}>
         <Icon name="gear" />
       </button>
     </div>
@@ -155,31 +156,31 @@ export function Home() {
             <div class="searchbar">
               <Icon name="search" sm />
               <input
-                placeholder="搜索标签页或工作区"
+                placeholder={t("home.searchPlaceholder")}
                 value={query() ?? ""}
                 ref={(el) => setTimeout(() => el.focus(), 30)}
                 onInput={(e) => setQuery(e.currentTarget.value)}
               />
-              <button aria-label="关闭搜索" class="cbtn" style={{ width: "32px", height: "32px", background: "none", border: "0", "box-shadow": "none" }} onClick={() => setQuery(null)}>
+              <button aria-label={t("home.closeSearch")} class="cbtn" style={{ width: "32px", height: "32px", background: "none", border: "0", "box-shadow": "none" }} onClick={() => setQuery(null)}>
                 <Icon name="x" sm />
               </button>
             </div>
           </Show>
           <button class="agsum" onClick={() => navigate({ name: "agents" })}>
             <div class="tx">
-              <div class="t1">所有 Agent</div>
+              <div class="t1">{t("agents.title")}</div>
               <div class="t2">
-                <span>{agents().length} 个</span>
+                <span>{t("home.agentCount", { count: agents().length })}</span>
                 <Show when={waiting()}>
                   <span>
                     <span class="wd" />
-                    {waiting()} 个等你
+                    {t("home.waitingCount", { count: waiting() })}
                   </span>
                 </Show>
                 <Show when={working()}>
                   <span>
                     <span class="spin" />
-                    {working()} 个工作中
+                    {t("home.workingCount", { count: working() })}
                   </span>
                 </Show>
               </div>
@@ -190,8 +191,8 @@ export function Home() {
           <Show when={state.workspaces.length === 0 && state.connected}>
             <div class="emptyh">
               <Icon name="folder" />
-              <div class="big">还没有工作区</div>
-              在电脑上的 Herdr 里打开一个工作区，它会出现在这里。
+              <div class="big">{t("home.noWorkspaces")}</div>
+              {t("home.noWorkspacesHint")}
             </div>
           </Show>
 
@@ -215,7 +216,7 @@ export function Home() {
                       </Show>
                       <span class="m">{ws.tabs.length}</span>
                     </button>
-                    <button class="mini" aria-label={`在 ${ws.label} 新建会话`} onClick={() => navigate({ name: "new", workspaceId: ws.id, mode: "new" })}>
+                    <button class="mini" aria-label={t("home.newIn", { name: ws.label })} onClick={() => navigate({ name: "new", workspaceId: ws.id, mode: "new" })}>
                       <Icon name="plus" sm />
                     </button>
                   </div>
@@ -229,23 +230,23 @@ export function Home() {
         </div>
       </div>
       <div class="bottombar">
-        <button class="cbtn lg" aria-label="搜索" onClick={() => setQuery(query() === null ? "" : null)}>
+        <button class="cbtn lg" aria-label={t("home.search")} onClick={() => setQuery(query() === null ? "" : null)}>
           <Icon name="search" />
         </button>
         <button class="fab" onClick={() => navigate({ name: "new", workspaceId: focusedWs(), mode: "new" })}>
           <Icon name="plus" />
-          新会话
+          {t("new.title")}
         </button>
       </div>
     </div>
   );
 }
 
-const GROUPS: Array<[RowStatus, string]> = [
-  ["blocked", "等待你"],
-  ["working", "工作中"],
-  ["done", "已完成"],
-  ["idle", "空闲"],
+const GROUPS: Array<[RowStatus, MessageId]> = [
+  ["blocked", "status.blocked"],
+  ["working", "status.working"],
+  ["done", "status.done"],
+  ["idle", "status.idle"],
 ];
 
 /** §2.2 */
@@ -256,14 +257,14 @@ export function AgentsPage() {
   return (
     <div class="page">
       <div class="hdr">
-        <button class="cbtn" aria-label="返回" onClick={() => navigate({ name: "home" })}>
+        <button class="cbtn" aria-label={t("common.back")} onClick={() => navigate({ name: "home" })}>
           <Icon name="chevL" />
         </button>
         <div class="ht">
-          <div class="t">所有 Agent</div>
+          <div class="t">{t("agents.title")}</div>
         </div>
         <div class="cap">
-          <button aria-label="筛选" onClick={() => openOverlay({ kind: "filter" })}>
+          <button aria-label={t("filter.title")} onClick={() => openOverlay({ kind: "filter" })}>
             <Icon name="sliders" />
             <Show when={filterActive()}>
               <span class="dot" />
@@ -276,8 +277,8 @@ export function AgentsPage() {
         <div class="home">
           <Show when={rows().length === 0}>
             <div class="emptyh">
-              <div class="big">没有 Agent</div>
-              {filterActive() ? "当前筛选下没有结果。" : "在新会话里启动一个 Agent。"}
+              <div class="big">{t("agents.empty")}</div>
+              {filterActive() ? t("agents.emptyFiltered") : t("agents.emptyHint")}
             </div>
           </Show>
           <For each={GROUPS}>
@@ -289,7 +290,7 @@ export function AgentsPage() {
                     <span class={`chev${shut()[status] ? " shut" : ""}`}>
                       <Icon name="chevD" sm />
                     </span>
-                    {label}
+                    {t(label)}
                     <span class="c">{items().length}</span>
                   </button>
                   <Show when={!shut()[status]}>
@@ -306,8 +307,8 @@ export function AgentsPage() {
                                 {r.ws.label}
                               </span>
                             </div>
-                            <Show when={status === "blocked" && r.pane.summary}>
-                              <div class="p">{r.pane.summary}</div>
+                            <Show when={status === "blocked" && paneSummary(r.pane)}>
+                              <div class="p">{paneSummary(r.pane)}</div>
                             </Show>
                           </div>
                           <Show when={state.unread[r.pane.id]}>

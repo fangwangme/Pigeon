@@ -2,6 +2,7 @@ import { createSignal, For, Show } from "solid-js";
 import { EMPTY_FILTER, filterActive, navigate, setFilter, showToast, state, type FilterState } from "../state/store";
 import { request } from "../state/ws";
 import { agentLabel, findTab, Icon, paneLabel, Sheet } from "./ui";
+import { t, type MessageId } from "../i18n";
 
 // Sheets reached from more than one screen (mobile-ui-and-themes.md §2.1 swipe actions, §6.5 menu).
 type Overlay = { kind: "rename"; tabId: string } | { kind: "close"; tabId: string } | { kind: "filter" } | null;
@@ -19,11 +20,11 @@ function RenameSheet(props: { tabId: string }) {
     setBusy(true);
     request({ type: "tab_rename", payload: { tabId: props.tabId, name: v } })
       .then(() => setOverlay(null))
-      .catch((e) => showToast(e.message || "重命名失败"))
+      .catch((e) => showToast(e.message || t("rename.failed")))
       .finally(() => setBusy(false));
   };
   return (
-    <Sheet title="重命名" onClose={() => setOverlay(null)}>
+    <Sheet title={t("common.rename")} onClose={() => setOverlay(null)}>
       <input
         class="inp"
         value={name()}
@@ -34,9 +35,9 @@ function RenameSheet(props: { tabId: string }) {
           if (e.key === "Enter" && !e.isComposing) save();
         }}
       />
-      <p class="note">改的是电脑上 Herdr 的标签名。</p>
+      <p class="note">{t("rename.note")}</p>
       <button class="btn acc blk" style={{ "margin-top": "10px" }} disabled={!name().trim() || busy()} onClick={save}>
-        {busy() ? "保存中…" : "保存"}
+        {busy() ? t("common.saving") : t("common.save")}
       </button>
     </Sheet>
   );
@@ -55,13 +56,13 @@ function CloseSheet(props: { tabId: string }) {
         setOverlay(null);
         if (state.activeTabId === props.tabId && state.route.name === "session") navigate({ name: "home" });
       })
-      .catch((e) => showToast(e.message || "关闭失败"))
+      .catch((e) => showToast(e.message || t("close.failed")))
       .finally(() => setBusy(false));
   };
   return (
-    <Sheet title="关闭会话" sub={found?.tab.label} onClose={() => setOverlay(null)}>
+    <Sheet title={t("close.title")} sub={found?.tab.label} onClose={() => setOverlay(null)}>
       <p class="note" style={{ "font-size": "15px", color: "var(--fg)" }}>
-        电脑上的这个标签页会关闭，其中的程序随之结束：
+        {t("close.lead")}
       </p>
       <div class="card" style={{ margin: "8px 0" }}>
         <For each={found?.tab.panes ?? []}>
@@ -70,7 +71,7 @@ function CloseSheet(props: { tabId: string }) {
               <Icon name={p.agent ? "spark" : "term"} />
               <div class="tx">
                 {paneLabel(p)}
-                <small>{p.agent ? (p.agentStatus === "working" ? "正在工作" : "Agent") : "Shell"}</small>
+                <small>{p.agent ? (p.agentStatus === "working" ? t("close.paneWorking") : "Agent") : "Shell"}</small>
               </div>
             </div>
           )}
@@ -79,28 +80,28 @@ function CloseSheet(props: { tabId: string }) {
       <Show when={working()}>
         <div class="banner" style={{ margin: "8px 0" }}>
           <Icon name="alert" sm />
-          <span>有 Agent 还在工作，关闭会打断它。</span>
+          <span>{t("close.workingWarn")}</span>
         </div>
       </Show>
-      <p class="note">Agent 的会话记录会保留，之后可以从历史会话恢复。</p>
+      <p class="note">{t("close.keptNote")}</p>
       <div class="optbtns" style={{ "margin-top": "12px" }}>
         <button class="btn red blk" disabled={busy()} onClick={confirm}>
-          {busy() ? "关闭中…" : "关闭"}
+          {busy() ? t("close.closing") : t("common.close")}
         </button>
         <button class="btn blk" onClick={() => setOverlay(null)}>
-          取消
+          {t("common.cancel")}
         </button>
       </div>
     </Sheet>
   );
 }
 
-const STATUS_CHOICES: Array<[FilterState["statuses"][number], string]> = [
-  ["blocked", "等待你"],
-  ["working", "工作中"],
-  ["done", "已完成"],
-  ["idle", "空闲"],
-  ["terminal", "终端"],
+const STATUS_CHOICES: Array<[FilterState["statuses"][number], MessageId]> = [
+  ["blocked", "status.blocked"],
+  ["working", "status.working"],
+  ["done", "status.done"],
+  ["idle", "status.idle"],
+  ["terminal", "agent.terminal"],
 ];
 
 /** §2.3: stored in this browser only. */
@@ -112,22 +113,22 @@ function FilterSheet() {
   };
   return (
     <Sheet
-      title="筛选"
+      title={t("filter.title")}
       onClose={() => setOverlay(null)}
       right={
         <Show when={filterActive()}>
           <button class="lnk" onClick={() => setFilter(EMPTY_FILTER)}>
-            重置
+            {t("filter.reset")}
           </button>
         </Show>
       }
     >
-      <div class="sec">状态</div>
+      <div class="sec">{t("filter.status")}</div>
       <div class="chipr" style={{ "flex-wrap": "wrap" }}>
         <For each={STATUS_CHOICES}>
           {([v, label]) => (
             <button class={`chip${state.filter.statuses.includes(v) ? " hi" : ""}`} onClick={() => toggle("statuses", v)}>
-              {label}
+              {t(label)}
             </button>
           )}
         </For>
@@ -142,18 +143,18 @@ function FilterSheet() {
           )}
         </For>
       </div>
-      <div class="sec">显示</div>
+      <div class="sec">{t("filter.show")}</div>
       <div class="card">
         <button class="li" onClick={() => setFilter({ ...state.filter, showTerminals: !state.filter.showTerminals })}>
-          <div class="tx">显示普通终端</div>
+          <div class="tx">{t("filter.showTerminals")}</div>
           <span class={`tg${state.filter.showTerminals ? "" : " off"}`} />
         </button>
         <button class="li" onClick={() => setFilter({ ...state.filter, showIdle: !state.filter.showIdle })}>
-          <div class="tx">显示空闲的会话</div>
+          <div class="tx">{t("filter.showIdle")}</div>
           <span class={`tg${state.filter.showIdle ? "" : " off"}`} />
         </button>
       </div>
-      <p class="note">筛选只保存在这台手机上。</p>
+      <p class="note">{t("filter.note")}</p>
     </Sheet>
   );
 }

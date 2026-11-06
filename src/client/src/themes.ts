@@ -1,4 +1,5 @@
 import type { AccentName, ThemeMode } from "../../types/protocol";
+import type { MessageId } from "./i18n";
 
 // mobile-ui-and-themes.md §9.1: two palettes, one accent. Components use the CSS tokens only.
 
@@ -94,12 +95,12 @@ export const PALETTES: Record<"light" | "dark", Palette> = {
   },
 };
 
-export const ACCENTS: Record<AccentName, { light: string; dark: string; label: string }> = {
-  blue: { light: "#1F6FEB", dark: "#5B9CFF", label: "蓝" },
-  purple: { light: "#7445D6", dark: "#A98BFF", label: "紫" },
-  green: { light: "#0F7F6C", dark: "#5FC7B2", label: "绿" },
-  orange: { light: "#B85400", dark: "#F0A050", label: "橙" },
-  pink: { light: "#C0306B", dark: "#F07AA8", label: "粉" },
+export const ACCENTS: Record<AccentName, { light: string; dark: string; label: MessageId }> = {
+  blue: { light: "#1F6FEB", dark: "#5B9CFF", label: "accent.blue" },
+  purple: { light: "#7445D6", dark: "#A98BFF", label: "accent.purple" },
+  green: { light: "#0F7F6C", dark: "#5FC7B2", label: "accent.green" },
+  orange: { light: "#B85400", dark: "#F0A050", label: "accent.orange" },
+  pink: { light: "#C0306B", dark: "#F07AA8", label: "accent.pink" },
 };
 
 const KEBAB: Record<keyof Palette, string> = {
