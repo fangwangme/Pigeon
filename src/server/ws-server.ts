@@ -91,6 +91,8 @@ export class WsServer {
     this.skillScanner = options.skillScanner || new SkillScanner();
     this.uploadStore = options.uploadStore;
     this.pairingManager = options.pairingManager;
+    // security-and-pairing.md §5: a revoked device (from the phone or `pigeon devices revoke`) is cut off at once.
+    this.pairingManager?.on("device_revoked", (deviceId: string) => this.closeDevice(deviceId));
 
     this.herdrClient.on("connected", () => this.paneStore.setHerdrStatus(true));
     this.herdrClient.on("disconnected", () => this.paneStore.setHerdrStatus(false));
@@ -348,13 +350,14 @@ export class WsServer {
       }
 
       case "device_revoke": {
+        // §4.12: ack first; revoking then closes the device's connections, this one included.
         const { deviceId } = msg.payload;
-        if (!this.pairingManager?.revokeDevice(deviceId)) {
+        if (!this.pairingManager?.listDevices().some((d) => d.deviceId === deviceId)) {
           this.sendError(ws, msg.id, ProtocolErrors.ERR_NOT_FOUND, `Unknown device ${deviceId}`);
           return;
         }
         this.sendAck(ws, msg.id, { deviceId });
-        this.closeDevice(deviceId);
+        this.pairingManager.revokeDevice(deviceId);
         return;
       }
 
@@ -430,6 +433,10 @@ export class WsServer {
       }
 
       case "close_tab":
+        if (!this.herdrClient.hasTab(msg.payload.tabId)) {
+          this.sendError(ws, msg.id, ProtocolErrors.ERR_NOT_FOUND, `Unknown tab ${msg.payload.tabId}`);
+          return;
+        }
         await this.herdrClient.closeTab(msg.payload.tabId);
         this.sendAck(ws, msg.id, { closedTabId: msg.payload.tabId });
         return;
@@ -484,42 +491,45 @@ export class WsServer {
   }
 
   /**
-   * agent-session-normalization.md §2.0: exact matches first, then the newest session of the
-   * folder, never one already bound to another pane. Panes keep a session while it still matches.
+   * agent-session-normalization.md §2.0: rule 1 (exact) first, then a resumed or already-bound pane
+   * keeps its session (rules 5, 6), then unbound panes take the newest unclaimed session (rule 2).
    */
   private rebindSessions(): void {
     const panes = this.herdrClient
       .paneIds()
       .map((paneId) => ({ paneId, facts: this.herdrClient.getPaneFacts(paneId)! }))
       .filter((p) => p.facts.agentKind && this.agentAdapters.isSupported(p.facts.agentKind));
-    const claimed = new Map<string, string>(); // "agent|session" → pane
-    const result = new Map<string, string | null>();
+    const claimed = new Set<string>(); // "agent|session"
+    const result = new Map<string, string>();
     const keyOf = (agent: string, id: string) => `${agent}|${id}`;
     const factsOf = (p: (typeof panes)[number]) => ({ agent: p.facts.agentKind!, pid: p.facts.pid, cwd: p.facts.cwd, createdMs: p.facts.createdMs });
+    const take = (p: (typeof panes)[number], id: string | null | undefined): boolean => {
+      if (!id || result.has(p.paneId) || claimed.has(keyOf(p.facts.agentKind!, id))) return false;
+      claimed.add(keyOf(p.facts.agentKind!, id));
+      result.set(p.paneId, id);
+      return true;
+    };
+    for (const p of panes) take(p, this.agentAdapters.exactSession(factsOf(p)));
     for (const p of panes) {
       const launch = this.paneStore.getLaunch(p.paneId);
-      const exact = launch?.resumeSessionId && launch.agent === p.facts.agentKind ? launch.resumeSessionId : this.agentAdapters.exactSession(factsOf(p));
-      if (exact && !claimed.has(keyOf(p.facts.agentKind!, exact))) {
-        claimed.set(keyOf(p.facts.agentKind!, exact), p.paneId);
-        result.set(p.paneId, exact);
-      }
+      if (launch?.resumeSessionId && launch.agent === p.facts.agentKind) take(p, launch.resumeSessionId);
+      const bound = this.paneStore.boundSession(p.paneId);
+      if (bound?.agent === p.facts.agentKind) take(p, bound.sessionId);
     }
-    // Panes already bound go first, so a stable binding is not taken by a newer pane.
-    const rest = panes
-      .filter((p) => !result.has(p.paneId))
-      .sort((a, b) => Number(!!this.paneStore.boundSession(b.paneId)) - Number(!!this.paneStore.boundSession(a.paneId)));
-    for (const p of rest) {
+    for (const p of panes) {
+      if (result.has(p.paneId)) continue;
       const agent = p.facts.agentKind!;
-      const exclude = new Set(Array.from(claimed.keys()).filter((k) => k.startsWith(agent + "|")).map((k) => k.slice(agent.length + 1)));
-      const id = this.agentAdapters.newestSession(factsOf(p), exclude);
-      if (id) claimed.set(keyOf(agent, id), p.paneId);
-      result.set(p.paneId, id);
+      const exclude = new Set([...claimed].filter((k) => k.startsWith(agent + "|")).map((k) => k.slice(agent.length + 1)));
+      take(p, this.agentAdapters.newestSession(factsOf(p), exclude));
     }
     for (const p of panes) {
       const id = result.get(p.paneId);
       if (id) this.paneStore.registerPaneSession(p.paneId, p.facts.agentKind!, id);
       else this.paneStore.unbind(p.paneId);
     }
+    // Rule 7: a pane that no longer runs a supported agent drops its session.
+    const live = new Set(panes.map((p) => p.paneId));
+    for (const paneId of this.paneStore.trackedPaneIds()) if (!live.has(paneId)) this.paneStore.unbind(paneId);
   }
 
   /** protocol.md §4.2: attachments as paths after a blank line, with the recipe's mention prefix. */
@@ -534,7 +544,7 @@ export class WsServer {
   /** Queues while the agent works or others wait; sends otherwise (protocol.md §4.2). */
   private async submitPrompt(ws: Ws, replyTo: string | null, paneId: string, text: string, attachments: string[]): Promise<void> {
     const queue = this.queues.get(paneId) ?? [];
-    if (this.herdrClient.getPaneHerdrStatus(paneId) === "working" || queue.length > 0) {
+    if (this.herdrClient.getPaneHerdrStatus(paneId) === "working" || queue.length > 0 || this.flushing.has(paneId)) {
       const item: QueuedPrompt = { queueId: `q_${randomBytes(6).toString("hex")}`, text, attachments, createdAt: Date.now() };
       queue.push(item);
       this.queues.set(paneId, queue);

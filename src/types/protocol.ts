@@ -3,7 +3,7 @@ export type { NormalizedTurn, NormalizedToolCall, FileDiffSummary, NormalizedQue
 
 export type AgentStatus = "idle" | "working" | "blocked" | "done" | "unknown";
 
-export type CardKind = "thought" | "tool_call" | "diff" | "markdown" | "interaction" | "text";
+export type CardKind = "thought" | "tool_call" | "diff" | "markdown" | "interaction";
 
 export interface BaseCard {
   id: string;
@@ -56,12 +56,7 @@ export interface InteractionCardData extends BaseCard {
   fallbackKeys: string[];
 }
 
-export interface TextCard extends BaseCard {
-  kind: "text";
-  text: string;
-}
-
-export type Card = ThoughtCard | ToolCallCard | DiffCard | MarkdownCard | InteractionCardData | TextCard;
+export type Card = ThoughtCard | ToolCallCard | DiffCard | MarkdownCard | InteractionCardData;
 
 export interface PaneSummary {
   id: string;

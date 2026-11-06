@@ -15,7 +15,6 @@ export interface AgyAdapterOptions {
 export class AgyAdapter {
   private baseBrainDir: string;
   private byteOffsets = new Map<string, number>();
-  private partialLineBuffers = new Map<string, string>();
   private cachedTurns = new Map<string, NormalizedTurn[]>();
 
   constructor(options: AgyAdapterOptions = {}) {
@@ -86,8 +85,6 @@ export class AgyAdapter {
   ): { turns: NormalizedTurn[]; stats?: SessionStats; sessionTitle?: string } {
     const title = this.getSessionTitle(sessionId) || undefined;
     const logPath = this.getSessionLogPath(sessionId);
-    // A full read starts from scratch: a half line left over from an earlier incremental read
-    // would otherwise be glued to the first record and drop the first turn.
     if (!incremental) this.resetCache(sessionId);
     if (!existsSync(logPath)) {
       return { turns: [], sessionTitle: title };
@@ -105,7 +102,6 @@ export class AgyAdapter {
           // File truncated or rotated, reset offset
           startOffset = 0;
           this.cachedTurns.delete(sessionId);
-          this.partialLineBuffers.delete(sessionId);
         }
       }
 
@@ -119,23 +115,12 @@ export class AgyAdapter {
       fd = openSync(logPath, "r");
       readSync(fd, buffer, 0, bytesToRead, startOffset);
 
-      const chunkStr = buffer.toString("utf-8");
-      const prevPartial = this.partialLineBuffers.get(sessionId) || "";
-      const fullText = prevPartial + chunkStr;
-
-      // Find the last newline to avoid parsing a truncated incomplete JSON line at EOF
-      const lastNewlineIdx = fullText.lastIndexOf("\n");
-      if (lastNewlineIdx === -1) {
-        // Entire chunk is incomplete, wait for newline
-        this.partialLineBuffers.set(sessionId, fullText);
-        return { turns: this.cachedTurns.get(sessionId) || [], sessionTitle: title };
-      }
-
-      const completeChunk = fullText.slice(0, lastNewlineIdx);
-      const trailingUnfinished = fullText.slice(lastNewlineIdx + 1);
-
-      this.partialLineBuffers.set(sessionId, trailingUnfinished);
-      this.byteOffsets.set(sessionId, startOffset + bytesToRead - Buffer.byteLength(trailingUnfinished, "utf-8"));
+      // agent-session-normalization.md §4.2: only whole lines are parsed. The offset stops after the
+      // last newline, so a half-written line (and any split UTF-8 character) is read again in full.
+      const lastNewline = buffer.lastIndexOf(0x0a);
+      if (lastNewline === -1) return { turns: this.cachedTurns.get(sessionId) || [], sessionTitle: title };
+      const completeChunk = buffer.subarray(0, lastNewline).toString("utf-8");
+      this.byteOffsets.set(sessionId, startOffset + lastNewline + 1);
 
       const lines = completeChunk.split("\n");
       const turns: NormalizedTurn[] = incremental
@@ -266,11 +251,9 @@ export class AgyAdapter {
   public resetCache(sessionId?: string): void {
     if (sessionId) {
       this.byteOffsets.delete(sessionId);
-      this.partialLineBuffers.delete(sessionId);
       this.cachedTurns.delete(sessionId);
     } else {
       this.byteOffsets.clear();
-      this.partialLineBuffers.clear();
       this.cachedTurns.clear();
     }
   }

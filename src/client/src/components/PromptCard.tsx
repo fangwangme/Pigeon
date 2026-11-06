@@ -6,6 +6,7 @@ import { focusComposer } from "./Composer";
 import { Markdown, openToolDetail } from "./Transcript";
 import { DiffBadge, Icon, Sheet } from "./ui";
 import { t } from "../i18n";
+import { matchScreenOption } from "../prompt-match";
 
 /** Options that hand the turn back to the user to write something (§4.1, §4.3). */
 const TELL_RE = /tell|keep planning|告诉|说明|继续规划/i;
@@ -110,11 +111,10 @@ function QuestionCard(props: { p: InteractionCardData; q: NormalizedQuestion; on
   const [picked, setPicked] = createSignal<Record<number, string>>({});
   const { sending, answer } = useAnswer(() => props.p);
   const q = () => qs()[cur()];
-  const screenOption = (label: string) => props.p.options.find((o) => norm(o.label) === norm(label) || norm(o.label).startsWith(norm(label)));
   const other = () => props.p.options.find((o) => OTHER_RE.test(o.label));
   const submit = () => {
     const label = picked()[cur()];
-    const opt = label ? screenOption(label) : undefined;
+    const opt = label ? matchScreenOption(props.p.options, label) : undefined;
     if (!opt) {
       showToast(t("prompt.mismatch"));
       openTerminal();
@@ -163,27 +163,32 @@ function QuestionCard(props: { p: InteractionCardData; q: NormalizedQuestion; on
             </button>
           )}
         </For>
-        <button
-          class="opt oth"
-          onClick={() => {
-            const o = other();
-            if (o) answer(o.id, "tell");
-            props.onCollapse();
-            focusComposer();
-          }}
-        >
-          <span class="rd" style={{ visibility: "hidden" }} />
-          <div class="tx">{t("prompt.other")}</div>
-        </button>
+        <Show when={other()} keyed>
+          {(o) => (
+            <button class="opt oth" disabled={!!sending() || cur() !== onScreen()} onClick={() => answer(o.id, "tell")}>
+              <span class="rd" style={{ visibility: "hidden" }} />
+              <div class="tx">{t("prompt.other")}</div>
+            </button>
+          )}
+        </Show>
       </div>
       <div class="qfoot">
         <button class="lnk" onClick={openTerminal}>
           <Icon name="term" sm />
           {t("agent.terminal")}
         </button>
-        <button class="btn acc" disabled={!picked()[cur()] || !!sending() || cur() !== onScreen()} onClick={submit}>
-          {sending() ? t("common.sending") : cur() === qs().length - 1 ? t("prompt.submit") : t("prompt.nextShort")}
-        </button>
+        <Show
+          when={!q()?.multiSelect}
+          fallback={
+            <button class="btn acc" onClick={openTerminal}>
+              {t("prompt.inTerminal")}
+            </button>
+          }
+        >
+          <button class="btn acc" disabled={!picked()[cur()] || !!sending() || cur() !== onScreen()} onClick={submit}>
+            {sending() ? t("common.sending") : cur() === qs().length - 1 ? t("prompt.submit") : t("prompt.nextShort")}
+          </button>
+        </Show>
       </div>
     </div>
   );

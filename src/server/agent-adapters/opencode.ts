@@ -34,6 +34,7 @@ export class OpenCodeAdapter {
   public getTurns(sessionId: string): {
     turns: NormalizedTurn[];
     stats?: SessionStats;
+    sessionTitle?: string;
   } {
     if (!this.isAvailable()) {
       return { turns: [] };
@@ -49,7 +50,7 @@ export class OpenCodeAdapter {
       let stats: SessionStats | undefined;
       const sessionRow: any = db
         .query(
-          "SELECT summary_additions, summary_deletions, summary_files, summary_diffs FROM session_v2 WHERE id = ? LIMIT 1"
+          "SELECT title, summary_additions, summary_deletions, summary_files, summary_diffs FROM session_v2 WHERE id = ? LIMIT 1"
         )
         .get(sessionId);
 
@@ -229,7 +230,7 @@ export class OpenCodeAdapter {
         turns.push(currentTurn);
       }
 
-      return { turns, stats };
+      return { turns, stats, sessionTitle: typeof sessionRow?.title === "string" && sessionRow.title ? sessionRow.title : undefined };
     } finally {
       db?.close();
     }

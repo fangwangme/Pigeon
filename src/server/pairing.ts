@@ -184,18 +184,14 @@ export class PairingManager extends EventEmitter {
       return { success: false, error: "Pairing token has expired. Please generate a new one." };
     }
 
-    if (this.activeToken.failedAttempts >= 5) {
-      this.activeToken = null;
-      this.saveDevices();
-      return { success: false, error: "Too many failed attempts. Pairing token revoked." };
-    }
-
     const codeBuf = Buffer.from(code.trim().toUpperCase());
     const tokenBuf = Buffer.from(this.activeToken.token.trim().toUpperCase());
     const match = codeBuf.length === tokenBuf.length && timingSafeEqual(codeBuf, tokenBuf);
 
     if (!match) {
       this.activeToken.failedAttempts++;
+      // security-and-pairing.md §2: the fifth wrong code revokes the token at once.
+      if (this.activeToken.failedAttempts >= 5) this.activeToken = null;
       this.saveDevices();
       return { success: false, error: "Invalid pairing code." };
     }

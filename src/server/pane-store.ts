@@ -69,23 +69,30 @@ export class PaneStore extends EventEmitter {
   /** Binds a pane to a session; a different session replaces the old one. Returns whether it changed. */
   public registerPaneSession(paneId: string, agent: string, sessionId: string): boolean {
     const existing = this.paneStates.get(paneId);
-    if (existing && existing.agent === agent && existing.sessionId === sessionId) return false;
+    if (existing && existing.agent === agent && existing.sessionId === sessionId) {
+      // A session can be bound before its file exists (claude writes it with the first prompt).
+      if (!existing.watcher && this.watch(existing)) this.refreshPaneTurns(paneId, true);
+      return false;
+    }
     if (existing) this.release(existing);
 
     const state: PaneSessionState = { paneId, agent, sessionId, turns: [], seqWatermark: 0 };
     this.paneStates.set(paneId, state);
     this.refreshPaneTurns(paneId);
-
-    // Log changes drive turn updates directly instead of riding on screen polls.
-    const watchPath = this.adapters.getWatchPath(agent, sessionId);
-    if (watchPath && existsSync(watchPath)) {
-      let timer: ReturnType<typeof setTimeout> | null = null;
-      state.watcher = watch(watchPath, () => {
-        if (timer) clearTimeout(timer);
-        timer = setTimeout(() => this.refreshPaneTurns(paneId, true), 100);
-      });
-    }
+    this.watch(state);
     this.emit("session_changed", paneId);
+    return true;
+  }
+
+  /** agent-session-normalization.md §4: log changes drive turn updates, debounced 100 ms. */
+  private watch(state: PaneSessionState): boolean {
+    const watchPath = this.adapters.getWatchPath(state.agent, state.sessionId);
+    if (!watchPath || !existsSync(watchPath)) return false;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    state.watcher = watch(watchPath, () => {
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(() => this.refreshPaneTurns(state.paneId, true), 100);
+    });
     return true;
   }
 

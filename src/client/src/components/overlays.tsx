@@ -54,7 +54,8 @@ function CloseSheet(props: { tabId: string }) {
     request({ type: "close_tab", payload: { tabId: props.tabId } })
       .then(() => {
         setOverlay(null);
-        if (state.activeTabId === props.tabId && state.route.name === "session") navigate({ name: "home" });
+        // §6.7: back to where the session was opened from.
+        if (state.activeTabId === props.tabId && state.route.name === "session") navigate({ name: state.route.from });
       })
       .catch((e) => showToast(e.message || t("close.failed")))
       .finally(() => setBusy(false));

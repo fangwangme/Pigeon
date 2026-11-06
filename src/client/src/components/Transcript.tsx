@@ -460,8 +460,6 @@ export function ScreenCard(props: { card: Card }) {
   switch (c.kind) {
     case "markdown":
       return <Markdown md={c.content} />;
-    case "text":
-      return <div class="scard term mono">{c.text}</div>;
     case "thought":
       return <Reasoning text={c.body} />;
     case "tool_call":

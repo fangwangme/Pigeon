@@ -10,7 +10,7 @@ export class ClaudeSource implements SessionSource {
   public readonly agent = "claude";
   private root: string;
   private paths = new Map<string, string>();
-  private readers = new Map<string, { tail: JsonlTail; builder: TurnBuilder; state: ParseState }>();
+  private readers = new Map<string, { tail: JsonlTail; builder: TurnBuilder }>();
 
   constructor(home: string) {
     this.root = join(home, ".claude");
@@ -24,7 +24,13 @@ export class ClaudeSource implements SessionSource {
     if (!facts.pid) return null;
     const file = join(this.root, "sessions", `${facts.pid}.json`);
     if (!existsSync(file)) return null;
-    const data = JSON.parse(readFileSync(file, "utf-8"));
+    // §1: another program's file; Claude may be mid-write, so an unreadable map is skipped.
+    let data: any;
+    try {
+      data = JSON.parse(readFileSync(file, "utf-8"));
+    } catch {
+      return null;
+    }
     const sessionId = str(data.sessionId);
     const cwd = str(data.cwd) ?? facts.cwd;
     if (!sessionId || !cwd) return null;
@@ -58,15 +64,14 @@ export class ClaudeSource implements SessionSource {
     if (!path) return { turns: [] };
     let reader = this.readers.get(sessionId);
     if (!reader || !incremental) {
-      reader = { tail: new JsonlTail(path), builder: new TurnBuilder(), state: { resultsTypes: new Map() } };
+      reader = { tail: new JsonlTail(path), builder: new TurnBuilder() };
       this.readers.set(sessionId, reader);
     }
     const { records, reset } = reader.tail.read();
     if (reset) {
       reader.builder = new TurnBuilder();
-      reader.state = { resultsTypes: new Map() };
     }
-    for (const r of records) applyRecord(reader.builder, reader.state, r);
+    for (const r of records) applyRecord(reader.builder, r);
     return reader.builder.result("AskUserQuestion", "ExitPlanMode");
   }
 
@@ -108,11 +113,6 @@ export class ClaudeSource implements SessionSource {
     }
     return result;
   }
-}
-
-interface ParseState {
-  /** Tool use id → tool name, for interpreting results. */
-  resultsTypes: Map<string, string>;
 }
 
 const NOT_PROMPT = /^\s*<(command-|local-command-|system-reminder)/;
@@ -180,7 +180,7 @@ function describeTool(name: string, input: Record<string, any>) {
   }
 }
 
-function applyRecord(b: TurnBuilder, state: ParseState, r: unknown): void {
+function applyRecord(b: TurnBuilder, r: unknown): void {
   if (!isObj(r) || r.isSidechain === true) return;
   const ts = tsOf(r.timestamp, Date.now());
   if (r.type === "custom-title" || r.type === "ai-title") {
@@ -238,7 +238,6 @@ function applyRecord(b: TurnBuilder, state: ParseState, r: unknown): void {
         const name = str(block.name);
         if (!id || !name) continue;
         const input = isObj(block.input) ? block.input : {};
-        state.resultsTypes.set(id, name);
         const todos: TodoItem[] | undefined =
           name === "TodoWrite" && Array.isArray(input.todos)
             ? input.todos.filter(isObj).map((t: any) => ({ text: str(t.content) ?? "", status: todoStatus(t.status) }))

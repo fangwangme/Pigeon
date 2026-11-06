@@ -174,7 +174,6 @@ export class PigeonDaemon {
       uploadStore: this.uploadStore,
       pairingManager: this.pairingManager,
     });
-    this.pairingManager.on("device_revoked", (deviceId) => this.wsServer.closeDevice(deviceId));
   }
 
   private parseCookie(req: Request): Record<string, string> {

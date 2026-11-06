@@ -124,8 +124,6 @@ svg.i.sm { width: 16px; height: 16px; }
 @keyframes bl { 0%, 80%, 100% { opacity: .25; } 40% { opacity: 1; } }
 .acts { display: flex; gap: 6px; color: var(--muted); margin: 2px 0 10px -10px; }
 .acts button { width: 44px; height: 40px; display: grid; place-items: center; }
-.scard { margin: 6px 0; }
-.scard.term { font-size: 12.5px; background: var(--code); border: 1px solid var(--line); border-radius: 14px; padding: 10px 12px; white-space: pre-wrap; overflow-wrap: anywhere; }
 
 /* ---------- floating controls (glass) ---------- */
 .cbtn, .cap, .comp, .todo, .jump {
@@ -175,7 +173,6 @@ svg.i.sm { width: 16px; height: 16px; }
 .jump { position: relative; width: 44px; height: 44px; border-radius: 50%; display: grid; place-items: center; margin-left: auto; }
 .qcap { position: relative; align-self: center; height: 38px; padding: 0 16px; border-radius: 19px; font-size: 13.5px; color: var(--warn); display: inline-flex; align-items: center; gap: 8px; }
 .pop { position: relative; border-radius: 24px; padding: 6px 12px; max-height: 46vh; overflow-y: auto; }
-.pop mark { background: none; color: var(--fg); font-weight: 700; }
 
 /* ---------- sheets ---------- */
 .overlay { position: fixed; inset: 0; z-index: 40; display: flex; flex-direction: column; justify-content: flex-end; }
@@ -276,7 +273,6 @@ svg.i.sm { width: 16px; height: 16px; }
 /* ---------- misc ---------- */
 .banner { margin: 0 12px 6px; border-radius: 16px; padding: 10px 12px; display: flex; align-items: center; gap: 10px; font-size: 13.5px; background: var(--warnbg); color: var(--warn); border: 1px solid var(--line); flex: none; }
 .banner b { color: var(--fg); font-weight: 600; }
-.banner.float { position: fixed; top: calc(64px + env(safe-area-inset-top)); left: 0; right: 0; z-index: 30; -webkit-backdrop-filter: blur(16px); backdrop-filter: blur(16px); }
 .toast { position: fixed; left: 50%; transform: translateX(-50%); bottom: calc(96px + env(safe-area-inset-bottom)); z-index: 60; background: var(--fg); color: var(--bg); border-radius: 20px; padding: 10px 16px; font-size: 13.5px; max-width: calc(100% - 32px); display: flex; gap: 12px; align-items: center; box-shadow: 0 8px 24px rgba(0,0,0,.3); animation: fade .2s; }
 .toast button { color: var(--bg); font-weight: 700; text-decoration: underline; min-height: 32px; }
 .update { position: fixed; bottom: auto; top: calc(8px + env(safe-area-inset-top)); left: 50%; transform: translateX(-50%); z-index: 61; }
