@@ -218,6 +218,20 @@ describe("session actions", () => {
     await send(c.ws, { type: "device_revoke", id: "d3", payload: { deviceId: theirs } });
     expect(lastError(c)).toBe("ERR_NOT_FOUND");
   });
+
+  test("devices are listed newest paired first (protocol.md §4.12)", async () => {
+    const { token } = pairing.createPairingToken();
+    const ids: string[] = [];
+    for (const name of ["Old", "Middle", "New"]) {
+      ids.push(pairing.exchangeToken(token, name).deviceId!);
+      await Bun.sleep(5);
+    }
+    const c = fakeWs(ids[0]);
+    server.handleOpen(c.ws);
+    await send(c.ws, { type: "devices_list", id: "d1" });
+    const names = lastAck(c).devices.map((d: any) => d.deviceName);
+    expect(names.filter((n: string) => ["Old", "Middle", "New"].includes(n))).toEqual(["New", "Middle", "Old"]);
+  });
 });
 
 describe("snapshot fields (protocol.md §5.3, herdr-adapter.md §3.1)", () => {

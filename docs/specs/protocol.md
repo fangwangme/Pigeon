@@ -153,7 +153,7 @@ The ack carries `{ "sessions": [ { "id", "title", "updatedAt" } ] }`: the agent'
 `name` is 1–80 characters after trimming. The tab is renamed in Herdr and the snapshot refreshed; the ack carries `{ "tabId", "name" }`. An unknown tab is `ERR_NOT_FOUND`.
 
 ### 4.12 Devices (`devices_list`, `device_revoke`)
-`devices_list` acks `{ "devices": [ { "deviceId", "deviceName", "createdAt", "lastUsedAt", "isThisDevice" } ] }`. `device_revoke { deviceId }` revokes that device exactly like `pigeon devices revoke` (`security-and-pairing.md` §5): its connections close with `4403`. An unknown device is `ERR_NOT_FOUND`. Revoking this device acks first, then closes this connection.
+`devices_list` acks `{ "devices": [ { "deviceId", "deviceName", "createdAt", "lastUsedAt", "isThisDevice" } ] }`, newest `createdAt` first. `device_revoke { deviceId }` revokes that device exactly like `pigeon devices revoke` (`security-and-pairing.md` §5): its connections close with `4403`. An unknown device is `ERR_NOT_FOUND`. Revoking this device acks first, then closes this connection.
 
 ### 4.13 Cancel a Queued Prompt (`queue_cancel`)
 ```json

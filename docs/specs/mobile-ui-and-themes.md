@@ -35,7 +35,7 @@ Pigeon is a phone app for Herdr, written as a PWA. It follows the interaction mo
 - While the daemon or Herdr is unreachable, the connection banner (§8.3) sits above the list.
 
 ### 2.2 All agents
-Every pane with an agent, across workspaces, grouped by status in this order: **等待你** → **工作中** → **已完成** → **空闲**. The idle group starts collapsed. Each row's subtitle names the workspace and the agent; a waiting row adds one amber line saying what it waits for (the pane's summary). A tap opens that session; back returns here.
+Every pane with an agent, across workspaces, grouped by status in this order: **等待你** → **工作中** → **已完成** → **空闲**. Every group starts expanded each time the page opens; a group header collapses or expands its group, and its chevron points down when expanded and right when collapsed. Each row shows the tab label as its title; the subtitle shows the agent as a tinted label, then the workspace with a folder icon in muted text, so the two read apart at a glance. A waiting row adds one amber line saying what it waits for (the pane's summary). A tap opens that session; back returns here.
 
 ### 2.3 Filter
 A sheet shared by §2.1 and §2.2: status (等待你, 工作中, 已完成, 空闲, 终端), agent kind, and display options (show plain terminals, show idle tabs). While a filter is active the filter button carries a dot. Stored in this browser's `localStorage` only, never synced.
@@ -141,7 +141,7 @@ The **恢复** segment (also reached from `+`) lists the agent's past sessions f
 ### 8.1 Settings (gear on home)
 - **外观**: 跟随系统 / 浅色 / 深色; **降低透明度** (§9.2); **强调色**.
 - **通知**: the push switches (`push.md` §5). Until delivery exists they are shown disabled with the note "推送投递尚未接通".
-- **设备与配对**: the connection to the computer and to Herdr; paired devices with **移除** (revokes at once, `protocol.md` §4.12); how to pair another phone (`pigeon pair` on the computer).
+- **设备与配对**: the connection to the computer and to Herdr; paired devices, newest paired first, each with **移除** (revokes at once, `protocol.md` §4.12). The five newest show; any others sit behind one row that expands them; how to pair another phone (`pigeon pair` on the computer).
 - **关于**: version; install-as-app hint.
 
 ### 8.2 Unpaired
