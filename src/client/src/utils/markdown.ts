@@ -32,12 +32,12 @@ export function renderMarkdown(content: string): string {
     return DOMPurify.sanitize(rawHtml, {
       USE_PROFILES: { html: true },
       ADD_ATTR: ["target"],
-      ALLOWED_URI_REGEXP: /^(?:(?:(?:f|ht)tps?|mailto|tel|callto|sms|cid|xmpp):|[^a-z]|[a-z+.\-]+(?:[^a-z+.\-:]|$))/i,
+      ALLOWED_URI_REGEXP: /^(?:(?:https?|mailto):|[^a-z]|[a-z+.\-]+(?:[^a-z+.\-:]|$))/i,
     });
   }
-  // In headless environments without DOMParser, strip script/handlers.
+  // In headless environments without DOMParser, strip script/handlers and disallowed URI schemes (architecture.md §5).
   return rawHtml
     .replace(/<script[\s\S]*?<\/script>/gi, "")
     .replace(/on\w+\s*=\s*(["'][^"']*["']|[^\s>]+)/gi, "")
-    .replace(/href\s*=\s*["']\s*javascript:[^"']*["']/gi, "");
+    .replace(/(href|src)\s*=\s*["']\s*(?!https?:|mailto:|\/|#)([a-z][a-z0-9+.\-]*:)[^"']*["']/gi, "");
 }

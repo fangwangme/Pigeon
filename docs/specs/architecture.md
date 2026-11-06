@@ -27,6 +27,7 @@ Rather than exposing a raw VT100 character-grid terminal over SSH/Mosh—which s
 │                  Pigeon Bridge Daemon                   │
 │  - Runtime: Bun                                         │
 │  - Herdr Adapter (App + Core, events.subscribe)         │
+│  - Session Store & Agent Log Readers (PaneStore)        │
 │  - Line Pattern Card Classifier (150-250ms Debounce)   │
 │  - Pairing & Security Guard (QR Code Only)              │
 │  - Web Push Notification Subsystem                      │

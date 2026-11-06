@@ -1,11 +1,12 @@
 import { existsSync, openSync, readSync, closeSync, statSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import type {
+  NormalizedToolCall,
   NormalizedTurn,
   SessionStats,
 } from "../../shared/agent-session";
-import { verbForName } from "../sessions/common";
+import { targetForInput, verbForName } from "../sessions/common";
 
 export interface AgyAdapterOptions {
   baseBrainDir?: string;
@@ -38,23 +39,45 @@ export class AgyAdapter {
   }
 
   private getSessionTitle(sessionId: string): string | null {
-    {
-      const annotPath = join(
-        homedir(),
-        ".gemini",
-        "antigravity-cli",
-        "annotations",
-        `${sessionId}.pbtxt`
-      );
-      if (existsSync(annotPath)) {
-        const content = readFileSync(annotPath, "utf-8");
-        const match = content.match(/title:\s*"([^"]+)"/);
-        if (match && match[1]) {
-          return match[1];
-        }
+    const annotPath = join(
+      dirname(this.baseBrainDir),
+      "annotations",
+      `${sessionId}.pbtxt`
+    );
+    if (existsSync(annotPath)) {
+      const content = readFileSync(annotPath, "utf-8");
+      const match = content.match(/title:\s*"([^"]+)"/);
+      if (match && match[1]) {
+        return match[1];
       }
     }
     return null;
+  }
+
+  /** Reads `transcript_full.jsonl` on demand when `transcript.jsonl` reports `truncated_fields` (§2.2). */
+  private loadFullRecords(sessionId: string): Map<number, any> {
+    const map = new Map<number, any>();
+    const fullPath = join(
+      this.baseBrainDir,
+      sessionId,
+      ".system_generated",
+      "logs",
+      "transcript_full.jsonl"
+    );
+    if (!existsSync(fullPath)) return map;
+    const lines = readFileSync(fullPath, "utf-8").split("\n");
+    for (let i = 0; i < lines.length; i++) {
+      const t = lines[i].trim();
+      if (!t) continue;
+      try {
+        const parsed = JSON.parse(t);
+        const key = typeof parsed.step_index === "number" ? parsed.step_index : i;
+        map.set(key, parsed);
+      } catch {
+        // Skip malformed record
+      }
+    }
+    return map;
   }
 
   public getTurns(
@@ -122,6 +145,7 @@ export class AgyAdapter {
       let currentTurn: NormalizedTurn | null =
         turns.length > 0 ? turns[turns.length - 1] : null;
       let turnCounter = turns.length;
+      let fullRecords: Map<number, any> | null = null;
 
       for (const line of lines) {
         const trimmed = line.trim();
@@ -133,6 +157,12 @@ export class AgyAdapter {
         } catch {
           // Skip malformed record
           continue;
+        }
+
+        if (Array.isArray(record.truncated_fields) && record.truncated_fields.length > 0) {
+          fullRecords ??= this.loadFullRecords(sessionId);
+          const full = typeof record.step_index === "number" ? fullRecords.get(record.step_index) : undefined;
+          if (full) record = full;
         }
 
         const recType = record.type;
@@ -157,6 +187,7 @@ export class AgyAdapter {
               text: promptText,
             },
             toolCalls: [],
+            items: [],
           };
           turns.push(currentTurn);
         } else if (recType === "PLANNER_RESPONSE") {
@@ -167,6 +198,7 @@ export class AgyAdapter {
               turnNumber: turnCounter,
               timestamp,
               toolCalls: [],
+              items: [],
             };
             turns.push(currentTurn);
           }
@@ -181,18 +213,33 @@ export class AgyAdapter {
 
           if (Array.isArray(record.tool_calls)) {
             currentTurn.toolCalls = currentTurn.toolCalls || [];
+            currentTurn.items = currentTurn.items || [];
             for (const tc of record.tool_calls) {
-              currentTurn.toolCalls.push({
+              const args = tc.args || {};
+              const target = targetForInput(args);
+              const description =
+                typeof args.toolSummary === "string"
+                  ? args.toolSummary
+                  : typeof args.description === "string"
+                  ? args.description
+                  : undefined;
+              const call: NormalizedToolCall = {
                 id: `tc_${currentTurn.turnNumber}_${currentTurn.toolCalls.length}`,
                 name: tc.name || "tool",
                 verb: verbForName(tc.name || ""),
-                input: tc.args || {},
+                ...(target ? { target } : {}),
+                ...(description ? { description } : {}),
+                input: args,
                 status: "completed",
-              });
+              };
+              currentTurn.toolCalls.push(call);
+              currentTurn.items.push({ kind: "tool", call });
             }
           }
 
           if (record.content) {
+            currentTurn.items = currentTurn.items || [];
+            currentTurn.items.push({ kind: "text", markdown: record.content });
             currentTurn.assistantResponse = {
               markdown: currentTurn.assistantResponse?.markdown
                 ? currentTurn.assistantResponse.markdown + "\n" + record.content

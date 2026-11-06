@@ -37,10 +37,15 @@ describe("skills per pane (herdr-adapter.md §8.3)", () => {
     skill(join(proj, ".claude", "skills"), "review", "Review code");
     skill(join(home, ".pi", "agent", "skills"), "plan", "Plan work");
     skill(join(proj, ".agents", "skills"), "ship", "Ship it");
+    skill(join(home, ".gemini", "antigravity-cli", "builtin", "skills"), "guide", "Builtin guide");
     const scanner = new SkillScanner(home);
     expect(userEntries(scanner.listSkills("claude", proj))).toEqual([{ name: "review", description: "Review code", source: "project", kind: "skill", invocation: "/review" }]);
     expect(userEntries(scanner.listSkills("pi", proj)).map((s: any) => s.invocation)).toEqual(["/skill:plan"]);
     expect(userEntries(scanner.listSkills("codex", proj)).map((s: any) => s.invocation)).toEqual(["$ship"]);
+    expect(scanner.listSkills("agy", proj).map((s: any) => [s.invocation, s.source])).toEqual([
+      ["/ship", "project"],
+      ["/guide", "builtin"],
+    ]);
   });
 
   test("a project skill shadows a user skill of the same name", () => {

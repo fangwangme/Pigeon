@@ -1,11 +1,11 @@
 # Running Pigeon Day to Day
 
-How to run Pigeon on your computer and phone, manage paired devices, and ship fixes to your phone while using it. The contracts behind each step live in [`docs/specs/`](../specs/).
+How to set up Pigeon for daily use, manage paired phones, and ship changes to your phone while you use it. For the design and protocol specs, see [`docs/specs/`](../specs/).
 
 ## Prerequisites
 
-- The Herdr desktop app (`herdr-app`) open on this machine. Pigeon reads workspaces and tabs from the App window socket (`$HERDR_APP_HOME/herdr-app.sock`, defaulting to `~/.config/herdr-app/herdr-app.sock`) and drives terminals through Herdr Core (`$HC_TERMINAL_SOCKET`, defaulting to `$XDG_RUNTIME_DIR/herdr-core/default.sock`). When the Herdr window is closed, the phone shows Herdr offline even though Herdr Core keeps terminals running. The older terminal-only `herdr` is not supported.
-- Tailscale on this machine and on the phone, both logged into the same tailnet. Tailscale provides a trusted HTTPS origin, which PWA installation, the service worker, and Web Push require (`architecture.md` §4.2).
+- The Herdr desktop app (`herdr-app`) running with its window open. Pigeon gets workspaces and tabs from the App socket (`$HERDR_APP_HOME/herdr-app.sock`, or `~/.config/herdr-app/herdr-app.sock` by default) and talks to terminals through Herdr Core (`$HC_TERMINAL_SOCKET`, or `$XDG_RUNTIME_DIR/herdr-core/default.sock` by default). Closing the Herdr window leaves Herdr Core's terminals alive, but Pigeon will show Herdr as offline until the window is open again. The older terminal-only `herdr` TUI is not supported.
+- Tailscale on both this machine and your phone, signed into the same tailnet. Tailscale gives Pigeon a trusted HTTPS origin, which browsers require for PWA installation, service workers, and Web Push.
 - Chrome (or another modern Chromium browser) on Android.
 
 ## One-time setup
@@ -53,19 +53,19 @@ How to run Pigeon on your computer and phone, manage paired devices, and ship fi
 
 ## Paired devices
 
-- `pigeon devices` lists every paired browser, and `pigeon devices revoke <deviceId>` cuts one off immediately. You can also view and remove paired devices from **Settings → Devices and pairing** on the phone (`protocol.md` §4.12).
-- `pigeon pair` rotates the active pairing link (`--ephemeral` creates a single-use link that expires in 10 minutes). Browsers that are already paired stay paired.
-- `pigeon status` prints the active session count and `publicBaseUrl`.
-- Revoke any sessions left over from development before relying on Pigeon day to day.
+- `pigeon devices` lists every paired browser, and `pigeon devices revoke <deviceId>` disconnects one right away. You can also view and remove paired phones from **Settings → Devices and pairing** in the app.
+- `pigeon pair` rotates the pairing link and prints a fresh QR code (`--ephemeral` makes a single-use link that expires in 10 minutes). Phones that are already paired stay connected.
+- `pigeon status` shows the active session count and public URL.
+- Clean up any test sessions left over from development before using Pigeon day to day.
 
-## The use-and-fix loop
+## Updating while you use it
 
-1. Use Pigeon on your phone. When something is wrong, note what you did and what you saw.
-2. Fix it in a worktree, run `bun test`, and deploy the new build:
+1. When you spot something to fix on your phone, make the change in a git worktree and run `bun test`.
+2. Build, install, and restart the service:
    ```bash
    bun run build && install -m 755 dist/pigeon ~/.local/bin/pigeon && systemctl --user restart pigeon
    ```
-3. The phone reconnects automatically. When the restarted daemon serves a different client build (`welcome.buildId`), the app shows an **`Update available · Reload`** banner (in Chinese, **`有新版本 · 重新加载`**); tap it to load the new client (`protocol.md` §3.2). Because a standalone PWA has no browser reload button, this banner is how updates reach an installed phone app.
+3. Your phone reconnects on its own. When the restarted daemon serves a newer client build, the app shows an **`Update available · Reload`** banner (**`有新版本 · 重新加载`** in Chinese). Tap it to reload into the new build—standalone PWAs don't have a browser refresh button, so this banner is how updates reach an installed app.
 
 ## Without Tailscale
 

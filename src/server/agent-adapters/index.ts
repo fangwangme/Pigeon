@@ -77,8 +77,22 @@ class OpenCodeSource implements SessionSource {
   public watchPath(): string {
     return `${this.adapter.getDbPath()}-wal`;
   }
+  private firstPrompt(sessionId: string): string | undefined {
+    const row = this.query<{ data: string }>(
+      "SELECT data FROM session_message WHERE session_id = ? AND type = 'user' ORDER BY seq ASC, time_created ASC LIMIT 1",
+      sessionId
+    )[0];
+    if (!row) return undefined;
+    try {
+      const data = JSON.parse(row.data);
+      const text = typeof data.text === "string" ? data.text : typeof data.content === "string" ? data.content : "";
+      return text.trim() || undefined;
+    } catch {
+      return undefined;
+    }
+  }
   public read(id: string): SessionRead {
-    const title = this.query<{ title: string | null }>("SELECT title FROM session_v2 WHERE id = ?", id)[0]?.title;
+    const title = this.query<{ title: string | null }>("SELECT title FROM session_v2 WHERE id = ?", id)[0]?.title || this.firstPrompt(id)?.slice(0, 120);
     return { ...this.adapter.getTurns(id), ...(title ? { sessionTitle: title } : {}) };
   }
   public forget(): void {}
@@ -87,7 +101,7 @@ class OpenCodeSource implements SessionSource {
       "SELECT id, title, time_updated FROM session_v2 WHERE (directory = ? OR directory LIKE ?) AND time_archived IS NULL ORDER BY time_updated DESC LIMIT 50",
       folder,
       `${folder}/%`
-    ).map((r) => ({ id: r.id, title: (r.title || r.id).slice(0, 120), updatedAt: r.time_updated }));
+    ).map((r) => ({ id: r.id, title: (r.title || this.firstPrompt(r.id) || r.id).slice(0, 120), updatedAt: r.time_updated }));
   }
 }
 

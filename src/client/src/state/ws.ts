@@ -93,7 +93,7 @@ export async function initWebSocket(): Promise<void> {
         ws.close(); // half-open connection: force a reconnect
         return;
       }
-      sendMessage({ type: "ping", id: nextId(), timestamp: Date.now() });
+      sendMessage({ type: "ping", timestamp: Date.now() });
       reportPresence();
     }, 15000);
     reportPresence();

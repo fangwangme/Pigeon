@@ -8,7 +8,7 @@ import type {
   FileDiffSummary,
   SessionStats,
 } from "../../shared/agent-session";
-import { verbForName } from "../sessions/common";
+import { targetForInput, verbForName } from "../sessions/common";
 
 export interface OpenCodeAdapterOptions {
   dbPath?: string;
@@ -121,6 +121,7 @@ export class OpenCodeAdapter {
               files: userFiles,
             },
             toolCalls: [],
+            items: [],
           };
         } else if (msgType === "assistant") {
           if (!currentTurn) {
@@ -130,6 +131,7 @@ export class OpenCodeAdapter {
               turnNumber: turnCounter,
               timestamp,
               toolCalls: [],
+              items: [],
             };
           }
 
@@ -177,11 +179,16 @@ export class OpenCodeAdapter {
                   .join("\n");
               }
 
+              const toolInput = toolState.input || item.input || {};
+              const target = targetForInput(toolInput);
+              const description = typeof toolInput?.description === "string" ? toolInput.description : undefined;
               const toolCall: NormalizedToolCall = {
                 id: item.id || item.callID || `tool_${msg.id}_${currentTurn.toolCalls?.length ?? 0}`,
                 name: item.name || item.tool || "tool",
                 verb: verbForName(item.name || item.tool || ""),
-                input: toolState.input || item.input || {},
+                ...(target ? { target } : {}),
+                ...(description ? { description } : {}),
+                input: toolInput,
                 output: outputStr || undefined,
                 exitCode: toolState.exitCode,
                 status,
@@ -193,9 +200,13 @@ export class OpenCodeAdapter {
 
               currentTurn.toolCalls = currentTurn.toolCalls || [];
               currentTurn.toolCalls.push(toolCall);
+              currentTurn.items = currentTurn.items || [];
+              currentTurn.items.push({ kind: "tool", call: toolCall });
             } else if (item.type === "text") {
               const textChunk = item.text || item.content || "";
               if (textChunk) {
+                currentTurn.items = currentTurn.items || [];
+                currentTurn.items.push({ kind: "text", markdown: textChunk });
                 assistantMarkdown = assistantMarkdown
                   ? assistantMarkdown + "\n" + textChunk
                   : textChunk;

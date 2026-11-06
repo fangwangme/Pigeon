@@ -21,7 +21,10 @@ describe("structured session adapters (agent-session-normalization.md §2)", () 
       db.run(`
         CREATE TABLE session_v2 (
           id text PRIMARY KEY,
+          directory text,
           title text,
+          time_updated integer,
+          time_archived integer,
           summary_additions integer,
           summary_deletions integer,
           summary_files integer,
@@ -39,10 +42,12 @@ describe("structured session adapters (agent-session-normalization.md §2)", () 
 
       // Insert mock session
       db.run(
-        "INSERT INTO session_v2 (id, title, summary_additions, summary_deletions, summary_files, summary_diffs) VALUES (?, ?, ?, ?, ?, ?)",
+        "INSERT INTO session_v2 (id, directory, title, time_updated, summary_additions, summary_deletions, summary_files, summary_diffs) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
         [
           "ses_mock_1",
+          "/work",
           "Test Session",
+          2000,
           15,
           5,
           2,
@@ -51,6 +56,16 @@ describe("structured session adapters (agent-session-normalization.md §2)", () 
             { filePath: "src/util.ts", status: "created", additions: 5, deletions: 3 },
           ]),
         ]
+      );
+
+      // Insert untitled session to test first-prompt fallback
+      db.run(
+        "INSERT INTO session_v2 (id, directory, title, time_updated) VALUES (?, ?, ?, ?)",
+        ["ses_untitled", "/work", null, 3000]
+      );
+      db.run(
+        "INSERT INTO session_message (id, session_id, type, seq, time_created, data) VALUES (?, ?, ?, ?, ?, ?)",
+        ["msg_u_untitled", "ses_untitled", "user", 1, 3000, JSON.stringify({ text: "First prompt fallback title" })]
       );
 
       // Insert User Message
@@ -126,10 +141,14 @@ describe("structured session adapters (agent-session-normalization.md §2)", () 
       expect(turn.toolCalls?.length).toBe(1);
       const tc = turn.toolCalls![0];
       expect(tc.name).toBe("bash");
+      expect(tc.target).toBe("bun test");
       expect(tc.status).toBe("completed");
       expect(tc.exitCode).toBe(0);
       expect(tc.output).toContain("5 tests passed");
       expect(tc.durationMs).toBe(400);
+
+      // Ordered items (§3)
+      expect(turn.items?.map((i) => i.kind)).toEqual(["tool", "text"]);
 
       // Assistant Text
       expect(turn.assistantResponse?.markdown).toContain("| 列1 | 列2 |");
@@ -140,6 +159,14 @@ describe("structured session adapters (agent-session-normalization.md §2)", () 
       expect(stats?.additions).toBe(15);
       expect(stats?.deletions).toBe(5);
       expect(stats?.diffs?.length).toBe(2);
+    });
+
+    test("OpenCode session listing falls back to the first prompt when title is empty (protocol.md §4.10)", () => {
+      const mgr = new AgentAdapterManager({ opencode: { dbPath: mockDbPath } });
+      expect(mgr.listSessions("opencode", "/work")).toEqual([
+        { id: "ses_untitled", title: "First prompt fallback title", updatedAt: 3000 },
+        { id: "ses_mock_1", title: "Test Session", updatedAt: 2000 },
+      ]);
     });
 
     test("Gracefully handles non-existent session ID", () => {
@@ -201,8 +228,37 @@ describe("structured session adapters (agent-session-normalization.md §2)", () 
       expect(turn.reasoning?.text).toContain("SHA-256 去重");
       expect(turn.toolCalls?.length).toBe(1);
       expect(turn.toolCalls![0].name).toBe("run_command");
+      expect(turn.toolCalls![0].target).toBe("bun test");
       expect(turn.toolCalls![0].output).toContain("29 pass");
+      expect(turn.items?.map((i) => i.kind)).toEqual(["tool", "text"]);
       expect(turn.assistantResponse?.markdown).toBe("所有模块已就绪并测试通过。");
+    });
+
+    test("Reads full line from transcript_full.jsonl when truncated_fields is present (§2.2)", () => {
+      const brain = join(testDir, "brain_trunc");
+      const logs = join(brain, "s_trunc", ".system_generated", "logs");
+      const annots = join(testDir, "annotations");
+      mkdirSync(logs, { recursive: true });
+      mkdirSync(annots, { recursive: true });
+      writeFileSync(join(annots, "s_trunc.pbtxt"), 'title: "Truncated Session"\n');
+      writeFileSync(
+        join(logs, "transcript.jsonl"),
+        JSON.stringify({ step_index: 0, type: "USER_INPUT", content: "<USER_REQUEST>hi</USER_REQUEST>", created_at: new Date(1000).toISOString() }) +
+          "\n" +
+          JSON.stringify({ step_index: 1, type: "PLANNER_RESPONSE", content: "trunc...", truncated_fields: ["content"], created_at: new Date(2000).toISOString() }) +
+          "\n"
+      );
+      writeFileSync(
+        join(logs, "transcript_full.jsonl"),
+        JSON.stringify({ step_index: 0, type: "USER_INPUT", content: "<USER_REQUEST>hi</USER_REQUEST>", created_at: new Date(1000).toISOString() }) +
+          "\n" +
+          JSON.stringify({ step_index: 1, type: "PLANNER_RESPONSE", content: "full untruncated response", created_at: new Date(2000).toISOString() }) +
+          "\n"
+      );
+      const adapter = new AgyAdapter({ baseBrainDir: brain });
+      const { turns, sessionTitle } = adapter.getTurns("s_trunc");
+      expect(sessionTitle).toBe("Truncated Session");
+      expect(turns[0].assistantResponse?.markdown).toBe("full untruncated response");
     });
 
     test("Protects against incomplete partial line at EOF", () => {

@@ -27,7 +27,7 @@ Binding is re-evaluated on every snapshot (`herdr-adapter.md` §3.1). When the r
 
 ### 2.1 OpenCode (`opencode`)
 - **Storage**: SQLite at `~/.local/share/opencode/opencode.db`, opened read-only with `PRAGMA query_only = ON` and `PRAGMA busy_timeout = 2000`, so the running OpenCode is never locked.
-- **Session**: `session_v2` (`id`, `directory`, `title`, `time_updated`, summary columns); messages in `session_message`, parts in `part` (`text`, `tool`, `reasoning`, …).
+- **Session**: `session_v2` (`id`, `directory`, `title`, `time_updated`, summary columns); messages and parts (`text`, `tool`, `reasoning`, …) in `session_message`.
 - **Binding and listing** use `directory` and `time_updated` (milliseconds).
 
 ### 2.2 Antigravity (`agy`)

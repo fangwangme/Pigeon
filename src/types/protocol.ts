@@ -251,7 +251,7 @@ export interface PigeonConfig {
 // Client -> Server messages
 export type ClientMessage =
   | { type: "hello"; id: string; payload: { protocolVersion: string; subscribePaneId?: string } }
-  | { type: "ping"; id?: string; timestamp?: number }
+  | { type: "ping"; timestamp?: number }
   | { type: "presence_update"; isVisible: boolean; viewingPaneId: string | null }
   | { type: "select_view"; id: string; payload: { paneId: string } }
   | { type: "interaction_respond"; id: string; payload: { targetPaneId: string; interactionId: string; optionId: string; fingerprint: string } }

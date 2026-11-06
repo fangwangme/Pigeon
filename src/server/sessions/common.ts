@@ -116,6 +116,23 @@ export function verbForName(name: string): ToolVerb {
   return "other";
 }
 
+/** Extracts a display target (command, file path, search pattern, or URL) from tool arguments. */
+export function targetForInput(input: unknown): string | undefined {
+  if (!isObj(input)) return undefined;
+  return (
+    str(input.command) ??
+    str(input.CommandLine) ??
+    str(input.cmd) ??
+    str(input.filePath) ??
+    str(input.file_path) ??
+    str(input.path) ??
+    str(input.Path) ??
+    str(input.pattern) ??
+    str(input.query) ??
+    str(input.url)
+  );
+}
+
 const MAX_DIFF_LINES = 2000;
 
 /** Line-based diff of two texts as a unified patch (`agent-session-normalization.md` §3.1). */

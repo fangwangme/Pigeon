@@ -1,8 +1,8 @@
 # Pigeon
 
-Pigeon puts the coding agents running in [Herdr](https://herdr.dev) on your phone. Instead of pinching and zooming a raw terminal, you get a touch-first web app for **Claude Code**, **Codex**, **OpenCode**, **Antigravity**, and **pi**—see which agent is working and which is waiting on you, read what it did, answer its prompts, queue the next message, or start and resume sessions from your phone's browser.
+Pigeon puts the coding agents running in [Herdr](https://herdr.dev) on your phone. Instead of pinching and zooming a terminal, you get a mobile web app for **Claude Code**, **Codex**, **OpenCode**, **Antigravity**, and **pi**. Check which agent is working or waiting on you, read its changes, answer prompts with a tap, queue your next message, or start and resume sessions from the couch.
 
-A small daemon runs alongside Herdr on your computer, talks to Herdr over local Unix sockets, and serves the Progressive Web App (PWA) over your Tailscale network. Everything ships as a single compiled binary.
+A small daemon runs alongside Herdr on your computer and serves the app over your Tailscale network. Everything compiles into a single binary.
 
 <p align="center">
   <picture>
@@ -44,13 +44,13 @@ A small daemon runs alongside Herdr on your computer, talks to Herdr over local 
 
 ## What it does
 
-- **Every workspace at a glance.** Browse Herdr's workspaces and tabs with live status (`waiting for you`, `working`, `done`, `idle`, or plain terminal) and unread indicators for sessions that finished while you were away. Open **All agents** to see every active agent across workspaces grouped by state, or search and filter by status, agent, or name.
-- **Conversations, not terminal scrollback.** Pigeon binds each agent pane to the agent's on-disk session log and renders prompts, Markdown replies, collapsible reasoning, grouped tool calls, file diffs, and task lists as a conversation. When a pane has no bound session log, Pigeon falls back to structured cards parsed from the terminal screen.
-- **One-tap prompt cards.** When an agent pauses for permission, a multi-question prompt, or plan approval, a prompt card replaces the composer. Numbered choices on screen become tap buttons; prompts without numbered options (such as arrow-key menus or `y/n` prompts) open the terminal view instead of guessing keystrokes.
-- **Keep the work moving.** Send messages (queued automatically by the daemon while the agent is working, with one-tap undo), attach photos or files from your phone, and insert project, user, plugin, or built-in `/` commands and skills. Stop a running turn at any time.
-- **Raw terminal when you need it.** Inspect any pane's live screen and send `↑`, `↓`, `←`, `→`, `Enter`, `Esc`, `Tab`, or `Ctrl+C`. Plain shell tabs open directly in the terminal view and accept command lines from the composer.
-- **New and resumed sessions.** Start an agent or shell in a new Herdr tab, or resume a past Claude Code, Codex, OpenCode, or pi session in a new tab. For agents that expose model lists (Claude Code and Codex), choose a model and reasoning effort at launch—or switch models mid-session in Claude Code. Rename or close tabs, and switch panes in multi-pane tabs, without moving desktop focus.
-- **Your look, your language.** Light, dark, or system theme with a shared accent color and a per-phone **Reduce transparency** toggle for the Liquid Glass controls. The UI is in English or Simplified Chinese, following your browser language unless you pick one.
+- **Every workspace at a glance.** Browse your Herdr workspaces and tabs with live status (`waiting for you`, `working`, `done`, `idle`, or plain terminal) and unread dots for sessions that finished while you were away. Open **All agents** to see every active agent across workspaces grouped by state, or search and filter by status, agent, or name.
+- **Conversations, not terminal scrollback.** Prompts, Markdown replies, collapsible reasoning, grouped tool calls, file diffs, and task lists read like a chat thread, backed by each agent's own session log. If a pane doesn't have a session log yet, Pigeon parses the terminal screen into clean cards instead.
+- **Answer prompts with a tap.** When an agent pauses for permission, asks a question, or waits on a plan, a prompt card takes the place of the reply box. Numbered choices become tap buttons; arrow-key menus and `y/n` prompts open the terminal sheet so Pigeon never guesses keystrokes.
+- **Keep the work moving.** Reply at any time—if the agent is still working, your message queues until the turn finishes (with one-tap undo). Attach photos or files from your phone, insert `/` commands and skills from your project or user config, or stop a turn mid-flight.
+- **A real terminal when you need one.** Peek at any pane's live screen and send arrow keys, `Enter`, `Esc`, `Tab`, or `Ctrl+C`. Plain shell tabs open straight to the terminal view and let you run commands from the reply box.
+- **Start, resume, and manage tabs.** Launch an agent or shell in a new Herdr tab, or pick up a past Claude Code, Codex, OpenCode, or pi session where you left off. Pick the model and reasoning effort for Claude Code or Codex (and switch models mid-session in Claude Code). Rename or close tabs and switch between panes without disturbing focus on your computer.
+- **Light, dark, English, or Chinese.** Follow your system theme or pick light or dark with a shared accent color, plus a per-phone **Reduce transparency** toggle if you prefer solid panels over glass. Available in English and Simplified Chinese.
 
 ## How it works
 
@@ -60,9 +60,9 @@ Phone (Chrome PWA) ──HTTPS / WSS over Tailscale──▶ pigeon daemon ─�
                                                         └── local admin socket ◀── pigeon CLI
 ```
 
-- **Herdr bridge:** The daemon talks to the **Herdr App** (`herdr-app.sock`) for workspaces and tabs—listing, creating, renaming, and closing—and to **Herdr Core** (`herdr-core`) for terminal status events, screen reads, and input.
-- **Session log binding:** Using the foreground process and working directory reported by Herdr Core, the daemon matches each agent pane to its local session store (JSONL or SQLite) and watches it for incremental updates.
-- **QR-only pairing:** Your phone pairs by scanning a QR code printed in the terminal (`#code=...` in the URL fragment, never sent in HTTP headers or logs) in exchange for an `HttpOnly` session cookie. Paired browsers can be listed and revoked from the phone's Settings screen or via `pigeon devices`.
+- **Two local sockets to Herdr.** The daemon talks to the **Herdr App** (`herdr-app.sock`) to list, create, rename, and close tabs, and to **Herdr Core** (`herdr-core`) to subscribe to terminal status events, read screens, and send input.
+- **Live session logs.** From the foreground process and working directory Herdr Core reports, the daemon pairs each agent pane with the agent's own session file on disk (JSONL or SQLite) and tails it as new turns arrive.
+- **QR pairing.** Scan the QR code printed in your terminal to pair a phone. The one-time code travels in the URL fragment (`#code=...`, so it never appears in HTTP headers or server logs) and is exchanged for an `HttpOnly` session cookie. You can view or revoke paired phones anytime from Settings or `pigeon devices`.
 
 The full design and contracts live in [`docs/specs/`](docs/specs/).
 
@@ -70,8 +70,8 @@ The full design and contracts live in [`docs/specs/`](docs/specs/).
 
 - The [Herdr](https://herdr.dev) desktop app (`herdr-app` + `herdr-core`) running on your computer with its window open. (The older terminal-only `herdr` TUI is not supported.)
 - [Bun](https://bun.sh) to build from source.
-- [Tailscale](https://tailscale.com) on both the computer and the phone, logged into the same tailnet, so the phone gets an HTTPS origin.
-- Chrome (or another modern Chromium browser) on Android. iOS Safari is not supported yet.
+- [Tailscale](https://tailscale.com) on both your computer and your phone, signed into the same tailnet, so the phone gets an HTTPS address.
+- Chrome (or another modern Chromium browser) on Android. iOS Safari isn't supported yet.
 
 ## Quick start
 
@@ -84,7 +84,7 @@ tailscale serve --bg 4100            # serves local port 4100 over HTTPS in your
 
 Scan the QR code with Chrome on your phone, then open the browser menu and choose **Add to Home screen** to install the app.
 
-While the daemon is running, you can manage pairing and devices from another terminal (or directly in the app's **Settings**):
+While the daemon is running, you can manage pairing and devices from another terminal (or from **Settings** in the app):
 
 ```bash
 ./dist/pigeon pair                   # rotate the pairing link and print a new QR code
@@ -94,8 +94,8 @@ While the daemon is running, you can manage pairing and devices from another ter
 ./dist/pigeon status                 # show active session count and public URL
 ```
 
-To install `pigeon` on your `PATH`, run it as a `systemd` user service, and ship updates to your phone while you use it, see [`docs/usage/README.md`](docs/usage/README.md).
+To put `pigeon` on your `PATH`, keep it running with `systemd`, and push updates to your phone as you work, see [`docs/usage/README.md`](docs/usage/README.md).
 
 ## Status
 
-Pigeon is early and changes quickly. Web Push keys, subscriptions, triggers, and presence suppression are built, but push delivery to the browser is not connected yet (the notification switches in Settings stay disabled until it lands). Run `bun test` to build the client, type-check the codebase, and run the test suite.
+Pigeon is early and moving fast. Web Push key generation, subscriptions, triggers, and presence checks are in place, but push delivery to the browser isn't wired up yet (the notification toggles in Settings stay disabled for now). Run `bun test` to build the client, type-check the repo, and run the test suite.

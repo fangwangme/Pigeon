@@ -46,7 +46,10 @@ describe("Markdown rendering (mobile-ui-and-themes.md §3.1)", () => {
     ['<img src="x" onerror="alert(1)">', "onerror"],
     ["<script>window.pwned = true;</script>", "<script"],
     ["[click](javascript:alert(1))", "javascript:"],
-  ])("agent output cannot inject script: %s", (input, forbidden) => {
+    ["[click](data:text/html,<script>alert(1)</script>)", "data:"],
+    ["[click](blob:https://example.com/123)", "blob:"],
+    ["[click](file:///etc/passwd)", "file:"],
+  ])("agent output cannot inject script or disallowed URI schemes: %s", (input, forbidden) => {
     expect(renderMarkdown(input)).not.toContain(forbidden);
   });
 });

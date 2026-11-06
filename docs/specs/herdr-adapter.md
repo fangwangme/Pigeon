@@ -156,7 +156,7 @@ Entries come from each agent's own directories, in the order below: project dire
 | claude | `<root>/.claude/skills`, `~/.claude/skills` | `/name` |
 | codex | `<root>/.agents/skills`, `~/.agents/skills`, `~/.codex/skills` | `$name` |
 | pi | `<root>/.pi/skills`, `~/.pi/agent/skills` | `/skill:name` |
-| agy | `<root>/.agents/skills`, `~/.gemini/antigravity-cli/skills`, Antigravity builtin skills | `/name` |
+| agy | `<root>/.agents/skills`, `~/.gemini/antigravity-cli/skills`, `~/.gemini/antigravity-cli/builtin/skills` | `/name` |
 | opencode | `<root>/.opencode/skills`, `~/.config/opencode/skills` | `/name` |
 
 | Agent | Custom commands (project, then user) | Invocation |

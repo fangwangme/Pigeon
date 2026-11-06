@@ -74,7 +74,7 @@ const LAYOUTS: Record<string, Layout> = {
     skills: (home, root) => [
       ...(root ? [{ dir: join(root, ".agents", "skills"), source: "project" as const }] : []),
       { dir: join(home, ".gemini", "antigravity-cli", "skills"), source: "user" },
-      { dir: join(home, ".gemini", "antigravity", "builtin", "skills"), source: "builtin" },
+      { dir: join(home, ".gemini", "antigravity-cli", "builtin", "skills"), source: "builtin" },
     ],
     skillInvocation: "/{name}",
   },
