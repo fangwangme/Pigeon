@@ -256,7 +256,7 @@ describe("HTTP and WebSocket gate (security-and-pairing.md §3, §4)", () => {
     expect((await fetch(`${base}/review`)).status).toBe(404);
   });
 
-  const upload = (headers: Record<string, string>, body: Uint8Array | string = "hello") =>
+  const upload = (headers: Record<string, string>, body: BodyInit = "hello") =>
     fetch(`${base}/api/uploads`, { method: "POST", headers: { "Content-Type": "text/plain", "X-Pigeon-Filename": encodeURIComponent("my notes.txt"), ...headers }, body });
 
   test("an upload needs a session, the exact Origin and an allowed Host (protocol.md §7)", async () => {

@@ -18,8 +18,15 @@ export interface AgentRecipe {
   models(): ModelOption[];
   defaultModel?: string;
   defaultThinking?: string;
-  launchArgs(options?: { modelId?: string; thinking?: string }): string[];
+  /** `resume` is the value the resume argument takes (`herdr-adapter.md` §5); set only when `resumable`. */
+  launchArgs(options?: { modelId?: string; thinking?: string; resume?: string }): string[];
   interruptKeys: string[];
+  resumable: boolean;
+  /** Prefix for an attachment's path in a prompt (`protocol.md` §4.2). */
+  mentionPrefix: string;
+  /** The agent's own runtime commands (`herdr-adapter.md` §7); absent when it has none. */
+  runtimeModelCommand?: (modelId: string) => string;
+  runtimeThinkingCommand?: (level: string) => string;
 }
 
 const EFFORT_LADDER = ["low", "medium", "high", "xhigh", "max"];
@@ -48,9 +55,12 @@ export const AGENT_RECIPES: Record<string, AgentRecipe> = {
       { id: "haiku", label: "Haiku" },
     ],
     launchArgs(o) {
-      return [...(o?.modelId ? ["--model", o.modelId] : []), ...(o?.thinking ? ["--effort", o.thinking] : [])];
+      return [...(o?.resume ? ["--resume", o.resume] : []), ...(o?.modelId ? ["--model", o.modelId] : []), ...(o?.thinking ? ["--effort", o.thinking] : [])];
     },
     interruptKeys: ["esc"],
+    resumable: true,
+    mentionPrefix: "@",
+    runtimeModelCommand: (id) => `/model ${id}`,
   },
   codex: {
     kind: "codex",
@@ -59,9 +69,16 @@ export const AGENT_RECIPES: Record<string, AgentRecipe> = {
     models: codexModels,
     launchArgs(o) {
       // Without --no-daemon Codex runs its commands outside Herdr Core.
-      return ["--no-daemon", ...(o?.modelId ? ["-m", o.modelId] : []), ...(o?.thinking ? ["-c", `model_reasoning_effort="${o.thinking}"`] : [])];
+      return [
+        "--no-daemon",
+        ...(o?.resume ? ["resume", o.resume] : []),
+        ...(o?.modelId ? ["-m", o.modelId] : []),
+        ...(o?.thinking ? ["-c", `model_reasoning_effort="${o.thinking}"`] : []),
+      ];
     },
     interruptKeys: ["esc"],
+    resumable: true,
+    mentionPrefix: "",
   },
   agy: {
     kind: "agy",
@@ -72,14 +89,18 @@ export const AGENT_RECIPES: Record<string, AgentRecipe> = {
       return [...(o?.modelId ? ["--model", o.modelId] : []), ...(o?.thinking ? ["--effort", o.thinking] : [])];
     },
     interruptKeys: ["esc"],
+    resumable: false,
+    mentionPrefix: "@",
   },
   opencode: {
     kind: "opencode",
     label: "OpenCode",
     command: "opencode",
     models: () => [],
-    launchArgs: () => [],
+    launchArgs: (o) => (o?.resume ? ["--session", o.resume] : []),
     interruptKeys: ["esc"],
+    resumable: true,
+    mentionPrefix: "@",
   },
   pi: {
     kind: "pi",
@@ -87,9 +108,11 @@ export const AGENT_RECIPES: Record<string, AgentRecipe> = {
     command: "pi",
     models: () => [],
     launchArgs(o) {
-      return [...(o?.modelId ? ["--model", o.modelId] : []), ...(o?.thinking ? ["--thinking", o.thinking] : [])];
+      return [...(o?.resume ? ["--session", o.resume] : []), ...(o?.modelId ? ["--model", o.modelId] : []), ...(o?.thinking ? ["--thinking", o.thinking] : [])];
     },
     interruptKeys: ["esc"],
+    resumable: true,
+    mentionPrefix: "@",
   },
   terminal: {
     kind: "terminal",
@@ -97,6 +120,8 @@ export const AGENT_RECIPES: Record<string, AgentRecipe> = {
     models: () => [],
     launchArgs: () => [],
     interruptKeys: ["ctrl+c"],
+    resumable: false,
+    mentionPrefix: "",
   },
 };
 

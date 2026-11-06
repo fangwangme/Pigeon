@@ -28,7 +28,7 @@ function skill(dir: string, name: string, description: string) {
   writeFileSync(join(dir, name, "SKILL.md"), `---\nname: ${name}\ndescription: "${description}"\n---\nbody\n`);
 }
 
-const userEntries = (entries: { source: string }[]) => entries.filter((e) => e.source !== "builtin");
+const userEntries = <T extends { source: string }>(entries: T[]) => entries.filter((e) => e.source !== "builtin");
 
 describe("skills per pane (herdr-adapter.md §8.3)", () => {
   test("each agent reads its own directories and gets its own invocation syntax", () => {

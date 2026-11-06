@@ -8,6 +8,7 @@ import { PushManager, type PushSubscriptionData } from "./push";
 import { WsServer, newConnectionId, SERVER_VERSION, type ClientConnectionData } from "./ws-server";
 import { EMBEDDED_HTML } from "./embedded-html";
 import { ConfigManager } from "./config-manager";
+import { MAX_UPLOAD_BYTES, UploadStore } from "./uploads";
 import { PWA_MANIFEST, PWA_SW_SCRIPT, PWA_ICON_SVG, PWA_ICON_192_BASE64, PWA_ICON_512_BASE64 } from "./pwa-assets";
 
 export interface DaemonConfig {
@@ -21,6 +22,7 @@ export interface DaemonConfig {
   adminSocketPath?: string;
   devicesFilePath?: string;
   vapidPath?: string;
+  uploadsDir?: string;
   embeddedHtml?: string;
 }
 
@@ -34,6 +36,7 @@ export interface ResolvedDaemonConfig {
   adminSocketPath: string;
   devicesFilePath: string;
   vapidPath: string;
+  uploadsDir: string;
 }
 
 const VIRTUAL_IFACE_RE = /^(docker|br-|veth|virbr|vmnet|vboxnet|lo|tailscale|tun|tap|wg)/;
@@ -107,6 +110,7 @@ export class PigeonDaemon {
   public pairingManager: PairingManager;
   public pushManager: PushManager;
   public wsServer: WsServer;
+  public uploadStore: UploadStore;
   private bunServer: Server<ClientConnectionData> | null = null;
   private html: string;
   private allowedHosts: Set<string>;
@@ -130,6 +134,7 @@ export class PigeonDaemon {
       adminSocketPath: opts.adminSocketPath || serverCfg.adminSocketPath,
       devicesFilePath: opts.devicesFilePath || join(serverCfg.stateDir, "devices.json"),
       vapidPath: opts.vapidPath || join(serverCfg.stateDir, "vapid.json"),
+      uploadsDir: opts.uploadsDir || join(serverCfg.stateDir, "uploads"),
     };
 
     // Only the HTML compiled into this build is served (never a file found via the cwd).
@@ -160,11 +165,14 @@ export class PigeonDaemon {
       devicesFilePath: this.config.devicesFilePath,
     });
     this.pushManager = new PushManager(this.config.vapidPath);
+    this.uploadStore = new UploadStore(this.config.uploadsDir);
     this.wsServer = new WsServer({
       buildId: createHash("sha256").update(this.html).digest("hex").slice(0, 12),
       herdrClient: this.herdrClient,
       pushManager: this.pushManager,
       configManager: this.configManager,
+      uploadStore: this.uploadStore,
+      pairingManager: this.pairingManager,
     });
     this.pairingManager.on("device_revoked", (deviceId) => this.wsServer.closeDevice(deviceId));
   }
@@ -245,6 +253,28 @@ export class PigeonDaemon {
             { success: true, deviceId: res.deviceId },
             { headers: { "Set-Cookie": `${cookieName}=${res.sessionToken}; HttpOnly; SameSite=Strict; Path=/; Max-Age=${COOKIE_MAX_AGE_S}${secureFlag}` } }
           );
+        }
+
+        if (url.pathname === "/api/uploads" && req.method === "POST") {
+          // protocol.md §7: the same gate as the WebSocket, then the body is validated.
+          const rejected = self.checkHostAndOrigin(req);
+          if (rejected) return rejected;
+          if (!sessionOf(req)) return new Response("Unauthorized", { status: 401 });
+          const declared = Number(req.headers.get("content-length") || "0");
+          if (declared > MAX_UPLOAD_BYTES) return Response.json({ error: "File too large" }, { status: 413 });
+          let name: string;
+          try {
+            name = decodeURIComponent(req.headers.get("x-pigeon-filename") || "");
+          } catch {
+            return Response.json({ error: "Bad file name" }, { status: 400 });
+          }
+          if (!name || name.length > 200) return Response.json({ error: "X-Pigeon-Filename is required" }, { status: 400 });
+          const bytes = new Uint8Array(await req.arrayBuffer());
+          if (bytes.length > MAX_UPLOAD_BYTES) return Response.json({ error: "File too large" }, { status: 413 });
+          if (bytes.length === 0) return Response.json({ error: "Empty file" }, { status: 400 });
+          const mime = (req.headers.get("content-type") || "application/octet-stream").split(";")[0].trim();
+          const info = self.uploadStore.save({ name, mime, bytes });
+          return Response.json({ id: info.id, name: info.name, size: info.size, mime: info.mime });
         }
 
         if (url.pathname === "/api/version") return Response.json({ version: SERVER_VERSION, name: "pigeon" });

@@ -2,6 +2,7 @@ import { connect, type Socket } from "node:net";
 import { EventEmitter } from "node:events";
 import { createHash } from "node:crypto";
 import { basename } from "node:path";
+import { readGitBranch } from "./git-branch";
 import { CardClassifier, buildUnrecognizedPrompt } from "./card-classifier";
 import { getAgentRecipe } from "./agent-recipes";
 import type {
@@ -65,6 +66,18 @@ interface KnownPane {
   cwd: string | null;
   herdrStatus: AgentStatus;
   title: string | undefined;
+  /** Foreground process (`herdr-adapter.md` §3.1), used for session binding. */
+  pid: number | null;
+  program: string | undefined;
+  createdMs: number;
+}
+
+/** What a pane's session binding needs (`agent-session-normalization.md` §2.0). */
+export interface PaneProcessFacts {
+  agentKind: string | null;
+  pid: number | null;
+  cwd: string | null;
+  createdMs: number;
 }
 
 export class HerdrClient extends EventEmitter {
@@ -97,6 +110,8 @@ export class HerdrClient extends EventEmitter {
   private currentSnapshot: SnapshotPayload = { workspaces: [], workingAgents: [] };
   private focusedPaneId: string | null = null;
   private monitoredPaneIds = new Set<string>();
+  private workspaceFolders = new Map<string, string>();
+  private tabIds = new Set<string>();
 
   constructor(options: HerdrClientOptions) {
     super();
@@ -178,6 +193,28 @@ export class HerdrClient extends EventEmitter {
 
   public getPaneCwd(paneId: string): string | null {
     return this.knownPanes.get(paneId)?.cwd ?? null;
+  }
+
+  public getPaneFacts(paneId: string): PaneProcessFacts | null {
+    const k = this.knownPanes.get(paneId);
+    return k ? { agentKind: k.agentKind, pid: k.pid, cwd: k.cwd, createdMs: k.createdMs } : null;
+  }
+
+  /** Herdr's own status for the pane, without the on-screen prompt override. */
+  public getPaneHerdrStatus(paneId: string): AgentStatus {
+    return this.knownPanes.get(paneId)?.herdrStatus ?? "unknown";
+  }
+
+  public getWorkspaceFolder(workspaceId: string): string | null {
+    return this.workspaceFolders.get(workspaceId) ?? null;
+  }
+
+  public hasTab(tabId: string): boolean {
+    return this.tabIds.has(tabId);
+  }
+
+  public paneIds(): string[] {
+    return Array.from(this.knownPanes.keys());
   }
 
   public isConnected(): boolean {
@@ -389,6 +426,9 @@ export class HerdrClient extends EventEmitter {
             cwd: term ? term.foreground?.cwd || term.cwd : null,
             herdrStatus: this.normalizeStatus(term?.status),
             title: term?.title,
+            pid: term?.foreground?.pid || null,
+            program: term?.foreground?.name || undefined,
+            createdMs: term?.created_ms ?? 0,
           });
           if (ref.pane === topology.status.focused_pane) focusedPaneId = ref.terminal;
         }
@@ -404,6 +444,14 @@ export class HerdrClient extends EventEmitter {
     for (const id of Array.from(this.fullScreenPanes)) if (!nextKnown.has(id)) this.fullScreenPanes.delete(id);
     this.knownPanes = nextKnown;
     this.focusedPaneId = focusedPaneId;
+    this.workspaceFolders = new Map(topology.ls.spaces.map((sp) => [sp.id, sp.folder]));
+    this.tabIds = new Set(topology.ls.spaces.flatMap((sp) => sp.tabs.map((t) => t.id)));
+    const branches = new Map<string, string | undefined>();
+    const branchOf = (folder: string | null | undefined): string | undefined => {
+      if (!folder) return undefined;
+      if (!branches.has(folder)) branches.set(folder, readGitBranch(folder) ?? undefined);
+      return branches.get(folder);
+    };
 
     const workingAgents: WorkingAgentSummary[] = [];
     const workspaces: WorkspaceSummary[] = topology.ls.spaces.map((space) => {
@@ -418,6 +466,7 @@ export class HerdrClient extends EventEmitter {
           if (agentStatus === "blocked") hasWarn = true;
           if (agentStatus === "working") hasWorking = true;
           const name = ref.name || terminals.get(ref.terminal)?.name || ref.terminal;
+          const summary = this.summarizePane(ref.terminal, known.title);
           if (known.agentKind) {
             workingAgents.push({
               agent: known.agentKind,
@@ -427,10 +476,18 @@ export class HerdrClient extends EventEmitter {
               workspaceLabel,
               tabId: tab.id,
               paneId: ref.terminal,
-              summary: this.summarizePane(ref.terminal, known.title),
+              summary,
             });
           }
-          return { id: ref.terminal, agent: known.agentKind, agentStatus, isPrimary: idx === 0, name };
+          return {
+            id: ref.terminal,
+            agent: known.agentKind,
+            agentStatus,
+            isPrimary: idx === 0,
+            name,
+            ...(known.program ? { program: known.program } : {}),
+            ...(summary ? { summary } : {}),
+          };
         });
 
         let tabLabel = tab.name;
@@ -439,12 +496,16 @@ export class HerdrClient extends EventEmitter {
           const recipe = primary?.agent ? getAgentRecipe(primary.agent) : undefined;
           tabLabel = recipe?.label || `Tab ${tabIdx + 1}`;
         }
-        return { id: tab.id, label: tabLabel, paneCount: panes.length, panes };
+        const tabBranch = branchOf(nextKnown.get(tab.terminals[0]?.terminal ?? "")?.cwd);
+        return { id: tab.id, label: tabLabel, ...(tabBranch ? { branch: tabBranch } : {}), paneCount: panes.length, panes };
       });
 
+      const branch = branchOf(space.folder);
       return {
         id: space.id,
         label: workspaceLabel,
+        folder: space.folder,
+        ...(branch ? { branch } : {}),
         tabCount: tabs.length,
         activeTabId: space.tabs.find((t) => t.active)?.id ?? tabs[0]?.id ?? null,
         hasWarn,
@@ -609,17 +670,22 @@ export class HerdrClient extends EventEmitter {
   public async createTabAndAgent(
     workspaceId: string,
     agentKind: string,
-    options: { modelId?: string; thinking?: string; cwd?: string } = {}
+    options: { modelId?: string; thinking?: string; cwd?: string; firstMessage?: string; resume?: string } = {}
   ): Promise<{ tabId: string; paneId: string }> {
     const recipe = getAgentRecipe(agentKind)!;
-    const argv = recipe.command ? [recipe.command, ...recipe.launchArgs({ modelId: options.modelId, thinking: options.thinking })] : null;
+    const argv = recipe.command
+      ? [recipe.command, ...recipe.launchArgs({ modelId: options.modelId, thinking: options.thinking, resume: options.resume })]
+      : null;
+    const folder = options.cwd ?? this.workspaceFolders.get(workspaceId);
+    const firstLine = options.firstMessage?.split("\n").map((l) => l.trim()).find(Boolean);
     const created = await this.appRequest<{ terminal?: string }>({
       do: "tab.new",
       args: {
         space: workspaceId,
-        name: recipe.label,
-        ...(options.cwd ? { folder: options.cwd } : {}),
+        name: firstLine ? firstLine.slice(0, 40) : recipe.label,
+        ...(folder ? { folder } : {}),
         ...(argv ? { argv } : {}),
+        ...(options.firstMessage ? { task: options.firstMessage } : {}),
       },
     });
     const paneId = created.terminal;
@@ -628,6 +694,12 @@ export class HerdrClient extends EventEmitter {
     const tabId = this.knownPanes.get(paneId)?.tabId;
     if (!tabId) throw new HerdrError("invalid_response", `The new terminal ${paneId} is in no Herdr tab`);
     return { tabId, paneId };
+  }
+
+  /** herdr-adapter.md §5: rename through the App, then refresh the snapshot. */
+  public async renameTab(tabId: string, name: string): Promise<void> {
+    await this.appRequest({ do: "tab.rename", args: { id: tabId, name } });
+    await this.refreshSnapshot();
   }
 
   /** The phone's close dialog is the confirmation the App would otherwise ask for. */

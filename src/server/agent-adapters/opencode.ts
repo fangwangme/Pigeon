@@ -8,6 +8,7 @@ import type {
   FileDiffSummary,
   SessionStats,
 } from "../../shared/agent-session";
+import { verbForName } from "../sessions/common";
 
 export interface OpenCodeAdapterOptions {
   dbPath?: string;
@@ -179,6 +180,7 @@ export class OpenCodeAdapter {
               const toolCall: NormalizedToolCall = {
                 id: item.id || item.callID || `tool_${msg.id}_${currentTurn.toolCalls?.length ?? 0}`,
                 name: item.name || item.tool || "tool",
+                verb: verbForName(item.name || item.tool || ""),
                 input: toolState.input || item.input || {},
                 output: outputStr || undefined,
                 exitCode: toolState.exitCode,

@@ -6,6 +6,7 @@ import type {
   NormalizedToolCall,
   SessionStats,
 } from "../../shared/agent-session";
+import { verbForName } from "../sessions/common";
 
 export interface AgyAdapterOptions {
   baseBrainDir?: string;
@@ -185,6 +186,7 @@ export class AgyAdapter {
               currentTurn.toolCalls.push({
                 id: `tc_${currentTurn.turnNumber}_${currentTurn.toolCalls.length}`,
                 name: tc.name || "tool",
+                verb: verbForName(tc.name || ""),
                 input: tc.args || {},
                 status: "completed",
               });

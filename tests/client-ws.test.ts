@@ -105,7 +105,7 @@ describe("queue and session info (protocol.md §5.6, §5.8)", () => {
     selectPane("t1");
     handleServerMessage({
       type: "normalized_turns",
-      payload: { paneId: "t1", turns: [], todos: [{ text: "Ship", status: "pending" }], session: { bound: true, agent: "claude", sessionId: "s", model: { value: "opus", source: "launch" } } },
+      payload: { paneId: "t1", turns: [], todos: [{ text: "Ship", status: "pending" }], session: { bound: true, agent: "claude", sessionId: "s", model: { value: "opus", source: "launch" }, thinking: { value: null, source: "unknown" } } },
     });
     expect(state.todos).toEqual([{ text: "Ship", status: "pending" }]);
     expect(state.session?.model).toEqual({ value: "opus", source: "launch" });

@@ -1,9 +1,9 @@
 import { existsSync, readFileSync, writeFileSync, mkdirSync, renameSync } from "node:fs";
 import { dirname, join } from "node:path";
 import type { ClientConfig, ServerConfig, PigeonConfig } from "../types/protocol";
-import { DEFAULT_CLIENT_CONFIG } from "../shared/defaults";
+import { DEFAULT_CLIENT_CONFIG, REMOVED_CLIENT_KEYS } from "../shared/defaults";
 
-export { DEFAULT_MACROS, DEFAULT_CLIENT_CONFIG } from "../shared/defaults";
+export { DEFAULT_CLIENT_CONFIG } from "../shared/defaults";
 
 /** Server settings that do not depend on the environment, written into a fresh config file. */
 const STATIC_SERVER_DEFAULTS = { port: 4100, host: "", insecureDev: false, publicBaseUrl: "" };
@@ -160,14 +160,15 @@ function migrate(stored: StoredConfig, env: NodeJS.ProcessEnv): { stored: Stored
       changed = true;
     }
   }
-  const macros = stored.client?.macros;
-  if (Array.isArray(macros)) {
-    // The old default "模型" macro sent a key named "model", which Herdr rejects.
-    stored.client!.macros = macros.map((m) => {
-      if (m.id !== "m_model" || m.type !== "key" || m.payload !== "model") return m;
-      changed = true;
-      return { ...m, type: "text" as const, payload: "/model" };
-    });
+  const client = stored.client as Record<string, unknown> | undefined;
+  if (client) {
+    // Theme packs, macros and display options of the v1 UI (architecture.md §4.7).
+    for (const key of REMOVED_CLIENT_KEYS) {
+      if (key in client) {
+        delete client[key];
+        changed = true;
+      }
+    }
   }
   return { stored, changed };
 }

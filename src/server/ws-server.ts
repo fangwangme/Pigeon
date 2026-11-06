@@ -1,7 +1,8 @@
 import { randomBytes } from "node:crypto";
 import type { ServerWebSocket } from "bun";
 import { HerdrError, type HerdrClient } from "./herdr-client";
-import type { DeviceSession } from "./pairing";
+import type { DeviceSession, PairingManager } from "./pairing";
+import type { UploadStore } from "./uploads";
 import type { PushManager } from "./push";
 import type { ConfigManager } from "./config-manager";
 import { AgentAdapterManager } from "./agent-adapters/index";
@@ -16,6 +17,7 @@ import {
   type ClientConfig,
   type AgentRecipeSummary,
   type PaneStatePayload,
+  type QueuedPrompt,
 } from "../types/protocol";
 
 export const PROTOCOL_VERSION = "1.0.0";
@@ -30,6 +32,10 @@ export interface WsServerOptions {
   configManager: ConfigManager;
   agentAdapters?: AgentAdapterManager;
   skillScanner?: SkillScanner;
+  /** Attachments (`protocol.md` §7); without it, prompts with attachments are refused. */
+  uploadStore?: UploadStore;
+  /** Device management from the phone (`protocol.md` §4.12). */
+  pairingManager?: PairingManager;
 }
 
 export interface ClientConnectionData {
@@ -69,6 +75,11 @@ export class WsServer {
   private lastPushAt = new Map<string, number>();
   // Panes whose prompt answer is still being sent; a second answer meanwhile is stale (protocol.md §4.1).
   private answeringPanes = new Set<string>();
+  private uploadStore?: UploadStore;
+  private pairingManager?: PairingManager;
+  // protocol.md §4.2: prompts waiting for the pane's turn to end, oldest first.
+  private queues = new Map<string, QueuedPrompt[]>();
+  private flushing = new Set<string>();
 
   constructor(options: WsServerOptions) {
     this.buildId = options.buildId;
@@ -78,18 +89,26 @@ export class WsServer {
     this.agentAdapters = options.agentAdapters || new AgentAdapterManager();
     this.paneStore = new PaneStore(this.agentAdapters);
     this.skillScanner = options.skillScanner || new SkillScanner();
+    this.uploadStore = options.uploadStore;
+    this.pairingManager = options.pairingManager;
 
     this.herdrClient.on("connected", () => this.paneStore.setHerdrStatus(true));
     this.herdrClient.on("disconnected", () => this.paneStore.setHerdrStatus(false));
     this.paneStore.on("upstream_status", (status) => this.broadcast({ type: "upstream_status", payload: status }));
     this.paneStore.on("turns_delta", (delta) => this.sendToSubscribers(delta.paneId, { type: "turns_delta", payload: delta }));
+    this.paneStore.on("session_changed", (paneId: string) => {
+      this.sendToSubscribers(paneId, { type: "normalized_turns", payload: this.paneStore.getPayload(paneId, this.herdrClient.getPaneAgentKind(paneId)) });
+    });
 
     this.herdrClient.on("snapshot_updated", (snapshot) => {
       for (const paneId of this.paneStore.trackedPaneIds()) {
         if (!this.herdrClient.hasPane(paneId)) this.paneStore.closePane(paneId);
       }
+      for (const paneId of Array.from(this.queues.keys())) if (!this.herdrClient.hasPane(paneId)) this.queues.delete(paneId);
+      this.rebindSessions();
       this.broadcast({ type: "snapshot_update", payload: snapshot });
     });
+    this.rebindSessions();
 
     this.herdrClient.on("cards_updated", (state: PaneStatePayload) => {
       this.sendToSubscribers(state.paneId, { type: "pane_state", payload: state });
@@ -98,6 +117,7 @@ export class WsServer {
     this.herdrClient.on("pane_status_changed", ({ paneId, status }: { paneId: string; status: string }) => {
       const previous = this.lastStatus.get(paneId);
       this.lastStatus.set(paneId, status);
+      if (status === "idle" || status === "done") void this.flushQueue(paneId);
       // push.md §4: notify only on the transition into blocked, at most once per minute per pane.
       if (status !== "blocked" || previous === "blocked") return;
       const now = Date.now();
@@ -138,6 +158,8 @@ export class WsServer {
         defaultModel: r.defaultModel,
         defaultThinking: r.defaultThinking,
         interruptKeys: r.interruptKeys,
+        resumable: r.resumable,
+        runtimeSwitch: { model: !!r.runtimeModelCommand, thinking: !!r.runtimeThinkingCommand },
       };
     }
     return recipes;
@@ -222,10 +244,106 @@ export class WsServer {
       }
 
       case "agent_prompt": {
-        const { targetPaneId, text } = msg.payload;
+        const { targetPaneId, text, attachments } = msg.payload;
         if (!this.requireKnownPane(ws, msg.id, targetPaneId)) return;
-        await this.herdrClient.sendPrompt(targetPaneId, text);
-        this.sendAck(ws, msg.id);
+        const paths: string[] = [];
+        for (const id of attachments ?? []) {
+          const info = this.uploadStore?.get(id);
+          if (!info) {
+            this.sendError(ws, msg.id, ProtocolErrors.ERR_INVALID_PAYLOAD, `Unknown upload '${id}'`);
+            return;
+          }
+          paths.push(info.path);
+        }
+        const full = this.composePrompt(targetPaneId, text, paths);
+        await this.submitPrompt(ws, msg.id, targetPaneId, full, attachments ?? []);
+        return;
+      }
+
+      case "agent_set_model": {
+        const { targetPaneId, modelId, thinking } = msg.payload;
+        if (!this.requireKnownPane(ws, msg.id, targetPaneId)) return;
+        const kind = this.herdrClient.getPaneAgentKind(targetPaneId);
+        const recipe = kind ? getAgentRecipe(kind) : undefined;
+        const models = recipe?.models() ?? [];
+        const commands: string[] = [];
+        if (modelId) {
+          if (!recipe?.runtimeModelCommand || !models.some((m) => m.id === modelId)) {
+            this.sendError(ws, msg.id, ProtocolErrors.ERR_INVALID_PAYLOAD, `This agent cannot switch to model '${modelId}' at runtime`);
+            return;
+          }
+          commands.push(recipe.runtimeModelCommand(modelId));
+        }
+        if (thinking) {
+          const current = modelId ?? this.paneStore.sessionInfo(targetPaneId, kind).model.value;
+          const levels = models.find((m) => m.id === current)?.thinkingLevels ?? [];
+          if (!recipe?.runtimeThinkingCommand || !levels.includes(thinking)) {
+            this.sendError(ws, msg.id, ProtocolErrors.ERR_INVALID_PAYLOAD, `This agent cannot switch effort to '${thinking}' at runtime`);
+            return;
+          }
+          commands.push(recipe.runtimeThinkingCommand(thinking));
+        }
+        for (const [i, text] of commands.entries()) await this.submitPrompt(ws, i === commands.length - 1 ? msg.id : null, targetPaneId, text, []);
+        return;
+      }
+
+      case "queue_cancel": {
+        const { targetPaneId, queueId } = msg.payload;
+        const queue = this.queues.get(targetPaneId) ?? [];
+        const idx = queue.findIndex((q) => q.queueId === queueId);
+        if (idx === -1) {
+          this.sendError(ws, msg.id, ProtocolErrors.ERR_NOT_FOUND, "That prompt is no longer queued.");
+          return;
+        }
+        queue.splice(idx, 1);
+        this.sendQueue(targetPaneId);
+        this.sendAck(ws, msg.id, { queueId });
+        return;
+      }
+
+      case "sessions_list": {
+        const folder = this.herdrClient.getWorkspaceFolder(msg.payload.workspaceId);
+        if (!folder) {
+          this.sendError(ws, msg.id, ProtocolErrors.ERR_NOT_FOUND, `Unknown workspace ${msg.payload.workspaceId}`);
+          return;
+        }
+        const recipe = getAgentRecipe(msg.payload.agentKind);
+        const sessions = recipe?.resumable ? this.agentAdapters.listSessions(recipe.kind, folder) : [];
+        this.sendAck(ws, msg.id, { sessions });
+        return;
+      }
+
+      case "tab_rename": {
+        const name = msg.payload.name.trim();
+        if (!this.herdrClient.hasTab(msg.payload.tabId)) {
+          this.sendError(ws, msg.id, ProtocolErrors.ERR_NOT_FOUND, `Unknown tab ${msg.payload.tabId}`);
+          return;
+        }
+        await this.herdrClient.renameTab(msg.payload.tabId, name);
+        this.sendAck(ws, msg.id, { tabId: msg.payload.tabId, name });
+        return;
+      }
+
+      case "devices_list": {
+        const devices = (this.pairingManager?.listDevices() ?? []).map((d) => ({
+          deviceId: d.deviceId,
+          deviceName: d.deviceName,
+          createdAt: d.createdAt,
+          lastUsedAt: d.lastUsedAt,
+          isThisDevice: d.deviceId === data.session.deviceId,
+        }));
+        this.sendAck(ws, msg.id, { devices });
+        return;
+      }
+
+      case "device_revoke": {
+        const { deviceId } = msg.payload;
+        if (!this.pairingManager?.revokeDevice(deviceId)) {
+          this.sendError(ws, msg.id, ProtocolErrors.ERR_NOT_FOUND, `Unknown device ${deviceId}`);
+          return;
+        }
+        this.sendAck(ws, msg.id, { deviceId });
+        this.closeDevice(deviceId);
         return;
       }
 
@@ -268,7 +386,7 @@ export class WsServer {
       }
 
       case "create_tab_and_agent": {
-        const { workspaceId, agentKind, modelId, thinking, cwd } = msg.payload;
+        const { workspaceId, agentKind, modelId, thinking, cwd, firstMessage, resumeSessionId } = msg.payload;
         const recipe = getAgentRecipe(agentKind);
         if (!recipe) {
           this.sendError(ws, msg.id, ProtocolErrors.ERR_INVALID_PAYLOAD, `Unknown agent kind '${agentKind}'`);
@@ -283,7 +401,19 @@ export class WsServer {
           this.sendError(ws, msg.id, ProtocolErrors.ERR_INVALID_PAYLOAD, `Thinking level '${thinking}' is not offered for this model`);
           return;
         }
-        const res = await this.herdrClient.createTabAndAgent(workspaceId, recipe.kind, { modelId, thinking, cwd });
+        let resume: string | undefined;
+        if (resumeSessionId) {
+          const folder = cwd ?? this.herdrClient.getWorkspaceFolder(workspaceId);
+          const target = recipe.resumable && folder ? this.agentAdapters.resumeTarget(recipe.kind, resumeSessionId, folder) : null;
+          if (!target) {
+            this.sendError(ws, msg.id, ProtocolErrors.ERR_INVALID_PAYLOAD, `${recipe.label} cannot resume session '${resumeSessionId}'`);
+            return;
+          }
+          resume = target;
+        }
+        const res = await this.herdrClient.createTabAndAgent(workspaceId, recipe.kind, { modelId, thinking, cwd, firstMessage, resume });
+        this.paneStore.setLaunch(res.paneId, { agent: recipe.kind, modelId, thinking, resumeSessionId });
+        this.rebindSessions();
         this.sendAck(ws, msg.id, { workspaceId, tabId: res.tabId, paneId: res.paneId });
         return;
       }
@@ -323,10 +453,10 @@ export class WsServer {
     // Herdr Core reports no agent session (herdr-adapter.md §4), so the turns stay empty until a
     // session source exists. Always sent, so the client never keeps showing the previous pane's
     // conversation.
-    const { turns, stats, sessionTitle } = this.paneStore.getPaneTurns(paneId);
-    this.send(ws, { type: "normalized_turns", payload: { paneId, turns, sessionStats: stats, sessionTitle } });
+    this.send(ws, { type: "normalized_turns", payload: this.paneStore.getPayload(paneId, this.herdrClient.getPaneAgentKind(paneId)) });
 
     this.sendSkills(ws, paneId);
+    this.send(ws, { type: "prompt_queue", payload: { paneId, items: this.queues.get(paneId) ?? [] } });
     // The cached state renders at once; the fresh read reaches this subscriber as a `cards_updated`
     // pane_state only when the screen changed, so the client never gets the same state twice.
     const cached = this.herdrClient.getPaneState(paneId);
@@ -340,6 +470,94 @@ export class WsServer {
       ? this.skillScanner.listSkills(this.herdrClient.getPaneAgentKind(paneId), this.herdrClient.getPaneCwd(paneId))
       : [];
     this.send(ws, { type: "skills_sync", replyTo, payload: { paneId, skills, recipes: this.recipeSummaries() } });
+  }
+
+  /**
+   * agent-session-normalization.md §2.0: exact matches first, then the newest session of the
+   * folder, never one already bound to another pane. Panes keep a session while it still matches.
+   */
+  private rebindSessions(): void {
+    const panes = this.herdrClient
+      .paneIds()
+      .map((paneId) => ({ paneId, facts: this.herdrClient.getPaneFacts(paneId)! }))
+      .filter((p) => p.facts.agentKind && this.agentAdapters.isSupported(p.facts.agentKind));
+    const claimed = new Map<string, string>(); // "agent|session" → pane
+    const result = new Map<string, string | null>();
+    const keyOf = (agent: string, id: string) => `${agent}|${id}`;
+    const factsOf = (p: (typeof panes)[number]) => ({ agent: p.facts.agentKind!, pid: p.facts.pid, cwd: p.facts.cwd, createdMs: p.facts.createdMs });
+    for (const p of panes) {
+      const launch = this.paneStore.getLaunch(p.paneId);
+      const exact = launch?.resumeSessionId && launch.agent === p.facts.agentKind ? launch.resumeSessionId : this.agentAdapters.exactSession(factsOf(p));
+      if (exact && !claimed.has(keyOf(p.facts.agentKind!, exact))) {
+        claimed.set(keyOf(p.facts.agentKind!, exact), p.paneId);
+        result.set(p.paneId, exact);
+      }
+    }
+    // Panes already bound go first, so a stable binding is not taken by a newer pane.
+    const rest = panes
+      .filter((p) => !result.has(p.paneId))
+      .sort((a, b) => Number(!!this.paneStore.boundSession(b.paneId)) - Number(!!this.paneStore.boundSession(a.paneId)));
+    for (const p of rest) {
+      const agent = p.facts.agentKind!;
+      const exclude = new Set(Array.from(claimed.keys()).filter((k) => k.startsWith(agent + "|")).map((k) => k.slice(agent.length + 1)));
+      const id = this.agentAdapters.newestSession(factsOf(p), exclude);
+      if (id) claimed.set(keyOf(agent, id), p.paneId);
+      result.set(p.paneId, id);
+    }
+    for (const p of panes) {
+      const id = result.get(p.paneId);
+      if (id) this.paneStore.registerPaneSession(p.paneId, p.facts.agentKind!, id);
+      else this.paneStore.unbind(p.paneId);
+    }
+  }
+
+  /** protocol.md §4.2: attachments as paths after a blank line, with the recipe's mention prefix. */
+  private composePrompt(paneId: string, text: string, paths: string[]): string {
+    if (paths.length === 0) return text;
+    const kind = this.herdrClient.getPaneAgentKind(paneId);
+    const prefix = (kind && getAgentRecipe(kind)?.mentionPrefix) || "";
+    const lines = paths.map((p) => prefix + p).join("\n");
+    return text.trim() ? `${text}\n\n${lines}` : lines;
+  }
+
+  /** Queues while the agent works or others wait; sends otherwise (protocol.md §4.2). */
+  private async submitPrompt(ws: Ws, replyTo: string | null, paneId: string, text: string, attachments: string[]): Promise<void> {
+    const queue = this.queues.get(paneId) ?? [];
+    if (this.herdrClient.getPaneHerdrStatus(paneId) === "working" || queue.length > 0) {
+      const item: QueuedPrompt = { queueId: `q_${randomBytes(6).toString("hex")}`, text, attachments, createdAt: Date.now() };
+      queue.push(item);
+      this.queues.set(paneId, queue);
+      this.sendQueue(paneId);
+      if (replyTo) this.sendAck(ws, replyTo, { queued: true, queueId: item.queueId });
+      return;
+    }
+    await this.herdrClient.sendPrompt(paneId, text);
+    if (replyTo) this.sendAck(ws, replyTo, { queued: false });
+  }
+
+  /** Sends the oldest queued prompt once the turn ended; the next waits for the next idle. */
+  private async flushQueue(paneId: string): Promise<void> {
+    const queue = this.queues.get(paneId);
+    if (!queue?.length || this.flushing.has(paneId)) return;
+    const item = queue.shift()!;
+    this.flushing.add(paneId);
+    this.sendQueue(paneId);
+    try {
+      await this.herdrClient.sendPrompt(paneId, item.text);
+    } catch (err) {
+      const code = err instanceof HerdrError ? HERDR_ERROR_MAP[err.code] || ProtocolErrors.ERR_INTERNAL : ProtocolErrors.ERR_INTERNAL;
+      if (!(err instanceof HerdrError)) console.error(`[pigeon] sending queued prompt to ${paneId} failed:`, err);
+      this.sendToSubscribers(paneId, {
+        type: "error",
+        error: { code, message: err instanceof Error ? err.message : String(err), details: { queueId: item.queueId, paneId } },
+      });
+    } finally {
+      this.flushing.delete(paneId);
+    }
+  }
+
+  private sendQueue(paneId: string): void {
+    this.sendToSubscribers(paneId, { type: "prompt_queue", payload: { paneId, items: this.queues.get(paneId) ?? [] } });
   }
 
   private requireKnownPane(ws: Ws, replyTo: string, paneId: string): boolean {

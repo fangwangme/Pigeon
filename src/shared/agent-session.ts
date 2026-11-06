@@ -1,15 +1,26 @@
+// The normalized session model (`agent-session-normalization.md` §3), shared by the daemon and the PWA.
+
 export interface FileDiffSummary {
   filePath: string;
   status: "modified" | "created" | "deleted";
   additions: number;
   deletions: number;
-  patch?: string; // Unified diff chunk
+  /** Unified diff. */
+  patch?: string;
 }
+
+export type ToolVerb = "run" | "edit" | "create" | "read" | "search" | "other";
 
 export interface NormalizedToolCall {
   id: string;
-  name: string; // e.g. "Bash", "edit_file", "read_file"
-  input: Record<string, any> | string;
+  /** The agent's own tool name. */
+  name: string;
+  verb: ToolVerb;
+  /** File path, pattern or command shown next to the verb. */
+  target?: string;
+  /** The agent's own description of the call (Claude Bash `description`). */
+  description?: string;
+  input: Record<string, unknown> | string;
   output?: string;
   exitCode?: number;
   status: "running" | "completed" | "failed";
@@ -19,51 +30,36 @@ export interface NormalizedToolCall {
 
 export interface NormalizedQuestion {
   id: string;
-  question: string;
-  options: {
-    id: string;
-    label: string;
-    keyShortcut?: string;
-  }[];
-  multiSelect?: boolean;
+  questions: Array<{
+    question: string;
+    header?: string;
+    multiSelect?: boolean;
+    options: Array<{ label: string; description?: string }>;
+  }>;
 }
+
+export type TurnItem =
+  | { kind: "text"; markdown: string }
+  | { kind: "tool"; call: NormalizedToolCall }
+  | { kind: "todo"; done: number; total: number };
 
 export interface NormalizedTurn {
   turnId: string;
   turnNumber: number;
   timestamp: number;
-  userPrompt?: {
-    text: string;
-    files?: string[];
-  };
-  reasoning?: {
-    text: string;
-    durationMs?: number;
-    tokens?: number;
-    isStreaming?: boolean;
-  };
+  userPrompt?: { text: string; files?: string[] };
+  reasoning?: { text: string; durationMs?: number; isStreaming?: boolean };
+  /** Text and tool calls in the order the agent produced them. */
+  items?: TurnItem[];
   toolCalls?: NormalizedToolCall[];
-  assistantResponse?: {
-    markdown: string;
-    isStreaming?: boolean;
-  };
+  assistantResponse?: { markdown: string; isStreaming?: boolean };
   pendingQuestion?: NormalizedQuestion;
+  pendingPlan?: { markdown: string };
 }
 
-export type NormalizedBlockKind =
-  | "user_prompt"
-  | "reasoning"
-  | "tool_call"
-  | "assistant_text"
-  | "interactive_question"
-  | "error";
-
-export interface NormalizedBlock {
-  id: string;
-  kind: NormalizedBlockKind;
-  turnId: string;
-  timestamp: number;
-  payload: any;
+export interface TodoItem {
+  text: string;
+  status: "pending" | "in_progress" | "completed";
 }
 
 export interface SessionStats {
