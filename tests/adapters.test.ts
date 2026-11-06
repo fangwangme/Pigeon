@@ -125,8 +125,9 @@ describe("structured session adapters (agent-session-normalization.md §2)", () 
       const adapter = new OpenCodeAdapter({ dbPath: mockDbPath });
       expect(adapter.isAvailable()).toBe(true);
 
-      const { turns, stats } = adapter.getTurns("ses_mock_1");
+      const { turns, stats, sessionTitle } = adapter.getTurns("ses_mock_1");
       expect(turns.length).toBe(1);
+      expect(sessionTitle).toBe("Test Session"); // §2.1, §3
 
       const turn = turns[0];
       expect(turn.turnNumber).toBe(1);
@@ -261,17 +262,19 @@ describe("structured session adapters (agent-session-normalization.md §2)", () 
       expect(turns[0].assistantResponse?.markdown).toBe("full untruncated response");
     });
 
-    test("Protects against incomplete partial line at EOF", () => {
-      const adapter = new AgyAdapter({ baseBrainDir: agyBrainDir });
-      const logFile = join(sessionLogsDir, "transcript.jsonl");
-
-      // Append incomplete JSON line without trailing newline
-      const incomplete = '{"step_index": 3, "type": "USER_INPUT", "content": "正在输入的未';
-      writeFileSync(logFile, incomplete, { flag: "a" });
-
-      // Should not throw or crash on incomplete line
-      const { turns } = adapter.getTurns(sessionId, true);
-      expect(turns.length).toBe(1);
+    test("a line written in two parts is parsed once, whole, after its newline arrives (§4.2)", () => {
+      const brain = join(testDir, "brain_split");
+      const logs = join(brain, "s", ".system_generated", "logs");
+      mkdirSync(logs, { recursive: true });
+      const logFile = join(logs, "transcript.jsonl");
+      const first = JSON.stringify({ step_index: 0, type: "USER_INPUT", content: "<USER_REQUEST>first</USER_REQUEST>", created_at: new Date(1000).toISOString() });
+      const second = JSON.stringify({ step_index: 1, type: "USER_INPUT", content: "<USER_REQUEST>第二个问题</USER_REQUEST>", created_at: new Date(2000).toISOString() });
+      const cut = second.indexOf("第二") + 1;
+      writeFileSync(logFile, first + "\n" + second.slice(0, cut));
+      const adapter = new AgyAdapter({ baseBrainDir: brain });
+      expect(adapter.getTurns("s", true).turns.map((t) => t.userPrompt?.text)).toEqual(["first"]);
+      writeFileSync(logFile, second.slice(cut) + "\n", { flag: "a" });
+      expect(adapter.getTurns("s", true).turns.map((t) => t.userPrompt?.text)).toEqual(["first", "第二个问题"]);
     });
   });
 

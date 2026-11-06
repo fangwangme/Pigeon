@@ -42,6 +42,7 @@ describe("pairing (security-and-pairing.md §2)", () => {
     const p = pairingIn(tempDir("pair"));
     const { token } = p.createPairingToken();
     for (let i = 0; i < 5; i++) p.exchangeToken("AAAAAAAAAAAAAAAAAAAAAAAAAA", "x");
+    expect(p.getActiveToken()).toBeNull(); // gone at the fifth, so a restart cannot show it again
     expect(p.exchangeToken(token, "Phone").success).toBe(false);
   });
 

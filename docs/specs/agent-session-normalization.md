@@ -20,8 +20,11 @@ Herdr Core reports no session id (`herdr-adapter.md` §4). Pigeon binds each age
 2. **Folder and time (every agent, and claude without the file)**: the newest session of that agent whose folder is the pane's folder and that was last written at or after the terminal's creation time. AGY records carry no folder, so for AGY the newest session written since the creation time is used.
 3. A session already bound to another pane is skipped by rule 2, so two panes in the same folder do not show the same conversation.
 4. No match leaves the pane unbound (Track 2).
+5. A pane started with `resumeSessionId` (`protocol.md` §4.5) is bound to that session unless rule 1 names another one.
+6. A pane bound by rule 2 or rule 5 keeps its session while it runs the same agent; rule 2 picks only for unbound panes. Two panes in one folder therefore never trade sessions. The cost: a new session started inside such a pane (`/clear`, `/new`) is followed only after its agent exits and starts again; claude follows it at once through rule 1 (user decision, 2026-11-06).
+7. A pane whose agent exits (a plain terminal again) is unbound.
 
-Binding is re-evaluated on every snapshot (`herdr-adapter.md` §3.1). When the result changes (the agent started a new session, `/clear`, a resume), the pane switches session and its viewers get a fresh `normalized_turns` (`protocol.md` §5.6). A session is read only while its pane is viewed or bound; closing the pane drops it.
+Binding is re-evaluated on every snapshot (`herdr-adapter.md` §3.1). When the result changes (rule 1 names a new session after `/clear`, the pane's agent restarted, a resume), the pane switches session and its viewers get a fresh `normalized_turns` (`protocol.md` §5.6). A session is read only while its pane is viewed or bound; closing the pane drops it.
 
 `slug(path)` replaces every character outside `[A-Za-z0-9]` with `-` (`/home/u/My.Proj` → `-home-u-My-Proj`).
 

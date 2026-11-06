@@ -116,6 +116,55 @@ describe("binding a pane to its session (agent-session-normalization.md §2.0)",
     expect(bound.sort()).toEqual([false, true]);
   });
 
+  test("a bound pane keeps its session when a newer pane's session appears in the same folder (rule 6)", async () => {
+    const home = tempDir("home");
+    const proj = tempDir("proj");
+    const dir = join(home, ".codex", "sessions", "2026", "11", "06");
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, "rollout-2026-11-06T10-00-00-c1.jsonl"), jsonl([{ type: "session_meta", payload: { id: "c1", cwd: proj } }]));
+    const first = { paneId: "p1", app: "codex", cwd: proj, createdMs: Date.now() - 60_000 };
+    const { client, server } = await setup(home, [first]);
+    expect(server.paneStore.boundSession("p1")?.sessionId).toBe("c1");
+    writeFileSync(join(dir, "rollout-2026-11-06T10-05-00-c2.jsonl"), jsonl([{ type: "session_meta", payload: { id: "c2", cwd: proj } }]));
+    client.applySnapshot(topologyOf([first, { paneId: "p2", app: "codex", cwd: proj, createdMs: Date.now() - 1_000 }], { folder: "/work" }));
+    expect([server.paneStore.boundSession("p1")?.sessionId, server.paneStore.boundSession("p2")?.sessionId]).toEqual(["c1", "c2"]);
+  });
+
+  test("claude's process map wins over the session a pane was resumed with, so /clear is followed (rule 5)", async () => {
+    const home = tempDir("home");
+    const proj = tempDir("proj");
+    mkdirSync(join(home, ".claude", "sessions"), { recursive: true });
+    mkdirSync(join(home, ".claude", "projects", slug(proj)), { recursive: true });
+    writeFileSync(join(home, ".claude", "projects", slug(proj), "s1.jsonl"), claudeTranscript(proj));
+    writeFileSync(join(home, ".claude", "sessions", "4242.json"), JSON.stringify({ pid: 4242, sessionId: "s1", cwd: proj }));
+    const pane = { paneId: "p1", app: "claude-code", cwd: proj, pid: 4242 };
+    const { client, server } = await setup(home, [pane]);
+    server.paneStore.setLaunch("p1", { agent: "claude", resumeSessionId: "s1" });
+    writeFileSync(join(home, ".claude", "sessions", "4242.json"), JSON.stringify({ pid: 4242, sessionId: "s2", cwd: proj }));
+    client.applySnapshot(topologyOf([pane], { folder: "/work" }));
+    expect(server.paneStore.boundSession("p1")?.sessionId).toBe("s2");
+  });
+
+  test("a half-written claude process map leaves the pane unbound instead of failing (§1)", async () => {
+    const home = tempDir("home");
+    mkdirSync(join(home, ".claude", "sessions"), { recursive: true });
+    writeFileSync(join(home, ".claude", "sessions", "4242.json"), '{"pid": 42');
+    const { open } = await setup(home, [{ paneId: "p1", app: "claude-code", cwd: tempDir("proj"), pid: 4242 }]);
+    expect(turnsOf(await open("p1")).session.bound).toBe(false);
+  });
+
+  test("a pane whose agent exits is unbound (rule 7)", async () => {
+    const home = tempDir("home");
+    const proj = tempDir("proj");
+    const dir = join(home, ".codex", "sessions", "2026", "11", "06");
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, "rollout-2026-11-06T10-00-00-c1.jsonl"), jsonl([{ type: "session_meta", payload: { id: "c1", cwd: proj } }]));
+    const { client, server } = await setup(home, [{ paneId: "p1", app: "codex", cwd: proj, createdMs: Date.now() - 60_000 }]);
+    expect(server.paneStore.boundSession("p1")?.sessionId).toBe("c1");
+    client.applySnapshot(topologyOf([{ paneId: "p1", cwd: proj }], { folder: "/work" }));
+    expect(server.paneStore.boundSession("p1")).toBeNull();
+  });
+
   test("an agent pane without a matching session stays unbound", async () => {
     const { open } = await setup(tempDir("home"), [{ paneId: "p1", app: "codex", cwd: tempDir("proj") }]);
     const payload = turnsOf(await open("p1"));

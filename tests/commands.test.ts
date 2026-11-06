@@ -110,6 +110,20 @@ describe("prompt queue (protocol.md §4.2, §4.13, §5.8)", () => {
     expect(herdr.callsOf("terminal.send")[0].params).toEqual({ terminal: "p2", text: "hi" });
   });
 
+  test("a prompt sent while a queued one is still going out joins the queue", async () => {
+    await client.connect();
+    const c = await viewer("p1");
+    await send(c.ws, { type: "agent_prompt", id: "a1", payload: { targetPaneId: "p1", text: "one" } });
+    herdr.handlers["terminal.send"] = () => "no-reply"; // the paste is still in progress
+    herdr.serve(PANES.map((p) => ({ ...p, cwd: dir, ...(p.paneId === "p1" ? { state: "idle" } : {}) })), { folder: "/start" });
+    herdr.emitEvent("status", "p1", { status: { state: "idle", app: "claude-code" } });
+    await until(() => herdr.callsOf("terminal.send").length === 1);
+    await until(() => client.getPaneHerdrStatus("p1") === "idle");
+    await send(c.ws, { type: "agent_prompt", id: "a2", payload: { targetPaneId: "p1", text: "two" } });
+    expect(lastAck(c)).toMatchObject({ queued: true });
+    expect(herdr.callsOf("terminal.send").map((x) => x.params.text)).toEqual(["one"]);
+  });
+
   test("a queued prompt can be cancelled; cancelling it again is ERR_NOT_FOUND", async () => {
     const c = await viewer("p1");
     await send(c.ws, { type: "agent_prompt", id: "a1", payload: { targetPaneId: "p1", text: "later" } });
@@ -191,6 +205,13 @@ describe("session actions", () => {
     expect(lastError(c)).toBe("ERR_NOT_FOUND");
   });
 
+  test("closing an unknown tab is ERR_NOT_FOUND and nothing is sent to Herdr (protocol.md §8)", async () => {
+    const c = fakeWs();
+    await send(c.ws, { type: "close_tab", id: "c1", payload: { tabId: "nope" } });
+    expect(lastError(c)).toBe("ERR_NOT_FOUND");
+    expect(herdr.callsOf("tab.close")).toHaveLength(0);
+  });
+
   test("claude switches model with its own /model command; codex has none (protocol.md §4.9)", async () => {
     const c = await viewer("p1");
     await send(c.ws, { type: "agent_set_model", id: "m1", payload: { targetPaneId: "p1", modelId: "sonnet" } });
@@ -218,6 +239,28 @@ describe("session actions", () => {
     expect(o.closes[0].code).toBe(4403);
     await send(c.ws, { type: "device_revoke", id: "d3", payload: { deviceId: theirs } });
     expect(lastError(c)).toBe("ERR_NOT_FOUND");
+  });
+
+  test("revoking this device acks first, then closes this connection (protocol.md §4.12)", async () => {
+    const { token } = pairing.createPairingToken();
+    const mine = pairing.exchangeToken(token, "Phone").deviceId!;
+    const c = fakeWs(mine);
+    const order: string[] = [];
+    const { send: rawSend, close: rawClose } = c.ws;
+    c.ws.send = (text: string) => (order.push(JSON.parse(text).type), rawSend(text));
+    c.ws.close = (code?: number, reason?: string) => (order.push(`close ${code}`), rawClose(code, reason));
+    server.handleOpen(c.ws);
+    await send(c.ws, { type: "device_revoke", id: "d1", payload: { deviceId: mine } });
+    expect(order).toEqual(["ack", "close 4403"]);
+  });
+
+  test("a device revoked on the computer (pigeon devices revoke) is cut off at once (security-and-pairing.md §5)", () => {
+    const { token } = pairing.createPairingToken();
+    const id = pairing.exchangeToken(token, "Phone").deviceId!;
+    const c = fakeWs(id);
+    server.handleOpen(c.ws);
+    pairing.revokeDevice(id);
+    expect(c.closes.map((x) => x.code)).toEqual([4403]);
   });
 
   test("devices are listed newest paired first (protocol.md §4.12)", async () => {

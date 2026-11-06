@@ -85,8 +85,8 @@ When the pane has a `pendingInteraction` (`protocol.md` §5.4), a floating card 
 - **在终端中处理** opens the terminal view (§5). So does an ack with `approved: false`.
 
 ### 4.2 Questions
-When the transcript has a pending question tool call (Claude `AskUserQuestion`), the card uses it: a large question title, options as "label + description", and **其他…** last, which focuses the composer. With several questions the card pages with "‹ 1/4 ›"; the last page's button is **提交**. **下一题** stays disabled until an option is picked. ✕ collapses the card into a capsule "n 个问题等你回答" above the composer, which reopens it.
-Answers are sent as the screen's numbered options: the card matches the current screen prompt to its question by text and sends the digit of the option with the same label. Without a transcript question, the card is the plain §4.1 card.
+When the transcript has a pending question tool call (Claude `AskUserQuestion`), the card uses it: a large question title, options as "label + description", and **其他…** last, which sends the screen's own "other" option and then focuses the composer. **其他…** is shown only when the screen has such an option, and like **提交** it works only for the question on screen. With several questions the card pages with "‹ 1/4 ›"; the last page's button is **提交**. **下一题** stays disabled until an option is picked. ✕ collapses the card into a capsule "n 个问题等你回答" above the composer, which reopens it.
+Answers are sent as the screen's numbered options: the card matches the current screen prompt to its question by text and sends the digit of the option with the same label. A label matches exactly first; a prefix match counts only when exactly one screen option has that prefix, and anything else opens the terminal view instead of guessing. A multi-select question offers **在终端中处理** in place of **提交**. Without a transcript question, the card is the plain §4.1 card.
 
 ### 4.3 Plan approval
 When the transcript has a pending plan tool call (Claude `ExitPlanMode`), the card shows the plan as Markdown, faded past the card height with **全文** to read it in a sheet, and the screen's options as buttons. An option that asks to keep planning returns the composer like §4.1.
@@ -123,7 +123,7 @@ A sheet listing the recipe's models and, for the chosen model, its effort levels
 Every edit in the session's transcript, summed per file: path, added and removed lines. A tap opens that file's diffs (§3.3 edit detail). Empty when the pane has no bound session.
 
 ### 6.7 Close
-A confirmation sheet that states: the tab on the computer will close, which programs end (each pane's agent or shell), and whether one is working. It also says the agent's session log is kept. Confirming sends `close_tab`.
+A confirmation sheet that states: the tab on the computer will close, which programs end (each pane's agent or shell), and whether one is working. It also says the agent's session log is kept. Confirming sends `close_tab`; the page then returns where the session was opened from (Home or 所有 Agent).
 
 ### 6.8 Switch pane
 A sheet listing the tab's panes (agent or shell, status). The session page defaults to the tab's first pane with an agent. Switching never changes the desktop.
