@@ -28,12 +28,13 @@ A snapshot joins three answers: App `ls` (spaces, their tabs, and each tab's ter
 
 | Herdr | Pigeon |
 | :--- | :--- |
-| space `id`, `name` (or the last segment of its `folder` when unnamed), `folder`, `active` | workspace `id`, `label`, `folder`, `isFocused` |
+| space `id`, `name` (or the last segment of the workspace folder when unnamed), `active` | workspace `id`, `label`, `isFocused` |
 | tab `id`, `name`, `active` | tab `id`, `label`, the workspace's `activeTabId` |
 | tab terminal `terminal` (an address such as `t7`) | pane `id` |
 | Core terminal `foreground.cwd` (else `cwd`), `status`, `title` | pane folder, agent kind and status (§4), summary |
 | Core terminal `foreground.name`, `foreground.pid`, `created_ms` | pane `program`; the process id and start time used for session binding |
 
+- **Workspace folder**: the folder of the first pane of the space's first tab (Core `foreground.cwd`, else `cwd`). Herdr starts a new space in the folder of the space focused before it, and the App's space `folder` and a terminal's `cwd` keep that start folder after the user moves into the project, so neither names the project. The App's `folder` is used only for a space with no live terminal.
 - A tab named only by its number is labelled after its first pane's agent recipe, else `Tab <n>`.
 - Each snapshot rebuilds the pane facts. State for panes missing from the snapshot is dropped, so a reused address never shows old data.
 - A terminal the App shows but the Core does not list (it finished, or its machine is not connected) is a pane without an agent and with status `unknown`.

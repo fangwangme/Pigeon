@@ -29,11 +29,12 @@ const PANES: FakePane[] = [
 beforeEach(async () => {
   dir = tempDir("cmd");
   herdr = new FakeHerdr(dir);
-  herdr.serve(PANES, { folder: dir });
+  // The App reports the folder a space was started in; the panes have moved into the project (herdr-adapter.md §3.1).
+  herdr.serve(PANES.map((p) => ({ ...p, cwd: dir })), { folder: "/start" });
   await herdr.listen();
   herdr.handlers["terminal.read"] = () => ({ result: { text: "$ ls\n", how: "history" } });
   client = new HerdrClient({ appSocketPath: herdr.appSocketPath, coreSocketPath: herdr.coreSocketPath, debounceMs: 5, panePollMs: 60_000 });
-  client.applySnapshot(topologyOf(PANES, { folder: dir }));
+  client.applySnapshot(topologyOf(PANES.map((p) => ({ ...p, cwd: dir })), { folder: "/start" }));
   uploads = new UploadStore(join(dir, "uploads"));
   pairing = new PairingManager({ devicesFilePath: join(dir, "devices.json"), adminSocketPath: join(dir, "admin.sock"), publicBaseUrl: "https://pigeon.example.ts.net" });
   server = new WsServer({
@@ -238,17 +239,22 @@ describe("snapshot fields (protocol.md §5.3, herdr-adapter.md §3.1)", () => {
   test("workspace folder and branch, tab branch, pane program", () => {
     mkdirSync(join(dir, ".git"), { recursive: true });
     writeFileSync(join(dir, ".git", "HEAD"), "ref: refs/heads/feat/1-ui\n");
-    const snap = client.applySnapshot(topologyOf(PANES.map((p) => ({ ...p, cwd: dir })), { folder: dir }));
+    const snap = client.applySnapshot(topologyOf(PANES.map((p) => ({ ...p, cwd: dir })), { folder: "/start" }));
     const ws = snap.workspaces[0];
     expect([ws.folder, ws.branch, ws.tabs[0].branch]).toEqual([dir, "feat/1-ui", "feat/1-ui"]);
     expect(ws.tabs[0].panes.map((p) => p.program)).toEqual(["claude", "codex", "zsh"]);
   });
 
   test("a detached HEAD or no repository gives no branch", () => {
-    const snap = client.applySnapshot(topologyOf(PANES, { folder: tempDir("norepo") }));
+    const snap = client.applySnapshot(topologyOf(PANES.map((p) => ({ ...p, cwd: tempDir("norepo") }))));
     expect(snap.workspaces[0].branch).toBeUndefined();
     mkdirSync(join(dir, ".git"), { recursive: true });
     writeFileSync(join(dir, ".git", "HEAD"), "3f9a0c21d7e4b5a6c7d8e9f0a1b2c3d4e5f6a7b8\n");
-    expect(client.applySnapshot(topologyOf(PANES, { folder: dir })).workspaces[0].branch).toBeUndefined();
+    expect(client.applySnapshot(topologyOf(PANES.map((p) => ({ ...p, cwd: dir })))).workspaces[0].branch).toBeUndefined();
+  });
+
+  test("a space without a live terminal falls back to the App's folder", () => {
+    const snap = client.applySnapshot(topologyOf([], { folder: "/start" }));
+    expect(snap.workspaces[0].folder).toBe("/start");
   });
 });
