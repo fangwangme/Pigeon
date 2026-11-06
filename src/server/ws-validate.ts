@@ -116,7 +116,7 @@ const CONFIG_CHECKS: Record<keyof ClientConfig, (v: unknown) => boolean> = {
 };
 
 /** Returns an error message, or null when every key is known and well-typed. */
-export function validateClientConfigPatch(patch: Record<string, unknown>): string | null {
+function validateClientConfigPatch(patch: Record<string, unknown>): string | null {
   for (const [key, value] of Object.entries(patch)) {
     const check = CONFIG_CHECKS[key as keyof ClientConfig];
     if (!check) return `Unknown client config key '${key}'`;

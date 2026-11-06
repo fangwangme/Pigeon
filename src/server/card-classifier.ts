@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import type { Card, CardKind, InteractionCardData } from "../types/protocol";
 
-export function stripAnsi(str: string): string {
+function stripAnsi(str: string): string {
   // Herdr already strips ANSI by default (`strip_ansi: true`); this only removes leftovers.
   return str
     .replace(/\x1B\][^\x07\x1B]*(\x07|\x1B\\)/g, "") // OSC (any number, BEL or ST terminated)
@@ -11,7 +11,7 @@ export function stripAnsi(str: string): string {
     .replace(/\r/g, "");
 }
 
-export function computeCardId(kind: CardKind, anchor: string, occurrence: number): string {
+function computeCardId(kind: CardKind, anchor: string, occurrence: number): string {
   const hash = createHash("sha256")
     .update(`${kind}:${anchor.trim().slice(0, 80)}:${occurrence}`)
     .digest("hex")
@@ -19,12 +19,12 @@ export function computeCardId(kind: CardKind, anchor: string, occurrence: number
   return `card_${kind}_${hash}`;
 }
 
-export function computeInteractionFingerprint(question: string, payload = "", options: Array<{ id?: string; label: string }> = []): string {
+function computeInteractionFingerprint(question: string, payload = "", options: Array<{ id?: string; label: string }> = []): string {
   const raw = `${question.trim()}|${payload.trim()}|${options.map((o) => o.id || o.label).join(",")}`;
   return "fp_" + createHash("sha256").update(raw).digest("hex").slice(0, 12);
 }
 
-export const DEFAULT_FALLBACK_KEYS = ["enter", "esc", "up", "down"];
+const DEFAULT_FALLBACK_KEYS = ["enter", "esc", "up", "down"];
 const YES_NO_FALLBACK_KEYS = ["y", "n", "enter", "esc"];
 
 const QUESTION_RE = /^(Allow|Do you want to|Would you like to|Do you trust|Select|Choose|Approve|Permission)\b/i;
@@ -127,7 +127,7 @@ function parseTailPrompt(lines: string[], start: number): PromptParse | null {
   };
 }
 
-export function buildInteraction(prompt: PromptParse, title = "需要授权"): InteractionCardData {
+function buildInteraction(prompt: PromptParse, title = "需要授权"): InteractionCardData {
   const optionKey = prompt.options.map((o) => o.label).join("|");
   const interactionId = "int_" + createHash("sha256").update(`${prompt.question}|${optionKey}`).digest("hex").slice(0, 10);
   return {

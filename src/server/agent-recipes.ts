@@ -44,7 +44,7 @@ function codexModels(): ModelOption[] {
     }));
 }
 
-export const AGENT_RECIPES: Record<string, AgentRecipe> = {
+const AGENT_RECIPES: Record<string, AgentRecipe> = {
   claude: {
     kind: "claude",
     label: "Claude Code",

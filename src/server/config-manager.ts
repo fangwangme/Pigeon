@@ -3,8 +3,6 @@ import { dirname, join } from "node:path";
 import type { ClientConfig, ServerConfig, PigeonConfig } from "../types/protocol";
 import { DEFAULT_CLIENT_CONFIG, REMOVED_CLIENT_KEYS } from "../shared/defaults";
 
-export { DEFAULT_CLIENT_CONFIG } from "../shared/defaults";
-
 /** Server settings that do not depend on the environment, written into a fresh config file. */
 const STATIC_SERVER_DEFAULTS = { port: 4100, host: "", insecureDev: false, publicBaseUrl: "" };
 
@@ -12,7 +10,7 @@ const STATIC_SERVER_DEFAULTS = { port: 4100, host: "", insecureDev: false, publi
  * Environment-derived defaults. Resolved on every start and never written to disk, so a later
  * change of `XDG_RUNTIME_DIR`, `HERDR_APP_HOME` or `HC_TERMINAL_SOCKET` is picked up.
  */
-export function resolveRuntimeServerDefaults(
+function resolveRuntimeServerDefaults(
   env: NodeJS.ProcessEnv = process.env
 ): Pick<ServerConfig, "herdrAppSocketPath" | "herdrCoreSocketPath" | "adminSocketPath" | "stateDir"> {
   const home = env.HOME;
@@ -27,7 +25,7 @@ export function resolveRuntimeServerDefaults(
   };
 }
 
-export function resolveConfigPath(customPath?: string, env: NodeJS.ProcessEnv = process.env): string {
+function resolveConfigPath(customPath?: string, env: NodeJS.ProcessEnv = process.env): string {
   if (customPath) return customPath;
   if (env.PIGEON_CONFIG_PATH) return env.PIGEON_CONFIG_PATH;
   if (env.XDG_CONFIG_HOME) return join(env.XDG_CONFIG_HOME, "pigeon", "config.json");
@@ -35,7 +33,7 @@ export function resolveConfigPath(customPath?: string, env: NodeJS.ProcessEnv = 
   return join(env.HOME, ".config", "pigeon", "config.json");
 }
 
-export function deepMerge<T extends Record<string, any>>(target: T, source: Partial<T>): T {
+function deepMerge<T extends Record<string, any>>(target: T, source: Partial<T>): T {
   const result = { ...target };
   for (const [key, value] of Object.entries(source)) {
     if (value === undefined) continue;
@@ -101,20 +99,12 @@ export class ConfigManager {
     return stored;
   }
 
-  public getConfig(): PigeonConfig {
-    return this.config;
-  }
-
   public getClientConfig(): ClientConfig {
     return this.config.client;
   }
 
   public getServerConfig(): ServerConfig {
     return this.config.server;
-  }
-
-  public getConfigPath(): string {
-    return this.configPath;
   }
 
   /** Merges a validated patch and writes it to disk before returning; write errors propagate. */

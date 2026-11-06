@@ -48,7 +48,7 @@ export function paneStatus(p: PaneSummary | undefined): RowStatus {
   return statusOf(p.agentStatus);
 }
 
-export function statusOf(s: AgentStatus): RowStatus {
+function statusOf(s: AgentStatus): RowStatus {
   return s === "unknown" ? "idle" : s;
 }
 

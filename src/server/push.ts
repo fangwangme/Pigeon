@@ -79,10 +79,6 @@ export class PushManager {
     this.subscriptions.set(sub.endpoint, sub);
   }
 
-  public getSubscriptionsCount(): number {
-    return this.subscriptions.size;
-  }
-
   public updatePresence(connectionId: string, isVisible: boolean, viewingPaneId: string | null): void {
     this.presence.set(connectionId, { isVisible, viewingPaneId, lastUpdated: Date.now() });
   }

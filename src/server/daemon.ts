@@ -1,7 +1,7 @@
 import { join } from "node:path";
 import { networkInterfaces } from "node:os";
 import { createHash } from "node:crypto";
-import type { Server, ServerWebSocket } from "bun";
+import type { Server } from "bun";
 import { HerdrClient } from "./herdr-client";
 import { PairingManager } from "./pairing";
 import { PushManager, type PushSubscriptionData } from "./push";
@@ -49,7 +49,7 @@ function isPrivateIPv4(addr: string): boolean {
 }
 
 /** LAN address for insecure-dev pairing links: a private IPv4 on a physical interface. */
-export function detectLocalIp(): string | null {
+function detectLocalIp(): string | null {
   for (const [name, list] of Object.entries(networkInterfaces())) {
     if (!list || VIRTUAL_IFACE_RE.test(name)) continue;
     for (const iface of list) {
@@ -60,7 +60,7 @@ export function detectLocalIp(): string | null {
 }
 
 /** Tailscale MagicDNS name of this machine, or null when Tailscale is absent or not running. */
-export function detectTailscaleDns(): string | null {
+function detectTailscaleDns(): string | null {
   let proc: ReturnType<typeof Bun.spawnSync>;
   try {
     proc = Bun.spawnSync(["tailscale", "status", "--json"], { timeout: 2000, stderr: "ignore" });

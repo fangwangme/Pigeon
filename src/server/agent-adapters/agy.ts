@@ -3,7 +3,6 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import type {
   NormalizedTurn,
-  NormalizedToolCall,
   SessionStats,
 } from "../../shared/agent-session";
 import { verbForName } from "../sessions/common";

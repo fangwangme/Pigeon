@@ -60,7 +60,7 @@ export class JsonlTail {
 }
 
 /** Session records are a trust boundary: a line that is not JSON is skipped (§1). */
-export function parseJsonLines(text: string): unknown[] {
+function parseJsonLines(text: string): unknown[] {
   const out: unknown[] = [];
   for (const line of text.split("\n")) {
     const t = line.trim();

@@ -19,13 +19,13 @@ const VERB_COUNT: Record<ToolVerb, (n: number) => string> = {
 const VERB_ORDER: ToolVerb[] = ["read", "search", "edit", "create", "run", "other"];
 
 /** Wraps code blocks with a copy button (§3.2); clicks are handled by `onMarkdownClick`. */
-export function markdownHtml(md: string): string {
+function markdownHtml(md: string): string {
   return renderMarkdown(md)
     .replace(/<pre>/g, '<div class="cb"><button class="cpy" data-copy type="button">复制</button><pre>')
     .replace(/<\/pre>/g, "</pre></div>");
 }
 
-export function onMarkdownClick(e: MouseEvent): void {
+function onMarkdownClick(e: MouseEvent): void {
   const btn = (e.target as HTMLElement).closest("[data-copy]");
   if (!btn) return;
   const pre = btn.parentElement?.querySelector("pre");
@@ -61,7 +61,7 @@ function totals(calls: NormalizedToolCall[]): { add: number; del: number } {
   return { add, del };
 }
 
-export function groupSummary(calls: NormalizedToolCall[]): string {
+function groupSummary(calls: NormalizedToolCall[]): string {
   const counts = new Map<ToolVerb, number>();
   for (const c of calls) counts.set(c.verb, (counts.get(c.verb) ?? 0) + 1);
   return VERB_ORDER.filter((v) => counts.has(v))
@@ -109,7 +109,7 @@ function Lines(props: { text: string; label: string }) {
 }
 
 /** A unified diff with line numbers and add/remove bars; lines never wrap (§3.3). */
-export function DiffView(props: { patch: string }) {
+function DiffView(props: { patch: string }) {
   const rows = () => {
     const out: Array<{ cls: string; ln: string; text: string }> = [];
     let oldN = 0;
@@ -270,7 +270,7 @@ export function ToolSheet() {
 // ---------- todo (§3.4) ----------
 
 const [todoOpen, setTodoOpen] = createSignal(false);
-export const openTodos = () => setTodoOpen(true);
+const openTodos = () => setTodoOpen(true);
 
 export function TodoSheet() {
   return (

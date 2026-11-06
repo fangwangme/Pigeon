@@ -13,7 +13,7 @@ function passes(status: RowStatus, agent: string | null | undefined, f: FilterSt
   return true;
 }
 
-export function openPane(paneId: string, from: "home" | "agents"): void {
+function openPane(paneId: string, from: "home" | "agents"): void {
   selectPane(paneId);
   navigate({ name: "session", from });
 }

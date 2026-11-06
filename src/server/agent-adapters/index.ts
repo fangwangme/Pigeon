@@ -93,16 +93,14 @@ class OpenCodeSource implements SessionSource {
 
 /** Every agent's session store behind one interface (`agent-session-normalization.md` §2). */
 export class AgentAdapterManager {
-  private opencode: OpenCodeAdapter;
-  private agy: AgyAdapter;
   private sources = new Map<string, SessionSource>();
 
   constructor(options: AgentAdapterManagerOptions = {}) {
     const home = options.home ?? homedir();
-    this.opencode = new OpenCodeAdapter(options.opencode ?? { dbPath: join(home, ".local", "share", "opencode", "opencode.db") });
+    const opencode = new OpenCodeAdapter(options.opencode ?? { dbPath: join(home, ".local", "share", "opencode", "opencode.db") });
     const brainDir = options.agy?.baseBrainDir ?? join(home, ".gemini", "antigravity-cli", "brain");
-    this.agy = new AgyAdapter({ baseBrainDir: brainDir });
-    for (const s of [new ClaudeSource(home), new CodexSource(home), new PiSource(home), new AgySource(this.agy, brainDir), new OpenCodeSource(this.opencode)]) {
+    const agy = new AgyAdapter({ baseBrainDir: brainDir });
+    for (const s of [new ClaudeSource(home), new CodexSource(home), new PiSource(home), new AgySource(agy, brainDir), new OpenCodeSource(opencode)]) {
       this.sources.set(s.agent, s);
     }
   }
@@ -142,13 +140,5 @@ export class AgentAdapterManager {
   public resumeTarget(agent: string, sessionId: string, folder: string): string | null {
     const source = this.sources.get(agent.toLowerCase());
     return source?.resumeTarget ? source.resumeTarget(sessionId, folder) : sessionId;
-  }
-
-  public getOpenCodeAdapter(): OpenCodeAdapter {
-    return this.opencode;
-  }
-
-  public getAgyAdapter(): AgyAdapter {
-    return this.agy;
   }
 }

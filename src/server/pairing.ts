@@ -3,7 +3,6 @@ import { createServer, connect, type Server as NetServer, type Socket } from "no
 import { existsSync, unlinkSync, mkdirSync, chmodSync, readFileSync, writeFileSync, renameSync } from "node:fs";
 import { dirname } from "node:path";
 import { EventEmitter } from "node:events";
-import qrcode from "qrcode-terminal";
 
 const BASE32_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
 
@@ -27,7 +26,7 @@ export function generateBase32Token(bytesLength = 16): string {
   return output.slice(0, 26);
 }
 
-export function hashToken(token: string): string {
+function hashToken(token: string): string {
   return createHash("sha256").update(token).digest("hex");
 }
 
@@ -166,22 +165,6 @@ export class PairingManager extends EventEmitter {
 
     const url = `${this.publicBaseUrl}/pair#code=${token}`;
     return { token, url, expiresAt, permanent };
-  }
-
-  public printTerminalQrCode(tokenInfo?: { token: string; url: string; permanent?: boolean }): void {
-    const info = tokenInfo || this.createPairingToken();
-    console.log("\n=======================================================");
-    console.log("             PIGEON TERMINAL PAIRING QR CODE           ");
-    console.log("=======================================================\n");
-    console.log(`Pairing URL: ${info.url}\n`);
-    qrcode.generate(info.url, { small: true });
-    console.log("\nScan the QR code above with your mobile Chromium browser.");
-    if (info.permanent) {
-      console.log("This pairing link is permanent (does not expire).");
-    } else {
-      console.log("This pairing link will expire in 10 minutes.");
-    }
-    console.log("=======================================================\n");
   }
 
   /** `code` and `deviceName` are already validated strings (checked at the HTTP boundary). */

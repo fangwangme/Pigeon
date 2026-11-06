@@ -124,22 +124,22 @@ svg.i.sm { width: 16px; height: 16px; }
 .scard.term { font-size: 12.5px; background: var(--code); border: 1px solid var(--line); border-radius: 14px; padding: 10px 12px; white-space: pre-wrap; overflow-wrap: anywhere; }
 
 /* ---------- floating controls (glass) ---------- */
-.glass, .cbtn, .cap, .comp, .todo, .jump {
+.cbtn, .cap, .comp, .todo, .jump {
   background: var(--lg-fill); -webkit-backdrop-filter: blur(16px) saturate(1.8); backdrop-filter: blur(16px) saturate(1.8);
   border: 1px solid var(--lg-edge); box-shadow: inset 0 1px 0 var(--lg-hi), inset 0 -1px 0 var(--lg-lo), var(--lg-shadow);
 }
-.menu, .qcard, .sheet, .pop, .compx {
+.menu, .qcard, .sheet, .pop {
   background: var(--lg-fill-strong); -webkit-backdrop-filter: blur(28px) saturate(1.8); backdrop-filter: blur(28px) saturate(1.8);
   border: 1px solid var(--lg-edge); box-shadow: inset 0 1px 0 var(--lg-hi), inset 0 -1px 0 var(--lg-lo), var(--lg-shadow);
 }
-.cbtn::before, .cap::before, .comp::before, .todo::before, .jump::before, .menu::before, .qcard::before, .sheet::before, .pop::before, .compx::before {
+.cbtn::before, .cap::before, .comp::before, .todo::before, .jump::before, .menu::before, .qcard::before, .sheet::before, .pop::before {
   content: ""; position: absolute; inset: 0; z-index: -1; border-radius: inherit; pointer-events: none;
   background: linear-gradient(140deg, var(--lg-spec) 0%, transparent 34%, transparent 68%, var(--lg-spec) 100%); opacity: .55; mix-blend-mode: screen;
 }
-.solid .cbtn, .solid .cap, .solid .comp, .solid .todo, .solid .jump, .solid .menu, .solid .qcard, .solid .sheet, .solid .pop, .solid .compx {
+.solid .cbtn, .solid .cap, .solid .comp, .solid .todo, .solid .jump, .solid .menu, .solid .qcard, .solid .sheet, .solid .pop {
   -webkit-backdrop-filter: none; backdrop-filter: none; background: var(--elev); border-color: var(--line2);
 }
-.solid .cbtn::before, .solid .cap::before, .solid .comp::before, .solid .todo::before, .solid .jump::before, .solid .menu::before, .solid .qcard::before, .solid .sheet::before, .solid .pop::before, .solid .compx::before { display: none; }
+.solid .cbtn::before, .solid .cap::before, .solid .comp::before, .solid .todo::before, .solid .jump::before, .solid .menu::before, .solid .qcard::before, .solid .sheet::before, .solid .pop::before { display: none; }
 .solid .hdr.float::before { -webkit-backdrop-filter: none; backdrop-filter: none; background: var(--bg); -webkit-mask-image: none; mask-image: none; inset: 0; }
 
 /* ---------- composer ---------- */
@@ -246,7 +246,6 @@ svg.i.sm { width: 16px; height: 16px; }
 .qtop .pg button { width: 36px; height: 36px; display: grid; place-items: center; }
 .qtop .x { width: 40px; height: 40px; border-radius: 50%; background: rgba(127,127,127,.16); display: grid; place-items: center; }
 .qtitle { font-size: 18px; font-weight: 700; line-height: 1.35; margin: 4px 0 10px; overflow-wrap: anywhere; }
-.qsub { font-size: 14px; color: var(--muted); margin: -4px 0 10px; }
 .qcmd { font-size: 13px; background: var(--code); border: 1px solid var(--line); border-radius: 12px; padding: 8px 10px; margin-bottom: 10px; white-space: pre-wrap; word-break: break-all; max-height: 140px; overflow: auto; width: 100%; text-align: left; }
 .opt { padding: 12px 2px; border-bottom: 1px solid var(--line); display: flex; gap: 12px; align-items: flex-start; width: 100%; text-align: left; min-height: 48px; }
 .opt .tx { flex: 1; }

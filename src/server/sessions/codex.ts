@@ -135,7 +135,7 @@ function parseArgs(v: unknown): Record<string, any> {
 }
 
 /** `*** Add File:` / `*** Update File:` / `*** Delete File:` sections, one diff each. */
-export function patchDiffs(patch: string): FileDiffSummary[] {
+function patchDiffs(patch: string): FileDiffSummary[] {
   const out: FileDiffSummary[] = [];
   let cur: { file: string; status: FileDiffSummary["status"]; lines: string[] } | null = null;
   const flush = () => {

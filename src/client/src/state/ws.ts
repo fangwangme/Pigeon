@@ -37,7 +37,7 @@ export async function checkPairingFromUrlHash(): Promise<void> {
   if (!ok) setState("paired", false);
 }
 
-export async function pairWithCode(code: string): Promise<boolean> {
+async function pairWithCode(code: string): Promise<boolean> {
   const res = await fetch("/api/pair", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -47,7 +47,7 @@ export async function pairWithCode(code: string): Promise<boolean> {
   return !!data.success;
 }
 
-export async function isAuthenticated(): Promise<boolean> {
+async function isAuthenticated(): Promise<boolean> {
   const res = await fetch("/api/auth/status", { credentials: "same-origin" });
   const data = await res.json();
   return !!data.authenticated;
@@ -148,7 +148,6 @@ function applyPaneState(p: PaneStatePayload): void {
   if (p.revision <= last) return; // out-of-order or replayed update
   paneRevisions.set(p.paneId, p.revision);
   setState({
-    activeWorkspaceId: p.workspaceId,
     activeTabId: p.tabId,
     agentStatus: p.agentStatus,
     cards: p.cards,
@@ -196,7 +195,6 @@ export function handleServerMessage(msg: ServerMessage): void {
 
     case "upstream_status":
       setState("herdrConnected", msg.payload.herdrConnected);
-      setState("lastSyncTimestamp", msg.payload.lastSyncTimestamp);
       return;
 
     case "config_sync":
@@ -209,7 +207,6 @@ export function handleServerMessage(msg: ServerMessage): void {
     case "snapshot_update":
       trackUnread(msg.payload);
       setState("workspaces", msg.payload.workspaces);
-      setState("workingAgents", msg.payload.workingAgents);
       return;
 
     case "pane_state":
@@ -302,7 +299,7 @@ function errorText(code: string, message: string): string {
   }
 }
 
-export function sendMessage(msg: ClientMessage): boolean {
+function sendMessage(msg: ClientMessage): boolean {
   if (!socket || socket.readyState !== WebSocket.OPEN) {
     setState("lastError", { code: "ERR_OFFLINE", message: "离线，消息没有发出，草稿已保留", at: Date.now() });
     return false;
@@ -347,7 +344,7 @@ export function selectPane(paneId: string): void {
   for (const w of state.workspaces) {
     const t = w.tabs.find((tab) => tab.panes.some((p) => p.id === paneId));
     if (t) {
-      setState({ activeWorkspaceId: w.id, activeTabId: t.id });
+      setState("activeTabId", t.id);
       break;
     }
   }

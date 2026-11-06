@@ -13,7 +13,6 @@ import type {
   SkillEntry,
   ThemeMode,
   TodoItem,
-  WorkingAgentSummary,
   WorkspaceSummary,
 } from "../../../types/protocol";
 import { applyTheme } from "../themes";
@@ -46,10 +45,7 @@ export interface AppState {
   updateAvailable: boolean;
   serverVersion: string | null;
   herdrConnected: boolean;
-  lastSyncTimestamp: number;
   workspaces: WorkspaceSummary[];
-  workingAgents: WorkingAgentSummary[];
-  activeWorkspaceId: string | null;
   activeTabId: string | null;
   activePaneId: string | null;
   agentStatus: AgentStatus;
@@ -114,10 +110,7 @@ const [state, setState] = createStore<AppState>({
   updateAvailable: false,
   serverVersion: null,
   herdrConnected: true,
-  lastSyncTimestamp: Date.now(),
   workspaces: [],
-  workingAgents: [],
-  activeWorkspaceId: null,
   activeTabId: null,
   activePaneId: null,
   agentStatus: "idle",

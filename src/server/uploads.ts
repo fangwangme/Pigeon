@@ -16,7 +16,7 @@ export interface UploadInfo {
 }
 
 /** Keeps only `[A-Za-z0-9._-]`, without a leading dot (`protocol.md` §7). */
-export function safeUploadName(original: string): string {
+function safeUploadName(original: string): string {
   const name = original.replace(/[^A-Za-z0-9._-]/g, "_").replace(/^\.+/, "");
   return name || "file";
 }
