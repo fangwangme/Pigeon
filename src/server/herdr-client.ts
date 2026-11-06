@@ -444,7 +444,12 @@ export class HerdrClient extends EventEmitter {
     for (const id of Array.from(this.fullScreenPanes)) if (!nextKnown.has(id)) this.fullScreenPanes.delete(id);
     this.knownPanes = nextKnown;
     this.focusedPaneId = focusedPaneId;
-    this.workspaceFolders = new Map(topology.ls.spaces.map((sp) => [sp.id, sp.folder]));
+    // herdr-adapter.md §3.1: the App's space folder is where the space was started, not the project.
+    const folderOf = (space: (typeof topology.ls.spaces)[number]): string => {
+      const first = space.tabs[0]?.terminals[0]?.terminal;
+      return (first ? nextKnown.get(first)?.cwd : null) || space.folder;
+    };
+    this.workspaceFolders = new Map(topology.ls.spaces.map((sp) => [sp.id, folderOf(sp)]));
     this.tabIds = new Set(topology.ls.spaces.flatMap((sp) => sp.tabs.map((t) => t.id)));
     const branches = new Map<string, string | undefined>();
     const branchOf = (folder: string | null | undefined): string | undefined => {
@@ -457,7 +462,8 @@ export class HerdrClient extends EventEmitter {
     const workspaces: WorkspaceSummary[] = topology.ls.spaces.map((space) => {
       let hasWarn = false;
       let hasWorking = false;
-      const workspaceLabel = space.name || basename(space.folder);
+      const folder = this.workspaceFolders.get(space.id)!;
+      const workspaceLabel = space.name || basename(folder);
 
       const tabs: TabSummary[] = space.tabs.map((tab, tabIdx) => {
         const panes: PaneSummary[] = tab.terminals.map((ref, idx) => {
@@ -500,11 +506,11 @@ export class HerdrClient extends EventEmitter {
         return { id: tab.id, label: tabLabel, ...(tabBranch ? { branch: tabBranch } : {}), paneCount: panes.length, panes };
       });
 
-      const branch = branchOf(space.folder);
+      const branch = branchOf(folder);
       return {
         id: space.id,
         label: workspaceLabel,
-        folder: space.folder,
+        folder,
         ...(branch ? { branch } : {}),
         tabCount: tabs.length,
         activeTabId: space.tabs.find((t) => t.active)?.id ?? tabs[0]?.id ?? null,
