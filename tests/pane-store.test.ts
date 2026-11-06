@@ -37,7 +37,7 @@ describe("session log streaming (agent-session-normalization.md §5)", () => {
     expect(modes[0]).toBe(false);
     expect(modes.slice(1).length).toBeGreaterThan(0);
     expect(modes.slice(1).every((m) => m)).toBe(true);
-    expect(store.getPaneTurns("p1").turns.map((t) => t.userPrompt?.text)).toEqual(["first", "second"]);
+    expect(store.getPayload("p1", "agy").turns.map((t) => t.userPrompt?.text)).toEqual(["first", "second"]);
     expect(deltas.at(-1)!.appendTurns.map((t) => t.userPrompt?.text)).toEqual(["second"]);
   });
 });

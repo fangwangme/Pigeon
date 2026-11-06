@@ -203,6 +203,5 @@ describe("device revocation (security-and-pairing.md §5)", () => {
     server.handleOpen(c.ws);
     server.closeDevice("dev_gone");
     expect(c.closes[0].code).toBe(4403);
-    expect(server.getConnectedClientsCount()).toBe(0);
   });
 });

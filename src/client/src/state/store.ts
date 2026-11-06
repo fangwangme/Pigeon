@@ -144,7 +144,7 @@ const [state, setState] = createStore<AppState>({
 export { state, setState };
 
 /** Applies the language choice, following the browser's languages for 跟随系统 (§10.1). */
-export function applyLocale(): void {
+function applyLocale(): void {
   setLocale(resolveLocale(state.localePref, globalThis.navigator?.languages ?? []));
 }
 

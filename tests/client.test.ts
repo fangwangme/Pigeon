@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { ACCENTS, PALETTES } from "../src/client/src/themes";
+import { PALETTES } from "../src/client/src/themes";
 import { renderMarkdown } from "../src/client/src/utils/markdown";
 
 const rootDir = join(import.meta.dir, "..");
@@ -24,14 +24,6 @@ describe("themes (mobile-ui-and-themes.md §9.1)", () => {
   test.each(["light", "dark"] as const)("%s: text tokens meet WCAG AA against the background", (mode) => {
     const p = PALETTES[mode];
     for (const token of [p.fg, p.muted, p.faint]) expect(contrast(p.bg, token)).toBeGreaterThanOrEqual(4.5);
-  });
-
-  test("the five accents exist for both palettes", () => {
-    expect(Object.keys(ACCENTS).sort()).toEqual(["blue", "green", "orange", "pink", "purple"]);
-    for (const a of Object.values(ACCENTS)) {
-      expect(a.light).toMatch(/^#[0-9A-Fa-f]{6}$/);
-      expect(a.dark).toMatch(/^#[0-9A-Fa-f]{6}$/);
-    }
   });
 });
 

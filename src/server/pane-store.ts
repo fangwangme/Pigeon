@@ -106,7 +106,7 @@ export class PaneStore extends EventEmitter {
    * Re-reads a pane's session. The first read after binding is full; reads triggered by the log
    * watcher are incremental (`agent-session-normalization.md` §4).
    */
-  public refreshPaneTurns(paneId: string, incremental = false): void {
+  private refreshPaneTurns(paneId: string, incremental = false): void {
     const state = this.paneStates.get(paneId);
     if (!state || !this.adapters.isSupported(state.agent)) return;
 
@@ -178,12 +178,6 @@ export class PaneStore extends EventEmitter {
       ...(state?.todos ? { todos: state.todos } : {}),
       session: this.sessionInfo(paneId, agent),
     };
-  }
-
-  public getPaneTurns(paneId: string): { turns: NormalizedTurn[]; stats?: SessionStats; sessionTitle?: string; seqWatermark: number } {
-    const state = this.paneStates.get(paneId);
-    if (!state) return { turns: [], seqWatermark: 0 };
-    return { turns: state.turns, stats: state.stats, sessionTitle: state.sessionTitle, seqWatermark: state.seqWatermark };
   }
 
   public closePane(paneId: string): void {

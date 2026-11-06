@@ -37,7 +37,7 @@ export class AgyAdapter {
     return existsSync(this.getSessionLogPath(sessionId));
   }
 
-  public getSessionTitle(sessionId: string): string | null {
+  private getSessionTitle(sessionId: string): string | null {
     {
       const annotPath = join(
         homedir(),

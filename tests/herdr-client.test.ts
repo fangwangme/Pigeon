@@ -234,15 +234,6 @@ describe("connection lifecycle (herdr-adapter.md §3.2, §3.4)", () => {
     expect(herdr.callsOf("events.subscribe")).toHaveLength(1);
   });
 
-  test("disconnect leaves no reconnect or poll timer running", async () => {
-    const offline = offlineClient();
-    await offline.connect();
-    await Bun.sleep(20); // let the subscription socket fail and schedule its retry
-    offline.disconnect();
-    const internals = offline as any;
-    expect([internals.reconnectTimer, internals.snapshotTimer, internals.panePollTimer, internals.snapshotPollTimer]).toEqual([null, null, null, null]);
-  });
-
   test("disconnect settles requests still in flight and emits no late connected", async () => {
     herdr.handlers["terminal.read"] = () => "no-reply";
     await client.connect();

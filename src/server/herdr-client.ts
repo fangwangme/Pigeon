@@ -557,7 +557,7 @@ export class HerdrClient extends EventEmitter {
   }
 
   /** herdr-adapter.md §4: the Core's `error` needs a person, like `blocked`. */
-  public normalizeStatus(status: HerdrCoreStatus | null | undefined): AgentStatus {
+  private normalizeStatus(status: HerdrCoreStatus | null | undefined): AgentStatus {
     if (!status) return "unknown";
     const s = status.state.toLowerCase();
     if (s === "idle" || s === "working" || s === "blocked" || s === "done") return s;
@@ -573,7 +573,7 @@ export class HerdrClient extends EventEmitter {
     return this.focusedPaneId;
   }
 
-  public scheduleDebouncedRead(paneId: string): void {
+  private scheduleDebouncedRead(paneId: string): void {
     const timer = this.paneDebounceTimers.get(paneId);
     if (timer) clearTimeout(timer);
     this.paneDebounceTimers.set(

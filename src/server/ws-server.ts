@@ -577,7 +577,7 @@ export class WsServer {
     return false;
   }
 
-  public broadcastConfigUpdated(client: ClientConfig, origin?: Ws): void {
+  private broadcastConfigUpdated(client: ClientConfig, origin?: Ws): void {
     const text = JSON.stringify({ type: "config_updated", payload: { version: this.configVersion, client } } satisfies ServerMessage);
     for (const ws of this.clients) if (ws !== origin) ws.send(text);
   }
@@ -594,13 +594,9 @@ export class WsServer {
     this.send(ws, { type: "error", replyTo, error: { code, message } });
   }
 
-  public broadcast(msg: ServerMessage): void {
+  private broadcast(msg: ServerMessage): void {
     const text = JSON.stringify(msg);
     for (const ws of this.clients) ws.send(text);
-  }
-
-  public getConnectedClientsCount(): number {
-    return this.clients.size;
   }
 
   public closeDevice(deviceId: string): void {

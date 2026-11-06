@@ -177,7 +177,7 @@ export class PigeonDaemon {
     this.pairingManager.on("device_revoked", (deviceId) => this.wsServer.closeDevice(deviceId));
   }
 
-  public parseCookie(req: Request): Record<string, string> {
+  private parseCookie(req: Request): Record<string, string> {
     const cookies: Record<string, string> = {};
     for (const pair of (req.headers.get("cookie") || "").split(";")) {
       const idx = pair.indexOf("=");
