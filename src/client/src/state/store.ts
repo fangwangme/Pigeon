@@ -1,32 +1,52 @@
 import { createStore } from "solid-js/store";
 import type {
-  Card,
-  InteractionCardData,
-  WorkspaceSummary,
-  WorkingAgentSummary,
-  AgentStatus,
-  ClientConfig,
-  MacroItem,
-  NormalizedTurn,
-  FileDiffSummary,
-  SkillEntry,
+  AccentName,
   AgentRecipeSummary,
+  AgentStatus,
+  Card,
+  ClientConfig,
+  InteractionCardData,
+  NormalizedTurn,
+  QueuedPrompt,
+  SessionInfo,
+  SessionStats,
+  SkillEntry,
+  ThemeMode,
+  TodoItem,
+  WorkingAgentSummary,
+  WorkspaceSummary,
 } from "../../../types/protocol";
-import type { SessionStats } from "../../../shared/agent-session";
-import { applyFullTheme } from "../themes";
-import { DEFAULT_MACROS } from "../../../shared/defaults";
+import { applyTheme } from "../themes";
 
-export type { MacroItem, SkillEntry, AgentRecipeSummary };
+export type { SkillEntry, AgentRecipeSummary };
+
+export type Route =
+  | { name: "home" }
+  | { name: "agents" }
+  | { name: "session"; from: "home" | "agents" }
+  | { name: "new"; workspaceId: string | null; mode: "new" | "resume" }
+  | { name: "settings" };
+
+/** mobile-ui-and-themes.md §2.3: stored in this browser only. */
+export interface FilterState {
+  statuses: Array<"blocked" | "working" | "done" | "idle" | "terminal">;
+  agents: string[];
+  showTerminals: boolean;
+  showIdle: boolean;
+}
+
+export const EMPTY_FILTER: FilterState = { statuses: [], agents: [], showTerminals: true, showIdle: true };
 
 export interface AppState {
   connected: boolean;
   /** False once the server says this browser holds no valid pairing. */
   paired: boolean;
   lastError: { code: string; message: string; at: number } | null;
+  toast: { message: string; at: number } | null;
   updateAvailable: boolean;
+  serverVersion: string | null;
   herdrConnected: boolean;
   lastSyncTimestamp: number;
-  serverHost: string;
   workspaces: WorkspaceSummary[];
   workingAgents: WorkingAgentSummary[];
   activeWorkspaceId: string | null;
@@ -34,32 +54,26 @@ export interface AppState {
   activePaneId: string | null;
   agentStatus: AgentStatus;
   cards: Card[];
+  pendingInteraction: InteractionCardData | null;
+  rawScreen: string;
   normalizedTurns: NormalizedTurn[];
   sessionStats: SessionStats | null;
   sessionTitle: string | null;
-  pendingInteraction: InteractionCardData | null;
-  rawScreen: string;
-  drawerOpen: boolean;
-  terminalSheetOpen: boolean;
-  diffDrawerOpen: boolean;
-  newTabModalOpen: boolean;
-  activeAgentsModalOpen: boolean;
-  settingsModalOpen: boolean;
-  settingsTab: "appearance" | "macros" | "pairing" | "pwa";
-  canInstallPWA: boolean;
-  themeId: string;
-  themeKey: string;
-  themeMode: "system" | "light" | "dark";
-  displayDensity: "compact" | "aggregated" | "detailed";
-  showScrollControls: boolean;
-  showMacroDock: boolean;
-  confirmCtrlC: boolean;
-  closeTabConfirmModalOpen: boolean;
-  tabToClose: { tabId: string; label: string } | null;
-  sessionMenuOpen: boolean;
-  macros: MacroItem[];
+  todos: TodoItem[] | null;
+  session: SessionInfo | null;
+  queue: QueuedPrompt[];
   skills: SkillEntry[];
   recipes: Record<string, AgentRecipeSummary>;
+  themeMode: ThemeMode;
+  accent: AccentName;
+  /** null: follow the system's reduce-transparency setting (§9.2). */
+  reduceTransparency: boolean | null;
+  route: Route;
+  terminalOpen: boolean;
+  filter: FilterState;
+  collapsed: Record<string, boolean>;
+  unread: Record<string, boolean>;
+  canInstallPWA: boolean;
 }
 
 /** localStorage can throw (private mode, blocked site data); preferences then fall back to defaults. */
@@ -71,22 +85,36 @@ export function readPref(key: string): string | null {
   }
 }
 
-export function writePref(key: string, value: string): void {
+export function writePref(key: string, value: string | null): void {
   try {
-    localStorage.setItem(key, value);
+    if (value === null) localStorage.removeItem(key);
+    else localStorage.setItem(key, value);
   } catch {
-    // per-browser convenience only; the server copy in config.json is authoritative
+    // per-browser convenience only
   }
 }
+
+function readJson<T>(key: string, fallback: T): T {
+  const raw = readPref(key);
+  if (!raw) return fallback;
+  try {
+    return { ...fallback, ...JSON.parse(raw) };
+  } catch {
+    return fallback;
+  }
+}
+
+const storedRt = readPref("pigeon_reduce_transparency");
 
 const [state, setState] = createStore<AppState>({
   connected: false,
   paired: true,
   lastError: null,
+  toast: null,
   updateAvailable: false,
+  serverVersion: null,
   herdrConnected: true,
   lastSyncTimestamp: Date.now(),
-  serverHost: typeof window !== "undefined" ? window.location.hostname : "localhost",
   workspaces: [],
   workingAgents: [],
   activeWorkspaceId: null,
@@ -94,196 +122,85 @@ const [state, setState] = createStore<AppState>({
   activePaneId: null,
   agentStatus: "idle",
   cards: [],
+  pendingInteraction: null,
+  rawScreen: "",
   normalizedTurns: [],
   sessionStats: null,
   sessionTitle: null,
-  pendingInteraction: null,
-  rawScreen: "",
-  drawerOpen: false,
-  terminalSheetOpen: false,
-  diffDrawerOpen: false,
-  newTabModalOpen: false,
-  activeAgentsModalOpen: false,
-  settingsModalOpen: false,
-  settingsTab: "appearance",
-  canInstallPWA: false,
-  themeId: "gruvbox",
-  themeKey: "gruvbox",
-  themeMode: "system",
-  displayDensity: (readPref("pigeon_density") as AppState["displayDensity"] | null) || "compact",
-  showScrollControls: readPref("pigeon_scroll_controls") !== "false",
-  showMacroDock: readPref("pigeon_show_macro_dock") !== "false",
-  confirmCtrlC: true,
-  closeTabConfirmModalOpen: false,
-  tabToClose: null,
-  sessionMenuOpen: false,
-  macros: DEFAULT_MACROS,
+  todos: null,
+  session: null,
+  queue: [],
   skills: [],
   recipes: {},
+  themeMode: (readPref("pigeon_mode") as ThemeMode | null) || "system",
+  accent: (readPref("pigeon_accent") as AccentName | null) || "blue",
+  reduceTransparency: storedRt === null ? null : storedRt === "1",
+  route: { name: "home" },
+  terminalOpen: false,
+  filter: readJson<FilterState>("pigeon_filter", EMPTY_FILTER),
+  collapsed: readJson<Record<string, boolean>>("pigeon_collapsed", {}),
+  unread: readJson<Record<string, boolean>>("pigeon_unread", {}),
+  canInstallPWA: false,
 });
 
 export { state, setState };
 
-export function setPaletteTheme(themeKey: string, mode: "system" | "light" | "dark") {
-  setState("themeKey", themeKey);
-  setState("themeMode", mode);
-  applyFullTheme(themeKey, mode);
-  writePref("pigeon_theme_key", themeKey);
-  writePref("pigeon_theme_mode", mode);
-}
-
-export function applySyncedClientConfig(config: Partial<ClientConfig>): void {
+/** Applies the appearance shared by all phones (`protocol.md` §6) and mirrors it for first paint. */
+export function applySyncedClientConfig(config: Partial<ClientConfig> | undefined): void {
   if (!config) return;
-  if (config.themeKey || config.themeMode) {
-    const key = config.themeKey || state.themeKey;
-    const mode = config.themeMode || state.themeMode;
-    setState("themeKey", key);
-    setState("themeMode", mode);
-    applyFullTheme(key, mode);
-    writePref("pigeon_theme_key", key);
-    writePref("pigeon_theme_mode", mode);
-  }
-  if (config.themeId) {
-    setState("themeId", config.themeId);
-  }
-  if (config.displayDensity) {
-    setState("displayDensity", config.displayDensity);
-    writePref("pigeon_density", config.displayDensity);
-  }
-  if (config.showScrollControls !== undefined) {
-    setState("showScrollControls", config.showScrollControls);
-    writePref("pigeon_scroll_controls", String(config.showScrollControls));
-  }
-  if (config.showMacroDock !== undefined) {
-    setState("showMacroDock", config.showMacroDock);
-    writePref("pigeon_show_macro_dock", String(config.showMacroDock));
-  }
-  if (Array.isArray(config.macros)) {
-    setState("macros", config.macros);
-  }
-  if (config.confirmCtrlC !== undefined) {
-    setState("confirmCtrlC", config.confirmCtrlC);
-  }
+  if (config.themeMode) setState("themeMode", config.themeMode);
+  if (config.accent) setState("accent", config.accent);
+  writePref("pigeon_mode", state.themeMode);
+  writePref("pigeon_accent", state.accent);
+  applyTheme(state.themeMode, state.accent);
 }
 
-export function setDisplayDensity(density: "compact" | "aggregated" | "detailed") {
-  setState("displayDensity", density);
-  writePref("pigeon_density", density);
+export function setReduceTransparency(value: boolean | null): void {
+  setState("reduceTransparency", value);
+  writePref("pigeon_reduce_transparency", value === null ? null : value ? "1" : "0");
 }
 
-export function setShowScrollControls(show: boolean) {
-  setState("showScrollControls", show);
-  writePref("pigeon_scroll_controls", String(show));
+export function systemReducesTransparency(): boolean {
+  return typeof window !== "undefined" && !!window.matchMedia?.("(prefers-reduced-transparency: reduce)").matches;
 }
 
-export function setShowMacroDock(show: boolean) {
-  setState("showMacroDock", show);
-  writePref("pigeon_show_macro_dock", String(show));
+export function setFilter(filter: FilterState): void {
+  setState("filter", filter);
+  writePref("pigeon_filter", JSON.stringify(filter));
 }
 
-export function toggleSessionMenu() {
-  setState("sessionMenuOpen", (open) => !open);
+export function filterActive(f: FilterState = state.filter): boolean {
+  return f.statuses.length > 0 || f.agents.length > 0 || !f.showTerminals || !f.showIdle;
 }
 
-export function closeSessionMenu() {
-  setState("sessionMenuOpen", false);
+export function toggleCollapsed(workspaceId: string): void {
+  setState("collapsed", workspaceId, (v) => !v);
+  writePref("pigeon_collapsed", JSON.stringify(state.collapsed));
 }
 
-export function toggleDrawer() {
-  setState("drawerOpen", (open) => !open);
+export function setUnread(paneId: string, value: boolean): void {
+  if (!!state.unread[paneId] === value) return;
+  setState("unread", (u) => {
+    const next = { ...u };
+    if (value) next[paneId] = true;
+    else delete next[paneId];
+    return next;
+  });
+  writePref("pigeon_unread", JSON.stringify(state.unread));
 }
 
-export function closeDrawer() {
-  setState("drawerOpen", false);
+export function navigate(route: Route): void {
+  setState("route", route);
 }
 
-export function toggleTerminalSheet() {
-  setState("terminalSheetOpen", (open) => !open);
+export function showToast(message: string): void {
+  setState("toast", { message, at: Date.now() });
 }
 
-export function openDiffDrawer() {
-  setState("diffDrawerOpen", true);
+export function openTerminal(): void {
+  setState("terminalOpen", true);
 }
 
-export function closeDiffDrawer() {
-  setState("diffDrawerOpen", false);
-}
-
-export function toggleDiffDrawer() {
-  setState("diffDrawerOpen", (open) => !open);
-}
-
-export function closeTerminalSheet() {
-  setState("terminalSheetOpen", false);
-}
-
-export function openSettingsModal(tab: "appearance" | "macros" | "pairing" | "pwa" = "appearance") {
-  closeDrawer();
-  setState("settingsTab", tab);
-  setState("settingsModalOpen", true);
-}
-
-export function closeSettingsModal() {
-  setState("settingsModalOpen", false);
-}
-
-export function setSettingsTab(tab: "appearance" | "macros" | "pairing" | "pwa") {
-  setState("settingsTab", tab);
-}
-
-export function openNewTabModal() {
-  setState("newTabModalOpen", true);
-}
-
-export function closeNewTabModal() {
-  setState("newTabModalOpen", false);
-}
-
-export function openPairingModal() {
-  openSettingsModal("pairing");
-}
-
-export function openActiveAgentsModal() {
-  setState("activeAgentsModalOpen", true);
-}
-
-export function closeActiveAgentsModal() {
-  setState("activeAgentsModalOpen", false);
-}
-
-export function toggleActiveAgentsModal() {
-  setState("activeAgentsModalOpen", (open) => !open);
-}
-
-export function openCloseTabConfirm(tabId: string, label: string) {
-  setState("tabToClose", { tabId, label });
-  setState("closeTabConfirmModalOpen", true);
-}
-
-export function cancelCloseTabConfirm() {
-  setState("closeTabConfirmModalOpen", false);
-  setState("tabToClose", null);
-}
-
-export function getActiveWorkspace(): WorkspaceSummary | undefined {
-  return state.workspaces.find((w) => w.id === state.activeWorkspaceId) || state.workspaces[0];
-}
-
-export function getActiveTab() {
-  const ws = getActiveWorkspace();
-  if (!ws) return undefined;
-  return ws.tabs.find((t) => t.id === state.activeTabId) || ws.tabs[0];
-}
-
-export function getSubPanes() {
-  const tab = getActiveTab();
-  return tab?.panes || [];
-}
-
-export function getBlockedAgentsCount(): number {
-  let count = 0;
-  for (const ag of state.workingAgents) {
-    if (ag.status === "blocked") count++;
-  }
-  return count;
+export function draftKey(paneId: string | null): string {
+  return `pigeon_draft_${paneId ?? "new"}`;
 }

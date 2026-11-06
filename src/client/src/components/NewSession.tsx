@@ -1,0 +1,250 @@
+import { createEffect, createSignal, For, on, Show } from "solid-js";
+import { navigate, showToast, state } from "../state/store";
+import { request, selectPane } from "../state/ws";
+import type { PastSession } from "../../../types/protocol";
+import { Composer, ModelSheet } from "./Composer";
+import { ago, agentLabel, Icon, Sheet } from "./ui";
+
+function defaultAgent(): string | null {
+  const kinds = Object.keys(state.recipes);
+  return kinds.includes("claude") ? "claude" : kinds[0] ?? null;
+}
+
+/** §7.1 and §7.2 */
+export function NewSession(props: { workspaceId: string | null; mode: "new" | "resume" }) {
+  const [mode, setMode] = createSignal(props.mode);
+  const [wsId, setWsId] = createSignal(props.workspaceId ?? state.workspaces.find((w) => w.isFocused)?.id ?? state.workspaces[0]?.id ?? null);
+  const [agent, setAgent] = createSignal(state.activePaneId && props.mode === "resume" ? currentAgent() : defaultAgent());
+  const [model, setModel] = createSignal<string | null>(null);
+  const [thinking, setThinking] = createSignal<string | null>(null);
+  const [sheet, setSheet] = createSignal<"ws" | "agent" | "model" | null>(null);
+  const [past, setPast] = createSignal<PastSession[] | null>(null);
+  const [busy, setBusy] = createSignal<string | null>(null);
+
+  function currentAgent(): string | null {
+    for (const w of state.workspaces) for (const t of w.tabs) for (const p of t.panes) if (p.id === state.activePaneId && p.agent) return p.agent;
+    return defaultAgent();
+  }
+
+  const ws = () => state.workspaces.find((w) => w.id === wsId());
+  const recipe = () => (agent() ? state.recipes[agent()!] : undefined);
+
+  createEffect(
+    on(agent, () => {
+      setModel(recipe()?.defaultModel ?? recipe()?.models[0]?.id ?? null);
+      setThinking(recipe()?.defaultThinking ?? null);
+    })
+  );
+  createEffect(() => {
+    if (!agent() && Object.keys(state.recipes).length) setAgent(defaultAgent());
+    if (!wsId() && state.workspaces.length) setWsId(state.workspaces[0].id);
+  });
+  createEffect(
+    on([mode, wsId, agent, () => state.connected], () => {
+      if (mode() !== "resume" || !wsId() || !agent() || !state.connected) return;
+      if (!recipe()?.resumable) return setPast([]);
+      setPast(null);
+      request({ type: "sessions_list", payload: { workspaceId: wsId()!, agentKind: agent()! } })
+        .then((ack) => setPast(ack.sessions ?? []))
+        .catch((e) => {
+          setPast([]);
+          showToast(e.message || "读取历史会话失败");
+        });
+    })
+  );
+
+  const go = (paneId: string) => {
+    selectPane(paneId);
+    navigate({ name: "session", from: "home" });
+  };
+
+  const create = (extra: { firstMessage?: string; resumeSessionId?: string }) => {
+    if (!wsId() || !agent()) return Promise.reject({ message: "先选择工作区和 Agent" });
+    const payload = {
+      workspaceId: wsId()!,
+      agentKind: agent()!,
+      ...(model() ? { modelId: model()! } : {}),
+      ...(thinking() && recipe()?.models.find((m) => m.id === model())?.thinkingLevels?.includes(thinking()!) ? { thinking: thinking()! } : {}),
+      ...extra,
+    };
+    return request({ type: "create_tab_and_agent", payload }).then((ack) => go(ack.paneId));
+  };
+
+  const thinkingLabel = () => (thinking() ? ` · ${thinking()}` : "");
+
+  return (
+    <div class="page">
+      <div class="hdr">
+        <button class="cbtn" aria-label="返回" onClick={() => navigate({ name: "home" })}>
+          <Icon name="chevL" />
+        </button>
+        <div class="ht">
+          <div class="t">新会话</div>
+        </div>
+        <div style={{ width: "44px" }} />
+      </div>
+      <div style={{ padding: "0 16px" }}>
+        <div class="seg">
+          <button class={mode() === "new" ? "on" : ""} onClick={() => setMode("new")}>
+            新建
+          </button>
+          <button class={mode() === "resume" ? "on" : ""} onClick={() => setMode("resume")}>
+            恢复
+          </button>
+        </div>
+        <div class="chipr" style={{ "margin-top": "10px", "flex-wrap": "wrap" }}>
+          <button class="chip" onClick={() => setSheet("ws")}>
+            <Icon name="folder" />
+            {ws()?.label ?? "选择工作区"}
+            <Icon name="chevD" />
+          </button>
+          <button class="chip" onClick={() => setSheet("agent")}>
+            <Icon name="spark" />
+            {agent() ? agentLabel(agent()) : "Agent"}
+            <Icon name="chevD" />
+          </button>
+          <Show when={mode() === "new" && recipe()?.models.length}>
+            <button class="chip" onClick={() => setSheet("model")}>
+              <Icon name="layers" />
+              {(recipe()!.models.find((m) => m.id === model())?.label ?? "默认模型") + thinkingLabel()}
+              <Icon name="chevD" />
+            </button>
+          </Show>
+        </div>
+      </div>
+
+      <div class="scroll">
+        <Show
+          when={mode() === "resume"}
+          fallback={
+            <div class="newempty">
+              <div class="logo">P</div>
+              <div class="big">开始新会话</div>
+              <div class="mono" style={{ "font-size": "13px", "overflow-wrap": "anywhere" }}>
+                {ws()?.folder ?? ""}
+              </div>
+              <p class="note" style={{ "margin-top": "14px" }}>
+                发送第一条消息后，会在电脑上的 Herdr 里新开一个标签页。
+              </p>
+            </div>
+          }
+        >
+          <div class="reslist">
+            <Show when={recipe()?.resumable} fallback={<p class="note">{agentLabel(agent())} 不支持恢复历史会话。</p>}>
+              <Show when={past()} fallback={<div class="newempty"><span class="spin" style={{ margin: "0 auto" }} /></div>}>
+                <Show when={past()!.length} fallback={<p class="note">这个工作区还没有 {agentLabel(agent())} 的历史会话。</p>}>
+                  <p class="note">恢复会在电脑上新开一个标签页。</p>
+                  <div class="card">
+                    <For each={past()!}>
+                      {(s) => (
+                        <button
+                          class="li"
+                          disabled={!!busy()}
+                          onClick={() => {
+                            setBusy(s.id);
+                            create({ resumeSessionId: s.id })
+                              .catch((e) => showToast(e.message || "恢复失败"))
+                              .finally(() => setBusy(null));
+                          }}
+                        >
+                          <Icon name="clock" />
+                          <div class="tx">
+                            <div style={{ overflow: "hidden", "text-overflow": "ellipsis", "white-space": "nowrap" }}>{s.title || "（无标题）"}</div>
+                            <small>{ago(s.updatedAt)}</small>
+                          </div>
+                          <Show when={busy() === s.id} fallback={<Icon name="chevR" sm />}>
+                            <span class="spin" />
+                          </Show>
+                        </button>
+                      )}
+                    </For>
+                  </div>
+                </Show>
+              </Show>
+            </Show>
+          </div>
+        </Show>
+        <div style={{ height: "120px" }} />
+      </div>
+
+      <Show when={mode() === "new"}>
+        <div class="dock">
+          <Composer draftId={null} placeholder="第一条消息…" onSend={(text) => create({ firstMessage: text })} />
+        </div>
+      </Show>
+
+      <Show when={sheet() === "ws"}>
+        <Sheet title="工作区" onClose={() => setSheet(null)}>
+          <div class="card">
+            <For each={state.workspaces}>
+              {(w) => (
+                <button
+                  class="li"
+                  onClick={() => {
+                    setWsId(w.id);
+                    setSheet(null);
+                  }}
+                >
+                  <Icon name="folder" />
+                  <div class="tx">
+                    {w.label}
+                    <small class="mono">{w.folder}</small>
+                  </div>
+                  <Show when={w.id === wsId()}>
+                    <span class="ck">
+                      <Icon name="check" />
+                    </span>
+                  </Show>
+                </button>
+              )}
+            </For>
+          </div>
+          <p class="note">新工作区需要在电脑上的 Herdr 里创建。</p>
+        </Sheet>
+      </Show>
+      <Show when={sheet() === "agent"}>
+        <Sheet title="Agent" onClose={() => setSheet(null)}>
+          <div class="card">
+            <For each={Object.values(state.recipes)}>
+              {(r) => (
+                <button
+                  class="li"
+                  onClick={() => {
+                    setAgent(r.kind);
+                    setSheet(null);
+                  }}
+                >
+                  <Icon name="spark" />
+                  <div class="tx">{r.label}</div>
+                  <Show when={r.kind === agent()}>
+                    <span class="ck">
+                      <Icon name="check" />
+                    </span>
+                  </Show>
+                </button>
+              )}
+            </For>
+          </div>
+        </Sheet>
+      </Show>
+      <Show when={sheet() === "model"}>
+        <ModelSheet
+          recipe={recipe()}
+          model={model()}
+          thinking={thinking()}
+          canSwitchModel
+          canSwitchThinking
+          onClose={() => setSheet(null)}
+          onPick={(c) => {
+            if (c.modelId) {
+              setModel(c.modelId);
+              const levels = recipe()?.models.find((m) => m.id === c.modelId)?.thinkingLevels ?? [];
+              if (thinking() && !levels.includes(thinking()!)) setThinking(null);
+            }
+            if (c.thinking) setThinking(c.thinking);
+          }}
+        />
+      </Show>
+    </div>
+  );
+}

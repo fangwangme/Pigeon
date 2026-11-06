@@ -1,9 +1,10 @@
-import { state, setState, applySyncedClientConfig, openPairingModal, toggleTerminalSheet } from "./store";
-import type { ClientMessage, ServerMessage, SnapshotPayload, PaneStatePayload, ClientConfig } from "../../../types/protocol";
+import { state, setState, applySyncedClientConfig, openTerminal, setUnread, showToast } from "./store";
+import type { ClientMessage, ServerMessage, SnapshotPayload, PaneStatePayload, ClientConfig, AgentStatus } from "../../../types/protocol";
 
 const PROTOCOL_VERSION = "1.0.0";
 // Close codes after which reconnecting cannot help (protocol.md §2.2).
 const TERMINAL_CLOSE_CODES = new Set([4401, 4403, 4409, 1008]);
+const RECONNECT_MS = 3000;
 
 let socket: WebSocket | null = null;
 let pingInterval: ReturnType<typeof setInterval> | null = null;
@@ -14,7 +15,8 @@ let configVersion = 0;
 // The client bundle this page was loaded with, as named by its first `welcome` (protocol.md §3.2).
 let loadedBuildId: string | null = null;
 const paneRevisions = new Map<string, number>();
-const RECONNECT_MS = 3000;
+const lastStatus = new Map<string, AgentStatus>();
+const pending = new Map<string, { resolve: (p: any) => void; reject: (e: { code: string; message: string }) => void }>();
 
 function scheduleReconnect(): void {
   if (reconnectTimer) clearTimeout(reconnectTimer);
@@ -32,14 +34,14 @@ export async function checkPairingFromUrlHash(): Promise<void> {
   // Purge the token from history before anything else (security-and-pairing.md §2).
   window.history.replaceState(null, "", "/");
   const ok = await pairWithCode(code);
-  if (!ok) openPairingModal();
+  if (!ok) setState("paired", false);
 }
 
 export async function pairWithCode(code: string): Promise<boolean> {
   const res = await fetch("/api/pair", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ code, deviceName: navigator.userAgent.includes("Android") ? "Android" : "Mobile Chrome" }),
+    body: JSON.stringify({ code, deviceName: navigator.userAgent.includes("Android") ? "Android" : "Phone" }),
   });
   const data = await res.json();
   return !!data.success;
@@ -64,7 +66,6 @@ export async function initWebSocket(): Promise<void> {
   }
   if (!paired) {
     setState("paired", false);
-    openPairingModal();
     return;
   }
   setState("paired", true);
@@ -108,10 +109,11 @@ export async function initWebSocket(): Promise<void> {
     setState("connected", false);
     if (pingInterval) clearInterval(pingInterval);
     pingInterval = null;
+    for (const p of pending.values()) p.reject({ code: "ERR_OFFLINE", message: "连接已断开" });
+    pending.clear();
     if (TERMINAL_CLOSE_CODES.has(event.code)) {
       if (reconnectTimer) clearTimeout(reconnectTimer);
-      setState("paired", event.code !== 4401 && event.code !== 4403 && event.code !== 1008);
-      if (event.code !== 4409) openPairingModal();
+      setState("paired", event.code === 4409);
       return;
     }
     // An HTTP 401 on the upgrade surfaces as a plain close; initWebSocket re-checks pairing first.
@@ -130,9 +132,13 @@ function resetPaneView(paneId: string): void {
     normalizedTurns: [],
     sessionStats: null,
     sessionTitle: null,
+    todos: null,
+    session: null,
+    queue: [],
     pendingInteraction: null,
     rawScreen: "",
     skills: [],
+    terminalOpen: false,
   });
 }
 
@@ -151,6 +157,22 @@ function applyPaneState(p: PaneStatePayload): void {
   });
 }
 
+/** mobile-ui-and-themes.md §2.1: a pane that finished while this phone was not looking is unread. */
+function trackUnread(snap: SnapshotPayload): void {
+  const viewing = typeof document === "undefined" || document.visibilityState === "visible" ? state.activePaneId : null;
+  for (const w of snap.workspaces) {
+    for (const t of w.tabs) {
+      for (const p of t.panes) {
+        const prev = lastStatus.get(p.id);
+        lastStatus.set(p.id, p.agentStatus);
+        if (p.agentStatus === "done" && prev && prev !== "done" && p.id !== viewing) setUnread(p.id, true);
+      }
+    }
+  }
+  const alive = new Set(snap.workspaces.flatMap((w) => w.tabs.flatMap((t) => t.panes.map((p) => p.id))));
+  for (const id of Object.keys(state.unread)) if (!alive.has(id)) setUnread(id, false);
+}
+
 /** Exported for tests; the socket's onmessage is the only production caller. */
 export function handleServerMessage(msg: ServerMessage): void {
   switch (msg.type) {
@@ -164,6 +186,7 @@ export function handleServerMessage(msg: ServerMessage): void {
       configVersion = 0;
       applySyncedClientConfig(msg.payload.clientConfig);
       setState("recipes", msg.payload.recipes);
+      setState("serverVersion", msg.payload.serverVersion);
       return;
 
     case "skills_sync":
@@ -183,28 +206,11 @@ export function handleServerMessage(msg: ServerMessage): void {
       applySyncedClientConfig(msg.payload.client);
       return;
 
-    case "snapshot_update": {
-      const snap: SnapshotPayload = msg.payload;
-      setState("workspaces", snap.workspaces);
-      setState("workingAgents", snap.workingAgents);
-      const activeStillExists = snap.workspaces.some((w) => w.tabs.some((t) => t.panes.some((p) => p.id === state.activePaneId)));
-      if (state.activePaneId && activeStillExists) return;
-
-      // First snapshot (or the active pane closed): prefer a pane that needs attention.
-      const ws =
-        snap.workspaces.find((w) => w.hasWarn) ||
-        snap.workspaces.find((w) => w.hasWorking) ||
-        snap.workspaces.find((w) => w.isFocused) ||
-        snap.workspaces[0];
-      if (!ws) return;
-      const tab =
-        ws.tabs.find((t) => t.panes.some((p) => p.agentStatus === "working" || p.agentStatus === "blocked")) ||
-        ws.tabs.find((t) => t.id === ws.activeTabId) ||
-        ws.tabs[0];
-      const pane = tab?.panes.find((p) => p.agentStatus === "working" || p.agentStatus === "blocked") || tab?.panes[0];
-      if (pane) selectPane(pane.id);
+    case "snapshot_update":
+      trackUnread(msg.payload);
+      setState("workspaces", msg.payload.workspaces);
+      setState("workingAgents", msg.payload.workingAgents);
       return;
-    }
 
     case "pane_state":
       applyPaneState(msg.payload);
@@ -212,14 +218,18 @@ export function handleServerMessage(msg: ServerMessage): void {
 
     case "normalized_turns":
       if (msg.payload.paneId !== state.activePaneId) return;
-      setState("normalizedTurns", msg.payload.turns);
-      setState("sessionStats", msg.payload.sessionStats || null);
-      setState("sessionTitle", msg.payload.sessionTitle || null);
+      setState({
+        normalizedTurns: msg.payload.turns,
+        sessionStats: msg.payload.sessionStats || null,
+        sessionTitle: msg.payload.sessionTitle || null,
+        todos: msg.payload.todos || null,
+        session: msg.payload.session,
+      });
       return;
 
     case "turns_delta": {
       if (msg.payload.paneId !== state.activePaneId) return;
-      const { sinceTurnIndex, appendTurns, patchLastTurn, sessionStats, sessionTitle } = msg.payload;
+      const { sinceTurnIndex, appendTurns, patchLastTurn, sessionStats, sessionTitle, todos, session } = msg.payload;
       let current = [...state.normalizedTurns];
       if (sinceTurnIndex === 0 && !patchLastTurn) {
         current = appendTurns;
@@ -230,27 +240,43 @@ export function handleServerMessage(msg: ServerMessage): void {
       setState("normalizedTurns", current);
       if (sessionStats) setState("sessionStats", sessionStats);
       if (sessionTitle) setState("sessionTitle", sessionTitle);
+      if (todos) setState("todos", todos);
+      if (session) setState("session", session);
       return;
     }
+
+    case "prompt_queue":
+      if (msg.payload.paneId === state.activePaneId) setState("queue", msg.payload.items);
+      return;
 
     case "ack": {
       const p = msg.payload;
+      const waiter = pending.get(msg.replyTo);
+      if (waiter) {
+        pending.delete(msg.replyTo);
+        waiter.resolve(p);
+      }
       if (p.approved === false && p.interactionId === state.pendingInteraction?.interactionId) {
-        // The prompt is still on screen after the key was sent: hand over to the raw terminal.
-        if (!state.terminalSheetOpen) toggleTerminalSheet();
+        // The prompt is still on screen after the key was sent: hand over to the terminal view.
+        openTerminal();
       }
       if (typeof p.version === "number") configVersion = Math.max(configVersion, p.version);
-      if (p.paneId && p.tabId) selectPane(p.paneId); // a tab we just created
       return;
     }
 
-    case "error":
+    case "error": {
+      const waiter = msg.replyTo ? pending.get(msg.replyTo) : undefined;
+      if (waiter) {
+        pending.delete(msg.replyTo!);
+        waiter.reject(msg.error);
+      }
       console.error("[Pigeon] server error", msg.error.code, msg.error.message);
-      setState("lastError", { code: msg.error.code, message: msg.error.message, at: Date.now() });
+      setState("lastError", { code: msg.error.code, message: errorText(msg.error.code, msg.error.message), at: Date.now() });
       if (msg.error.code === "ERR_INTERACTION_STALE" && state.activePaneId) {
         sendMessage({ type: "select_view", id: nextId(), payload: { paneId: state.activePaneId } });
       }
       return;
+    }
 
     case "pong":
       lastPongTime = Date.now();
@@ -258,18 +284,51 @@ export function handleServerMessage(msg: ServerMessage): void {
   }
 }
 
+/** The user-facing text for an error code (protocol.md §8). */
+function errorText(code: string, message: string): string {
+  switch (code) {
+    case "ERR_AGENT_BLOCKED":
+      return "Agent 正在等你回答，先处理它的问题";
+    case "ERR_AGENT_NOT_READY":
+      return "Agent 还没准备好，稍后再试";
+    case "ERR_TIMEOUT":
+      return "Herdr 没有及时响应，先看看会话再重试";
+    case "ERR_NOT_FOUND":
+      return "找不到它了，可能已经关闭";
+    case "ERR_INTERACTION_STALE":
+      return "这个问题已经变了，已刷新";
+    default:
+      return message;
+  }
+}
+
 export function sendMessage(msg: ClientMessage): boolean {
   if (!socket || socket.readyState !== WebSocket.OPEN) {
-    setState("lastError", { code: "ERR_OFFLINE", message: "未连接到电脑，消息没有发出", at: Date.now() });
+    setState("lastError", { code: "ERR_OFFLINE", message: "离线，消息没有发出，草稿已保留", at: Date.now() });
     return false;
   }
   socket.send(JSON.stringify(msg));
   return true;
 }
 
-export function sendPrompt(text: string): boolean {
-  if (!state.activePaneId) return false;
-  return sendMessage({ type: "agent_prompt", id: nextId(), payload: { targetPaneId: state.activePaneId, text } });
+type Command = Exclude<ClientMessage, { type: "ping" } | { type: "presence_update" } | { type: "hello" }>;
+type WithoutId<T> = T extends any ? Omit<T, "id"> : never;
+
+/** Sends a command and resolves with its ack payload; rejects with the error (or offline). */
+export function request(msg: WithoutId<Command>): Promise<any> {
+  const id = nextId();
+  return new Promise((resolve, reject) => {
+    if (!sendMessage({ ...msg, id } as ClientMessage)) {
+      reject({ code: "ERR_OFFLINE", message: "离线" });
+      return;
+    }
+    pending.set(id, { resolve, reject });
+  });
+}
+
+export function sendPrompt(text: string, attachments: string[] = []): Promise<any> {
+  if (!state.activePaneId) return Promise.reject({ code: "ERR_NOT_FOUND", message: "no pane" });
+  return request({ type: "agent_prompt", payload: { targetPaneId: state.activePaneId, text, ...(attachments.length ? { attachments } : {}) } });
 }
 
 export function sendKeys(keys: string[]): void {
@@ -277,16 +336,12 @@ export function sendKeys(keys: string[]): void {
   sendMessage({ type: "agent_send_keys", id: nextId(), payload: { targetPaneId: state.activePaneId, keys } });
 }
 
-export function respondInteraction(interactionId: string, optionId: string, fingerprint: string): void {
-  if (!state.activePaneId) return;
-  sendMessage({
-    type: "interaction_respond",
-    id: nextId(),
-    payload: { targetPaneId: state.activePaneId, interactionId, optionId, fingerprint },
-  });
+export function respondInteraction(interactionId: string, optionId: string, fingerprint: string): Promise<any> {
+  if (!state.activePaneId) return Promise.reject({ code: "ERR_NOT_FOUND", message: "no pane" });
+  return request({ type: "interaction_respond", payload: { targetPaneId: state.activePaneId, interactionId, optionId, fingerprint } });
 }
 
-/** The one navigation entry point: workspace and tab follow from the pane. */
+/** The one navigation entry point into a pane: workspace and tab follow from it. */
 export function selectPane(paneId: string): void {
   if (paneId !== state.activePaneId) resetPaneView(paneId);
   for (const w of state.workspaces) {
@@ -296,32 +351,27 @@ export function selectPane(paneId: string): void {
       break;
     }
   }
+  setUnread(paneId, false);
   sendMessage({ type: "select_view", id: nextId(), payload: { paneId } });
   reportPresence();
 }
 
-export function createTab(workspaceId: string, agentKind: string, options?: { modelId?: string; thinking?: string; cwd?: string }): void {
-  sendMessage({
-    type: "create_tab_and_agent",
-    id: nextId(),
-    payload: { workspaceId, agentKind, modelId: options?.modelId, thinking: options?.thinking, cwd: options?.cwd },
-  });
-}
-
-export function closeTab(tabId: string): void {
-  sendMessage({ type: "close_tab", id: nextId(), payload: { tabId } });
-}
-
-export function fetchSkills(): void {
-  sendMessage({ type: "skills_get", id: nextId() });
-}
-
 export function sendConfigPatch(patch: Partial<ClientConfig>): void {
+  applySyncedClientConfig(patch);
   sendMessage({ type: "config_patch", id: nextId(), payload: { client: patch } });
 }
 
-export function fetchConfig(): void {
-  sendMessage({ type: "config_get", id: nextId() });
+/** protocol.md §7: uploads go over HTTP before the prompt names them. */
+export async function uploadFile(file: File): Promise<{ id: string; name: string; size: number; mime: string }> {
+  const res = await fetch("/api/uploads", {
+    method: "POST",
+    credentials: "same-origin",
+    headers: { "Content-Type": file.type || "application/octet-stream", "X-Pigeon-Filename": encodeURIComponent(file.name || "photo.jpg") },
+    body: file,
+  });
+  if (res.status === 413) throw new Error("文件超过 20 MB");
+  if (!res.ok) throw new Error(`上传失败（${res.status}）`);
+  return res.json();
 }
 
 export function reportPresence(): void {
@@ -330,8 +380,15 @@ export function reportPresence(): void {
     JSON.stringify({
       type: "presence_update",
       isVisible: document.visibilityState === "visible",
-      viewingPaneId: state.activePaneId,
+      viewingPaneId: state.route.name === "session" ? state.activePaneId : null,
     } satisfies ClientMessage)
+  );
+}
+
+export function copyText(text: string): void {
+  navigator.clipboard?.writeText(text).then(
+    () => showToast("已复制"),
+    () => showToast("复制失败")
   );
 }
 

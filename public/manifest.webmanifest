@@ -10,8 +10,8 @@
     "window-controls-overlay"
   ],
   "orientation": "portrait-primary",
-  "background_color": "#282828",
-  "theme_color": "#282828",
+  "background_color": "#111113",
+  "theme_color": "#111113",
   "categories": [
     "developer",
     "utilities",

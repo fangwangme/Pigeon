@@ -1,18 +1,16 @@
 import { render } from "solid-js/web";
-import { onMount, Show, createEffect, createSignal } from "solid-js";
-import { Header } from "./components/Header";
-import { Drawer } from "./components/Drawer";
-import { CardFeed } from "./components/CardFeed";
-import { MacroDock } from "./components/MacroDock";
-import { TerminalSheet } from "./components/TerminalSheet";
-import { NewTabModal } from "./components/NewTabModal";
-import { ActiveAgentsModal } from "./components/ActiveAgentsModal";
-import { SettingsModal } from "./components/SettingsModal";
-import { DiffDrawer } from "./components/DiffDrawer";
-import { CloseTabModal } from "./components/CloseTabModal";
-import { state, setState, setPaletteTheme, readPref } from "./state/store";
-import { applyFullTheme } from "./themes";
-import { initWebSocket, checkPairingFromUrlHash } from "./state/ws";
+import { createEffect, createSignal, Match, on, onMount, Show, Switch } from "solid-js";
+import "./styles.css";
+import { setState, state, systemReducesTransparency } from "./state/store";
+import { applyTheme } from "./themes";
+import { checkPairingFromUrlHash, initWebSocket, reportPresence } from "./state/ws";
+import { AgentsPage, Home } from "./components/Home";
+import { NewSession } from "./components/NewSession";
+import { Overlays } from "./components/overlays";
+import { SessionPage } from "./components/SessionPage";
+import { Pairing, Settings } from "./components/Settings";
+
+applyTheme(state.themeMode, state.accent);
 
 let waitingWorker: ServiceWorker | null = null;
 
@@ -51,106 +49,72 @@ function registerServiceWorker() {
   });
 }
 
-function ErrorToast() {
-  const [visible, setVisible] = createSignal(false);
+/** §8.3: one toast line for notices and failed commands. */
+function Toast() {
+  const [text, setText] = createSignal<string | null>(null);
   let timer: ReturnType<typeof setTimeout> | undefined;
-  createEffect(() => {
-    if (!state.lastError) return;
-    setVisible(true);
+  const show = (t: string) => {
+    setText(t);
     clearTimeout(timer);
-    timer = setTimeout(() => setVisible(false), 4000);
-  });
+    timer = setTimeout(() => setText(null), 3200);
+  };
+  createEffect(on(() => state.toast, (t) => t && show(t.message), { defer: true }));
+  createEffect(on(() => state.lastError, (e) => e && show(e.message), { defer: true }));
   return (
-    <Show when={visible() && state.lastError}>
-      <div
-        role="alert"
-        onClick={() => setVisible(false)}
-        style={{
-          position: "fixed",
-          left: "12px",
-          right: "12px",
-          bottom: "calc(80px + env(safe-area-inset-bottom))",
-          "z-index": 80,
-          padding: "10px 12px",
-          "border-radius": "10px",
-          background: "var(--delbg)",
-          color: "#fff",
-          "font-size": "13px",
-          "box-shadow": "0 6px 20px rgba(0,0,0,0.3)",
-        }}
-      >
-        {state.lastError!.message}
+    <Show when={text()}>
+      <div class="toast" role="status" onClick={() => setText(null)}>
+        {text()}
       </div>
     </Show>
   );
 }
 
-function UpdateBanner() {
-  return (
-    <Show when={state.updateAvailable}>
-      <button
-        onClick={applyUpdate}
-        style={{
-          border: 0,
-          padding: "8px 12px",
-          background: "var(--accentbg)",
-          color: "var(--accent)",
-          "font-size": "13px",
-          "font-weight": 600,
-          "text-align": "left",
-          cursor: "pointer",
-        }}
-      >
-        有新版本可用 · 点击刷新
-      </button>
-    </Show>
-  );
-}
-
 function App() {
+  const [systemReduce, setSystemReduce] = createSignal(systemReducesTransparency());
   onMount(async () => {
-    await checkPairingFromUrlHash();
-
-    setPaletteTheme(readPref("pigeon_theme_key") || "gruvbox", (readPref("pigeon_theme_mode") as "system" | "light" | "dark") || "system");
-    window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => {
-      if (state.themeMode === "system") applyFullTheme(state.themeKey, "system");
-    });
-
-    await initWebSocket();
-    registerServiceWorker();
-
+    window.matchMedia("(prefers-color-scheme: light)").addEventListener("change", () => applyTheme(state.themeMode, state.accent));
+    window.matchMedia("(prefers-reduced-transparency: reduce)").addEventListener?.("change", (e) => setSystemReduce(e.matches));
     window.addEventListener("beforeinstallprompt", (e) => {
       e.preventDefault();
       (window as any).__pigeonDeferredPrompt = e;
       setState("canInstallPWA", true);
     });
+    await checkPairingFromUrlHash();
+    await initWebSocket();
+    registerServiceWorker();
   });
+  createEffect(on(() => state.route.name, () => reportPresence(), { defer: true }));
+  const solid = () => state.reduceTransparency ?? systemReduce();
 
   return (
-    <div
-      style={{
-        display: "flex",
-        "flex-direction": "column",
-        height: "100%",
-        width: "100%",
-        overflow: "hidden",
-        background: "var(--bg)",
-        color: "var(--fg)",
-        "font-family": "Inter, 'PingFang SC', 'Noto Sans SC', system-ui, sans-serif",
-      }}
-    >
-      <UpdateBanner />
-      <Header />
-      <Drawer />
-      <CardFeed />
-      <MacroDock />
-      <TerminalSheet />
-      <NewTabModal />
-      <ActiveAgentsModal />
-      <SettingsModal />
-      <DiffDrawer />
-      <CloseTabModal />
-      <ErrorToast />
+    <div class={solid() ? "solid" : ""} style={{ height: "100%" }}>
+      <Switch>
+        <Match when={!state.paired}>
+          <Pairing />
+        </Match>
+        <Match when={state.route.name === "home"}>
+          <Home />
+        </Match>
+        <Match when={state.route.name === "agents"}>
+          <AgentsPage />
+        </Match>
+        <Match when={state.route.name === "session"}>
+          <SessionPage />
+        </Match>
+        <Match when={state.route.name === "new" && state.route} keyed>
+          {(r) => <NewSession workspaceId={(r as { workspaceId: string | null }).workspaceId} mode={(r as { mode: "new" | "resume" }).mode} />}
+        </Match>
+        <Match when={state.route.name === "settings"}>
+          <Settings />
+        </Match>
+      </Switch>
+      <Overlays />
+      <Show when={state.updateAvailable}>
+        <button class="toast update" onClick={applyUpdate}>
+          有新版本 · <b>重新加载</b>
+        </button>
+      </Show>
+      <Toast />
     </div>
   );
 }
