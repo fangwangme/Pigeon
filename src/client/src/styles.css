@@ -54,8 +54,8 @@ svg.i.sm { width: 16px; height: 16px; }
 .wsh .tg2 { display: flex; align-items: center; gap: 8px; flex: 1; min-width: 0; text-align: left; min-height: 44px; }
 .wsh .n { color: var(--fg); font-weight: 650; font-size: 15.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .wsh .m { font-size: 13px; color: var(--faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: inline-flex; align-items: center; gap: 4px; }
-.wsh .chev { transition: transform .15s; color: var(--faint); }
-.wsh .chev.shut { transform: rotate(-90deg); }
+.chev { display: inline-grid; place-items: center; transition: transform .15s; color: var(--faint); flex: none; }
+.chev.shut { transform: rotate(-90deg); }
 .mini { width: 36px; height: 36px; border-radius: 50%; background: var(--surface); border: 1px solid var(--line); display: grid; place-items: center; flex: none; }
 .rowwrap { position: relative; overflow: hidden; border-radius: 12px; }
 .rowacts { position: absolute; right: 0; top: 0; bottom: 0; display: flex; }
@@ -69,8 +69,12 @@ svg.i.sm { width: 16px; height: 16px; }
 .srow .s { font-size: 13px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .srow .p { font-size: 13px; color: var(--warn); margin-top: 1px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .srow .udot { margin-top: 8px; }
+.srow .s.who { display: flex; align-items: center; gap: 8px; margin-top: 3px; }
+.srow .ag { flex: none; font-size: 12px; font-weight: 600; line-height: 18px; color: var(--accent); background: var(--accentbg); border-radius: 6px; padding: 0 7px; }
+.srow .wsn { display: inline-flex; align-items: center; gap: 4px; min-width: 0; color: var(--faint); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.srow .wsn svg.i { flex: none; }
 .gh { display: flex; align-items: center; gap: 8px; font-size: 13.5px; font-weight: 650; margin: 18px 0 4px; min-height: 36px; width: 100%; text-align: left; }
-.gh .c { color: var(--faint); font-weight: 500; }
+.gh .c { color: var(--muted); font-weight: 600; font-size: 12px; line-height: 18px; background: rgba(127,127,127,.16); border-radius: 9px; padding: 0 7px; }
 .bottombar { position: fixed; left: 16px; right: 16px; bottom: calc(20px + env(safe-area-inset-bottom)); display: flex; justify-content: space-between; align-items: center; z-index: 15; pointer-events: none; }
 .bottombar > * { pointer-events: auto; }
 .fab { height: 52px; border-radius: 26px; background: var(--fg); color: var(--bg); display: inline-flex; align-items: center; gap: 10px; padding: 0 22px 0 18px; font-weight: 600; font-size: 16px; box-shadow: 0 8px 24px rgba(0,0,0,.3); }
@@ -216,6 +220,8 @@ svg.i.sm { width: 16px; height: 16px; }
 .li .ck { color: var(--accent); }
 .li.red { color: var(--danger); }
 .li.off { opacity: .5; }
+.li.more { color: var(--accent); font-size: 14.5px; min-height: 44px; }
+.li.more .chev { color: var(--accent); }
 .tile3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
 .tile3 button, .tile3 label { background: var(--surface); border: 1px solid var(--line); border-radius: 20px; height: 96px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; font-size: 15px; cursor: pointer; }
 .tile3 svg.i { width: 24px; height: 24px; }

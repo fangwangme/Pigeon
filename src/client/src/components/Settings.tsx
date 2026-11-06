@@ -5,6 +5,9 @@ import { ACCENTS, resolveMode } from "../themes";
 import type { AccentName, DeviceInfo, ThemeMode } from "../../../types/protocol";
 import { ago, Icon } from "./ui";
 
+/** §8.1: the newest devices shown before the rest are folded away. */
+const DEVICES_SHOWN = 5;
+
 const MODES: Array<[ThemeMode, string]> = [
   ["system", "跟随系统"],
   ["light", "浅色"],
@@ -21,6 +24,9 @@ function installApp(): void {
 /** §8.1 */
 export function Settings() {
   const [devices, setDevices] = createSignal<DeviceInfo[] | null>(null);
+  const [allDevices, setAllDevices] = createSignal(false);
+  const shownDevices = () => (allDevices() ? devices()! : devices()!.slice(0, DEVICES_SHOWN));
+  const hiddenCount = () => Math.max(0, (devices()?.length ?? 0) - DEVICES_SHOWN);
   const reduce = () => state.reduceTransparency ?? systemReducesTransparency();
   const load = () =>
     request({ type: "devices_list" })
@@ -114,7 +120,7 @@ export function Settings() {
           <div class="sec">已配对的设备</div>
           <div class="card">
             <Show when={devices()} fallback={<div class="li off">{state.connected ? "读取中…" : "离线"}</div>}>
-              <For each={devices()!} fallback={<div class="li off">没有设备</div>}>
+              <For each={shownDevices()} fallback={<div class="li off">没有设备</div>}>
                 {(d) => (
                   <div class="li">
                     <Icon name="phone" />
@@ -129,6 +135,14 @@ export function Settings() {
                   </div>
                 )}
               </For>
+              <Show when={hiddenCount() > 0}>
+                <button class="li more" aria-expanded={allDevices()} onClick={() => setAllDevices(!allDevices())}>
+                  <div class="tx">{allDevices() ? "收起" : `显示其余 ${hiddenCount()} 台设备`}</div>
+                  <span class={`chev${allDevices() ? "" : " shut"}`}>
+                    <Icon name="chevD" sm />
+                  </span>
+                </button>
+              </Show>
             </Show>
           </div>
           <p class="note">

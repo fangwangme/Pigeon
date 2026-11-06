@@ -250,7 +250,8 @@ const GROUPS: Array<[RowStatus, string]> = [
 
 /** §2.2 */
 export function AgentsPage() {
-  const [shut, setShut] = createSignal<Record<string, boolean>>({ idle: true });
+  // §2.2: every group starts expanded each time the page opens.
+  const [shut, setShut] = createSignal<Record<string, boolean>>({});
   const rows = createMemo(() => agentPanes().filter((a) => passes(paneStatus(a.pane), a.pane.agent, state.filter)));
   return (
     <div class="page">
@@ -285,7 +286,7 @@ export function AgentsPage() {
               return (
                 <Show when={items().length}>
                   <button class="gh" onClick={() => setShut({ ...shut(), [status]: !shut()[status] })} aria-expanded={!shut()[status]}>
-                    <span class={`chev${shut()[status] ? " shut" : ""}`} style={{ color: "var(--faint)" }}>
+                    <span class={`chev${shut()[status] ? " shut" : ""}`}>
                       <Icon name="chevD" sm />
                     </span>
                     {label}
@@ -298,8 +299,12 @@ export function AgentsPage() {
                           <StatusIcon status={status} />
                           <div class="tx">
                             <div class="t">{r.tab.label}</div>
-                            <div class="s">
-                              {r.ws.label} · {agentLabel(r.pane.agent)}
+                            <div class="s who">
+                              <span class="ag">{agentLabel(r.pane.agent)}</span>
+                              <span class="wsn">
+                                <Icon name="folder" sm />
+                                {r.ws.label}
+                              </span>
                             </div>
                             <Show when={status === "blocked" && r.pane.summary}>
                               <div class="p">{r.pane.summary}</div>

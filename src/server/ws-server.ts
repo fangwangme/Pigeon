@@ -325,7 +325,7 @@ export class WsServer {
       }
 
       case "devices_list": {
-        const devices = (this.pairingManager?.listDevices() ?? []).map((d) => ({
+        const devices = (this.pairingManager?.listDevices() ?? []).sort((a, b) => b.createdAt - a.createdAt).map((d) => ({
           deviceId: d.deviceId,
           deviceName: d.deviceName,
           createdAt: d.createdAt,
