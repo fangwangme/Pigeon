@@ -210,7 +210,7 @@ export function SessionPage() {
   const modelChip = () => (
     <Show when={recipe()}>
       <button class="mc" onMouseDown={(e) => e.preventDefault()} onClick={() => setPanel("model")}>
-        {recipe()!.models.find((m) => m.id === modelValue())?.label ?? modelValue() ?? t("model.model")}
+        {recipe()!.models.find((m) => m.id === modelValue() || m.label === modelValue())?.label ?? modelValue() ?? t("model.model")}
         <Show when={thinkingValue()}>
           <em>· {thinkingValue()}</em>
         </Show>

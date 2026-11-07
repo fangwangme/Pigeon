@@ -1,7 +1,7 @@
 import { createMemo, createSignal, For, onCleanup, Show, type JSX } from "solid-js";
 import { draftKey, readPref, showToast, state, writePref } from "../state/store";
 import { refreshModels, uploadFile } from "../state/ws";
-import type { AgentRecipeSummary, SkillEntry } from "../../../types/protocol";
+import type { AgentRecipeSummary, ModelOption, SkillEntry } from "../../../types/protocol";
 import { Icon, Sheet } from "./ui";
 import { t, type MessageId } from "../i18n";
 
@@ -109,7 +109,8 @@ export function ModelSheet(props: {
     const q = query().trim().toLowerCase();
     return q ? models().filter((m) => m.id.toLowerCase().includes(q) || m.label.toLowerCase().includes(q)) : models();
   };
-  const current = () => models().find((m) => m.id === props.model);
+  const isMatch = (m: ModelOption) => !!props.model && (m.id === props.model || m.label === props.model);
+  const current = () => models().find(isMatch);
   const levels = () => current()?.thinkingLevels ?? [];
   const refresh = () => {
     setRefreshing(true);
@@ -146,14 +147,14 @@ export function ModelSheet(props: {
           <For each={shown()}>
             {(m) => (
               <button
-                class={`li${!props.canSwitchModel && m.id !== props.model ? " off" : ""}`}
-                onClick={() => props.canSwitchModel && m.id !== props.model && props.onPick({ modelId: m.id })}
+                class={`li${!props.canSwitchModel && !isMatch(m) ? " off" : ""}`}
+                onClick={() => props.canSwitchModel && !isMatch(m) && props.onPick({ modelId: m.id })}
               >
                 <div class="tx">
                   {m.label}
                   <small class="mono">{m.id}</small>
                 </div>
-                <Show when={m.id === props.model}>
+                <Show when={isMatch(m)}>
                   <span class="ck">
                     <Icon name="check" />
                   </span>
