@@ -161,6 +161,12 @@ The ack carries `{ "sessions": [ { "id", "title", "updatedAt" } ] }`: the agent'
 ```
 Removes the prompt from the pane's queue and sends `prompt_queue` to the viewers. A `queueId` that is no longer queued (it was already sent, or the queue was dropped) is `ERR_NOT_FOUND`.
 
+### 4.14 Refresh Model Lists (`models_refresh`)
+```json
+{ "type": "models_refresh", "id": "cli_18", "payload": {} }
+```
+Fills the model catalog again from every agent's source (`herdr-adapter.md` §7.1). The ack comes once the fill has finished and carries `{ "recipes": { … } }` in the shape of §5.7; every connected client also gets `recipes_sync` (§5.9) when a list changed.
+
 ## 5. Server Events (`server -> client`)
 
 ### 5.1 Command Acknowledgment (`ack`)
@@ -197,6 +203,9 @@ Broadcast to every client whenever the Herdr snapshot changes:
   }
 }
 ```
+
+- A tab's `label` is its Herdr name when the user gave it one. A Herdr name that is empty or only digits is a default, and the label is then the title of the session bound to the tab's primary pane (`agent-session-normalization.md` §2), else the recipe's label (user decision, 2026-11-07).
+- `agentStatus` and `status` are the reported status: a pane the daemon marks seen is `idle` (`herdr-adapter.md` §4).
 
 ### 5.4 Pane State (`pane_state`)
 Sent to the clients viewing a pane whenever its classified screen or status changes:
@@ -281,13 +290,19 @@ A pane that becomes bound or switches session (for example after the agent's `/c
 ```
 Skills are per pane: they depend on the pane's agent kind and project directory (`herdr-adapter.md` §8.3). `source` is `project`, `user`, `plugin` or `builtin`; `kind` is `skill` or `command`. A built-in command also carries `descriptionId` (`herdr-adapter.md` §8.3), and the phone shows its own text for that id, falling back to the English `description`. The client ignores skills for a pane it is no longer viewing. Choosing an entry inserts its `invocation` as prompt text.
 
-Each recipe summary also carries `resumable` (the recipe can resume a session) and `runtimeSwitch: { model, thinking }` (whether §4.9 can change each value).
+Each recipe summary also carries `resumable` (the recipe can resume a session) and `runtimeSwitch: { model, thinking }` (whether §4.9 can change each value). A recipe's `models` is that agent's list in the model catalog (`herdr-adapter.md` §7.1), complete; the phone searches it.
 
 ### 5.8 Queue (`prompt_queue`)
 ```json
 { "type": "prompt_queue", "payload": { "paneId": "w1:p2", "items": [ { "queueId": "q_1a2b3c", "text": "also run lint", "attachments": [], "createdAt": 1729650000000 } ] } }
 ```
 The pane's whole queue, oldest first. Sent on pane selection (§3.3) and to the pane's viewers whenever its queue changes.
+
+### 5.9 Recipes (`recipes_sync`)
+```json
+{ "type": "recipes_sync", "payload": { "recipes": { "codex": { "kind": "codex", "label": "Codex", "models": [ { "id": "gpt-5.5", "label": "GPT-5.5", "thinkingLevels": ["low", "medium", "high"] } ], "interruptKeys": ["esc"], "resumable": true, "runtimeSwitch": { "model": false, "thinking": false } } } } }
+```
+Every recipe summary, in the shape of §5.7. Broadcast to every client after a fill of the model catalog changed a list (`herdr-adapter.md` §7.1). It replaces the recipes the client had from `welcome` or `skills_sync`.
 
 ## 6. Configuration Synchronization Protocol
 

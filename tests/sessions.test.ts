@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdirSync, utimesSync, writeFileSync } from "node:fs";
+import { mkdirSync, readlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { AgentAdapterManager } from "../src/server/agent-adapters/index";
 import { ConfigManager } from "../src/server/config-manager";
@@ -170,6 +170,160 @@ describe("binding a pane to its session (agent-session-normalization.md §2.0)",
     const payload = turnsOf(await open("p1"));
     expect(payload.session.bound).toBe(false);
     expect(payload.turns).toEqual([]);
+  });
+});
+
+describe("following the session the agent writes (agent-session-normalization.md §2.0, issue #3)", () => {
+  /** A process that holds `first` open on fd 3 and, after one line on stdin, holds `second` instead. */
+  async function holder(first: string, second: string) {
+    const proc = Bun.spawn(["sh", "-c", 'exec 3<"$1"; read _; exec 3<&-; exec 3<"$2"; exec sleep 60', "sh", first, second], { stdin: "pipe" });
+    cleanup.push(() => proc.kill());
+    const holds = async (path: string) => {
+      const end = Date.now() + 2000;
+      while (Date.now() < end) {
+        try {
+          if (readlinkSync(`/proc/${proc.pid}/fd/3`) === path) return;
+        } catch {}
+        await Bun.sleep(10);
+      }
+      throw new Error(`process never opened ${path}`);
+    };
+    await holds(first);
+    return {
+      pid: proc.pid,
+      switchFiles: async () => {
+        proc.stdin.write("\n");
+        proc.stdin.flush();
+        await holds(second);
+      },
+    };
+  }
+
+  test("an agent whose process holds one of its session files open is bound to that file, and follows it when the process switches files (rule 1)", async () => {
+    const home = tempDir("home");
+    const proj = tempDir("proj");
+    const dir = join(home, ".codex", "sessions", "2026", "11", "07");
+    mkdirSync(dir, { recursive: true });
+    const a = join(dir, "rollout-2026-11-07T10-00-00-ca.jsonl");
+    const b = join(dir, "rollout-2026-11-07T10-05-00-cb.jsonl");
+    writeFileSync(a, jsonl([{ type: "session_meta", payload: { id: "ca", cwd: proj } }]));
+    writeFileSync(b, jsonl([{ type: "session_meta", payload: { id: "cb", cwd: proj } }]));
+    const older = (Date.now() - 30_000) / 1000;
+    utimesSync(a, older, older); // the held file is not the newest, so only the open file can name it
+    const proc = await holder(a, b);
+    const pane = { paneId: "p1", app: "codex", cwd: proj, pid: proc.pid, createdMs: Date.now() - 60_000 };
+    const { client, server } = await setup(home, [pane]);
+    expect(server.paneStore.boundSession("p1")?.sessionId).toBe("ca");
+
+    await proc.switchFiles();
+    const newer = Date.now() / 1000 + 5;
+    utimesSync(a, newer, newer); // now the released file is the newest: following it would be wrong
+    client.applySnapshot(topologyOf([pane], { folder: "/work" }));
+    expect(server.paneStore.boundSession("p1")?.sessionId).toBe("cb");
+  });
+
+  test("AGY: a newer session after /clear moves the pane to it (rule 6)", async () => {
+    const home = tempDir("home");
+    const brain = join(home, ".gemini", "antigravity-cli", "brain");
+    const transcript = (id: string, text: string) => {
+      const logs = join(brain, id, ".system_generated", "logs");
+      mkdirSync(logs, { recursive: true });
+      const file = join(logs, "transcript.jsonl");
+      writeFileSync(file, jsonl([{ step_index: 0, source: "USER_EXPLICIT", type: "USER_INPUT", status: "DONE", created_at: new Date().toISOString(), content: `<USER_REQUEST>\n${text}\n</USER_REQUEST>` }]));
+      return file;
+    };
+    const first = transcript("g1", "before clear");
+    const earlier = (Date.now() - 30_000) / 1000;
+    utimesSync(first, earlier, earlier);
+    const pane = { paneId: "p1", app: "antigravity", cwd: tempDir("proj"), createdMs: Date.now() - 60_000 };
+    const { client, server } = await setup(home, [pane]);
+    expect(server.paneStore.boundSession("p1")?.sessionId).toBe("g1");
+
+    transcript("g2", "after clear");
+    client.applySnapshot(topologyOf([pane], { folder: "/work" }));
+    expect(server.paneStore.boundSession("p1")?.sessionId).toBe("g2");
+  });
+});
+
+describe("session titles (protocol.md §5.3, agent-session-normalization.md §2.4, §2.5, issue #3)", () => {
+  async function claudePane(tabName: string) {
+    const home = tempDir("home");
+    const proj = tempDir("proj");
+    mkdirSync(join(home, ".claude", "sessions"), { recursive: true });
+    writeFileSync(join(home, ".claude", "sessions", "4242.json"), JSON.stringify({ pid: 4242, sessionId: "s1", cwd: proj }));
+    mkdirSync(join(home, ".claude", "projects", slug(proj)), { recursive: true });
+    writeFileSync(join(home, ".claude", "projects", slug(proj), "s1.jsonl"), claudeTranscript(proj));
+    const herdr = new FakeHerdr(tempDir("herdr"));
+    await herdr.listen();
+    herdr.handlers["terminal.read"] = () => ({ result: { text: "", how: "history" } });
+    const client = new HerdrClient({ appSocketPath: herdr.appSocketPath, coreSocketPath: herdr.coreSocketPath, debounceMs: 5, panePollMs: 60_000 });
+    const topology = topologyOf([{ paneId: "p1", app: "claude-code", cwd: proj, pid: 4242 }]);
+    topology.ls.spaces[0].tabs[0].name = tabName;
+    client.applySnapshot(topology);
+    const server = new WsServer({
+      buildId: "b",
+      herdrClient: client,
+      pushManager: new PushManager(join(home, "vapid.json")),
+      configManager: new ConfigManager(join(home, "config.json"), { HOME: home }),
+      skillScanner: new SkillScanner(home),
+      agentAdapters: new AgentAdapterManager({ home }),
+    });
+    cleanup.push(async () => {
+      server.destroy();
+      client.disconnect();
+      await herdr.close();
+    });
+    const c = fakeWs();
+    server.handleOpen(c.ws);
+    await server.handleMessage(c.ws, JSON.stringify({ type: "hello", id: "h", payload: { protocolVersion: "1.0.0", subscribePaneId: "p1" } }));
+    const label = async () => {
+      const end = Date.now() + 2000;
+      let last: string | undefined;
+      while (Date.now() < end) {
+        last = c.ofType("snapshot_update").at(-1)?.payload.workspaces[0].tabs[0].label;
+        if (last !== "Claude Code") return last;
+        await Bun.sleep(10);
+      }
+      return last;
+    };
+    return { label };
+  }
+
+  test("an unnamed tab is labelled with its bound session's title; a tab named in Herdr keeps its name", async () => {
+    expect(await (await claudePane("1")).label()).toBe("Fix tests");
+    expect(await (await claudePane("Release prep")).label()).toBe("Release prep");
+  });
+
+  test("codex and pi sessions are titled by their first prompt", async () => {
+    const home = tempDir("home");
+    const proj = tempDir("proj");
+    const codexDir = join(home, ".codex", "sessions", "2026", "11", "07");
+    mkdirSync(codexDir, { recursive: true });
+    writeFileSync(
+      join(codexDir, "rollout-2026-11-07T10-00-00-c1.jsonl"),
+      jsonl([
+        { type: "session_meta", payload: { id: "c1", cwd: proj } },
+        { type: "response_item", payload: { type: "message", role: "user", content: [{ type: "input_text", text: "<environment_context>cwd</environment_context>" }] } },
+        { type: "response_item", payload: { type: "message", role: "user", content: [{ type: "input_text", text: "Refactor the parser" }] } },
+      ])
+    );
+    const piProj = tempDir("proj");
+    const piDir = join(home, ".pi", "agent", "sessions", `--${piProj.slice(1).replace(/\//g, "-")}--`);
+    mkdirSync(piDir, { recursive: true });
+    writeFileSync(
+      join(piDir, "2026-11-07T10-00-00_p1.jsonl"),
+      jsonl([
+        { type: "session", id: "p1", cwd: piProj },
+        { type: "message", message: { role: "user", content: [{ type: "text", text: "List files" }] } },
+      ])
+    );
+    const created = Date.now() - 60_000;
+    const { open } = await setup(home, [
+      { paneId: "p1", app: "codex", cwd: proj, createdMs: created },
+      { paneId: "p2", app: "pi", cwd: piProj, createdMs: created },
+    ]);
+    expect(turnsOf(await open("p1")).sessionTitle).toBe("Refactor the parser");
+    expect(turnsOf(await open("p2")).sessionTitle).toBe("List files");
   });
 });
 

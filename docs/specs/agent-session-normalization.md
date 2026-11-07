@@ -16,27 +16,29 @@ Session records are files written by other programs: they are a trust boundary. 
 ### 2.0 Binding a pane to its session
 Herdr Core reports no session id (`herdr-adapter.md` §4). Pigeon binds each agent pane from what the Core does report: the agent kind, the foreground process id (`foreground.pid`), the pane's folder (`foreground.cwd`, else `cwd`) and the terminal's creation time (`created_ms`).
 
-1. **Exact (claude)**: `~/.claude/sessions/<pid>.json` names `sessionId` and `cwd`. The session is `~/.claude/projects/<slug(cwd)>/<sessionId>.jsonl`.
-2. **Folder and time (every agent, and claude without the file)**: the newest session of that agent whose folder is the pane's folder and that was last written at or after the terminal's creation time. AGY records carry no folder, so for AGY the newest session written since the creation time is used.
-3. A session already bound to another pane is skipped by rule 2, so two panes in the same folder do not show the same conversation.
+1. **Exact**: the agent process names the session it is writing. claude: `~/.claude/sessions/<pid>.json` names `sessionId` and `cwd`; the session is `~/.claude/projects/<slug(cwd)>/<sessionId>.jsonl`. Every other agent: among the files that the pane's foreground process or any of its descendants holds open (Linux `/proc/<pid>/fd`), the one that is a session file of that agent (§2.1–§2.5 name the file per agent) is its session. The descendants count because an agent's command is often a launcher whose child does the work. A process that has gone or whose open files cannot be read gives no exact signal.
+2. **Folder and time (every agent without an exact signal)**: the newest session of that agent whose folder is the pane's folder and that was last written at or after the terminal's creation time. AGY records carry no folder, so for AGY the newest session written since the creation time is used.
+3. A session already bound to another pane is skipped by rules 2 and 6, so two panes in the same folder do not show the same conversation.
 4. No match leaves the pane unbound (Track 2).
 5. A pane started with `resumeSessionId` (`protocol.md` §4.5) is bound to that session unless rule 1 names another one.
-6. A pane bound by rule 2 or rule 5 keeps its session while it runs the same agent; rule 2 picks only for unbound panes. Two panes in one folder therefore never trade sessions. The cost: a new session started inside such a pane (`/clear`, `/new`) is followed only after its agent exits and starts again; claude follows it at once through rule 1 (user decision, 2026-11-06).
+6. A pane bound by rule 2 or rule 5 keeps its session while it runs the same agent, until a newer session appears: after every unbound pane has picked by rule 2, a bound pane without an exact signal moves to a session of its agent and folder (any folder for AGY) that is unclaimed and was last written after its current session. That is how `/clear` or `/new` in such a pane is followed (user decision, 2026-11-07). Unbound panes pick first, so a new pane opened in the same folder takes its own new session before an older pane can move to it. The accepted cost: when one pane's folder has two sessions written at the same time by programs outside any pane, the pane can move to the wrong one.
 7. A pane whose agent exits (a plain terminal again) is unbound.
 
-Binding is re-evaluated on every snapshot (`herdr-adapter.md` §3.1). When the result changes (rule 1 names a new session after `/clear`, the pane's agent restarted, a resume), the pane switches session and its viewers get a fresh `normalized_turns` (`protocol.md` §5.6). A session is read only while its pane is viewed or bound; closing the pane drops it.
+Binding is re-evaluated on every snapshot (`herdr-adapter.md` §3.1). When the result changes (rule 1 names a new session after `/clear`, rule 6 moves the pane, the pane's agent restarted, a resume), the pane switches session and its viewers get a fresh `normalized_turns` (`protocol.md` §5.6). A session is read only while its pane is viewed or bound; closing the pane drops it.
 
 `slug(path)` replaces every character outside `[A-Za-z0-9]` with `-` (`/home/u/My.Proj` → `-home-u-My-Proj`).
 
 ### 2.1 OpenCode (`opencode`)
 - **Storage**: SQLite at `~/.local/share/opencode/opencode.db`, opened read-only with `PRAGMA query_only = ON` and `PRAGMA busy_timeout = 2000`, so the running OpenCode is never locked.
 - **Session**: `session_v2` (`id`, `directory`, `title`, `time_updated`, summary columns); messages and parts (`text`, `tool`, `reasoning`, …) in `session_message`.
-- **Binding and listing** use `directory` and `time_updated` (milliseconds).
+- **Binding and listing** use `directory` and `time_updated` (milliseconds). All sessions share one database file, so no open file names a session (§2.0 rule 1 does not apply).
+- **Model**: the model the session's latest assistant message names (source `log`).
 
 ### 2.2 Antigravity (`agy`)
 - **Storage**: `~/.gemini/antigravity-cli/brain/<id>/.system_generated/logs/transcript.jsonl` (NDJSON). Title from `~/.gemini/antigravity-cli/annotations/<id>.pbtxt` (`title: "…"`).
 - **Records**: `USER_INPUT`, `PLANNER_RESPONSE` (`thinking`, `tool_calls`, `content`), `GENERIC` (tool output). When a line has `truncated_fields`, the full line is read from `transcript_full.jsonl`.
-- **Binding** uses the transcript's modification time (no folder, §2.0).
+- **Binding**: exact (§2.0 rule 1) when the AGY process holds `~/.gemini/antigravity-cli/presence/<id>.lock` or the session's transcript open; otherwise the transcript's modification time (no folder).
+- **Model**: the model the records name, when they name one (source `log`).
 
 ### 2.3 Claude Code (`claude`)
 - **Storage**: `~/.claude/projects/<slug(cwd)>/<id>.jsonl` (NDJSON); live process map `~/.claude/sessions/<pid>.json`.
@@ -53,11 +55,15 @@ Binding is re-evaluated on every snapshot (`herdr-adapter.md` §3.1). When the r
 - **Storage**: `~/.codex/sessions/YYYY/MM/DD/rollout-<time>-<id>.jsonl` (NDJSON). The first record is `session_meta` (`payload.id`, `payload.cwd`).
 - **Records used** (`response_item` payloads): `message` with role `user` (`input_text` blocks; text starting with `<environment_context>`, `<user_instructions>` or `<user_action>` is not a prompt) or `assistant` (`output_text` blocks); `reasoning` (`summary[].text`); `function_call` (`name`, `arguments` JSON text, `call_id`) and `function_call_output` (`call_id`, `output`); `custom_tool_call` (`name`, `input`, `call_id`) and `custom_tool_call_output`. `event_msg` with `thread_settings_applied` names the model (`thread_settings.model`, source `log`). Others are ignored.
 - **Tools**: `shell` / `exec_command` (`command` as an array or a string, or `cmd`) are commands; `apply_patch` input is a patch whose `*** Update File:`, `*** Add File:` and `*** Delete File:` sections produce one `FileDiffSummary` each; `update_plan` (`plan[]` with `step`, `status`) is the todo list.
-- **Listing and binding** read the newest rollouts first and only their first line for the folder.
+- **Listing and binding** read the newest rollouts first and only their first line for the folder. Exact binding (§2.0 rule 1): a rollout file the Codex process holds open.
+- **Title**: the first prompt (at most 120 characters).
 
 ### 2.5 Pi (`pi`)
 - **Storage**: `~/.pi/agent/sessions/--<path>--/<time>_<id>.jsonl`, where `<path>` is the folder without its leading `/` and with `/` replaced by `-`.
 - **Records used**: `message` records with `message.role` `user` (text blocks), `assistant` (`text`, `thinking`, `toolCall` blocks with `id`, `name`, `arguments`) and `toolResult` (`toolCallId`, `content` text, `isError`). `bash` tool calls are commands; `edit` (`path`, `oldText`, `newText`) and `write` (`path`, `content`) produce file diffs. Others are ignored.
+- **Binding**: exact (§2.0 rule 1) when the pi process holds a session file open; otherwise folder and time.
+- **Model**: the model the latest assistant message names (source `log`).
+- **Title**: the first prompt (at most 120 characters).
 
 ### 2.6 Listing past sessions
 `sessions_list` (`protocol.md` §4.10) lists, newest first and at most 50, an agent's sessions whose folder is the workspace's folder or inside it:

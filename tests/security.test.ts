@@ -57,6 +57,24 @@ describe("pairing (security-and-pairing.md §2)", () => {
     expect(second.validateSession(ok.sessionToken)?.deviceName).toBe("Phone");
   });
 
+  test("a device unused for 30 days is removed at startup and its token no longer authenticates", () => {
+    const dir = tempDir("pair");
+    const first = pairingIn(dir);
+    const { token } = first.createPairingToken();
+    const stale = first.exchangeToken(token, "Old phone");
+    const recent = first.exchangeToken(token, "Phone");
+    const file = join(dir, "devices.json");
+    const registry = JSON.parse(readFileSync(file, "utf-8"));
+    const day = 24 * 3_600_000;
+    const sessions: any[] = Array.isArray(registry.sessions) ? registry.sessions : Object.values(registry.sessions);
+    for (const s of sessions) s.lastUsedAt = Date.now() - (s.deviceId === stale.deviceId ? 31 : 29) * day;
+    writeFileSync(file, JSON.stringify(registry));
+    const second = pairingIn(dir);
+    expect(second.listDevices().map((d) => d.deviceName)).toEqual(["Phone"]);
+    expect(second.validateSession(stale.sessionToken)).toBeNull();
+    expect(second.validateSession(recent.sessionToken)?.deviceName).toBe("Phone");
+  });
+
   test("a corrupt device registry stops startup and is left untouched", () => {
     const dir = tempDir("pair");
     writeFileSync(join(dir, "devices.json"), "{not json");
@@ -221,6 +239,19 @@ describe("HTTP and WebSocket gate (security-and-pairing.md §3, §4)", () => {
     expect(res.status).toBe(200);
     const cookie = res.headers.get("set-cookie")!;
     for (const part of ["HttpOnly", "SameSite=Strict", "Secure", "Max-Age=31536000"]) expect(cookie).toContain(part);
+  });
+
+  test("pairing again from an already paired browser replaces its device record", async () => {
+    const oldCookie = pairedCookie();
+    const oldToken = oldCookie.split("=")[1];
+    const before = daemon.pairingManager.listDevices().length;
+    const { token } = daemon.pairingManager.createPairingToken();
+    const res = await fetch(`${base}/api/pair`, { method: "POST", headers: { "Content-Type": "application/json", Cookie: oldCookie }, body: JSON.stringify({ code: token, deviceName: "Phone" }) });
+    expect(res.status).toBe(200);
+    const newToken = res.headers.get("set-cookie")!.split(";")[0].split("=")[1];
+    expect(daemon.pairingManager.listDevices().length).toBe(before);
+    expect(daemon.pairingManager.validateSession(oldToken)).toBeNull();
+    expect(daemon.pairingManager.validateSession(newToken)?.deviceName).toBe("Phone");
   });
 
   test("a malformed pairing body is 400", async () => {

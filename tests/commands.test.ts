@@ -301,3 +301,37 @@ describe("snapshot fields (protocol.md §5.3, herdr-adapter.md §3.1)", () => {
     expect(snap.workspaces[0].folder).toBe("/start");
   });
 });
+
+describe("seen panes (herdr-adapter.md §4, protocol.md §5.3, issue #3)", () => {
+  const statusOf = (c: ReturnType<typeof fakeWs>, paneId: string) =>
+    c.ofType("snapshot_update").at(-1)?.payload.workspaces.flatMap((w: any) => w.tabs.flatMap((t: any) => t.panes)).find((p: any) => p.id === paneId)?.agentStatus;
+  /** The Core reports the new state both in its terminal list and as a status event. */
+  const setStatus = (paneId: string, state: string, app = "codex") => {
+    herdr.serve(PANES.map((p) => ({ ...p, cwd: dir, ...(p.paneId === paneId ? { state } : {}) })), { folder: "/start" });
+    herdr.emitEvent("status", paneId, { status: { state, app } });
+  };
+
+  test("a done pane viewed by a visible client is idle for every client until its status changes", async () => {
+    await client.connect();
+    const connect = async (deviceId: string, paneId: string) => {
+      const c = fakeWs(deviceId);
+      server.handleOpen(c.ws);
+      await send(c.ws, { type: "hello", id: "h", payload: { protocolVersion: "1.0.0", subscribePaneId: paneId } });
+      return c;
+    };
+    const looker = await connect("dev_looker", "p2");
+    const other = await connect("dev_other", "p1");
+    setStatus("p2", "done");
+    await until(() => statusOf(other, "p2") === "done");
+
+    await send(looker.ws, { type: "presence_update", isVisible: true, viewingPaneId: "p2" });
+    await until(() => statusOf(other, "p2") === "idle");
+    expect(statusOf(looker, "p2")).toBe("idle");
+
+    await send(looker.ws, { type: "presence_update", isVisible: false, viewingPaneId: "p2" });
+    setStatus("p2", "working");
+    await until(() => statusOf(other, "p2") === "working");
+    setStatus("p2", "done");
+    await until(() => statusOf(other, "p2") === "done");
+  });
+});
