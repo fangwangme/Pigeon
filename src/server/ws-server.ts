@@ -196,6 +196,7 @@ export class WsServer {
         defaultThinking: r.defaultThinking,
         interruptKeys: r.interruptKeys,
         resumable: r.resumable,
+        launchModel: r.launchModel !== false,
         runtimeSwitch: { model: !!r.runtimeModelCommand, thinking: !!r.runtimeThinkingCommand },
       };
     }
@@ -437,6 +438,10 @@ export class WsServer {
           this.sendError(ws, msg.id, ProtocolErrors.ERR_INVALID_PAYLOAD, `Unknown agent kind '${agentKind}'`);
           return;
         }
+        if (modelId && recipe.launchModel === false) {
+          this.sendError(ws, msg.id, ProtocolErrors.ERR_INVALID_PAYLOAD, `${recipe.label} takes no model at launch`);
+          return;
+        }
         const model = modelId ? this.modelCatalog.models(recipe.kind).find((m) => m.id === modelId) : undefined;
         if (modelId && !model) {
           this.sendError(ws, msg.id, ProtocolErrors.ERR_INVALID_PAYLOAD, `Unknown model '${modelId}' for ${agentKind}`);
@@ -547,8 +552,9 @@ export class WsServer {
     for (const p of panes) {
       const launch = this.paneStore.getLaunch(p.paneId);
       const bound = this.paneStore.boundSession(p.paneId);
-      if (launch?.resumeSessionId && launch.agent === p.facts.agentKind && take(p, launch.resumeSessionId)) kept.push(p);
-      else if (bound?.agent === p.facts.agentKind && take(p, bound.sessionId)) kept.push(p);
+      // The bound session first: once rule 6 moved the pane past the session it was resumed with, it stays moved.
+      if (bound?.agent === p.facts.agentKind && take(p, bound.sessionId)) kept.push(p);
+      else if (launch?.resumeSessionId && launch.agent === p.facts.agentKind && take(p, launch.resumeSessionId)) kept.push(p);
     }
     for (const p of panes) {
       if (result.has(p.paneId)) continue;

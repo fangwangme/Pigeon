@@ -387,6 +387,9 @@ export class HerdrClient extends EventEmitter {
       const status = this.normalizeStatus(params.data.status);
       if (status !== "done") this.seenPanes.delete(paneId);
       known.herdrStatus = status;
+      // relabelTabs() re-applies the last topology before the next snapshot arrives: keep it current.
+      const term = this.lastTopology?.terminals.find((t) => t.address === paneId);
+      if (term) term.status = params.data.status;
       this.emit("pane_status_changed", { paneId, status });
       // The read re-classifies under the new status, which reaches viewers as a new pane_state.
       if (status === "blocked" || this.paneStates.has(paneId)) this.scheduleDebouncedRead(paneId);

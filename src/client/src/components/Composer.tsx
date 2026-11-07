@@ -181,7 +181,7 @@ export function ModelSheet(props: {
         </div>
       </Show>
       <Show when={!props.canSwitchModel || (levels().length > 0 && !props.canSwitchThinking)}>
-        <p class="note">{!props.canSwitchModel ? t("model.noSwitchModel") : t("model.noSwitchEffort")}</p>
+        <p class="note">{!props.canSwitchModel ? t(props.recipe?.launchModel === false ? "model.agentOnlyModel" : "model.noSwitchModel") : t("model.noSwitchEffort")}</p>
       </Show>
     </Sheet>
   );

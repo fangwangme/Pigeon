@@ -304,7 +304,9 @@ export function SessionPage() {
                   <div class="ub q">{q.text || t("session.attachments", { count: q.attachments.length })}</div>
                   <div class="ubm">
                     {t("session.queued")}
-                    <button onClick={() => editQueued(q)}>{t("session.edit")}</button>
+                    <Show when={composerVisible()}>
+                      <button onClick={() => editQueued(q)}>{t("session.edit")}</button>
+                    </Show>
                     <button
                       onClick={() =>
                         request({ type: "queue_cancel", payload: { targetPaneId: state.activePaneId!, queueId: q.queueId } }).catch((e) => showToast(e.message || t("session.undoFailed")))

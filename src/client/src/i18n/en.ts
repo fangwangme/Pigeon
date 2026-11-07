@@ -103,6 +103,7 @@ export const en = {
   "model.none": "This agent has no models to choose from.",
   "model.effort": "Effort",
   "model.noSwitchModel": "This agent can't switch models while running; choose one in a new session.",
+  "model.agentOnlyModel": "This agent's model can only be changed inside the agent.",
   "model.noSwitchEffort": "This agent can't switch effort while running; choose it in a new session.",
   "model.sourceLog": "session log",
   "model.sourceLaunch": "launch arguments",

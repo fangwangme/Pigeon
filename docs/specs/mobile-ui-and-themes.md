@@ -69,7 +69,7 @@ When the session has a todo list (`agent-session-normalization.md` §3), a capsu
 ### 3.5 Running state and scrolling
 - While working, the last turn ends with an animated "思考中…" line, and the send button becomes **■ 停止**.
 - **Stop** sends the recipe's `interruptKeys` (Esc for agents, Ctrl+C for a plain terminal) at once, without confirmation.
-- A message sent while the agent is working is queued by the daemon (`protocol.md` §4.2). Queued messages show as dashed bubbles below the last turn, each with **编辑** and **撤销**; they are sent in order when the turn ends. **编辑** takes the message out of the queue (`protocol.md` §4.13) and puts its text and attachments into the composer, replacing nothing the user has typed (the text is inserted at the caret); sending it again queues it at the end (user decision, 2026-11-07). When the message was already sent, the phone says so and leaves the composer unchanged.
+- A message sent while the agent is working is queued by the daemon (`protocol.md` §4.2). Queued messages show as dashed bubbles below the last turn, each with **编辑** and **撤销**; they are sent in order when the turn ends. **编辑** shows only while the composer is on screen: while a prompt card hides the composer, only **撤销** shows. **编辑** takes the message out of the queue (`protocol.md` §4.13) and puts its text and attachments into the composer, replacing nothing the user has typed (the text is inserted at the caret); sending it again queues it at the end (user decision, 2026-11-07). When the message was already sent, the phone says so and leaves the composer unchanged.
 - New content scrolls the page to the bottom only when the page was within 40 px of the bottom. Otherwise a round ↓ button appears above the composer and scrolls to the newest message.
 
 ### 3.6 Screen-card fallback
@@ -115,7 +115,7 @@ Typing `/` as the first character of a line (outside IME composition) opens a po
 A sheet of the pane's entries (`protocol.md` §5.7), grouped by source: 项目 → 用户 → 插件 → 命令, with segment buttons to narrow. Each row shows the name and description. Choosing one inserts its invocation into the composer.
 
 ### 6.4 Model and effort
-A sheet listing every model of the recipe (`herdr-adapter.md` §7.1) with a search field that filters by id and label, and, for the chosen model, its effort levels. A refresh button asks the daemon to read the agents' model lists again (`protocol.md` §4.14). The model capsule is shown for every agent pane, even while its list is empty. It shows the current values and their source: **启动参数** (from Pigeon's launch), **日志** (the transcript names the model) or **未知**. Changing them sends the recipe's runtime command as a prompt (`protocol.md` §4.9); when the agent has no such command the sheet says that the value can be chosen in a new session and changes nothing.
+A sheet listing every model of the recipe (`herdr-adapter.md` §7.1) with a search field that filters by id and label, and, for the chosen model, its effort levels. A refresh button asks the daemon to read the agents' model lists again (`protocol.md` §4.14). The model capsule is shown for every agent pane, even while its list is empty. It shows the current values and their source: **启动参数** (from Pigeon's launch), **日志** (the transcript names the model) or **未知**. Changing them sends the recipe's runtime command as a prompt (`protocol.md` §4.9); when the agent has no such command the sheet says that the value can be chosen in a new session (or, for an agent that takes no model at launch either, only inside the agent) and changes nothing.
 
 ### 6.5 ⋯ menu
 重命名 (renames the Herdr tab), 复制分支 (copies the tab's git branch; shown when there is one), 本会话的变更 (§6.6), 切换 pane (shown with several panes, §6.8), 查看终端 (§5), and **关闭会话** in red (§6.7).
@@ -132,7 +132,7 @@ A sheet listing the tab's panes (agent or shell, status). The session page defau
 ## 7. New session
 
 ### 7.1 New
-A blank session page: segments **新建 / 恢复**, chips for **工作区** (Herdr's workspaces; preset from where it was opened), **Agent** (recipes) and **模型** (with effort), then the composer for the first message. Sending creates the tab with the first message (`protocol.md` §4.5) and opens it; the title starts as the first message and can be renamed. Creating a Herdr workspace is not offered.
+A blank session page: segments **新建 / 恢复**, chips for **工作区** (Herdr's workspaces; preset from where it was opened), **Agent** (recipes) and **模型** (with effort; only for an agent that takes a model at launch, `protocol.md` §5.7), then the composer for the first message. Sending creates the tab with the first message (`protocol.md` §4.5) and opens it; the title starts as the first message and can be renamed. Creating a Herdr workspace is not offered.
 
 ### 7.2 Resume
 The **恢复** segment (also reached from `+`) lists the agent's past sessions for the chosen workspace's folder (`protocol.md` §4.10): title or first message, and age. A tap opens a new tab that resumes it (`protocol.md` §4.5 `resumeSessionId`) and goes there. Resuming always opens a new tab.

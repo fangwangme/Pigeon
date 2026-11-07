@@ -243,6 +243,30 @@ describe("following the session the agent writes (agent-session-normalization.md
     client.applySnapshot(topologyOf([pane], { folder: "/work" }));
     expect(server.paneStore.boundSession("p1")?.sessionId).toBe("g2");
   });
+
+  test("a resumed pane that rule 6 moved to a newer session keeps it when another pane opens in the folder (rule 6)", async () => {
+    const home = tempDir("home");
+    const proj = tempDir("proj");
+    const dir = join(home, ".codex", "sessions", "2026", "11", "07");
+    mkdirSync(dir, { recursive: true });
+    const rollout = (id: string, ageMs: number) => {
+      const file = join(dir, `rollout-2026-11-07T10-00-00-${id}.jsonl`);
+      writeFileSync(file, jsonl([{ type: "session_meta", payload: { id, cwd: proj } }]));
+      const at = (Date.now() - ageMs) / 1000;
+      utimesSync(file, at, at);
+    };
+    rollout("c1", 30_000);
+    const first = { paneId: "p1", app: "codex", cwd: proj, createdMs: Date.now() - 60_000 };
+    const { client, server } = await setup(home, [first]);
+    server.paneStore.setLaunch("p1", { agent: "codex", resumeSessionId: "c1" });
+    rollout("c2", 0);
+    client.applySnapshot(topologyOf([first], { folder: "/work" }));
+    expect(server.paneStore.boundSession("p1")?.sessionId).toBe("c2");
+
+    const second = { paneId: "p2", app: "codex", cwd: proj, createdMs: Date.now() - 10_000 };
+    client.applySnapshot(topologyOf([first, second], { folder: "/work" }));
+    expect([server.paneStore.boundSession("p1")?.sessionId, server.paneStore.boundSession("p2")?.sessionId]).toEqual(["c2", undefined]);
+  });
 });
 
 describe("session titles (protocol.md §5.3, agent-session-normalization.md §2.4, §2.5, issue #3)", () => {

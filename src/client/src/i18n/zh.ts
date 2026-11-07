@@ -104,6 +104,7 @@ export const zh: Messages = {
   "model.none": "这个 Agent 没有可选的模型。",
   "model.effort": "思考强度",
   "model.noSwitchModel": "这个 Agent 不能在运行中切换模型，可以在新会话里选择。",
+  "model.agentOnlyModel": "这个 Agent 的模型只能在它自己的界面里切换。",
   "model.noSwitchEffort": "这个 Agent 不能在运行中切换思考强度，可以在新会话里选择。",
   "model.sourceLog": "日志",
   "model.sourceLaunch": "启动参数",

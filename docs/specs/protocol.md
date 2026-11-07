@@ -111,7 +111,7 @@ This moves the connection's subscription and sends the pane data from §3.3. Des
 ```
 *Server Behavior*: The server checks the request against the recipe:
 - `agentKind` must be a known recipe.
-- `modelId`, if given, must be one of the recipe's models.
+- `modelId`, if given, must be one of the recipe's models, and the recipe must take a model at launch (§5.7 `launchModel`).
 - `thinking`, if given, must be one of that model's levels.
 - `cwd`, if given, must be absolute. Without it the tab starts in the workspace's folder.
 - `firstMessage`, if given, is 1–100 000 characters. It is handed to Herdr as the tab's first message, and the tab is named after its first line (at most 40 characters).
@@ -290,7 +290,7 @@ A pane that becomes bound or switches session (for example after the agent's `/c
 ```
 Skills are per pane: they depend on the pane's agent kind and project directory (`herdr-adapter.md` §8.3). `source` is `project`, `user`, `plugin` or `builtin`; `kind` is `skill` or `command`. A built-in command also carries `descriptionId` (`herdr-adapter.md` §8.3), and the phone shows its own text for that id, falling back to the English `description`. The client ignores skills for a pane it is no longer viewing. Choosing an entry inserts its `invocation` as prompt text.
 
-Each recipe summary also carries `resumable` (the recipe can resume a session) and `runtimeSwitch: { model, thinking }` (whether §4.9 can change each value). A recipe's `models` is that agent's list in the model catalog (`herdr-adapter.md` §7.1), complete; the phone searches it.
+Each recipe summary also carries `resumable` (the recipe can resume a session), `launchModel` (whether §4.5 can start the agent on a chosen model, `herdr-adapter.md` §5) and `runtimeSwitch: { model, thinking }` (whether §4.9 can change each value). A recipe's `models` is that agent's list in the model catalog (`herdr-adapter.md` §7.1), complete; the phone searches it.
 
 ### 5.8 Queue (`prompt_queue`)
 ```json

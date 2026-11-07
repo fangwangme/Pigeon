@@ -172,6 +172,8 @@ export interface AgentRecipeSummary {
   interruptKeys: string[];
   /** Whether `resumeSessionId` is accepted (`protocol.md` §4.5). */
   resumable: boolean;
+  /** Whether `create_tab_and_agent` can start the agent on a chosen model (`protocol.md` §4.5). */
+  launchModel: boolean;
   /** Which values `agent_set_model` can change (`protocol.md` §4.9). */
   runtimeSwitch: { model: boolean; thinking: boolean };
 }

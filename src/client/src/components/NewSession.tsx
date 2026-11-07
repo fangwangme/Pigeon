@@ -32,7 +32,7 @@ export function NewSession(props: { workspaceId: string | null; mode: "new" | "r
 
   createEffect(
     on(agent, () => {
-      setModel(recipe()?.defaultModel ?? recipe()?.models[0]?.id ?? null);
+      setModel(recipe()?.launchModel ? (recipe()?.defaultModel ?? recipe()?.models[0]?.id ?? null) : null);
       setThinking(recipe()?.defaultThinking ?? null);
     })
   );
@@ -104,7 +104,7 @@ export function NewSession(props: { workspaceId: string | null; mode: "new" | "r
             {agent() ? agentLabel(agent()) : "Agent"}
             <Icon name="chevD" />
           </button>
-          <Show when={mode() === "new" && recipe()?.models.length}>
+          <Show when={mode() === "new" && recipe()?.launchModel && recipe()?.models.length}>
             <button class="chip" onClick={() => setSheet("model")}>
               <Icon name="layers" />
               {(recipe()!.models.find((m) => m.id === model())?.label ?? t("new.defaultModel")) + thinkingLabel()}

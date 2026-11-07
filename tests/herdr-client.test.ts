@@ -273,6 +273,20 @@ describe("connection lifecycle (herdr-adapter.md §3.2, §3.4)", () => {
     return updates;
   }
 
+  test("a status that arrives before the next snapshot survives a relabel, so a seen done pane stays idle (§4)", async () => {
+    herdr.serve([{ paneId: "t1", app: "codex", state: "working" }]);
+    await client.connect();
+    await Bun.sleep(50);
+    client.once("pane_status_changed", () => {
+      client.markSeen("t1");
+      client.relabelTabs(); // a session title changed before the event's snapshot arrived
+    });
+    herdr.serve([{ paneId: "t1", app: "codex", state: "done" }]);
+    herdr.emitEvent("status", "t1", { status: { state: "done", app: "codex" }, records: {}, reported: true });
+    await Bun.sleep(50);
+    expect(client.getSnapshot().workspaces[0].tabs[0].panes[0].agentStatus).toBe("idle");
+  });
+
   test("a status change on an unchanged screen still sends the new status", async () => {
     const updates = await viewPaneThenChangeStatus("$ bun test\n", "working", "idle");
     expect(updates.at(-1)?.agentStatus).toBe("idle");

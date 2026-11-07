@@ -17,6 +17,8 @@ export interface AgentRecipe {
   launchArgs(options?: { modelId?: string; thinking?: string; resume?: string }): string[];
   interruptKeys: string[];
   resumable: boolean;
+  /** False when the agent takes no model at launch (`herdr-adapter.md` §5). */
+  launchModel?: false;
   /** Prefix for an attachment's path in a prompt (`protocol.md` §4.2). */
   mentionPrefix: string;
   /** The agent's own runtime commands (`herdr-adapter.md` §7); absent when it has none. */
@@ -73,6 +75,7 @@ const AGENT_RECIPES: Record<string, AgentRecipe> = {
     label: "OpenCode",
     command: "opencode",
     launchArgs: (o) => (o?.resume ? ["--session", o.resume] : []),
+    launchModel: false,
     interruptKeys: ["esc"],
     resumable: true,
     mentionPrefix: "@",

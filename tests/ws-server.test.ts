@@ -1,7 +1,9 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { chmodSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { ConfigManager } from "../src/server/config-manager";
 import { HerdrClient } from "../src/server/herdr-client";
+import { ModelCatalog } from "../src/server/model-catalog";
 import { PushManager } from "../src/server/push";
 import { SkillScanner } from "../src/server/skill-scanner";
 import { WsServer } from "../src/server/ws-server";
@@ -107,6 +109,27 @@ describe("input validation (protocol.md §7, architecture.md §5)", () => {
     await send(c.ws, { type: "create_tab_and_agent", id: "c1", payload: { workspaceId: "w1", agentKind: "claude", modelId: "gpt-x" } });
     expect(lastError(c.sent)).toBe(ProtocolErrors.ERR_INVALID_PAYLOAD);
     expect(herdr.callsOf("tab.new")).toHaveLength(0);
+  });
+
+  test("an agent that takes no model at launch says so, and a listed model for it is refused before anything is created (§4.5, §5.7)", async () => {
+    const bin = tempDir("bin");
+    writeFileSync(join(bin, "opencode"), "#!/bin/sh\n[ \"$1\" = models ] && echo anthropic/claude-x\n");
+    chmodSync(join(bin, "opencode"), 0o755);
+    const catalog = new ModelCatalog({ home: tempDir("home"), env: { PATH: `${bin}:/usr/bin:/bin` } });
+    await catalog.refresh();
+    const own = new WsServer({ buildId: "b", herdrClient: client, pushManager: new PushManager(join(tempDir("push"), "vapid.json")), configManager: config, skillScanner: new SkillScanner(tempDir("skills")), modelCatalog: catalog });
+    try {
+      const c = fakeWs();
+      own.handleOpen(c.ws);
+      await own.handleMessage(c.ws, JSON.stringify({ type: "hello", id: "h", payload: { protocolVersion: "1.0.0" } }));
+      const opencode = c.sent.find((m) => m.type === "welcome").payload.recipes.opencode;
+      expect([opencode.models.map((m: any) => m.id), opencode.launchModel]).toEqual([["anthropic/claude-x"], false]);
+      await own.handleMessage(c.ws, JSON.stringify({ type: "create_tab_and_agent", id: "c1", payload: { workspaceId: "w1", agentKind: "opencode", modelId: "anthropic/claude-x" } }));
+      expect(lastError(c.sent)).toBe(ProtocolErrors.ERR_INVALID_PAYLOAD);
+      expect(herdr.callsOf("tab.new")).toHaveLength(0);
+    } finally {
+      own.destroy();
+    }
   });
 });
 
