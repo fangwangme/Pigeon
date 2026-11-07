@@ -1,5 +1,7 @@
 import { state, setState, applySyncedClientConfig, openTerminal, setUnread, showToast } from "./store";
-import type { ClientMessage, ServerMessage, SnapshotPayload, PaneStatePayload, ClientConfig, AgentStatus } from "../../../types/protocol";
+import { load, save, remove, clearAll, sweep, meta, migrateLocalStorageCache, type PaneCacheEntry } from "./pane-cache";
+import type { ClientMessage, ServerMessage, SnapshotPayload, PaneStatePayload, ClientConfig, AgentStatus, HaveInfo } from "../../../types/protocol";
+import { hashTurn } from "../../../types/protocol";
 import { t } from "../i18n";
 
 const PROTOCOL_VERSION = "1.0.0";
@@ -18,6 +20,27 @@ let loadedBuildId: string | null = null;
 const paneRevisions = new Map<string, number>();
 const lastStatus = new Map<string, AgentStatus>();
 const pending = new Map<string, { resolve: (p: any) => void; reject: (e: { code: string; message: string }) => void }>();
+let freshDataArrivedPaneId: string | null = null;
+let lastAlivePanesKey = "";
+let pendingSelectViewId: string | null = null;
+
+function toPlain<T>(obj: T): T {
+  if (obj === null || typeof obj !== "object") return obj;
+  return JSON.parse(JSON.stringify(obj));
+}
+
+function saveActivePaneSnapshot(paneId: string): void {
+  if (state.session?.bound && state.session.sessionId && state.normalizedTurns.length) {
+    void save(paneId, {
+      sessionId: state.session.sessionId,
+      turns: toPlain(state.normalizedTurns),
+      sessionStats: state.sessionStats ? toPlain(state.sessionStats) : null,
+      sessionTitle: state.sessionTitle,
+      todos: state.todos ? toPlain(state.todos) : null,
+      session: state.session ? toPlain(state.session) : null,
+    });
+  }
+}
 
 function scheduleReconnect(): void {
   if (reconnectTimer) clearTimeout(reconnectTimer);
@@ -67,6 +90,7 @@ export async function initWebSocket(): Promise<void> {
   }
   if (!paired) {
     setState("paired", false);
+    void clearAll();
     return;
   }
   setState("paired", true);
@@ -81,10 +105,23 @@ export async function initWebSocket(): Promise<void> {
     if (socket !== ws) return;
     setState("connected", true);
     lastPongTime = Date.now();
+    let have: HaveInfo | undefined;
+    if (state.activePaneId && state.session?.bound && state.session.sessionId && state.normalizedTurns.length > 0) {
+      have = {
+        sessionId: state.session.sessionId,
+        turnCount: state.normalizedTurns.length,
+        lastTurnHash: hashTurn(state.normalizedTurns[state.normalizedTurns.length - 1]),
+      };
+      setState("paneSyncing", true);
+    }
     sendMessage({
       type: "hello",
       id: nextId(),
-      payload: { protocolVersion: PROTOCOL_VERSION, subscribePaneId: state.activePaneId || undefined },
+      payload: {
+        protocolVersion: PROTOCOL_VERSION,
+        subscribePaneId: state.activePaneId || undefined,
+        ...(have ? { have } : {}),
+      },
     });
     if (pingInterval) clearInterval(pingInterval);
     pingInterval = setInterval(() => {
@@ -112,6 +149,9 @@ export async function initWebSocket(): Promise<void> {
     pingInterval = null;
     for (const p of pending.values()) p.reject({ code: "ERR_OFFLINE", message: t("error.disconnected") });
     pending.clear();
+    if (event.code === 4401 || event.code === 4403) {
+      void clearAll();
+    }
     if (TERMINAL_CLOSE_CODES.has(event.code)) {
       if (reconnectTimer) clearTimeout(reconnectTimer);
       setState("paired", event.code === 4409);
@@ -122,32 +162,12 @@ export async function initWebSocket(): Promise<void> {
   };
 }
 
-/** Clears everything that belongs to the pane being left, so nothing from it is shown under the next one. */
-function resetPaneView(paneId: string): void {
-  // The server re-sends the pane's cached state with its current revision (protocol.md §3.3);
-  // a high-water mark kept from an earlier visit would drop it.
-  paneRevisions.delete(paneId);
-  setState({
-    activePaneId: paneId,
-    cards: [],
-    normalizedTurns: [],
-    sessionStats: null,
-    sessionTitle: null,
-    todos: null,
-    session: null,
-    queue: [],
-    pendingInteraction: null,
-    rawScreen: "",
-    skills: [],
-    terminalOpen: false,
-  });
-}
-
 function applyPaneState(p: PaneStatePayload): void {
   if (p.paneId !== state.activePaneId) return;
   const last = paneRevisions.get(p.paneId) || 0;
   if (p.revision <= last) return; // out-of-order or replayed update
   paneRevisions.set(p.paneId, p.revision);
+  const prevStatus = state.agentStatus;
   setState({
     activeTabId: p.tabId,
     agentStatus: p.agentStatus,
@@ -155,6 +175,11 @@ function applyPaneState(p: PaneStatePayload): void {
     pendingInteraction: p.pendingInteraction,
     rawScreen: p.rawScreen,
   });
+  if (prevStatus === "working" && p.agentStatus !== "working") {
+    if (state.activePaneId) {
+      saveActivePaneSnapshot(state.activePaneId);
+    }
+  }
 }
 
 /** mobile-ui-and-themes.md §2.1: a pane that finished while this phone was not looking is unread. */
@@ -191,7 +216,7 @@ export function handleServerMessage(msg: ServerMessage): void {
 
     case "skills_sync":
       if (msg.payload.paneId === state.activePaneId) setState("skills", msg.payload.skills);
-      setState("recipes", msg.payload.recipes);
+      if (msg.payload.recipes) setState("recipes", msg.payload.recipes);
       return;
 
     case "recipes_sync":
@@ -212,25 +237,51 @@ export function handleServerMessage(msg: ServerMessage): void {
     case "snapshot_update":
       trackUnread(msg.payload);
       setState("workspaces", msg.payload.workspaces);
+      if (state.herdrConnected) {
+        const alive = msg.payload.workspaces.flatMap((w) => w.tabs.flatMap((t) => t.panes.map((p) => p.id)));
+        const key = alive.slice().sort().join(",");
+        if (key !== lastAlivePanesKey) {
+          lastAlivePanesKey = key;
+          void sweep(alive);
+        }
+      }
       return;
 
     case "pane_state":
       applyPaneState(msg.payload);
       return;
 
-    case "normalized_turns":
+    case "normalized_turns": {
       if (msg.payload.paneId !== state.activePaneId) return;
+      freshDataArrivedPaneId = msg.payload.paneId;
       setState({
         normalizedTurns: msg.payload.turns,
         sessionStats: msg.payload.sessionStats || null,
         sessionTitle: msg.payload.sessionTitle || null,
         todos: msg.payload.todos || null,
         session: msg.payload.session,
+        paneSyncing: false,
       });
+      const metaInfo = meta(msg.payload.paneId);
+      if (!msg.payload.session?.bound || (metaInfo && metaInfo.sessionId !== msg.payload.session?.sessionId)) {
+        void remove(msg.payload.paneId);
+      } else if (msg.payload.session?.sessionId && msg.payload.turns?.length) {
+        void save(msg.payload.paneId, {
+          sessionId: msg.payload.session.sessionId,
+          turns: msg.payload.turns,
+          sessionStats: msg.payload.sessionStats || null,
+          sessionTitle: msg.payload.sessionTitle || null,
+          todos: msg.payload.todos || null,
+          session: msg.payload.session,
+        });
+      }
       return;
+    }
 
     case "turns_delta": {
       if (msg.payload.paneId !== state.activePaneId) return;
+      freshDataArrivedPaneId = msg.payload.paneId;
+      setState("paneSyncing", false);
       const { sinceTurnIndex, appendTurns, patchLastTurn, sessionStats, sessionTitle, todos, session } = msg.payload;
       let current = [...state.normalizedTurns];
       if (sinceTurnIndex === 0 && !patchLastTurn) {
@@ -253,6 +304,9 @@ export function handleServerMessage(msg: ServerMessage): void {
 
     case "ack": {
       const p = msg.payload;
+      if (msg.replyTo === pendingSelectViewId) {
+        pendingSelectViewId = null;
+      }
       const waiter = pending.get(msg.replyTo);
       if (waiter) {
         pending.delete(msg.replyTo);
@@ -271,6 +325,10 @@ export function handleServerMessage(msg: ServerMessage): void {
       if (waiter) {
         pending.delete(msg.replyTo!);
         waiter.reject(msg.error);
+      }
+      if (msg.replyTo && msg.replyTo === pendingSelectViewId) {
+        setState("paneSyncing", false);
+        pendingSelectViewId = null;
       }
       console.error("[Pigeon] server error", msg.error.code, msg.error.message);
       setState("lastError", { code: msg.error.code, message: errorText(msg.error.code, msg.error.message), at: Date.now() });
@@ -349,8 +407,30 @@ export function respondInteraction(interactionId: string, optionId: string, fing
 }
 
 /** The one navigation entry point into a pane: workspace and tab follow from it. */
-export function selectPane(paneId: string): void {
-  if (paneId !== state.activePaneId) resetPaneView(paneId);
+export async function selectPane(paneId: string): Promise<void> {
+  const previousPaneId = state.activePaneId;
+  if (previousPaneId && previousPaneId !== paneId) {
+    saveActivePaneSnapshot(previousPaneId);
+  }
+
+  freshDataArrivedPaneId = null;
+  paneRevisions.delete(paneId);
+  setState({
+    activePaneId: paneId,
+    cards: [],
+    normalizedTurns: [],
+    sessionStats: null,
+    sessionTitle: null,
+    todos: null,
+    session: null,
+    queue: [],
+    pendingInteraction: null,
+    rawScreen: "",
+    skills: [],
+    terminalOpen: false,
+    paneSyncing: false,
+  });
+
   for (const w of state.workspaces) {
     const t = w.tabs.find((tab) => tab.panes.some((p) => p.id === paneId));
     if (t) {
@@ -359,7 +439,44 @@ export function selectPane(paneId: string): void {
     }
   }
   setUnread(paneId, false);
-  sendMessage({ type: "select_view", id: nextId(), payload: { paneId } });
+
+  let cached: PaneCacheEntry | null = null;
+  try {
+    cached = await load(paneId);
+  } catch (err) {
+    console.error("[Pigeon] Failed to load pane cache, continuing with network view:", err);
+  }
+  if (state.activePaneId !== paneId) return;
+
+  let have: HaveInfo | undefined;
+  if (cached && freshDataArrivedPaneId !== paneId) {
+    setState({
+      normalizedTurns: cached.turns,
+      sessionStats: cached.sessionStats || null,
+      sessionTitle: cached.sessionTitle || null,
+      todos: cached.todos || null,
+      session: cached.session || null,
+      paneSyncing: true,
+    });
+    if (cached.sessionId && cached.turns.length > 0) {
+      have = {
+        sessionId: cached.sessionId,
+        turnCount: cached.turns.length,
+        lastTurnHash: hashTurn(cached.turns[cached.turns.length - 1]),
+      };
+    }
+  }
+
+  const selectViewId = nextId();
+  pendingSelectViewId = selectViewId;
+  sendMessage({
+    type: "select_view",
+    id: selectViewId,
+    payload: {
+      paneId,
+      ...(have ? { have } : {}),
+    },
+  });
   reportPresence();
 }
 
@@ -399,9 +516,15 @@ export function copyText(text: string): void {
   );
 }
 
-// Single lifecycle listener: phone unlock / tab switch back reconnects a dead socket.
+// Startup migration and sweep
+migrateLocalStorageCache();
+void sweep();
+
 if (typeof document !== "undefined") {
   document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "hidden" && state.activePaneId) {
+      saveActivePaneSnapshot(state.activePaneId);
+    }
     if (document.visibilityState === "visible") {
       const stale = Date.now() - lastPongTime > 30000;
       if (!socket || socket.readyState !== WebSocket.OPEN || stale) {
@@ -412,5 +535,13 @@ if (typeof document !== "undefined") {
       }
     }
     reportPresence();
+  });
+}
+
+if (typeof window !== "undefined") {
+  window.addEventListener("pagehide", () => {
+    if (state.activePaneId) {
+      saveActivePaneSnapshot(state.activePaneId);
+    }
   });
 }

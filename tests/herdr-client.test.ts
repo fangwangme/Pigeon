@@ -41,6 +41,36 @@ describe("snapshot (herdr-adapter.md §3.1)", () => {
     expect(snap.workspaces[0].tabs[0].label).toBe("Codex");
   });
 
+  test("a tab with a bound session title uses that title over the recipe label or tab index", () => {
+    client.setSessionTitleSource((paneId) => (paneId === "t1" ? "AI Renamed Feature Task" : undefined));
+    const snap = client.applySnapshot(topologyOf([{ paneId: "t1", app: "claude-code" }]));
+    expect(snap.workspaces[0].tabs[0].label).toBe("AI Renamed Feature Task");
+  });
+
+  test("a user-named tab keeps its name even when a session title exists (protocol.md §5.3)", () => {
+    client.setSessionTitleSource((paneId) => (paneId === "t1" ? "AI Renamed Feature Task" : undefined));
+    const topo = topologyOf([{ paneId: "t1", app: "claude-code" }]);
+    topo.ls.spaces[0].tabs[0].name = "My Custom Work";
+    const snap = client.applySnapshot(topo);
+    expect(snap.workspaces[0].tabs[0].label).toBe("My Custom Work");
+  });
+
+  test("a numeric tab with a session title shows the session title (protocol.md §5.3)", () => {
+    client.setSessionTitleSource((paneId) => (paneId === "t1" ? "AI Session Title" : undefined));
+    const topo = topologyOf([{ paneId: "t1", app: "claude-code" }]);
+    topo.ls.spaces[0].tabs[0].name = "42";
+    const snap = client.applySnapshot(topo);
+    expect(snap.workspaces[0].tabs[0].label).toBe("AI Session Title");
+  });
+
+  test("a numeric tab without a session title shows the recipe label (protocol.md §5.3)", () => {
+    client.setSessionTitleSource(() => undefined);
+    const topo = topologyOf([{ paneId: "t1", app: "claude-code" }]);
+    topo.ls.spaces[0].tabs[0].name = "42";
+    const snap = client.applySnapshot(topo);
+    expect(snap.workspaces[0].tabs[0].label).toBe("Claude Code");
+  });
+
   test("a terminal the App shows but the Core does not list has no agent and status unknown", () => {
     const topology = topologyOf([{ paneId: "t1", app: "claude-code" }]);
     topology.terminals = [];
@@ -188,7 +218,6 @@ describe("tab creation and closing (herdr-adapter.md §5)", () => {
     expect(res).toEqual({ tabId: "tab1", paneId: "t9" });
     expect(herdr.callsOf("tab.new")[0].params).toEqual({
       space: "w1",
-      name: "Claude Code",
       folder: "/proj",
       argv: ["claude", "--model", "opus", "--effort", "high"],
     });
@@ -209,7 +238,7 @@ describe("tab creation and closing (herdr-adapter.md §5)", () => {
       return { result: { terminal: "t9" } };
     };
     await client.createTabAndAgent("w1", "terminal");
-    expect(herdr.callsOf("tab.new")[0].params).toEqual({ space: "w1", name: "Terminal" });
+    expect(herdr.callsOf("tab.new")[0].params).toEqual({ space: "w1" });
   });
 
   test("an App error is a HerdrError carrying the App's text", async () => {
@@ -227,6 +256,16 @@ describe("tab creation and closing (herdr-adapter.md §5)", () => {
   test("closing a tab passes the phone's confirmation to the App", async () => {
     await client.closeTab("tab1");
     expect(herdr.callsOf("tab.close").map((c) => c.params)).toEqual([{ id: "tab1", confirmed: true }]);
+  });
+
+  test("launching with a firstMessage sends tab.new with no name (herdr-adapter.md §5, protocol.md §4.5)", async () => {
+    herdr.handlers["tab.new"] = () => {
+      herdr.serve([{ paneId: "t9", app: "claude-code" }]);
+      return { result: { pane: "pane-t9", terminal: "t9" } };
+    };
+    await client.createTabAndAgent("w1", "claude", { firstMessage: "Fix the flaky test" });
+    const calls = herdr.callsOf("tab.new");
+    expect(calls[0].params.name).toBeUndefined();
   });
 });
 

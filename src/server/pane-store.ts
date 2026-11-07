@@ -37,10 +37,15 @@ export class PaneStore extends EventEmitter {
   private adapters: AgentAdapterManager;
   private herdrConnected = false;
   private lastSyncTimestamp = Date.now();
+  private modelResolver?: (agent: string, idOrLabel: string) => string;
 
   constructor(adapters: AgentAdapterManager) {
     super();
     this.adapters = adapters;
+  }
+
+  public setModelResolver(resolver: (agent: string, idOrLabel: string) => string): void {
+    this.modelResolver = resolver;
   }
 
   public setHerdrStatus(connected: boolean): void {
@@ -140,7 +145,8 @@ export class PaneStore extends EventEmitter {
     if (titleChanged) this.emit("title_changed", paneId);
     state.todos = result.todos;
     const oldModel = state.model;
-    state.model = result.model;
+    const resolvedModel = result.model ? (this.modelResolver ? this.modelResolver(state.agent, result.model) : result.model) : undefined;
+    state.model = resolvedModel;
     if (state.model && state.model !== oldModel) this.emit("session_model", state.agent, state.model);
     state.seqWatermark += 1;
     const infoChanged = oldInfo !== JSON.stringify([state.todos, state.model]);
@@ -194,6 +200,10 @@ export class PaneStore extends EventEmitter {
       ...(state?.todos ? { todos: state.todos } : {}),
       session: this.sessionInfo(paneId, agent),
     };
+  }
+
+  public getPaneState(paneId: string): PaneSessionState | undefined {
+    return this.paneStates.get(paneId);
   }
 
   public closePane(paneId: string): void {

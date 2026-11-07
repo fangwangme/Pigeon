@@ -111,7 +111,7 @@ function Lines(props: { text: string; label: string }) {
 }
 
 /** A unified diff with line numbers and add/remove bars; lines never wrap (§3.3). */
-function DiffView(props: { patch: string }) {
+export function DiffView(props: { patch: string }) {
   const rows = () => {
     const out: Array<{ cls: string; ln: string; text: string }> = [];
     let oldN = 0;

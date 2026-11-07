@@ -29,9 +29,9 @@ Key Protocol Principles:
 
 ### 3.1 Handshake Request (`client -> server`)
 ```json
-{ "type": "hello", "id": "cli_1", "payload": { "protocolVersion": "1.0.0", "subscribePaneId": "w1:p2" } }
+{ "type": "hello", "id": "cli_1", "payload": { "protocolVersion": "1.0.0", "subscribePaneId": "w1:p2", "have": { "sessionId": "s_1", "turnCount": 5, "lastTurnHash": "a1b2c3d4" } } }
 ```
-If the major version differs from the server's, the server answers `ERR_INCOMPATIBLE_PROTOCOL` and closes the socket with `4409`.
+If the major version differs from the server's, the server answers `ERR_INCOMPATIBLE_PROTOCOL` and closes the socket with `4409`. `have` is optional: when the client has a cached transcript for `subscribePaneId`, it supplies its `sessionId`, `turnCount`, and `lastTurnHash` (FNV-1a 32-bit over `JSON.stringify(turn)` of the turn at index `turnCount - 1`, as lowercase hex) to request an incremental resume (§3.3).
 
 ### 3.2 Handshake Response (`server -> client`)
 ```json
@@ -54,7 +54,7 @@ Then come, in this order, `upstream_status` (§5.5) and `snapshot_update` (§5.3
 
 ### 3.3 Initial Pane Data (`server -> client`)
 The server picks a pane. It uses `subscribePaneId` when Herdr knows that pane, otherwise Herdr's focused pane. It subscribes the connection to that pane and sends:
-1. `normalized_turns` (§5.6). This is always sent, with `turns: []` and `session.bound: false` for panes without a structured session, so the client never keeps the previous pane's conversation.
+1. `normalized_turns` (§5.6) or `turns_delta` (§5.6): if `have` is given, the pane's bound session id equals `have.sessionId`, it has at least `turnCount` turns, and the hash of turn `turnCount - 1` matches `have.lastTurnHash` → send `turns_delta` with `sinceTurnIndex: turnCount`, the remaining turns, and `sessionStats`, `sessionTitle`, `todos`, `session`. Otherwise → the full `normalized_turns` exactly as today. This is always sent (or resumed), with `turns: []` and `session.bound: false` for panes without a structured session, so the client never keeps the previous pane's conversation.
 2. `skills_sync` (§5.7) for that pane's agent and project directory.
 3. `prompt_queue` (§5.8) for that pane, empty when nothing is queued.
 4. `pane_state` (§5.4): the cached state at once if the pane was read before, then a fresh screen read. The fresh read reaches the client as another `pane_state` only if the screen changed.
@@ -97,9 +97,9 @@ Every command except `ping` and `presence_update` carries a string `id`. Success
 
 ### 4.4 Switch Mobile View (`select_view`)
 ```json
-{ "type": "select_view", "id": "cli_10", "payload": { "paneId": "w1:p4" } }
+{ "type": "select_view", "id": "cli_10", "payload": { "paneId": "w1:p4", "have": { "sessionId": "s_1", "turnCount": 5, "lastTurnHash": "a1b2c3d4" } } }
 ```
-This moves the connection's subscription and sends the pane data from §3.3. Desktop focus is not touched. Herdr polls the union of the panes that connected clients are viewing.
+This moves the connection's subscription and sends the pane data from §3.3 (resumed incrementally via `turns_delta` when `have` matches, else full `normalized_turns`). Desktop focus is not touched. Herdr polls the union of the panes that connected clients are viewing.
 
 ### 4.5 Create Tab and Launch Agent (`create_tab_and_agent`)
 ```json
@@ -114,7 +114,7 @@ This moves the connection's subscription and sends the pane data from §3.3. Des
 - `modelId`, if given, must be one of the recipe's models, and the recipe must take a model at launch (§5.7 `launchModel`).
 - `thinking`, if given, must be one of that model's levels.
 - `cwd`, if given, must be absolute. Without it the tab starts in the workspace's folder.
-- `firstMessage`, if given, is 1–100 000 characters. It is handed to Herdr as the tab's first message, and the tab is named after its first line (at most 40 characters).
+- `firstMessage`, if given, is 1–100 000 characters. It is handed to Herdr as the tab's first message; the tab is created without a name, so Herdr's default number applies and the label rule in §5.3 takes over.
 - `resumeSessionId`, if given, matches `^[A-Za-z0-9._-]{1,128}$` and the recipe must support resuming (`herdr-adapter.md` §5).
 
 Any violation gets `ERR_INVALID_PAYLOAD` before anything is created. The launch sequence is in `herdr-adapter.md` §5. The daemon remembers the launch model and thinking level for the new pane (shown as source `launch`, §5.6). The ack carries `{ "workspaceId", "tabId", "paneId" }`, and the client switches to the new pane.
@@ -204,7 +204,7 @@ Broadcast to every client whenever the Herdr snapshot changes:
 }
 ```
 
-- A tab's `label` is its Herdr name when the user gave it one. A Herdr name that is empty or only digits is a default, and the label is then the title of the session bound to the tab's primary pane (`agent-session-normalization.md` §2), else the recipe's label (user decision, 2026-11-07).
+- A tab's `label` is its Herdr name when the user gave it one. A Herdr name that is empty or only digits is a default, and the label is then the title of the session bound to the tab's primary pane (`agent-session-normalization.md` §2), else the recipe's label (user decision, 2026-11-07). A 'session title' means solely a title the agent itself assigned (Claude Code `custom-title`/`ai-title`, OpenCode non-placeholder title, AGY annotation title); a first prompt is never a live session title.
 - `agentStatus` and `status` are the reported status: a pane the daemon marks seen is `idle` (`herdr-adapter.md` §4).
 
 ### 5.4 Pane State (`pane_state`)

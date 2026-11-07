@@ -7,7 +7,7 @@ import { ModelCatalog } from "../src/server/model-catalog";
 import { PushManager } from "../src/server/push";
 import { SkillScanner } from "../src/server/skill-scanner";
 import { WsServer } from "../src/server/ws-server";
-import { ProtocolErrors } from "../src/types/protocol";
+import { ProtocolErrors, hashTurn, fnv1a32, type NormalizedTurn } from "../src/types/protocol";
 import { FakeHerdr, fakeWs, tempDir, topologyOf } from "./helpers/fixtures";
 
 // protocol.md: §3 handshake, §4 client commands, §6 configuration sync, §7 error codes.
@@ -226,5 +226,140 @@ describe("device revocation (security-and-pairing.md §5)", () => {
     server.handleOpen(c.ws);
     server.closeDevice("dev_gone");
     expect(c.closes[0].code).toBe(4403);
+  });
+});
+
+describe("incremental resume with have (protocol.md §3.1, §3.3, §4.4)", () => {
+  const turn1: NormalizedTurn = { turnId: "t1", turnNumber: 1, timestamp: 1000, userPrompt: { text: "hello" } };
+  const turn2: NormalizedTurn = { turnId: "t2", turnNumber: 2, timestamp: 2000, userPrompt: { text: "step 2" } };
+  const turn3: NormalizedTurn = { turnId: "t3", turnNumber: 3, timestamp: 3000, userPrompt: { text: "step 3" } };
+
+  beforeEach(() => {
+    (server.paneStore as any).paneStates.set("p1", {
+      paneId: "p1",
+      agent: "claude",
+      sessionId: "ses_1",
+      turns: [turn1, turn2, turn3],
+      seqWatermark: 3,
+      sessionTitle: "My Session",
+    });
+  });
+
+  test("hash helper gives deterministic 8-char lowercase hex", () => {
+    const h1 = hashTurn(turn1);
+    const h2 = hashTurn(turn1);
+    expect(h1).toBe(h2);
+    expect(h1).toMatch(/^[0-9a-f]{8}$/);
+    expect(fnv1a32("test")).toBe("afd071e5");
+  });
+
+  test("a matching have gets a turns_delta from turnCount (protocol.md §3.3)", async () => {
+    const c = fakeWs();
+    server.handleOpen(c.ws);
+    await send(c.ws, {
+      type: "select_view",
+      id: "s1",
+      payload: {
+        paneId: "p1",
+        have: {
+          sessionId: "ses_1",
+          turnCount: 2,
+          lastTurnHash: hashTurn(turn2),
+        },
+      },
+    });
+    const deltas = c.ofType("turns_delta");
+    expect(deltas.length).toBe(1);
+    expect(c.ofType("normalized_turns").length).toBe(0);
+    expect(deltas[0].payload).toMatchObject({
+      paneId: "p1",
+      sinceTurnIndex: 2,
+      appendTurns: [turn3],
+      sessionTitle: "My Session",
+    });
+  });
+
+  test("a mismatched hash gets a full normalized_turns", async () => {
+    const c = fakeWs();
+    server.handleOpen(c.ws);
+    await send(c.ws, {
+      type: "select_view",
+      id: "s2",
+      payload: {
+        paneId: "p1",
+        have: {
+          sessionId: "ses_1",
+          turnCount: 2,
+          lastTurnHash: "00000000",
+        },
+      },
+    });
+    expect(c.ofType("turns_delta").length).toBe(0);
+    const full = c.ofType("normalized_turns");
+    expect(full.length).toBe(1);
+    expect(full[0].payload.turns).toHaveLength(3);
+  });
+
+  test("a mismatched sessionId gets a full normalized_turns", async () => {
+    const c = fakeWs();
+    server.handleOpen(c.ws);
+    await send(c.ws, {
+      type: "select_view",
+      id: "s3",
+      payload: {
+        paneId: "p1",
+        have: {
+          sessionId: "other_session",
+          turnCount: 2,
+          lastTurnHash: hashTurn(turn2),
+        },
+      },
+    });
+    expect(c.ofType("turns_delta").length).toBe(0);
+    const full = c.ofType("normalized_turns");
+    expect(full.length).toBe(1);
+    expect(full[0].payload.turns).toHaveLength(3);
+  });
+
+  test("an unbound pane gets normalized_turns with bound: false", async () => {
+    const c = fakeWs();
+    server.handleOpen(c.ws);
+    await send(c.ws, {
+      type: "select_view",
+      id: "s4",
+      payload: {
+        paneId: "p2",
+        have: {
+          sessionId: "ses_unbound",
+          turnCount: 1,
+          lastTurnHash: hashTurn(turn1),
+        },
+      },
+    });
+    expect(c.ofType("turns_delta").length).toBe(0);
+    const full = c.ofType("normalized_turns");
+    expect(full.length).toBe(1);
+    expect(full[0].payload.session.bound).toBe(false);
+  });
+
+  test("a malformed have gets a full normalized_turns", async () => {
+    const c = fakeWs();
+    server.handleOpen(c.ws);
+    await send(c.ws, {
+      type: "select_view",
+      id: "s5",
+      payload: {
+        paneId: "p1",
+        have: {
+          sessionId: 123,
+          turnCount: -1,
+          lastTurnHash: "bad",
+        } as any,
+      },
+    });
+    expect(c.ofType("turns_delta").length).toBe(0);
+    const full = c.ofType("normalized_turns");
+    expect(full.length).toBe(1);
+    expect(full[0].payload.turns).toHaveLength(3);
   });
 });

@@ -33,12 +33,13 @@ Binding is re-evaluated on every snapshot (`herdr-adapter.md` §3.1). When the r
 - **Session**: `session_v2` (`id`, `directory`, `title`, `time_updated`, summary columns); messages and parts (`text`, `tool`, `reasoning`, …) in `session_message`.
 - **Binding and listing** use `directory` and `time_updated` (milliseconds). All sessions share one database file, so no open file names a session (§2.0 rule 1 does not apply).
 - **Model**: the latest assistant message's `model` (`{ providerID, id }`), as `<providerID>/<id>` like `opencode models` (source `log`).
+- **Title**: `session_v2.title` unless it is OpenCode's default placeholder (`New session - <ISO time>`, matching `/^New session - \d{4}-\d{2}-\d{2}T/`). An absent or placeholder title leaves the session untitled (no first-prompt fallback); listing still falls back to the first prompt (§2.6).
 
 ### 2.2 Antigravity (`agy`)
 - **Storage**: `~/.gemini/antigravity-cli/brain/<id>/.system_generated/logs/transcript.jsonl` (NDJSON). Title from `~/.gemini/antigravity-cli/annotations/<id>.pbtxt` (`title: "…"`).
 - **Records**: `USER_INPUT`, `PLANNER_RESPONSE` (`thinking`, `tool_calls`, `content`), `GENERIC` (tool output). When a line has `truncated_fields`, the full line is read from `transcript_full.jsonl`.
 - **Binding**: exact (§2.0 rule 1) when the AGY process holds `~/.gemini/antigravity-cli/presence/<id>.lock` or the session's transcript open; otherwise the transcript's modification time (no folder).
-- **Model**: the records name no model, so it is the launch value or unknown (`protocol.md` §5.6).
+- **Model**: the latest record whose content reports that the user changed the `Model Selection` setting; its new value is a model label as `agy models` prints it, resolved to the model's id through the model catalog (`herdr-adapter.md` §7.1), source `log`. Without such a record, the launch value, else unknown (`protocol.md` §5.6). The global `settings.json` is not read.
 
 ### 2.3 Claude Code (`claude`)
 - **Storage**: `~/.claude/projects/<slug(cwd)>/<id>.jsonl` (NDJSON); live process map `~/.claude/sessions/<pid>.json`.
@@ -56,14 +57,14 @@ Binding is re-evaluated on every snapshot (`herdr-adapter.md` §3.1). When the r
 - **Records used** (`response_item` payloads): `message` with role `user` (`input_text` blocks; text starting with `<environment_context>`, `<user_instructions>` or `<user_action>` is not a prompt) or `assistant` (`output_text` blocks); `reasoning` (`summary[].text`); `function_call` (`name`, `arguments` JSON text, `call_id`) and `function_call_output` (`call_id`, `output`); `custom_tool_call` (`name`, `input`, `call_id`) and `custom_tool_call_output`. `event_msg` with `thread_settings_applied` names the model (`thread_settings.model`, source `log`). Others are ignored.
 - **Tools**: `shell` / `exec_command` (`command` as an array or a string, or `cmd`) are commands; `apply_patch` input is a patch whose `*** Update File:`, `*** Add File:` and `*** Delete File:` sections produce one `FileDiffSummary` each; `update_plan` (`plan[]` with `step`, `status`) is the todo list.
 - **Listing and binding** read the newest rollouts first and only their first line for the folder. Exact binding (§2.0 rule 1): a rollout file the Codex process holds open.
-- **Title**: the first prompt (at most 120 characters).
+- **Title**: none (Codex assigns no title); listings still show the first prompt (§2.6).
 
 ### 2.5 Pi (`pi`)
 - **Storage**: `~/.pi/agent/sessions/--<path>--/<time>_<id>.jsonl`, where `<path>` is the folder without its leading `/` and with `/` replaced by `-`.
 - **Records used**: `message` records with `message.role` `user` (text blocks), `assistant` (`text`, `thinking`, `toolCall` blocks with `id`, `name`, `arguments`) and `toolResult` (`toolCallId`, `content` text, `isError`). `bash` tool calls are commands; `edit` (`path`, `oldText`, `newText`) and `write` (`path`, `content`) produce file diffs. Others are ignored.
 - **Binding**: exact (§2.0 rule 1) when the pi process holds a session file open; otherwise folder and time.
 - **Model**: the latest `model_change` record (`provider`, `modelId`) or assistant message (`provider`, `model`), as `<provider>/<id>` like the model catalog (`herdr-adapter.md` §7.1, source `log`).
-- **Title**: the first prompt (at most 120 characters).
+- **Title**: none (Pi assigns no title); listings still show the first prompt (§2.6).
 
 ### 2.6 Listing past sessions
 `sessions_list` (`protocol.md` §4.10) lists, newest first and at most 50, an agent's sessions whose folder is the workspace's folder or inside it:

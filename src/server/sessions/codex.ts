@@ -213,7 +213,6 @@ function applyRecord(b: TurnBuilder, r: unknown): void {
       if (p.role === "user") {
         if (text && !NOT_PROMPT.test(text)) {
           b.prompt(text, ts);
-          b.title ??= text.slice(0, 120); // §2.4: Codex keeps no title of its own
         }
       } else if (p.role === "assistant") b.text(text, ts);
       return;

@@ -14,38 +14,49 @@ A small daemon runs alongside Herdr on your computer and serves the app over you
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="docs/images/home-dark.png">
-    <img src="docs/images/home-light.png" width="200" alt="Home: every Herdr workspace with its tabs and agent status">
-  </picture>
-  &nbsp;
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="docs/images/session-dark.png">
-    <img src="docs/images/session-light.png" width="200" alt="A Claude Code session: the prompt, grouped tool calls and the answer">
-  </picture>
-  &nbsp;
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="docs/images/answer-dark.png">
-    <img src="docs/images/answer-light.png" width="200" alt="The agent's answer rendered as Markdown, with the reply box">
+    <img src="docs/images/home-light.png" width="260" alt="See every workspace and active agent status at a glance">
   </picture>
   &nbsp;
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="docs/images/agents-dark.png">
-    <img src="docs/images/agents-light.png" width="200" alt="All agents grouped by status">
+    <img src="docs/images/agents-light.png" width="260" alt="Track who is waiting, working, or done across all projects">
+  </picture>
+  &nbsp;
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/images/session-dark.png">
+    <img src="docs/images/session-light.png" width="260" alt="Follow along in a clean chat feed with tasks and tool calls">
+  </picture>
+</p>
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/images/prompt-dark.png">
+    <img src="docs/images/prompt-light.png" width="260" alt="Approve command permissions and answer questions with a tap">
+  </picture>
+  &nbsp;
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/images/diff-dark.png">
+    <img src="docs/images/diff-light.png" width="260" alt="Inspect per-file additions, deletions, and unified patch diffs">
+  </picture>
+  &nbsp;
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/images/queue-dark.png">
+    <img src="docs/images/queue-light.png" width="260" alt="Queue follow-up prompts while an agent works, with instant undo">
   </picture>
 </p>
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="docs/images/commands-dark.png">
-    <img src="docs/images/commands-light.png" width="200" alt="Typing / lists the agent's commands and skills">
+    <img src="docs/images/commands-light.png" width="260" alt="Trigger slash commands and project skills right from the composer">
+  </picture>
+  &nbsp;
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/images/new-dark.png">
+    <img src="docs/images/new-light.png" width="260" alt="Start a new session with your chosen agent, model, and effort">
   </picture>
   &nbsp;
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="docs/images/resume-dark.png">
-    <img src="docs/images/resume-light.png" width="200" alt="Resume a past session in a new tab">
-  </picture>
-  &nbsp;
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="docs/images/settings-dark.png">
-    <img src="docs/images/settings-light.png" width="200" alt="Settings: appearance, language and paired devices">
+    <img src="docs/images/resume-light.png" width="260" alt="Pick up past sessions where you left off from agent-assigned titles">
   </picture>
 </p>
 

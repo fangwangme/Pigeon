@@ -245,12 +245,31 @@ export interface PigeonConfig {
   client: ClientConfig;
 }
 
+export interface HaveInfo {
+  sessionId: string;
+  turnCount: number;
+  lastTurnHash: string;
+}
+
+export function fnv1a32(str: string): string {
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < str.length; i++) {
+    hash ^= str.charCodeAt(i);
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return (hash >>> 0).toString(16).padStart(8, "0");
+}
+
+export function hashTurn(turn: NormalizedTurn): string {
+  return fnv1a32(JSON.stringify(turn));
+}
+
 // Client -> Server messages
 export type ClientMessage =
-  | { type: "hello"; id: string; payload: { protocolVersion: string; subscribePaneId?: string } }
+  | { type: "hello"; id: string; payload: { protocolVersion: string; subscribePaneId?: string; have?: HaveInfo } }
   | { type: "ping"; timestamp?: number }
   | { type: "presence_update"; isVisible: boolean; viewingPaneId: string | null }
-  | { type: "select_view"; id: string; payload: { paneId: string } }
+  | { type: "select_view"; id: string; payload: { paneId: string; have?: HaveInfo } }
   | { type: "interaction_respond"; id: string; payload: { targetPaneId: string; interactionId: string; optionId: string; fingerprint: string } }
   | { type: "agent_prompt"; id: string; payload: { targetPaneId: string; text: string; attachments?: string[] } }
   | { type: "agent_send_keys"; id: string; payload: { targetPaneId: string; keys: string[] } }

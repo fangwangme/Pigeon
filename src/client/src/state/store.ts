@@ -58,6 +58,7 @@ export interface AppState {
   sessionTitle: string | null;
   todos: TodoItem[] | null;
   session: SessionInfo | null;
+  paneSyncing: boolean;
   queue: QueuedPrompt[];
   skills: SkillEntry[];
   recipes: Record<string, AgentRecipeSummary>;
@@ -126,6 +127,7 @@ const [state, setState] = createStore<AppState>({
   sessionTitle: null,
   todos: null,
   session: null,
+  paneSyncing: false,
   queue: [],
   skills: [],
   recipes: {},
