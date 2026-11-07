@@ -50,19 +50,6 @@ export class AgyAdapter {
       .replace(/sonnet-(\d+)\.(\d+)/g, "sonnet-$1-$2");
   }
 
-  private getDefaultModel(): string | undefined {
-    const settingsPath = join(dirname(this.baseBrainDir), "settings.json");
-    if (existsSync(settingsPath)) {
-      try {
-        const data = JSON.parse(readFileSync(settingsPath, "utf-8"));
-        if (typeof data.model === "string" && data.model) {
-          return this.normalizeModelId(data.model.trim());
-        }
-      } catch {}
-    }
-    return undefined;
-  }
-
   private getSessionTitle(sessionId: string): string | null {
     const annotPath = join(
       dirname(this.baseBrainDir),
@@ -110,7 +97,7 @@ export class AgyAdapter {
     incremental = false
   ): { turns: NormalizedTurn[]; stats?: SessionStats; sessionTitle?: string; model?: string } {
     const title = this.getSessionTitle(sessionId) || undefined;
-    const model = () => this.cachedModels.get(sessionId) || this.getDefaultModel();
+    const model = () => this.cachedModels.get(sessionId);
     const logPath = this.getSessionLogPath(sessionId);
     if (!incremental) this.resetCache(sessionId);
     if (!existsSync(logPath)) {
@@ -182,17 +169,16 @@ export class AgyAdapter {
           ? new Date(record.created_at).getTime()
           : Date.now();
 
-        if (recType === "USER_INPUT") {
-          // Detect model change in <USER_SETTINGS_CHANGE>
-          const rawContent = record.content || "";
-          const modelMatch = rawContent.match(
-            /The user changed setting `Model Selection` from .*? to (.+?)\.(?:\s+No need|\s*<\/USER_SETTINGS_CHANGE>|$)/
-          );
-          if (modelMatch && modelMatch[1]) {
-            const norm = this.normalizeModelId(modelMatch[1].trim());
-            if (norm) this.cachedModels.set(sessionId, norm);
-          }
+        const rawContent = record.content || "";
+        const modelMatch = rawContent.match(
+          /The user changed setting `Model Selection` from .*? to `?(.+?)`?\.(?:\s+No need|\s*<\/USER_SETTINGS_CHANGE>|$)/
+        );
+        if (modelMatch && modelMatch[1]) {
+          const norm = this.normalizeModelId(modelMatch[1].trim());
+          if (norm) this.cachedModels.set(sessionId, norm);
+        }
 
+        if (recType === "USER_INPUT") {
           // Clean prompt: extract content from <USER_REQUEST> if wrapped
           let promptText = record.content || "";
           const match = promptText.match(/<USER_REQUEST>([\s\S]*?)<\/USER_REQUEST>/);

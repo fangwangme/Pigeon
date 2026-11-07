@@ -38,7 +38,7 @@ Binding is re-evaluated on every snapshot (`herdr-adapter.md` §3.1). When the r
 - **Storage**: `~/.gemini/antigravity-cli/brain/<id>/.system_generated/logs/transcript.jsonl` (NDJSON). Title from `~/.gemini/antigravity-cli/annotations/<id>.pbtxt` (`title: "…"`).
 - **Records**: `USER_INPUT`, `PLANNER_RESPONSE` (`thinking`, `tool_calls`, `content`), `GENERIC` (tool output). When a line has `truncated_fields`, the full line is read from `transcript_full.jsonl`.
 - **Binding**: exact (§2.0 rule 1) when the AGY process holds `~/.gemini/antigravity-cli/presence/<id>.lock` or the session's transcript open; otherwise the transcript's modification time (no folder).
-- **Model**: the records name no model, so it is the launch value or unknown (`protocol.md` §5.6).
+- **Model**: parsed from the latest `The user changed setting `Model Selection` from .*? to (.+?)\.` in transcript records as source `log`; otherwise falls back to the launch value or unknown (`protocol.md` §5.6).
 
 ### 2.3 Claude Code (`claude`)
 - **Storage**: `~/.claude/projects/<slug(cwd)>/<id>.jsonl` (NDJSON); live process map `~/.claude/sessions/<pid>.json`.

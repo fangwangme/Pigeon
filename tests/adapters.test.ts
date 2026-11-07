@@ -276,6 +276,29 @@ describe("structured session adapters (agent-session-normalization.md §2)", () 
       writeFileSync(logFile, second.slice(cut) + "\n", { flag: "a" });
       expect(adapter.getTurns("s", true).turns.map((t) => t.userPrompt?.text)).toEqual(["first", "第二个问题"]);
     });
+
+    test("Extracts model from USER_SETTINGS_CHANGE event in transcript (§2.2)", () => {
+      const brain = join(testDir, "brain_model");
+      const logs = join(brain, "s_model", ".system_generated", "logs");
+      mkdirSync(logs, { recursive: true });
+      const logFile = join(logs, "transcript.jsonl");
+      const line1 = JSON.stringify({
+        step_index: 0,
+        type: "USER_SETTINGS_CHANGE",
+        content: "The user changed setting `Model Selection` from `Gemini 2.5 Flash` to `Gemini 3.8 Flash (Medium)`.",
+        created_at: new Date(1000).toISOString(),
+      });
+      const line2 = JSON.stringify({
+        step_index: 1,
+        type: "USER_INPUT",
+        content: "<USER_REQUEST>test</USER_REQUEST>",
+        created_at: new Date(2000).toISOString(),
+      });
+      writeFileSync(logFile, `${line1}\n${line2}\n`, "utf-8");
+      const adapter = new AgyAdapter({ baseBrainDir: brain });
+      const { model } = adapter.getTurns("s_model", false);
+      expect(model).toBe("gemini-3.8-flash-medium");
+    });
   });
 
   describe("Antigravity full re-read", () => {

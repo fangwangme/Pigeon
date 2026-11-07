@@ -108,7 +108,7 @@ describe("question answers (mobile-ui-and-themes.md §4.2)", () => {
 describe("mobile layout enhancements (mobile-ui-and-themes.md §1.2, §2.1)", () => {
   test("Home header renders the compact Logo mark instead of plain text Pigeon", () => {
     const homeSrc = readFileSync(join(rootDir, "src", "client", "src", "components", "Home.tsx"), "utf-8");
-    expect(homeSrc).toContain("<Logo");
+    expect(homeSrc).toMatch(/class="logo-mark"[^>]*>[\s\S]*?<Logo/);
     expect(homeSrc).not.toContain('<div class="lt">Pigeon</div>');
   });
 
@@ -117,6 +117,6 @@ describe("mobile layout enhancements (mobile-ui-and-themes.md §1.2, §2.1)", ()
     expect(css).toMatch(/\.comp textarea\s*\{[^}]*max-height:\s*280px/);
     expect(css).toMatch(/\.comp textarea\s*\{[^}]*overflow-y:\s*auto/);
     const composerSrc = readFileSync(join(rootDir, "src", "client", "src", "components", "Composer.tsx"), "utf-8");
-    expect(composerSrc).toContain("280");
+    expect(composerSrc).toContain("Math.min(ta.scrollHeight, 280)");
   });
 });

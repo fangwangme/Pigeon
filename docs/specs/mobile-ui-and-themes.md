@@ -44,7 +44,7 @@ A sheet shared by §2.1 and §2.2: status (等待你, 工作中, 已完成, 空�
 ## 3. Session page
 
 ### 3.1 Layout
-- A glass header: back, the session title (prioritizes the agent session's renamed title, falling back to named tab labels, then agent recipe name; a spinner while working, an amber dot while waiting), the pane in the subtitle when the tab has several, and ⋯ (§6.1). Tapping the title switches pane when there are several (§6.8).
+- A glass header: back, the session title (prioritizes named tab labels, falling back to the agent session's title, then agent recipe name per protocol.md §5.3; a spinner while working, an amber dot while waiting), the pane in the subtitle when the tab has several, and ⋯ (§6.1). Tapping the title switches pane when there are several (§6.8).
 - The body is the transcript (§3.2) when the pane has a structured session, else the screen cards (§3.6). A plain terminal tab shows the terminal view (§5) as its body.
 - Visited sessions cache their normalized transcript and metadata in the browser's `localStorage` with a 7-day TTL (`pigeon_pane_cache_<paneId>`). Opening or refreshing a cached pane renders its transcript immediately without a blank loading screen, while fresh updates sync in the background. Caches older than 7 days expire and re-read from the daemon.
 - The composer (§6) floats at the bottom.

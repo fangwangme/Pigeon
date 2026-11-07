@@ -94,6 +94,8 @@ export function writePref(key: string, value: string | null): void {
 }
 
 export const PANE_CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
+export const MAX_CACHED_PANES = 5;
+const MAX_PANE_CACHE_CHARS = 1024 * 1024; // 1MB payload cap
 
 export interface PaneCacheEntry {
   savedAt: number;
@@ -102,6 +104,40 @@ export interface PaneCacheEntry {
   sessionTitle?: string | null;
   todos?: TodoItem[] | null;
   session?: SessionInfo | null;
+}
+
+function prunePaneCaches(currentPaneId?: string): void {
+  try {
+    if (typeof localStorage === "undefined") return;
+    const now = Date.now();
+    const cacheEntries: { key: string; savedAt: number }[] = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (key?.startsWith("pigeon_pane_cache_")) {
+        const raw = localStorage.getItem(key);
+        if (!raw) continue;
+        try {
+          const entry = JSON.parse(raw);
+          if (!entry.savedAt || now - entry.savedAt > PANE_CACHE_TTL_MS) {
+            localStorage.removeItem(key);
+          } else {
+            cacheEntries.push({ key, savedAt: entry.savedAt });
+          }
+        } catch {
+          localStorage.removeItem(key);
+        }
+      }
+    }
+    if (cacheEntries.length >= MAX_CACHED_PANES) {
+      cacheEntries.sort((a, b) => a.savedAt - b.savedAt);
+      while (cacheEntries.length >= MAX_CACHED_PANES) {
+        const oldest = cacheEntries.shift();
+        if (oldest && (!currentPaneId || oldest.key !== `pigeon_pane_cache_${currentPaneId}`)) {
+          localStorage.removeItem(oldest.key);
+        }
+      }
+    }
+  } catch {}
 }
 
 export function readPaneCache(paneId: string): PaneCacheEntry | null {
@@ -119,10 +155,18 @@ export function readPaneCache(paneId: string): PaneCacheEntry | null {
   }
 }
 
-export function writePaneCache(paneId: string, entry: Omit<PaneCacheEntry, "savedAt">): void {
+export function writePaneCache(paneId: string, entry: Omit<PaneCacheEntry, "savedAt"> | null): void {
   try {
+    if (!entry) {
+      writePref(`pigeon_pane_cache_${paneId}`, null);
+      return;
+    }
+    prunePaneCaches(paneId);
     const payload: PaneCacheEntry = { ...entry, savedAt: Date.now() };
-    writePref(`pigeon_pane_cache_${paneId}`, JSON.stringify(payload));
+    const serialized = JSON.stringify(payload);
+    if (serialized.length <= MAX_PANE_CACHE_CHARS) {
+      writePref(`pigeon_pane_cache_${paneId}`, serialized);
+    }
   } catch {
     // quota exceeded or storage disabled
   }

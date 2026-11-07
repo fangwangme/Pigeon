@@ -84,7 +84,6 @@ export async function initWebSocket(): Promise<void> {
     if (socket !== ws) return;
     reconnectAttempts = 0;
     setState("connected", true);
-    console.log(`[PERF] WebSocket connected to ${window.location.host}`);
     lastPongTime = Date.now();
     sendMessage({
       type: "hello",
@@ -129,12 +128,21 @@ export async function initWebSocket(): Promise<void> {
 
 /** Clears everything that belongs to the pane being left, restoring 7-day cache if available. */
 function resetPaneView(paneId: string): void {
+  // Persist current active pane state before switching if bound
+  if (state.activePaneId && state.session?.bound && state.normalizedTurns.length) {
+    writePaneCache(state.activePaneId, {
+      normalizedTurns: state.normalizedTurns,
+      sessionStats: state.sessionStats,
+      sessionTitle: state.sessionTitle,
+      todos: state.todos,
+      session: state.session,
+    });
+  }
   // The server re-sends the pane's cached state with its current revision (protocol.md §3.3);
   // a high-water mark kept from an earlier visit would drop it.
   paneRevisions.delete(paneId);
   const cached = readPaneCache(paneId);
   if (cached) {
-    console.log(`[PERF] Instant restore pane ${paneId} from 7-day cache (${cached.normalizedTurns.length} turns)`);
     setState({
       activePaneId: paneId,
       cards: [],
@@ -244,7 +252,6 @@ export function handleServerMessage(msg: ServerMessage): void {
 
     case "normalized_turns":
       if (msg.payload.paneId !== state.activePaneId) return;
-      console.log(`[PERF] Received fresh normalized_turns for ${msg.payload.paneId} (${msg.payload.turns?.length} turns, bound: ${msg.payload.session?.bound})`);
       setState({
         normalizedTurns: msg.payload.turns,
         sessionStats: msg.payload.sessionStats || null,
@@ -260,6 +267,8 @@ export function handleServerMessage(msg: ServerMessage): void {
           todos: msg.payload.todos || null,
           session: msg.payload.session,
         });
+      } else {
+        writePaneCache(msg.payload.paneId, null);
       }
       return;
 
@@ -278,7 +287,7 @@ export function handleServerMessage(msg: ServerMessage): void {
       if (sessionTitle) setState("sessionTitle", sessionTitle);
       if (todos) setState("todos", todos);
       if (session) setState("session", session);
-      if (state.session?.bound && current.length) {
+      if (state.session?.bound && current.length && appendTurns.length > 0) {
         writePaneCache(msg.payload.paneId, {
           normalizedTurns: current,
           sessionStats: state.sessionStats,
