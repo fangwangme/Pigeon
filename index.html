@@ -9,11 +9,21 @@
     <meta name="apple-mobile-web-app-title" content="Pigeon" />
     <meta name="application-name" content="Pigeon" />
     <meta name="theme-color" content="#111113" />
+    <meta name="color-scheme" content="light dark" />
     <link rel="manifest" href="/manifest.webmanifest" />
     <link rel="apple-touch-icon" href="/icon-192.png" />
     <link rel="icon" type="image/svg+xml" href="/icon.svg" />
     <link rel="icon" type="image/png" sizes="192x192" href="/icon-192.png" />
     <title>Pigeon</title>
+    <style>
+      :root { color-scheme: light dark; }
+      html, body { background: #111113; color: #F2F2F3; margin: 0; height: 100%; }
+      @media (prefers-color-scheme: light) {
+        :root:not([data-theme="dark"]), :root:not([data-theme="dark"]) body { background: #F8F8F6; color: #18181A; }
+      }
+      :root[data-theme="light"], :root[data-theme="light"] body { background: #F8F8F6; color: #18181A; }
+      :root[data-theme="dark"], :root[data-theme="dark"] body { background: #111113; color: #F2F2F3; }
+    </style>
     <script>
       // mobile-ui-and-themes.md §9.1: paint the stored palette before the app loads.
       (function () {
@@ -23,6 +33,7 @@
         var bg = light ? "#F8F8F6" : "#111113";
         var root = document.documentElement;
         root.setAttribute("data-theme", light ? "light" : "dark");
+        root.style.colorScheme = light ? "light" : "dark";
         root.style.setProperty("--bg", bg);
         root.style.background = bg;
         document.querySelector('meta[name="theme-color"]').setAttribute("content", bg);

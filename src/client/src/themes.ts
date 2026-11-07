@@ -149,6 +149,7 @@ export function applyTheme(mode: ThemeMode, accent: AccentName): void {
   const resolved = resolveMode(mode);
   const root = document.documentElement;
   root.setAttribute("data-theme", resolved);
+  root.style.colorScheme = resolved;
   const p = PALETTES[resolved];
   for (const key of Object.keys(KEBAB) as Array<keyof Palette>) root.style.setProperty(`--${KEBAB[key]}`, p[key]);
   const a = ACCENTS[accent][resolved];
