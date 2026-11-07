@@ -1,7 +1,7 @@
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="public/icon-dark.svg">
-    <img src="public/icon-light.svg" width="120" height="120" alt="Pigeon — origami messenger pigeon carrying a sealed envelope">
+    <img src="public/icon-light.svg" width="120" height="120" alt="Pigeon — bionic AI messenger pigeon carrying a >_ terminal envelope">
   </picture>
 </p>
 
@@ -67,7 +67,7 @@ A small daemon runs alongside Herdr on your computer and serves the app over you
   <img src="public/icon-light.svg" width="128" height="128" alt="Pigeon icon — Light Mode">
 </p>
 
-Pigeon's emblem is a geometric origami carrier pigeon in mid-flight, carrying a wax-sealed green envelope beneath its beak—a nod to its role as the messenger delivering prompts, approvals, and replies between your phone and the coding agents running on your desk. Every facet is folded along continuous shared creases in two coordinated Gruvbox paper palettes (**Dark** `#282828 → #1D2021` obsidian charcoal and **Light** `#F7F3E8 → #E6DEC8` warm parchment), adapting automatically across the README, browser favicon (`public/icon.svg`), pairing screen, and new-session view.
+Pigeon's emblem is a faceted bionic messenger pigeon in flight—sculpted from warm titanium-ceramic armor plates, a glowing hexagonal AI optical visor, and solar-orange wings traced with a neural pulse circuit—carrying a green `>_` terminal envelope beneath its beak. It captures what Pigeon does at a glance: an autonomous courier ferrying prompts, approvals, and replies between your phone and the terminal coding agents on your desk, with dedicated **Dark** (`public/icon-dark.svg`) and **Light** (`public/icon-light.svg`) palettes that adapt across the README, browser favicon (`public/icon.svg`), pairing screen, and new-session view.
 
 ## How it works
 

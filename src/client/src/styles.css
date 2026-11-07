@@ -293,44 +293,50 @@ svg.i.sm { width: 16px; height: 16px; }
 .note { font-size: 13px; color: var(--muted); margin: 8px 4px; line-height: 1.5; }
 .pair { flex: 1; display: flex; flex-direction: column; align-items: center; text-align: center; padding: calc(60px + env(safe-area-inset-top)) 24px 40px; overflow-y: auto; }
 .logo { width: 84px; height: 84px; display: block; margin: 20px 0 22px; flex: none; }
-.logo .bg-0 { stop-color: #282828; }
-.logo .bg-1 { stop-color: #1D2021; }
-.logo .bd-0 { stop-color: #7C6F64; }
-.logo .bd-1 { stop-color: #504945; }
+.logo .bg-0 { stop-color: #24272B; }
+.logo .bg-1 { stop-color: #16181A; }
+.logo .bd-0 { stop-color: #7C746B; }
+.logo .bd-1 { stop-color: #44474C; }
 .logo .w-back-1 { fill: #D65D0E; }
-.logo .w-back-2 { fill: #B54507; }
-.logo .tail-1 { fill: #7C6F64; }
-.logo .tail-2 { fill: #928374; }
-.logo .belly { fill: #BDAE93; }
-.logo .flank { fill: #D5C4A1; }
-.logo .breast { fill: #E4D5B7; }
-.logo .throat { fill: #E6D8B8; }
-.logo .crown { fill: #F4E8C1; }
+.logo .w-back-2 { fill: #A63A04; }
+.logo .tail-1 { fill: #6E6A63; }
+.logo .tail-2 { fill: #8A847B; }
+.logo .belly { fill: #B0A99D; }
+.logo .flank-rear { fill: #C5BEB2; }
+.logo .dorsal { fill: #DED8CD; }
+.logo .flank-mid { fill: #D2CBC0; }
+.logo .breast { fill: #E8E2D7; }
+.logo .throat { fill: #E2DCD0; }
+.logo .crown { fill: #F5F0E6; }
+.logo .seam { stroke: #24272B; }
 .logo .beak-1 { fill: #FABD2F; }
 .logo .beak-2 { fill: #D79921; }
-.logo .w-front-1 { fill: #FF9638; }
-.logo .w-front-2 { fill: #F26D13; }
+.logo .w-front-1 { fill: #FF9838; }
+.logo .w-front-2 { fill: #E8600E; }
 .logo .env-base { fill: #8EC07C; }
-.logo .env-fold { fill: #7DB36A; }
-.logo .env-flap { fill: #A4D292; }
-:root[data-theme="light"] .logo .bg-0 { stop-color: #F7F3E8; }
-:root[data-theme="light"] .logo .bg-1 { stop-color: #E6DEC8; }
-:root[data-theme="light"] .logo .bd-0 { stop-color: #CFC2AA; }
-:root[data-theme="light"] .logo .bd-1 { stop-color: #A89980; }
+.logo .env-fold { fill: #78AD65; }
+.logo .env-flap { fill: #A9D697; }
+:root[data-theme="light"] .logo .bg-0 { stop-color: #F7F4EC; }
+:root[data-theme="light"] .logo .bg-1 { stop-color: #E6DFCF; }
+:root[data-theme="light"] .logo .bd-0 { stop-color: #CFC5B2; }
+:root[data-theme="light"] .logo .bd-1 { stop-color: #A69B86; }
 :root[data-theme="light"] .logo .w-back-1 { fill: #D65D0E; }
-:root[data-theme="light"] .logo .w-back-2 { fill: #AF3A03; }
-:root[data-theme="light"] .logo .tail-1 { fill: #665C54; }
-:root[data-theme="light"] .logo .tail-2 { fill: #7C6F64; }
-:root[data-theme="light"] .logo .belly { fill: #B09B7C; }
-:root[data-theme="light"] .logo .flank { fill: #CBB694; }
-:root[data-theme="light"] .logo .breast { fill: #DFCEB0; }
-:root[data-theme="light"] .logo .throat { fill: #E2D2B5; }
-:root[data-theme="light"] .logo .crown { fill: #F2E5C6; }
-:root[data-theme="light"] .logo .w-front-1 { fill: #FF8B2E; }
-:root[data-theme="light"] .logo .w-front-2 { fill: #E65C08; }
+:root[data-theme="light"] .logo .w-back-2 { fill: #A63A04; }
+:root[data-theme="light"] .logo .tail-1 { fill: #5E5850; }
+:root[data-theme="light"] .logo .tail-2 { fill: #787066; }
+:root[data-theme="light"] .logo .belly { fill: #A39682; }
+:root[data-theme="light"] .logo .flank-rear { fill: #B8AC97; }
+:root[data-theme="light"] .logo .dorsal { fill: #D4C9B6; }
+:root[data-theme="light"] .logo .flank-mid { fill: #C6BAA5; }
+:root[data-theme="light"] .logo .breast { fill: #DFD5C3; }
+:root[data-theme="light"] .logo .throat { fill: #DAD0BE; }
+:root[data-theme="light"] .logo .crown { fill: #EFE7D8; }
+:root[data-theme="light"] .logo .seam { stroke: #5E5850; }
+:root[data-theme="light"] .logo .w-front-1 { fill: #FF8E2B; }
+:root[data-theme="light"] .logo .w-front-2 { fill: #E05606; }
 :root[data-theme="light"] .logo .env-base { fill: #68A85E; }
-:root[data-theme="light"] .logo .env-fold { fill: #56964C; }
-:root[data-theme="light"] .logo .env-flap { fill: #82BE78; }
+:root[data-theme="light"] .logo .env-fold { fill: #54944A; }
+:root[data-theme="light"] .logo .env-flap { fill: #84C07A; }
 .steps { text-align: left; width: 100%; margin: 22px 0; counter-reset: s; }
 .steps div { display: flex; gap: 12px; padding: 10px 0; font-size: 15px; border-bottom: 1px solid var(--line); }
 .steps div::before { counter-increment: s; content: counter(s); width: 24px; height: 24px; border-radius: 50%; background: var(--surface); border: 1px solid var(--line); display: grid; place-items: center; font-size: 13px; font-weight: 700; flex: none; }

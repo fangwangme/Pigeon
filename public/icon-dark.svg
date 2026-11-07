@@ -1,15 +1,15 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
   <defs>
     <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0%" stop-color="#282828" />
-      <stop offset="100%" stop-color="#1D2021" />
+      <stop offset="0%" stop-color="#24272B" />
+      <stop offset="100%" stop-color="#16181A" />
     </linearGradient>
     <linearGradient id="border" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0%" stop-color="#7C6F64" />
-      <stop offset="100%" stop-color="#504945" />
+      <stop offset="0%" stop-color="#7C746B" />
+      <stop offset="100%" stop-color="#44474C" />
     </linearGradient>
     <filter id="drop" x="-10%" y="-10%" width="125%" height="125%">
-      <feDropShadow dx="0" dy="10" stdDeviation="12" flood-color="#000000" flood-opacity="0.38" />
+      <feDropShadow dx="0" dy="12" stdDeviation="12" flood-color="#000000" flood-opacity="0.45" />
     </filter>
   </defs>
 
@@ -17,50 +17,66 @@
   <rect x="6" y="6" width="500" height="500" rx="110" fill="url(#bg)" stroke="url(#border)" stroke-width="12" />
 
   <g filter="url(#drop)">
-    <!-- Back wing (sharp triangle with internal 3D fold crease from apex 292,82) -->
-    <path d="M 208 220 L 292 82 L 304 214 L 236 206 Z" fill="#D65D0E" />
-    <path d="M 268 210 L 292 82 L 304 214 Z" fill="#B54507" />
+    <!-- Back bionic wing (anodized copper-orange facets) -->
+    <path d="M 208 220 L 292 80 L 304 214 L 236 202 Z" fill="#D65D0E" />
+    <path d="M 268 208 L 292 80 L 304 214 Z" fill="#A63A04" />
 
-    <!-- Seamless under-silhouette to eliminate anti-aliasing seams across internal creases -->
-    <path d="M 56 306 L 122 284 L 170 252 L 236 202 L 304 214 L 358 150 L 396 170 L 444 184 L 380 198 L 344 256 L 326 330 L 232 382 L 142 338 L 78 354 Z" fill="#D5C4A1" />
+    <!-- Seamless titanium-ceramic under-silhouette -->
+    <path d="M 54 306 L 122 284 L 170 252 L 236 202 L 304 214 L 358 148 L 398 170 L 446 184 L 380 198 L 344 256 L 326 330 L 232 382 L 142 338 L 76 354 Z" fill="#D4CEC3" />
 
-    <!-- Fanned origami tail (2 sculpted planes) -->
-    <path d="M 56 306 L 142 338 L 78 354 Z" fill="#7C6F64" />
-    <path d="M 56 306 L 122 284 L 142 338 Z" fill="#928374" />
+    <!-- Articulated tail stabilizers (gunmetal titanium) -->
+    <path d="M 54 306 L 142 338 L 76 354 Z" fill="#6E6A63" />
+    <path d="M 54 306 L 122 284 L 142 338 Z" fill="#8A847B" />
 
-    <!-- Belly & keel facet -->
-    <path d="M 122 284 L 142 338 L 232 382 Z" fill="#BDAE93" />
+    <!-- Lower keel armor plate -->
+    <path d="M 122 284 L 142 338 L 232 382 Z" fill="#B0A99D" />
 
-    <!-- Central body flank -->
-    <path d="M 122 284 L 232 382 L 344 256 L 304 214 L 236 202 L 170 252 Z" fill="#D5C4A1" />
+    <!-- Rear flank armor plate (locked to wing root 170,252 -> 230,296) -->
+    <path d="M 122 284 L 170 252 L 230 296 L 232 382 Z" fill="#C5BEB2" />
 
-    <!-- Proud breast facet -->
-    <path d="M 232 382 L 326 330 L 344 256 Z" fill="#E4D5B7" />
+    <!-- Upper dorsal deck plate (locked between wing root 230,296 and neck joint 344,256) -->
+    <path d="M 170 252 L 236 202 L 304 214 L 344 256 L 230 296 Z" fill="#DED8CD" />
 
-    <!-- Neck & head (split into shaded throat plane and top-lit crown plane) -->
-    <path d="M 304 214 L 396 170 L 380 198 L 344 256 Z" fill="#E6D8B8" />
-    <path d="M 304 214 L 358 150 L 396 170 Z" fill="#F4E8C1" />
+    <!-- Mid-chest core plate (locked to wing root 230,296, neck joint 344,256, and keel 232,382) -->
+    <path d="M 230 296 L 344 256 L 232 382 Z" fill="#D2CBC0" />
 
-    <!-- Two-facet origami beak (upper & lower mandible meeting along ridge 388,184 -> 444,184) -->
-    <path d="M 396 170 L 444 184 L 380 198 Z" fill="#FABD2F" />
-    <path d="M 388 184 L 444 184 L 380 198 Z" fill="#D79921" />
+    <!-- Forward breast armor plate -->
+    <path d="M 232 382 L 326 330 L 344 256 Z" fill="#E8E2D7" />
 
-    <!-- Front wing (sharp triangle with internal 3D fold crease from apex 246,88) -->
-    <path d="M 170 252 L 246 88 L 230 296 Z" fill="#FF9638" />
-    <path d="M 202 275 L 246 88 L 230 296 Z" fill="#F26D13" />
+    <!-- Neck & head armor plates -->
+    <path d="M 304 214 L 398 170 L 380 198 L 344 256 Z" fill="#E2DCD0" />
+    <path d="M 304 214 L 358 148 L 398 170 Z" fill="#F5F0E6" />
 
-    <!-- Expressive eye with amber iris and catchlight -->
-    <circle cx="362" cy="180" r="10.5" fill="#282828" />
-    <circle cx="364" cy="178" r="4.2" fill="#FE8019" />
-    <circle cx="360" cy="176" r="1.8" fill="#FBF1C7" />
+    <!-- Precision mecha panel seams on body joints -->
+    <path d="M 122 284 L 142 338 M 304 214 L 344 256" fill="none" stroke="#24272B" stroke-width="2.2" stroke-linecap="round" opacity="0.5" />
 
-    <!-- Messenger envelope (tilted -6 deg beneath the beak) -->
-    <g transform="rotate(-6 416 228)">
-      <rect x="378" y="202" width="78" height="52" rx="6" fill="#8EC07C" />
-      <path d="M 380 252 L 417 224 L 454 252 Z" fill="#7DB36A" />
-      <path d="M 379 204 L 417 232 L 455 204 Z" fill="#A4D292" />
-      <path d="M 380 204 L 417 232 L 454 204" fill="none" stroke="#282828" stroke-width="4" stroke-linecap="round" stroke-linejoin="round" />
-      <circle cx="417" cy="232" r="4.2" fill="#FE8019" stroke="#282828" stroke-width="2" />
+    <!-- Two-facet metallic beak -->
+    <path d="M 398 170 L 446 184 L 380 198 Z" fill="#FABD2F" />
+    <path d="M 388 184 L 446 184 L 380 198 Z" fill="#D79921" />
+
+    <!-- Front bionic wing with precision neural pulse trace -->
+    <path d="M 170 252 L 246 86 L 230 296 Z" fill="#FF9838" />
+    <path d="M 202 275 L 246 86 L 230 296 Z" fill="#E8600E" />
+    <path d="M 202 275 L 220 198 L 229 186 L 236 140" fill="none" stroke="#FFF3D1" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" opacity="0.92" />
+    <circle cx="236" cy="140" r="3.8" fill="#FFF3D1" />
+    <circle cx="202" cy="275" r="3.6" fill="#FFF3D1" />
+
+    <!-- AI Optical Visor Eye (tilted hexagonal bezel + glowing amber neural lens) -->
+    <g transform="rotate(-14 363 178)">
+      <polygon points="350,178 356,168 370,168 376,178 370,188 356,188" fill="#181A1C" />
+      <polygon points="355,178 359,172 367,172 371,178 367,184 359,184" fill="#FE8019" />
+      <rect x="358" y="176.5" width="10" height="3" rx="1.5" fill="#FFF8E7" />
+    </g>
+
+    <!-- Messenger Terminal Envelope (tilted -6 deg, combining envelope flap + `>_` prompt) -->
+    <g transform="rotate(-6 416 232)">
+      <rect x="372" y="200" width="88" height="60" rx="8" fill="#8EC07C" />
+      <path d="M 374 258 L 416 234 L 458 258 Z" fill="#78AD65" />
+      <path d="M 373 202 L 416 219 L 459 202 Z" fill="#A9D697" />
+      <path d="M 374 202 L 416 219 L 458 202" fill="none" stroke="#1D2021" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round" opacity="0.8" />
+      <!-- Bold `>_` terminal prompt emblem -->
+      <path d="M 393 226 L 406 235 L 393 244" fill="none" stroke="#1D2021" stroke-width="5" stroke-linecap="round" stroke-linejoin="round" />
+      <path d="M 414 244 L 433 244" fill="none" stroke="#1D2021" stroke-width="5" stroke-linecap="round" />
     </g>
   </g>
 </svg>
