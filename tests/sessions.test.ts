@@ -318,7 +318,7 @@ describe("session titles (protocol.md §5.3, agent-session-normalization.md §2.
     expect(await (await claudePane("Release prep")).label()).toBe("Release prep");
   });
 
-  test("codex and pi sessions are titled by their first prompt", async () => {
+  test("codex and pi live reads carry no sessionTitle, but listings show first prompt (agent-session-normalization.md §2.4, §2.5, §2.6)", async () => {
     const home = tempDir("home");
     const proj = tempDir("proj");
     const codexDir = join(home, ".codex", "sessions", "2026", "11", "07");
@@ -346,8 +346,16 @@ describe("session titles (protocol.md §5.3, agent-session-normalization.md §2.
       { paneId: "p1", app: "codex", cwd: proj, createdMs: created },
       { paneId: "p2", app: "pi", cwd: piProj, createdMs: created },
     ]);
-    expect(turnsOf(await open("p1")).sessionTitle).toBe("Refactor the parser");
-    expect(turnsOf(await open("p2")).sessionTitle).toBe("List files");
+    expect(turnsOf(await open("p1")).sessionTitle).toBeUndefined();
+    expect(turnsOf(await open("p2")).sessionTitle).toBeUndefined();
+
+    const adapters = new AgentAdapterManager({ home });
+    expect(adapters.listSessions("codex", proj)).toEqual([
+      { id: "c1", title: "Refactor the parser", updatedAt: expect.any(Number) },
+    ]);
+    expect(adapters.listSessions("pi", piProj)).toEqual([
+      { id: "2026-11-07T10-00-00_p1", title: "List files", updatedAt: expect.any(Number) },
+    ]);
   });
 });
 

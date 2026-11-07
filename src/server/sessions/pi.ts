@@ -110,7 +110,6 @@ function applyRecord(b: TurnBuilder, r: unknown): void {
     const text = blocksText(m.content);
     if (text) {
       b.prompt(text, ts);
-      b.title ??= text.slice(0, 120); // §2.5: pi keeps no title of its own
     }
     return;
   }

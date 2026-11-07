@@ -6,7 +6,7 @@ import { Composer, insertIntoComposer, ModelSheet, PlusSheet, restoreIntoCompose
 import { ConnectionBanner } from "./Home";
 import { openOverlay } from "./overlays";
 import { PromptCard } from "./PromptCard";
-import { openDiffs, ScreenCard, TodoCapsule, TodoSheet, ToolSheet, Turn } from "./Transcript";
+import { DiffView, openDiffs, ScreenCard, TodoCapsule, TodoSheet, ToolSheet, Turn } from "./Transcript";
 import { DiffBadge, findPane, Icon, paneLabel, paneStatus, paneSummary, Sheet, StatusIcon } from "./ui";
 import { t, type MessageId } from "../i18n";
 
@@ -71,6 +71,7 @@ function TerminalSheet() {
 
 /** §6.6: edits summed per file. */
 function ChangesSheet(props: { onClose: () => void }) {
+  const [expanded, setExpanded] = createSignal<string | null>(null);
   const files = createMemo(() => {
     const map = new Map<string, { add: number; del: number; diffs: FileDiffSummary[] }>();
     for (const d of state.sessionStats?.diffs ?? []) {
@@ -87,15 +88,32 @@ function ChangesSheet(props: { onClose: () => void }) {
       <Show when={files().length} fallback={<p class="note">{state.session?.bound ? t("changes.none") : t("changes.unbound")}</p>}>
         <div class="card">
           <For each={files()}>
-            {([path, f]) => (
-              <button class="li" onClick={() => openDiffs(path, f.diffs)}>
-                <div class="tx mono" style={{ "font-size": "13.5px", "overflow-wrap": "anywhere" }}>
-                  {path.split("/").pop()}
-                  <small>{path}</small>
+            {([path, f]) => {
+              const isExp = () => expanded() === path;
+              return (
+                <div style={{ "border-bottom": "1px solid var(--line)" }}>
+                  <button class="li" onClick={() => setExpanded(isExp() ? null : path)}>
+                    <div class="tx mono" style={{ "font-size": "13.5px", "overflow-wrap": "anywhere" }}>
+                      {path.split("/").pop()}
+                      <small>{path}</small>
+                    </div>
+                    <DiffBadge add={f.add} del={f.del} />
+                    <Icon name={isExp() ? "chevD" : "chevR"} sm class="chev" />
+                  </button>
+                  <Show when={isExp()}>
+                    <div style={{ padding: "0 12px 12px" }}>
+                      <For each={f.diffs}>
+                        {(d) => (
+                          <Show when={d.patch} fallback={<p class="note">{t("tool.noPatch")}</p>}>
+                            <DiffView patch={d.patch!} />
+                          </Show>
+                        )}
+                      </For>
+                    </div>
+                  </Show>
                 </div>
-                <DiffBadge add={f.add} del={f.del} />
-              </button>
-            )}
+              );
+            }}
           </For>
         </div>
       </Show>
@@ -239,6 +257,11 @@ export function SessionPage() {
             <span style={{ overflow: "hidden", "text-overflow": "ellipsis" }}>{tab()?.label ?? state.sessionTitle ?? t("session.fallbackTitle")}</span>
           </div>
           <div class="s">
+            <Show when={state.paneSyncing}>
+              <span class="spin" style={{ width: "10px", height: "10px", "border-width": "1.5px", "vertical-align": "-1px", "margin-right": "4px", display: "inline-block" }} />
+              <span>{t("session.syncing")}</span>
+              <span> · </span>
+            </Show>
             {pane() ? paneLabel(pane()!) : ""}
             <Show when={(tab()?.panes.length ?? 0) > 1}> · {t("home.paneCount", { count: tab()!.panes.length })} ▾</Show>
           </div>

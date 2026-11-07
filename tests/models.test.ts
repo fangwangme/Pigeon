@@ -106,4 +106,49 @@ describe("model catalog (herdr-adapter.md §7.1)", () => {
     expect(ack.payload.recipes.codex.models.map((m: any) => m.id)).toEqual(["gpt-new"]);
     expect(other.ofType("recipes_sync").at(-1).payload.recipes.codex.models.map((m: any) => m.id)).toEqual(["gpt-new"]);
   });
+
+  test("resolve by id, by label (case-insensitive), and an unknown value passed through (herdr-adapter.md §7.1)", async () => {
+    const { home, env } = agentHome();
+    const catalog = new ModelCatalog({ home, env });
+    await catalog.refresh();
+    // codex has model { id: "gpt-a", label: "GPT A" }
+    expect(catalog.resolve("codex", "gpt-a")).toBe("gpt-a");
+    expect(catalog.resolve("codex", "GPT A")).toBe("gpt-a");
+    expect(catalog.resolve("codex", "gpt a")).toBe("gpt-a");
+    expect(catalog.resolve("codex", "unknown-model")).toBe("unknown-model");
+  });
+
+  test("an AGY session whose transcript switches to Gemini 3.8 Flash (Medium) reports resolved model id through PaneStore / getPayload", async () => {
+    const { home, env } = agentHome();
+    const catalog = new ModelCatalog({ home, env });
+    (catalog as any).lists.set("agy", [
+      { id: "gemini-3.8-flash-medium", label: "Gemini 3.8 Flash (Medium)" },
+    ]);
+    const brain = join(home, ".gemini", "antigravity-cli", "brain");
+    const logs = join(brain, "s_agy", ".system_generated", "logs");
+    mkdirSync(logs, { recursive: true });
+    writeFileSync(
+      join(logs, "transcript.jsonl"),
+      JSON.stringify({
+        step_index: 0,
+        type: "USER_SETTINGS_CHANGE",
+        content: "The user changed setting `Model Selection` from `Gemini 2.5 Flash` to `Gemini 3.8 Flash (Medium)`.",
+        created_at: new Date(1000).toISOString(),
+      }) + "\n" +
+      JSON.stringify({
+        step_index: 1,
+        type: "USER_INPUT",
+        content: "test",
+        created_at: new Date(2000).toISOString(),
+      }) + "\n"
+    );
+
+    const adapters = new AgentAdapterManager({ agy: { baseBrainDir: brain } });
+    const { PaneStore } = await import("../src/server/pane-store");
+    const store = new PaneStore(adapters);
+    store.setModelResolver((agent, val) => catalog.resolve(agent, val));
+    store.registerPaneSession("p_agy", "agy", "s_agy");
+    const payload = store.getPayload("p_agy", "agy");
+    expect(payload.session.model).toEqual({ value: "gemini-3.8-flash-medium", source: "log" });
+  });
 });

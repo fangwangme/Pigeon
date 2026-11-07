@@ -16,7 +16,7 @@ Pigeon is a phone app for Herdr, written as a PWA. It follows the interaction mo
 - Safe areas use `env(safe-area-inset-*)`.
 
 ### 1.2 Text input
-- The composer is a native `<textarea>` that grows to at most 6 lines.
+- The composer is a native `<textarea>` that grows smoothly with content up to 280px (approx. 12 lines) with internal vertical scrolling and caret auto-scroll.
 - **IME safety**: between `compositionstart` and `compositionend` (including system dictation) Enter never sends and the `/` list (§6.2) never opens.
 - Enter outside composition sends on a hardware keyboard only; on a touch device Enter inserts a newline and the send button sends.
 - **Drafts** are kept per pane in `localStorage` and survive reloads, offline periods and failed sends.
@@ -26,7 +26,7 @@ Pigeon is a phone app for Herdr, written as a PWA. It follows the interaction mo
 ## 2. Home
 
 ### 2.1 Workspaces (the start screen)
-- A large title "Pigeon". Top right, one glass capsule with **filter** (§2.3) and **settings** (§8.1). There is no ☰, no device row, no tab bar, no pane row and no drawer.
+- Top left, the bionic pigeon logo mark (a compact 34×34px SVG `<Logo />` with subtle rounded border and gradient backdrop). Top right, one glass capsule with **filter** (§2.3) and **settings** (§8.1). There is no ☰, no device row, no tab bar, no pane row and no drawer.
 - An **所有 Agent** summary row (count of agents, and of those waiting) opens §2.2.
 - One collapsible group per Herdr workspace, in Herdr's order. The group header shows the workspace name, its git branch when it has one, and its tab count; its `+` opens a new session (§7.1) in that workspace. Collapsed state is kept in this browser.
 - One row per tab. The left icon is the tab's status (its primary pane's): amber dot = waiting for you (`blocked`), spinner = working, check = done, hollow circle = idle, `>_` = plain terminal. The title is the tab label (`protocol.md` §5.3: the Herdr name the user gave the tab, else the session's title, else the agent's name); the subtitle names the agent and, when the tab has more than one pane, the pane count.
@@ -44,9 +44,25 @@ A sheet shared by §2.1 and §2.2: status (等待你, 工作中, 已完成, 空�
 ## 3. Session page
 
 ### 3.1 Layout
-- A glass header: back, the session title (tab label; a spinner while working, an amber dot while waiting), the pane in the subtitle when the tab has several, and ⋯ (§6.1). Tapping the title switches pane when there are several (§6.8).
+- A glass header: back, the session title (prioritizes named tab labels, falling back to the agent session's title, then agent recipe name per `protocol.md` §5.3; a spinner while working, an amber dot while waiting), the pane in the subtitle when the tab has several, and ⋯ (§6.1). Tapping the title switches pane when there are several (§6.8).
 - The body is the transcript (§3.2) when the pane has a structured session, else the screen cards (§3.6). A plain terminal tab shows the terminal view (§5) as its body.
 - The composer (§6) floats at the bottom.
+
+#### Transcript Cache
+- **Store**: IndexedDB database `pigeon`, object store `paneCache`, keyed by `paneId`. Each entry holds `{ paneId, sessionId, savedAt, lastAccess, turns, sessionStats, sessionTitle, todos, session }`. Drafts and preferences stay in `localStorage`.
+- **Eviction**:
+  - TTL 7 days from `savedAt`;
+  - LRU by `lastAccess`, at most 10 panes;
+  - expired entries are swept at startup;
+  - entries for panes absent from a snapshot are deleted, but only from a snapshot taken while `herdrConnected` is true, so a Herdr outage does not wipe the cache.
+- **Restore**: opening a pane shows its cached transcript immediately if the entry's `sessionId` is the pane's current session as far as the client knows. While cached content is on screen, the header shows a "syncing" indicator (small spinner and "同步中 / Syncing" text). It clears when the server's first answer for that pane (`normalized_turns` or the resume `turns_delta`) arrives. The cache survives reloads; a pane opened after a reload is restored from it.
+- **Invalidation**: the server's answer names a different `sessionId`, or `session.bound` is false → the cached entry is deleted and the fresh data shown.
+- **Writes**, and only these:
+  - when leaving a pane;
+  - on `visibilitychange` to `hidden` and on `pagehide`;
+  - when the active pane's `agentStatus` leaves `working` (end of a streamed answer);
+  - after a full `normalized_turns`.
+  No write per `turns_delta`.
 
 ### 3.2 Messages
 - A user message is a right-aligned bubble; attachments show as thumbnails above it.
