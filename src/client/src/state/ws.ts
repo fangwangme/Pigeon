@@ -203,7 +203,7 @@ export function handleServerMessage(msg: ServerMessage): void {
 
     case "skills_sync":
       if (msg.payload.paneId === state.activePaneId) setState("skills", msg.payload.skills);
-      setState("recipes", msg.payload.recipes);
+      if (msg.payload.recipes) setState("recipes", msg.payload.recipes);
       return;
 
     case "recipes_sync":
@@ -224,7 +224,7 @@ export function handleServerMessage(msg: ServerMessage): void {
     case "snapshot_update":
       trackUnread(msg.payload);
       setState("workspaces", msg.payload.workspaces);
-      if (msg.payload.herdrConnected) {
+      if (state.herdrConnected) {
         const alive = msg.payload.workspaces.flatMap((w) => w.tabs.flatMap((t) => t.panes.map((p) => p.id)));
         void sweep(alive);
       }

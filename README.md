@@ -14,49 +14,49 @@ A small daemon runs alongside Herdr on your computer and serves the app over you
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="docs/images/home-dark.png">
-    <img src="docs/images/home-light.png" width="260" alt="Home: workspaces, tabs, agent status dots and bionic logo mark">
+    <img src="docs/images/home-light.png" width="260" alt="See every workspace and active agent status at a glance">
   </picture>
   &nbsp;
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="docs/images/agents-dark.png">
-    <img src="docs/images/agents-light.png" width="260" alt="All agents: unified multi-agent overview grouped by status">
+    <img src="docs/images/agents-light.png" width="260" alt="Track who is waiting, working, or done across all projects">
   </picture>
   &nbsp;
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="docs/images/session-dark.png">
-    <img src="docs/images/session-light.png" width="260" alt="Session feed: prioritized session title, collapsible reasoning, and grouped tool calls">
+    <img src="docs/images/session-light.png" width="260" alt="Follow along in a clean chat feed with tasks and tool calls">
   </picture>
 </p>
 <p align="center">
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="docs/images/answer-dark.png">
-    <img src="docs/images/answer-light.png" width="260" alt="Markdown rendering: tables, architecture diagrams, and syntax-highlighted code">
+    <source media="(prefers-color-scheme: dark)" srcset="docs/images/prompt-dark.png">
+    <img src="docs/images/prompt-light.png" width="260" alt="Approve command permissions and answer questions with a tap">
   </picture>
   &nbsp;
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="docs/images/diff-dark.png">
-    <img src="docs/images/diff-light.png" width="260" alt="Code changes & diffs: per-file addition/deletion badges and patch comparisons">
+    <img src="docs/images/diff-light.png" width="260" alt="Inspect per-file additions, deletions, and unified patch diffs">
   </picture>
   &nbsp;
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="docs/images/commands-dark.png">
-    <img src="docs/images/commands-light.png" width="260" alt="Slash commands & skills: typing / lists built-in actions and project skills">
+    <source media="(prefers-color-scheme: dark)" srcset="docs/images/queue-dark.png">
+    <img src="docs/images/queue-light.png" width="260" alt="Queue follow-up prompts while an agent works, with instant undo">
   </picture>
 </p>
 <p align="center">
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="docs/images/composer-dark.png">
-    <img src="docs/images/composer-light.png" width="260" alt="Expandable composer: 280px auto-growing input with smooth vertical scrolling">
+    <source media="(prefers-color-scheme: dark)" srcset="docs/images/commands-dark.png">
+    <img src="docs/images/commands-light.png" width="260" alt="Trigger slash commands and project skills right from the composer">
   </picture>
   &nbsp;
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="docs/images/model-dark.png">
-    <img src="docs/images/model-light.png" width="260" alt="Model sheet: switch active models and reasoning effort on the fly">
+    <source media="(prefers-color-scheme: dark)" srcset="docs/images/new-dark.png">
+    <img src="docs/images/new-light.png" width="260" alt="Start a new session with your chosen agent, model, and effort">
   </picture>
   &nbsp;
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="docs/images/settings-dark.png">
-    <img src="docs/images/settings-light.png" width="260" alt="Settings: dark/light theme, accent colors, bilingual toggle, and paired devices">
+    <source media="(prefers-color-scheme: dark)" srcset="docs/images/resume-dark.png">
+    <img src="docs/images/resume-light.png" width="260" alt="Pick up past sessions where you left off from agent-assigned titles">
   </picture>
 </p>
 

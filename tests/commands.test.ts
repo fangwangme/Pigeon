@@ -167,18 +167,19 @@ describe("creating sessions (protocol.md §4.5, herdr-adapter.md §5)", () => {
     herdr.handlers["tab.new"] = () => ({ result: { terminal: "p2" } });
   });
 
-  test("the first message is the tab's task and names it; the folder defaults to the workspace's", async () => {
+  test("the first message is the tab's task; the tab is created without a name (protocol.md §4, herdr-adapter.md §5)", async () => {
     const c = fakeWs();
     await send(c.ws, { type: "create_tab_and_agent", id: "n1", payload: { workspaceId: "w1", agentKind: "claude", firstMessage: "Fix the flaky test\nmore detail" } });
-    expect(created()).toMatchObject({ space: "w1", name: "Fix the flaky test", folder: dir, task: "Fix the flaky test\nmore detail", argv: ["claude"] });
+    expect(created()).toMatchObject({ space: "w1", folder: dir, task: "Fix the flaky test\nmore detail", argv: ["claude"] });
+    expect(created().name).toBeUndefined();
   });
 
   test("AGY and OpenCode pass the first message with their own prompt flags in argv instead of Herdr's positional task", async () => {
     const c = fakeWs();
     await send(c.ws, { type: "create_tab_and_agent", id: "n1", payload: { workspaceId: "w1", agentKind: "agy", firstMessage: "Review PR #4" } });
-    expect(created()).toEqual({ space: "w1", name: "Review PR #4", folder: dir, argv: ["agy", "-i", "Review PR #4"] });
+    expect(created()).toEqual({ space: "w1", folder: dir, argv: ["agy", "-i", "Review PR #4"] });
     await send(c.ws, { type: "create_tab_and_agent", id: "n2", payload: { workspaceId: "w1", agentKind: "opencode", firstMessage: "Fix the bug" } });
-    expect(created()).toEqual({ space: "w1", name: "Fix the bug", folder: dir, argv: ["opencode", "--prompt", "Fix the bug"] });
+    expect(created()).toEqual({ space: "w1", folder: dir, argv: ["opencode", "--prompt", "Fix the bug"] });
   });
 
   test("resuming adds the recipe's resume arguments", async () => {
