@@ -93,6 +93,41 @@ export function writePref(key: string, value: string | null): void {
   }
 }
 
+export const PANE_CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
+
+export interface PaneCacheEntry {
+  savedAt: number;
+  normalizedTurns: NormalizedTurn[];
+  sessionStats?: SessionStats | null;
+  sessionTitle?: string | null;
+  todos?: TodoItem[] | null;
+  session?: SessionInfo | null;
+}
+
+export function readPaneCache(paneId: string): PaneCacheEntry | null {
+  const raw = readPref(`pigeon_pane_cache_${paneId}`);
+  if (!raw) return null;
+  try {
+    const entry: PaneCacheEntry = JSON.parse(raw);
+    if (!entry.savedAt || Date.now() - entry.savedAt > PANE_CACHE_TTL_MS) {
+      writePref(`pigeon_pane_cache_${paneId}`, null);
+      return null;
+    }
+    return entry;
+  } catch {
+    return null;
+  }
+}
+
+export function writePaneCache(paneId: string, entry: Omit<PaneCacheEntry, "savedAt">): void {
+  try {
+    const payload: PaneCacheEntry = { ...entry, savedAt: Date.now() };
+    writePref(`pigeon_pane_cache_${paneId}`, JSON.stringify(payload));
+  } catch {
+    // quota exceeded or storage disabled
+  }
+}
+
 function readJson<T>(key: string, fallback: T): T {
   const raw = readPref(key);
   if (!raw) return fallback;

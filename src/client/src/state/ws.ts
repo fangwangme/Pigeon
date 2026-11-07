@@ -1,4 +1,4 @@
-import { state, setState, applySyncedClientConfig, openTerminal, setUnread, showToast } from "./store";
+import { state, setState, applySyncedClientConfig, openTerminal, setUnread, showToast, readPaneCache, writePaneCache } from "./store";
 import type { ClientMessage, ServerMessage, SnapshotPayload, PaneStatePayload, ClientConfig, AgentStatus } from "../../../types/protocol";
 import { t } from "../i18n";
 
@@ -10,6 +10,7 @@ const RECONNECT_MS = 3000;
 let socket: WebSocket | null = null;
 let pingInterval: ReturnType<typeof setInterval> | null = null;
 let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+let reconnectAttempts = 0;
 let lastPongTime = Date.now();
 let msgId = 0;
 let configVersion = 0;
@@ -21,7 +22,9 @@ const pending = new Map<string, { resolve: (p: any) => void; reject: (e: { code:
 
 function scheduleReconnect(): void {
   if (reconnectTimer) clearTimeout(reconnectTimer);
-  reconnectTimer = setTimeout(() => void initWebSocket(), RECONNECT_MS);
+  const delay = reconnectAttempts === 0 ? 0 : Math.min(reconnectAttempts * 1000, RECONNECT_MS);
+  reconnectAttempts++;
+  reconnectTimer = setTimeout(() => void initWebSocket(), delay);
 }
 
 function nextId(): string {
@@ -79,7 +82,9 @@ export async function initWebSocket(): Promise<void> {
   // close must not clear the new one or schedule a duplicate reconnect.
   ws.onopen = () => {
     if (socket !== ws) return;
+    reconnectAttempts = 0;
     setState("connected", true);
+    console.log(`[PERF] WebSocket connected to ${window.location.host}`);
     lastPongTime = Date.now();
     sendMessage({
       type: "hello",
@@ -122,25 +127,44 @@ export async function initWebSocket(): Promise<void> {
   };
 }
 
-/** Clears everything that belongs to the pane being left, so nothing from it is shown under the next one. */
+/** Clears everything that belongs to the pane being left, restoring 7-day cache if available. */
 function resetPaneView(paneId: string): void {
   // The server re-sends the pane's cached state with its current revision (protocol.md §3.3);
   // a high-water mark kept from an earlier visit would drop it.
   paneRevisions.delete(paneId);
-  setState({
-    activePaneId: paneId,
-    cards: [],
-    normalizedTurns: [],
-    sessionStats: null,
-    sessionTitle: null,
-    todos: null,
-    session: null,
-    queue: [],
-    pendingInteraction: null,
-    rawScreen: "",
-    skills: [],
-    terminalOpen: false,
-  });
+  const cached = readPaneCache(paneId);
+  if (cached) {
+    console.log(`[PERF] Instant restore pane ${paneId} from 7-day cache (${cached.normalizedTurns.length} turns)`);
+    setState({
+      activePaneId: paneId,
+      cards: [],
+      normalizedTurns: cached.normalizedTurns,
+      sessionStats: cached.sessionStats || null,
+      sessionTitle: cached.sessionTitle || null,
+      todos: cached.todos || null,
+      session: cached.session || null,
+      queue: [],
+      pendingInteraction: null,
+      rawScreen: "",
+      skills: [],
+      terminalOpen: false,
+    });
+  } else {
+    setState({
+      activePaneId: paneId,
+      cards: [],
+      normalizedTurns: [],
+      sessionStats: null,
+      sessionTitle: null,
+      todos: null,
+      session: null,
+      queue: [],
+      pendingInteraction: null,
+      rawScreen: "",
+      skills: [],
+      terminalOpen: false,
+    });
+  }
 }
 
 function applyPaneState(p: PaneStatePayload): void {
@@ -220,6 +244,7 @@ export function handleServerMessage(msg: ServerMessage): void {
 
     case "normalized_turns":
       if (msg.payload.paneId !== state.activePaneId) return;
+      console.log(`[PERF] Received fresh normalized_turns for ${msg.payload.paneId} (${msg.payload.turns?.length} turns, bound: ${msg.payload.session?.bound})`);
       setState({
         normalizedTurns: msg.payload.turns,
         sessionStats: msg.payload.sessionStats || null,
@@ -227,6 +252,15 @@ export function handleServerMessage(msg: ServerMessage): void {
         todos: msg.payload.todos || null,
         session: msg.payload.session,
       });
+      if (msg.payload.session?.bound && msg.payload.turns?.length) {
+        writePaneCache(msg.payload.paneId, {
+          normalizedTurns: msg.payload.turns,
+          sessionStats: msg.payload.sessionStats || null,
+          sessionTitle: msg.payload.sessionTitle || null,
+          todos: msg.payload.todos || null,
+          session: msg.payload.session,
+        });
+      }
       return;
 
     case "turns_delta": {
@@ -244,6 +278,15 @@ export function handleServerMessage(msg: ServerMessage): void {
       if (sessionTitle) setState("sessionTitle", sessionTitle);
       if (todos) setState("todos", todos);
       if (session) setState("session", session);
+      if (state.session?.bound && current.length) {
+        writePaneCache(msg.payload.paneId, {
+          normalizedTurns: current,
+          sessionStats: state.sessionStats,
+          sessionTitle: state.sessionTitle,
+          todos: state.todos,
+          session: state.session,
+        });
+      }
       return;
     }
 
