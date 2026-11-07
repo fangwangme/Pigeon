@@ -178,6 +178,7 @@ Without a valid pairing only the pairing guide shows: scan the QR code from `pig
 - Components use semantic tokens only: `--bg`, `--surface`, `--elev`, `--fg`, `--muted`, `--faint`, `--line`, `--accent`, `--onaccent`, `--accentbg`, `--warn`, `--warnbg`, `--danger`, `--addbg`, `--addfg`, `--delbg`, `--delfg`, `--code`.
 - Text tokens meet WCAG AA: `--fg`, `--muted` and `--faint` reach 4.5:1 against `--bg` in both palettes.
 - The theme is applied before first paint from `localStorage` (keys `pigeon_mode`, `pigeon_accent`), so the page never flashes the wrong palette.
+- The document shell declares `<meta name="color-scheme" content="light dark">` and critical inline background and color styling on `html` and `body` in `<head>` so the browser canvas initializes to dark mode without a white flash before scripts execute. The pre-paint script and `applyTheme` synchronize `colorScheme` alongside `data-theme`.
 
 ### 9.2 Liquid Glass
 - Glass is used only on the floating control layer: header buttons and capsules, the composer, the todo capsule, the ↓ button, menus, sheets, prompt cards and the `/` popover. Messages and lists stay opaque.

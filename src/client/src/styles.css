@@ -1,5 +1,8 @@
 /* Pigeon PWA — mobile-ui-and-themes.md. Colors come only from the tokens set by themes.ts. */
 * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
+:root { color-scheme: light dark; }
+:root[data-theme="dark"] { color-scheme: dark; }
+:root[data-theme="light"] { color-scheme: light; }
 html, body, #root { height: 100%; width: 100%; overflow: hidden; background: var(--bg); color: var(--fg); }
 body {
   font: 15px/1.5 -apple-system, BlinkMacSystemFont, "SF Pro Text", Inter, "PingFang SC", "Noto Sans SC", "Segoe UI", sans-serif;
