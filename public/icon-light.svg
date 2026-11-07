@@ -22,33 +22,33 @@
     <path d="M 268 208 L 292 80 L 304 214 Z" fill="#A63A04" />
 
     <!-- Seamless titanium-ceramic under-silhouette -->
-    <path d="M 54 306 L 122 284 L 170 252 L 236 202 L 304 214 L 358 148 L 398 170 L 446 184 L 380 198 L 344 256 L 326 330 L 232 382 L 142 338 L 76 354 Z" fill="#C4B9A6" />
+    <path d="M 54 306 L 122 284 L 170 252 L 236 202 L 304 214 L 358 148 L 398 170 L 446 184 L 380 198 L 344 256 L 326 330 L 232 382 L 142 338 L 76 354 Z" fill="#B1ACA4" />
 
     <!-- Articulated tail stabilizers (gunmetal titanium) -->
-    <path d="M 54 306 L 142 338 L 76 354 Z" fill="#5E5850" />
-    <path d="M 54 306 L 122 284 L 142 338 Z" fill="#787066" />
+    <path d="M 54 306 L 142 338 L 76 354 Z" fill="#55514B" />
+    <path d="M 54 306 L 122 284 L 142 338 Z" fill="#6D6862" />
 
     <!-- Lower keel armor plate -->
-    <path d="M 122 284 L 142 338 L 232 382 Z" fill="#A39682" />
+    <path d="M 122 284 L 142 338 L 232 382 Z" fill="#8C877F" />
 
     <!-- Rear flank armor plate (locked to wing root 170,252 -> 230,296) -->
-    <path d="M 122 284 L 170 252 L 230 296 L 232 382 Z" fill="#B8AC97" />
+    <path d="M 122 284 L 170 252 L 230 296 L 232 382 Z" fill="#A19C94" />
 
     <!-- Upper dorsal deck plate (locked between wing root 230,296 and neck joint 344,256) -->
-    <path d="M 170 252 L 236 202 L 304 214 L 344 256 L 230 296 Z" fill="#D4C9B6" />
+    <path d="M 170 252 L 236 202 L 304 214 L 344 256 L 230 296 Z" fill="#C0BCB5" />
 
     <!-- Mid-chest core plate (locked to wing root 230,296, neck joint 344,256, and keel 232,382) -->
-    <path d="M 230 296 L 344 256 L 232 382 Z" fill="#C6BAA5" />
+    <path d="M 230 296 L 344 256 L 232 382 Z" fill="#B1ACA4" />
 
     <!-- Forward breast armor plate -->
-    <path d="M 232 382 L 326 330 L 344 256 Z" fill="#DFD5C3" />
+    <path d="M 232 382 L 326 330 L 344 256 Z" fill="#CDC9C2" />
 
     <!-- Neck & head armor plates -->
-    <path d="M 304 214 L 398 170 L 380 198 L 344 256 Z" fill="#DAD0BE" />
-    <path d="M 304 214 L 358 148 L 398 170 Z" fill="#EFE7D8" />
+    <path d="M 304 214 L 398 170 L 380 198 L 344 256 Z" fill="#C7C3BC" />
+    <path d="M 304 214 L 358 148 L 398 170 Z" fill="#D8D5CF" />
 
     <!-- Precision mecha panel seams on body joints -->
-    <path d="M 122 284 L 142 338 M 304 214 L 344 256" fill="none" stroke="#5E5850" stroke-width="2.2" stroke-linecap="round" opacity="0.45" />
+    <path d="M 122 284 L 142 338 M 304 214 L 344 256" fill="none" stroke="#55514B" stroke-width="2.2" stroke-linecap="round" opacity="0.45" />
 
     <!-- Two-facet metallic beak -->
     <path d="M 398 170 L 446 184 L 380 198 Z" fill="#FABD2F" />
