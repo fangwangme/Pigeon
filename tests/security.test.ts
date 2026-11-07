@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, setSystemTime, test } from "bun:test";
 import { readFileSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { ConfigManager } from "../src/server/config-manager";
@@ -73,6 +73,25 @@ describe("pairing (security-and-pairing.md §2)", () => {
     expect(second.listDevices().map((d) => d.deviceName)).toEqual(["Phone"]);
     expect(second.validateSession(stale.sessionToken)).toBeNull();
     expect(second.validateSession(recent.sessionToken)?.deviceName).toBe("Phone");
+  });
+
+  test("a device used more often than hourly still has its use written within the hour (§5 expiry)", () => {
+    const dir = tempDir("pair");
+    const start = Date.now();
+    try {
+      setSystemTime(start);
+      const p = pairingIn(dir);
+      const { token } = p.createPairingToken();
+      const { sessionToken } = p.exchangeToken(token, "Phone");
+      setSystemTime(start + 30 * 60_000);
+      p.validateSession(sessionToken);
+      setSystemTime(start + 61 * 60_000);
+      p.validateSession(sessionToken);
+      const onDisk = JSON.parse(readFileSync(join(dir, "devices.json"), "utf-8")).sessions[0].lastUsedAt;
+      expect(onDisk).toBe(start + 61 * 60_000);
+    } finally {
+      setSystemTime();
+    }
   });
 
   test("a corrupt device registry stops startup and is left untouched", () => {

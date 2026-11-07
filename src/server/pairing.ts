@@ -67,6 +67,8 @@ export class PairingManager extends EventEmitter {
   } | null = null;
 
   private sessions = new Map<string, DeviceSession>(); // tokenHash -> DeviceSession
+  /** tokenHash -> the `lastUsedAt` the registry on disk holds, so use is written at most hourly. */
+  private persistedUse = new Map<string, number>();
   private publicBaseUrl: string;
   private insecureDev: boolean;
   private adminSocketPath: string;
@@ -106,7 +108,10 @@ export class PairingManager extends EventEmitter {
         for (const s of parsed.sessions) {
           if (!s.tokenHash || !s.deviceId) continue;
           if (this.isExpired(s)) expired = true;
-          else this.sessions.set(s.tokenHash, s);
+          else {
+            this.sessions.set(s.tokenHash, s);
+            this.persistedUse.set(s.tokenHash, s.lastUsedAt);
+          }
         }
         if (expired) this.saveDevices();
       }
@@ -129,6 +134,7 @@ export class PairingManager extends EventEmitter {
     writeFileSync(tmpPath, JSON.stringify(data, null, 2), { encoding: "utf-8", mode: 0o600 });
     chmodSync(tmpPath, 0o600);
     renameSync(tmpPath, this.devicesFilePath);
+    this.persistedUse = new Map(data.sessions.map((s) => [s.tokenHash, s.lastUsedAt]));
   }
 
   public getCookieName(): string {
@@ -252,7 +258,7 @@ export class PairingManager extends EventEmitter {
       return null;
     }
     const now = Date.now();
-    const persist = now - session.lastUsedAt >= LAST_USED_WRITE_MS;
+    const persist = now - (this.persistedUse.get(hash) ?? 0) >= LAST_USED_WRITE_MS;
     session.lastUsedAt = now;
     if (persist) this.saveDevices();
     return session;
