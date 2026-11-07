@@ -137,7 +137,7 @@ A sheet listing every model of the recipe (`herdr-adapter.md` §7.1) with a sear
 重命名 (renames the Herdr tab), 复制分支 (copies the tab's git branch; shown when there is one), 本会话的变更 (§6.6), 切换 pane (shown with several panes, §6.8), 查看终端 (§5), and **关闭会话** in red (§6.7).
 
 ### 6.6 Session changes
-Every edit in the session's transcript, summed per file: path, added and removed lines. A tap opens that file's diffs (§3.3 edit detail). Empty when the pane has no bound session.
+Every edit in the session's transcript, summed per file: path, added and removed lines. A tap expands that file's diffs in place (§3.3 diff view). Empty when the pane has no bound session.
 
 ### 6.7 Close
 A confirmation sheet that states: the tab on the computer will close, which programs end (each pane's agent or shell), and whether one is working. It also says the agent's session log is kept. Confirming sends `close_tab`; the page then returns where the session was opened from (Home or 所有 Agent).
