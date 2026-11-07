@@ -38,18 +38,6 @@ export class AgyAdapter {
     return existsSync(this.getSessionLogPath(sessionId));
   }
 
-  private normalizeModelId(raw: string): string | undefined {
-    if (!raw || raw === "None") return undefined;
-    if (/^[a-z0-9._-]+$/.test(raw)) return raw;
-    return raw
-      .toLowerCase()
-      .replace(/[()]/g, "")
-      .trim()
-      .replace(/\s+/g, "-")
-      .replace(/opus-(\d+)\.(\d+)/g, "opus-$1-$2")
-      .replace(/sonnet-(\d+)\.(\d+)/g, "sonnet-$1-$2");
-  }
-
   private getSessionTitle(sessionId: string): string | null {
     const annotPath = join(
       dirname(this.baseBrainDir),
@@ -97,11 +85,11 @@ export class AgyAdapter {
     incremental = false
   ): { turns: NormalizedTurn[]; stats?: SessionStats; sessionTitle?: string; model?: string } {
     const title = this.getSessionTitle(sessionId) || undefined;
-    const model = () => this.cachedModels.get(sessionId);
     const logPath = this.getSessionLogPath(sessionId);
     if (!incremental) this.resetCache(sessionId);
+    const model = this.cachedModels.get(sessionId);
     if (!existsSync(logPath)) {
-      return { turns: [], sessionTitle: title, ...(model() ? { model: model() } : {}) };
+      return { turns: [], sessionTitle: title, ...(model ? { model } : {}) };
     }
 
     let fd: number | null = null;
@@ -120,7 +108,7 @@ export class AgyAdapter {
       }
 
       if (startOffset === totalBytes && this.cachedTurns.has(sessionId)) {
-        return { turns: this.cachedTurns.get(sessionId)!, sessionTitle: title, ...(model() ? { model: model() } : {}) };
+        return { turns: this.cachedTurns.get(sessionId)!, sessionTitle: title, ...(model ? { model } : {}) };
       }
 
       const bytesToRead = totalBytes - startOffset;
@@ -132,7 +120,7 @@ export class AgyAdapter {
       // agent-session-normalization.md §4.2: only whole lines are parsed. The offset stops after the
       // last newline, so a half-written line (and any split UTF-8 character) is read again in full.
       const lastNewline = buffer.lastIndexOf(0x0a);
-      if (lastNewline === -1) return { turns: this.cachedTurns.get(sessionId) || [], sessionTitle: title, ...(model() ? { model: model() } : {}) };
+      if (lastNewline === -1) return { turns: this.cachedTurns.get(sessionId) || [], sessionTitle: title, ...(model ? { model } : {}) };
       const completeChunk = buffer.subarray(0, lastNewline).toString("utf-8");
       this.byteOffsets.set(sessionId, startOffset + lastNewline + 1);
 
@@ -174,8 +162,8 @@ export class AgyAdapter {
           /The user changed setting `Model Selection` from .*? to `?(.+?)`?\.(?:\s+No need|\s*<\/USER_SETTINGS_CHANGE>|$)/
         );
         if (modelMatch && modelMatch[1]) {
-          const norm = this.normalizeModelId(modelMatch[1].trim());
-          if (norm) this.cachedModels.set(sessionId, norm);
+          const raw = modelMatch[1].replace(/^`+|`+$/g, "").trim();
+          if (raw && raw !== "None") this.cachedModels.set(sessionId, raw);
         }
 
         if (recType === "USER_INPUT") {
@@ -265,7 +253,8 @@ export class AgyAdapter {
       }
 
       this.cachedTurns.set(sessionId, turns);
-      return { turns, sessionTitle: title, ...(model() ? { model: model() } : {}) };
+      const finalModel = this.cachedModels.get(sessionId);
+      return { turns, sessionTitle: title, ...(finalModel ? { model: finalModel } : {}) };
     } finally {
       if (fd !== null) closeSync(fd);
     }

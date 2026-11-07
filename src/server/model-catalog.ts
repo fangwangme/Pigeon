@@ -45,6 +45,21 @@ export class ModelCatalog {
     return this.lists.get(agent) ?? [];
   }
 
+  /**
+   * herdr-adapter.md §7.1: resolves a model value read from records to a catalog id by exact id,
+   * else case-insensitive label match, else kept as read.
+   */
+  public resolve(agent: string, idOrLabel: string): string {
+    if (!idOrLabel) return idOrLabel;
+    const list = this.models(agent);
+    const byId = list.find((m) => m.id === idOrLabel);
+    if (byId) return byId.id;
+    const lower = idOrLabel.toLowerCase();
+    const byLabel = list.find((m) => m.label.toLowerCase() === lower);
+    if (byLabel) return byLabel.id;
+    return idOrLabel;
+  }
+
   /** Fills every list again; resolves whether any list changed. Concurrent calls share one fill. */
   public refresh(): Promise<boolean> {
     this.filling ??= this.fill().finally(() => (this.filling = null));

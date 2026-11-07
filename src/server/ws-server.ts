@@ -115,6 +115,7 @@ export class WsServer {
     this.paneStore.on("session_model", (agent: string, model: string) => {
       void this.modelCatalog.noteModel(agent, model).then((changed) => changed && this.broadcastRecipes());
     });
+    this.paneStore.setModelResolver((agent, idOrLabel) => this.modelCatalog.resolve(agent, idOrLabel));
     this.herdrClient.setSessionTitleSource((paneId) => this.paneStore.sessionTitle(paneId));
     // Titles change while a snapshot is being handled (binding reads the session), so relabel after it.
     this.paneStore.on("title_changed", () => queueMicrotask(() => this.herdrClient.relabelTabs()));
