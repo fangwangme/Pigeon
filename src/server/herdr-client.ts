@@ -738,12 +738,10 @@ export class HerdrClient extends EventEmitter {
       ? [recipe.command, ...recipe.launchArgs({ modelId: options.modelId, thinking: options.thinking, resume: options.resume, firstMessage: options.firstMessage })]
       : null;
     const folder = options.cwd ?? this.workspaceFolders.get(workspaceId);
-    const firstLine = options.firstMessage?.split("\n").map((l) => l.trim()).find(Boolean);
     const created = await this.appRequest<{ terminal?: string }>({
       do: "tab.new",
       args: {
         space: workspaceId,
-        name: firstLine ? firstLine.slice(0, 40) : recipe.label,
         ...(folder ? { folder } : {}),
         ...(argv ? { argv } : {}),
         ...(options.firstMessage && !recipe.promptInArgv ? { task: options.firstMessage } : {}),

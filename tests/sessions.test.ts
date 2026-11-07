@@ -354,7 +354,7 @@ describe("session titles (protocol.md §5.3, agent-session-normalization.md §2.
       { id: "c1", title: "Refactor the parser", updatedAt: expect.any(Number) },
     ]);
     expect(adapters.listSessions("pi", piProj)).toEqual([
-      { id: "p1", title: "List files", updatedAt: expect.any(Number) },
+      { id: "2026-11-07T10-00-00_p1", title: "List files", updatedAt: expect.any(Number) },
     ]);
   });
 });

@@ -14,6 +14,8 @@ export interface OpenCodeAdapterOptions {
   dbPath?: string;
 }
 
+const OPENCODE_PLACEHOLDER_TITLE = /^New session - \d{4}-\d{2}-\d{2}T/;
+
 export class OpenCodeAdapter {
   private dbPath: string;
 
@@ -230,7 +232,9 @@ export class OpenCodeAdapter {
         turns.push(currentTurn);
       }
 
-      return { turns, stats, sessionTitle: typeof sessionRow?.title === "string" && sessionRow.title ? sessionRow.title : undefined };
+      const isPlaceholder = typeof sessionRow?.title === "string" && OPENCODE_PLACEHOLDER_TITLE.test(sessionRow.title);
+      const sessionTitle = typeof sessionRow?.title === "string" && sessionRow.title && !isPlaceholder ? sessionRow.title : undefined;
+      return { turns, stats, sessionTitle };
     } finally {
       db?.close();
     }

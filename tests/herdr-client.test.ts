@@ -218,7 +218,6 @@ describe("tab creation and closing (herdr-adapter.md §5)", () => {
     expect(res).toEqual({ tabId: "tab1", paneId: "t9" });
     expect(herdr.callsOf("tab.new")[0].params).toEqual({
       space: "w1",
-      name: "Claude Code",
       folder: "/proj",
       argv: ["claude", "--model", "opus", "--effort", "high"],
     });
@@ -239,7 +238,7 @@ describe("tab creation and closing (herdr-adapter.md §5)", () => {
       return { result: { terminal: "t9" } };
     };
     await client.createTabAndAgent("w1", "terminal");
-    expect(herdr.callsOf("tab.new")[0].params).toEqual({ space: "w1", name: "Terminal" });
+    expect(herdr.callsOf("tab.new")[0].params).toEqual({ space: "w1" });
   });
 
   test("an App error is a HerdrError carrying the App's text", async () => {

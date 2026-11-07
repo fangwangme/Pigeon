@@ -67,6 +67,8 @@ class AgySource implements SessionSource {
 }
 
 /** OpenCode: sessions are rows of `session_v2` (`agent-session-normalization.md` §2.1). */
+const OPENCODE_PLACEHOLDER_TITLE = /^New session - \d{4}-\d{2}-\d{2}T/;
+
 class OpenCodeSource implements SessionSource {
   public readonly agent = "opencode";
   constructor(private adapter: OpenCodeAdapter) {}
@@ -127,7 +129,9 @@ class OpenCodeSource implements SessionSource {
     return typeof model?.providerID === "string" && typeof model?.id === "string" ? `${model.providerID}/${model.id}` : undefined;
   }
   public read(id: string): SessionRead {
-    const title = this.query<{ title: string | null }>("SELECT title FROM session_v2 WHERE id = ?", id)[0]?.title || this.firstPrompt(id)?.slice(0, 120);
+    const rawTitle = this.query<{ title: string | null }>("SELECT title FROM session_v2 WHERE id = ?", id)[0]?.title;
+    const isPlaceholder = rawTitle ? OPENCODE_PLACEHOLDER_TITLE.test(rawTitle) : false;
+    const title = rawTitle && !isPlaceholder ? rawTitle : undefined;
     const model = this.model(id);
     return { ...this.adapter.getTurns(id), ...(title ? { sessionTitle: title } : {}), ...(model ? { model } : {}) };
   }
@@ -137,7 +141,11 @@ class OpenCodeSource implements SessionSource {
       "SELECT id, title, time_updated FROM session_v2 WHERE (directory = ? OR directory LIKE ?) AND time_archived IS NULL ORDER BY time_updated DESC LIMIT 50",
       folder,
       `${folder}/%`
-    ).map((r) => ({ id: r.id, title: (r.title || this.firstPrompt(r.id) || r.id).slice(0, 120), updatedAt: r.time_updated }));
+    ).map((r) => {
+      const isPlaceholder = r.title ? OPENCODE_PLACEHOLDER_TITLE.test(r.title) : false;
+      const effectiveTitle = (!isPlaceholder && r.title) || this.firstPrompt(r.id) || r.id;
+      return { id: r.id, title: effectiveTitle.slice(0, 120), updatedAt: r.time_updated };
+    });
   }
 }
 
