@@ -16,13 +16,13 @@
     <link rel="icon" type="image/png" sizes="192x192" href="/icon-192.png" />
     <title>Pigeon</title>
     <style>
-      :root { color-scheme: light dark; }
-      html, body { background: #111113; color: #F2F2F3; margin: 0; height: 100%; }
+      :where(:root) { color-scheme: light dark; }
+      :where(html, body) { background: #111113; color: #F2F2F3; margin: 0; height: 100%; }
       @media (prefers-color-scheme: light) {
-        :root:not([data-theme="dark"]), :root:not([data-theme="dark"]) body { background: #F8F8F6; color: #18181A; }
+        :where(:root:not([data-theme="dark"]), :root:not([data-theme="dark"]) body) { background: #F8F8F6; color: #18181A; }
       }
-      :root[data-theme="light"], :root[data-theme="light"] body { background: #F8F8F6; color: #18181A; }
-      :root[data-theme="dark"], :root[data-theme="dark"] body { background: #111113; color: #F2F2F3; }
+      :where(:root[data-theme="light"], :where(:root[data-theme="light"]) body) { background: #F8F8F6; color: #18181A; }
+      :where(:root[data-theme="dark"], :where(:root[data-theme="dark"]) body) { background: #111113; color: #F2F2F3; }
     </style>
     <script>
       // mobile-ui-and-themes.md §9.1: paint the stored palette before the app loads.
