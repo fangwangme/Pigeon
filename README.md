@@ -1,5 +1,8 @@
 <p align="center">
-  <img src="public/icon.svg" width="112" height="112" alt="Pigeon — geometric origami carrier pigeon icon">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="public/icon-dark.svg">
+    <img src="public/icon-light.svg" width="120" height="120" alt="Pigeon — origami messenger pigeon carrying a sealed envelope">
+  </picture>
 </p>
 
 # Pigeon
@@ -54,7 +57,17 @@ A small daemon runs alongside Herdr on your computer and serves the app over you
 - **Keep the work moving.** Reply at any time—if the agent is still working, your message queues until the turn finishes (with one-tap undo). Attach photos or files from your phone, insert `/` commands and skills from your project or user config, or stop a turn mid-flight.
 - **A real terminal when you need one.** Peek at any pane's live screen and send arrow keys, `Enter`, `Esc`, `Tab`, or `Ctrl+C`. Plain shell tabs open straight to the terminal view and let you run commands from the reply box.
 - **Start, resume, and manage tabs.** Launch an agent or shell in a new Herdr tab, or pick up a past Claude Code, Codex, OpenCode, or pi session where you left off. Pick the model and reasoning effort for Claude Code or Codex (and switch models mid-session in Claude Code). Rename or close tabs and switch between panes without disturbing focus on your computer.
-- **Light, dark, English, or Chinese.** Follow your system theme or pick light or dark with a shared accent color, plus a per-phone **Reduce transparency** toggle if you prefer solid panels over glass. Available in English and Simplified Chinese. The app's emblem—a geometric origami carrier pigeon folded from warm Gruvbox paper facets with bright orange wings and a green message envelope—anchors the home-screen icon, pairing screen, and new-session view.
+- **Light, dark, English, or Chinese.** Follow your system theme or pick light or dark with a shared accent color, plus a per-phone **Reduce transparency** toggle if you prefer solid panels over glass. Available in English and Simplified Chinese.
+
+### Visual identity
+
+<p align="center">
+  <img src="public/icon-dark.svg" width="128" height="128" alt="Pigeon icon — Dark Mode">
+  &nbsp;&nbsp;&nbsp;&nbsp;
+  <img src="public/icon-light.svg" width="128" height="128" alt="Pigeon icon — Light Mode">
+</p>
+
+Pigeon's emblem is a geometric origami carrier pigeon in mid-flight, carrying a wax-sealed green envelope beneath its beak—a nod to its role as the messenger delivering prompts, approvals, and replies between your phone and the coding agents running on your desk. Every facet is folded along continuous shared creases in two coordinated Gruvbox paper palettes (**Dark** `#282828 → #1D2021` obsidian charcoal and **Light** `#F7F3E8 → #E6DEC8` warm parchment), adapting automatically across the README, browser favicon (`public/icon.svg`), pairing screen, and new-session view.
 
 ## How it works
 

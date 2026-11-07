@@ -3,7 +3,7 @@ import { navigate, showToast, state } from "../state/store";
 import { request, selectPane } from "../state/ws";
 import type { PastSession } from "../../../types/protocol";
 import { Composer, ModelSheet } from "./Composer";
-import { ago, agentLabel, Icon, Sheet } from "./ui";
+import { ago, agentLabel, Icon, Logo, Sheet } from "./ui";
 import { t } from "../i18n";
 
 function defaultAgent(): string | null {
@@ -119,7 +119,7 @@ export function NewSession(props: { workspaceId: string | null; mode: "new" | "r
           when={mode() === "resume"}
           fallback={
             <div class="newempty">
-              <img class="logo" src="/icon.svg" alt="" />
+              <Logo />
               <div class="big">{t("new.start")}</div>
               <div class="mono" style={{ "font-size": "13px", "overflow-wrap": "anywhere" }}>
                 {ws()?.folder ?? ""}

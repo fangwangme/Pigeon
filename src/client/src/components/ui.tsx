@@ -8,6 +8,53 @@ export function Icon(props: { name: IconName; sm?: boolean; class?: string }) {
   return <svg class={`i${props.sm ? " sm" : ""}${props.class ? ` ${props.class}` : ""}`} viewBox="0 0 24 24" innerHTML={ICONS[props.name]} aria-hidden="true" />;
 }
 
+export function Logo() {
+  return (
+    <svg class="logo" viewBox="0 0 512 512" aria-hidden="true">
+      <defs>
+        <linearGradient id="pigeon-logo-bg" x1="0" y1="0" x2="0" y2="1">
+          <stop class="bg-0" offset="0%" />
+          <stop class="bg-1" offset="100%" />
+        </linearGradient>
+        <linearGradient id="pigeon-logo-bd" x1="0" y1="0" x2="1" y2="1">
+          <stop class="bd-0" offset="0%" />
+          <stop class="bd-1" offset="100%" />
+        </linearGradient>
+        <filter id="pigeon-logo-drop" x="-10%" y="-10%" width="125%" height="125%">
+          <feDropShadow dx="0" dy="10" stdDeviation="11" flood-color="#1D2021" flood-opacity="0.24" />
+        </filter>
+      </defs>
+      <rect x="6" y="6" width="500" height="500" rx="110" fill="url(#pigeon-logo-bg)" stroke="url(#pigeon-logo-bd)" stroke-width="12" />
+      <g filter="url(#pigeon-logo-drop)">
+        <path class="w-back-1" d="M 208 220 L 292 82 L 304 214 L 236 206 Z" />
+        <path class="w-back-2" d="M 268 210 L 292 82 L 304 214 Z" />
+        <path class="flank" d="M 56 306 L 122 284 L 170 252 L 236 202 L 304 214 L 358 150 L 396 170 L 444 184 L 380 198 L 344 256 L 326 330 L 232 382 L 142 338 L 78 354 Z" />
+        <path class="tail-1" d="M 56 306 L 142 338 L 78 354 Z" />
+        <path class="tail-2" d="M 56 306 L 122 284 L 142 338 Z" />
+        <path class="belly" d="M 122 284 L 142 338 L 232 382 Z" />
+        <path class="flank" d="M 122 284 L 232 382 L 344 256 L 304 214 L 236 202 L 170 252 Z" />
+        <path class="breast" d="M 232 382 L 326 330 L 344 256 Z" />
+        <path class="throat" d="M 304 214 L 396 170 L 380 198 L 344 256 Z" />
+        <path class="crown" d="M 304 214 L 358 150 L 396 170 Z" />
+        <path class="beak-1" d="M 396 170 L 444 184 L 380 198 Z" />
+        <path class="beak-2" d="M 388 184 L 444 184 L 380 198 Z" />
+        <path class="w-front-1" d="M 170 252 L 246 88 L 230 296 Z" />
+        <path class="w-front-2" d="M 202 275 L 246 88 L 230 296 Z" />
+        <circle cx="362" cy="180" r="10.5" fill="#282828" />
+        <circle cx="364" cy="178" r="4.2" fill="#FE8019" />
+        <circle cx="360" cy="176" r="1.8" fill="#FBF1C7" />
+        <g transform="rotate(-6 416 228)">
+          <rect class="env-base" x="378" y="202" width="78" height="52" rx="6" />
+          <path class="env-fold" d="M 380 252 L 417 224 L 454 252 Z" />
+          <path class="env-flap" d="M 379 204 L 417 232 L 455 204 Z" />
+          <path d="M 380 204 L 417 232 L 454 204" fill="none" stroke="#282828" stroke-width="4" stroke-linecap="round" stroke-linejoin="round" />
+          <circle cx="417" cy="232" r="4.2" fill="#FE8019" stroke="#282828" stroke-width="2" />
+        </g>
+      </g>
+    </svg>
+  );
+}
+
 export type RowStatus = "blocked" | "working" | "done" | "idle" | "terminal";
 
 /** mobile-ui-and-themes.md §2.1: the row icon for a status. */

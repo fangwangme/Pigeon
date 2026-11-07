@@ -3,7 +3,7 @@ import { navigate, setLocalePref, setReduceTransparency, setState, showToast, st
 import { initWebSocket, request, sendConfigPatch } from "../state/ws";
 import { ACCENTS, resolveMode } from "../themes";
 import type { AccentName, DeviceInfo, ThemeMode } from "../../../types/protocol";
-import { ago, Icon } from "./ui";
+import { ago, Icon, Logo } from "./ui";
 import { LOCALES, rich, t, type LocalePref, type MessageId } from "../i18n";
 
 /** §8.1: the newest devices shown before the rest are folded away. */
@@ -202,7 +202,7 @@ export function Pairing() {
   return (
     <div class="page">
       <div class="pair">
-        <img class="logo" src="/icon.svg" alt="" />
+        <Logo />
         <div style={{ "font-size": "24px", "font-weight": 700 }}>{t("pair.title")}</div>
         <p class="note" style={{ "font-size": "15px" }}>
           {t("pair.lead")}

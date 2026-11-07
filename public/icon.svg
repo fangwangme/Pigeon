@@ -1,36 +1,108 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
-  <!-- Background squircle -->
-  <rect x="6" y="6" width="500" height="500" rx="108" fill="#282828" stroke="#665C54" stroke-width="12" />
+  <style>
+    .bg-0 { stop-color: #282828; }
+    .bg-1 { stop-color: #1D2021; }
+    .bd-0 { stop-color: #7C6F64; }
+    .bd-1 { stop-color: #504945; }
+    .w-back-1 { fill: #D65D0E; }
+    .w-back-2 { fill: #B54507; }
+    .tail-1 { fill: #7C6F64; }
+    .tail-2 { fill: #928374; }
+    .belly { fill: #BDAE93; }
+    .flank { fill: #D5C4A1; }
+    .breast { fill: #E4D5B7; }
+    .throat { fill: #E6D8B8; }
+    .crown { fill: #F4E8C1; }
+    .beak-1 { fill: #FABD2F; }
+    .beak-2 { fill: #D79921; }
+    .w-front-1 { fill: #FF9638; }
+    .w-front-2 { fill: #F26D13; }
+    .env-base { fill: #8EC07C; }
+    .env-fold { fill: #7DB36A; }
+    .env-flap { fill: #A4D292; }
+    @media (prefers-color-scheme: light) {
+      .bg-0 { stop-color: #F7F3E8; }
+      .bg-1 { stop-color: #E6DEC8; }
+      .bd-0 { stop-color: #CFC2AA; }
+      .bd-1 { stop-color: #A89980; }
+      .w-back-1 { fill: #D65D0E; }
+      .w-back-2 { fill: #AF3A03; }
+      .tail-1 { fill: #665C54; }
+      .tail-2 { fill: #7C6F64; }
+      .belly { fill: #B09B7C; }
+      .flank { fill: #CBB694; }
+      .breast { fill: #DFCEB0; }
+      .throat { fill: #E2D2B5; }
+      .crown { fill: #F2E5C6; }
+      .w-front-1 { fill: #FF8B2E; }
+      .w-front-2 { fill: #E65C08; }
+      .env-base { fill: #68A85E; }
+      .env-fold { fill: #56964C; }
+      .env-flap { fill: #82BE78; }
+    }
+  </style>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop class="bg-0" offset="0%" stop-color="#282828" />
+      <stop class="bg-1" offset="100%" stop-color="#1D2021" />
+    </linearGradient>
+    <linearGradient id="border" x1="0" y1="0" x2="1" y2="1">
+      <stop class="bd-0" offset="0%" stop-color="#7C6F64" />
+      <stop class="bd-1" offset="100%" stop-color="#504945" />
+    </linearGradient>
+    <filter id="drop" x="-10%" y="-10%" width="125%" height="125%">
+      <feDropShadow dx="0" dy="10" stdDeviation="11" flood-color="#1D2021" flood-opacity="0.28" />
+    </filter>
+  </defs>
 
-  <!-- Back wing (deep Gruvbox orange, tucked cleanly behind dorsal ridge 236,198 -> 304,212) -->
-  <path d="M 204 224 L 290 84 L 304 212 L 236 218 Z" fill="#D65D0E" />
+  <!-- Squircle container -->
+  <rect x="6" y="6" width="500" height="500" rx="110" fill="url(#bg)" stroke="url(#border)" stroke-width="12" />
 
-  <!-- Seamless under-silhouette to prevent anti-aliasing background bleed across fold lines -->
-  <path d="M 60 312 L 116 284 L 164 250 L 236 198 L 304 212 L 364 152 L 396 174 L 342 264 L 330 342 L 224 402 L 138 342 L 82 358 Z" fill="#D5C4A1" />
+  <g filter="url(#drop)">
+    <!-- Back wing (sharp triangle with internal 3D fold crease from apex 292,82) -->
+    <path class="w-back-1" d="M 208 220 L 292 82 L 304 214 L 236 206 Z" fill="#D65D0E" />
+    <path class="w-back-2" d="M 268 210 L 292 82 L 304 214 Z" fill="#B54507" />
 
-  <!-- Tail facets -->
-  <path d="M 60 312 L 138 342 L 82 358 Z" fill="#7C6F64" />
-  <path d="M 60 312 L 116 284 L 138 342 Z" fill="#928374" />
+    <!-- Seamless under-silhouette to eliminate anti-aliasing seams across internal creases -->
+    <path class="flank" d="M 56 306 L 122 284 L 170 252 L 236 202 L 304 214 L 358 150 L 396 170 L 444 184 L 380 198 L 344 256 L 326 330 L 232 382 L 142 338 L 78 354 Z" fill="#D5C4A1" />
 
-  <!-- Body facets -->
-  <path d="M 116 284 L 138 342 L 224 402 Z" fill="#BDAE93" />
-  <path d="M 116 284 L 224 402 L 342 264 L 304 212 L 236 198 L 164 250 Z" fill="#D5C4A1" />
-  <path d="M 224 402 L 330 342 L 342 264 Z" fill="#E2D3B3" />
+    <!-- Fanned origami tail (2 sculpted planes) -->
+    <path class="tail-1" d="M 56 306 L 142 338 L 78 354 Z" fill="#7C6F64" />
+    <path class="tail-2" d="M 56 306 L 122 284 L 142 338 Z" fill="#928374" />
 
-  <!-- Neck & head facet -->
-  <path d="M 304 212 L 364 152 L 396 174 L 342 264 Z" fill="#EBDBB2" />
+    <!-- Belly & keel facet -->
+    <path class="belly" d="M 122 284 L 142 338 L 232 382 Z" fill="#BDAE93" />
 
-  <!-- Beak (shares exact front head edge 396,174 -> 378,204) -->
-  <path d="M 396 174 L 444 188 L 378 204 Z" fill="#FABD2F" />
+    <!-- Central body flank -->
+    <path class="flank" d="M 122 284 L 232 382 L 344 256 L 304 214 L 236 202 L 170 252 Z" fill="#D5C4A1" />
 
-  <!-- Front wing (bright Gruvbox orange, shares dorsal crease 164,250 -> 228,296) -->
-  <path d="M 164 250 L 244 94 L 228 296 Z" fill="#FE8019" />
+    <!-- Proud breast facet -->
+    <path class="breast" d="M 232 382 L 326 330 L 344 256 Z" fill="#E4D5B7" />
 
-  <!-- Eye -->
-  <circle cx="364" cy="182" r="10" fill="#282828" />
-  <circle cx="366" cy="180" r="4" fill="#FE8019" />
+    <!-- Neck & head (split into shaded throat plane and top-lit crown plane) -->
+    <path class="throat" d="M 304 214 L 396 170 L 380 198 L 344 256 Z" fill="#E6D8B8" />
+    <path class="crown" d="M 304 214 L 358 150 L 396 170 Z" fill="#F4E8C1" />
 
-  <!-- Envelope -->
-  <rect x="380" y="212" width="76" height="50" rx="6" fill="#8EC07C" />
-  <path d="M 382 214 L 418 240 L 454 214" fill="none" stroke="#282828" stroke-width="4" stroke-linecap="round" stroke-linejoin="round" />
+    <!-- Two-facet origami beak (upper & lower mandible meeting along ridge 388,184 -> 444,184) -->
+    <path class="beak-1" d="M 396 170 L 444 184 L 380 198 Z" fill="#FABD2F" />
+    <path class="beak-2" d="M 388 184 L 444 184 L 380 198 Z" fill="#D79921" />
+
+    <!-- Front wing (sharp triangle with internal 3D fold crease from apex 246,88) -->
+    <path class="w-front-1" d="M 170 252 L 246 88 L 230 296 Z" fill="#FF9638" />
+    <path class="w-front-2" d="M 202 275 L 246 88 L 230 296 Z" fill="#F26D13" />
+
+    <!-- Expressive eye with amber iris and catchlight -->
+    <circle cx="362" cy="180" r="10.5" fill="#282828" />
+    <circle cx="364" cy="178" r="4.2" fill="#FE8019" />
+    <circle cx="360" cy="176" r="1.8" fill="#FBF1C7" />
+
+    <!-- Messenger envelope (tilted -6 deg beneath the beak) -->
+    <g transform="rotate(-6 416 228)">
+      <rect class="env-base" x="378" y="202" width="78" height="52" rx="6" fill="#8EC07C" />
+      <path class="env-fold" d="M 380 252 L 417 224 L 454 252 Z" fill="#7DB36A" />
+      <path class="env-flap" d="M 379 204 L 417 232 L 455 204 Z" fill="#A4D292" />
+      <path d="M 380 204 L 417 232 L 454 204" fill="none" stroke="#282828" stroke-width="4" stroke-linecap="round" stroke-linejoin="round" />
+      <circle cx="417" cy="232" r="4.2" fill="#FE8019" stroke="#282828" stroke-width="2" />
+    </g>
+  </g>
 </svg>

@@ -1,0 +1,66 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#F7F3E8" />
+      <stop offset="100%" stop-color="#E6DEC8" />
+    </linearGradient>
+    <linearGradient id="border" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#CFC2AA" />
+      <stop offset="100%" stop-color="#A89980" />
+    </linearGradient>
+    <filter id="drop" x="-10%" y="-10%" width="125%" height="125%">
+      <feDropShadow dx="0" dy="10" stdDeviation="11" flood-color="#3C3226" flood-opacity="0.20" />
+    </filter>
+  </defs>
+
+  <!-- Squircle container -->
+  <rect x="6" y="6" width="500" height="500" rx="110" fill="url(#bg)" stroke="url(#border)" stroke-width="12" />
+
+  <g filter="url(#drop)">
+    <!-- Back wing (sharp triangle with internal 3D fold crease from apex 292,82) -->
+    <path d="M 208 220 L 292 82 L 304 214 L 236 206 Z" fill="#D65D0E" />
+    <path d="M 268 210 L 292 82 L 304 214 Z" fill="#AF3A03" />
+
+    <!-- Seamless under-silhouette to eliminate anti-aliasing seams across internal creases -->
+    <path d="M 56 306 L 122 284 L 170 252 L 236 202 L 304 214 L 358 150 L 396 170 L 444 184 L 380 198 L 344 256 L 326 330 L 232 382 L 142 338 L 78 354 Z" fill="#CBB694" />
+
+    <!-- Fanned origami tail (2 sculpted planes) -->
+    <path d="M 56 306 L 142 338 L 78 354 Z" fill="#665C54" />
+    <path d="M 56 306 L 122 284 L 142 338 Z" fill="#7C6F64" />
+
+    <!-- Belly & keel facet -->
+    <path d="M 122 284 L 142 338 L 232 382 Z" fill="#B09B7C" />
+
+    <!-- Central body flank -->
+    <path d="M 122 284 L 232 382 L 344 256 L 304 214 L 236 202 L 170 252 Z" fill="#CBB694" />
+
+    <!-- Proud breast facet -->
+    <path d="M 232 382 L 326 330 L 344 256 Z" fill="#DFCEB0" />
+
+    <!-- Neck & head (split into shaded throat plane and top-lit crown plane) -->
+    <path d="M 304 214 L 396 170 L 380 198 L 344 256 Z" fill="#E2D2B5" />
+    <path d="M 304 214 L 358 150 L 396 170 Z" fill="#F2E5C6" />
+
+    <!-- Two-facet origami beak (upper & lower mandible meeting along ridge 388,184 -> 444,184) -->
+    <path d="M 396 170 L 444 184 L 380 198 Z" fill="#FABD2F" />
+    <path d="M 388 184 L 444 184 L 380 198 Z" fill="#D79921" />
+
+    <!-- Front wing (sharp triangle with internal 3D fold crease from apex 246,88) -->
+    <path d="M 170 252 L 246 88 L 230 296 Z" fill="#FF8B2E" />
+    <path d="M 202 275 L 246 88 L 230 296 Z" fill="#E65C08" />
+
+    <!-- Expressive eye with amber iris and catchlight -->
+    <circle cx="362" cy="180" r="10.5" fill="#282828" />
+    <circle cx="364" cy="178" r="4.2" fill="#FE8019" />
+    <circle cx="360" cy="176" r="1.8" fill="#FBF1C7" />
+
+    <!-- Messenger envelope (tilted -6 deg beneath the beak) -->
+    <g transform="rotate(-6 416 228)">
+      <rect x="378" y="202" width="78" height="52" rx="6" fill="#68A85E" />
+      <path d="M 380 252 L 417 224 L 454 252 Z" fill="#56964C" />
+      <path d="M 379 204 L 417 232 L 455 204 Z" fill="#82BE78" />
+      <path d="M 380 204 L 417 232 L 454 204" fill="none" stroke="#282828" stroke-width="3.8" stroke-linecap="round" stroke-linejoin="round" />
+      <circle cx="417" cy="232" r="4.2" fill="#FE8019" stroke="#282828" stroke-width="2" />
+    </g>
+  </g>
+</svg>
