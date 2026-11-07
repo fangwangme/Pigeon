@@ -238,7 +238,7 @@ export function Composer(props: ComposerProps) {
   const grow = () => {
     if (!ta) return;
     ta.style.height = "auto";
-    ta.style.height = `${Math.min(ta.scrollHeight, 140)}px`;
+    ta.style.height = `${Math.min(ta.scrollHeight, 280)}px`;
   };
 
   const insert = (s: string) => {

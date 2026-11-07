@@ -24,6 +24,8 @@ svg.i.sm { width: 16px; height: 16px; }
   -webkit-mask-image: linear-gradient(#000 45%, transparent); mask-image: linear-gradient(#000 45%, transparent);
 }
 .lt { flex: 1; font-size: 30px; font-weight: 750; letter-spacing: -.02em; padding-left: 8px; }
+.logo-mark { display: flex; align-items: center; padding-left: 6px; flex: none; }
+.logo-mark .logo { width: 34px; height: 34px; margin: 0; }
 .ht { flex: 1; min-width: 0; text-align: center; }
 .ht .t { font-weight: 650; font-size: 16px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: flex; align-items: center; justify-content: center; gap: 7px; }
 .ht .s { font-size: 12.5px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -149,7 +151,7 @@ svg.i.sm { width: 16px; height: 16px; }
 .dockrow { display: flex; justify-content: space-between; align-items: flex-end; gap: 8px; pointer-events: none; }
 .dockrow > * { pointer-events: auto; }
 .comp { position: relative; min-height: 58px; border-radius: 29px; display: flex; align-items: flex-end; gap: 6px; padding: 6px; }
-.comp textarea { flex: 1; resize: none; border: 0; outline: none; background: none; font-size: 16px; line-height: 1.4; padding: 11px 4px; max-height: 140px; min-width: 0; }
+.comp textarea { flex: 1; resize: none; border: 0; outline: none; background: none; font-size: 16px; line-height: 1.4; padding: 11px 4px; max-height: 280px; min-width: 0; overflow-y: auto; }
 .comp textarea::placeholder { color: var(--faint); }
 .comp.open { border-radius: 26px; flex-direction: column; align-items: stretch; padding: 10px; }
 .comp.open textarea { padding: 4px 6px 10px; }

@@ -3,7 +3,7 @@ import { filterActive, navigate, state, toggleCollapsed, type FilterState } from
 import { selectPane } from "../state/ws";
 import type { PaneSummary, TabSummary, WorkspaceSummary } from "../../../types/protocol";
 import { openOverlay } from "./overlays";
-import { agentLabel, Icon, paneStatus, paneSummary, primaryPane, StatusIcon, tabStatus, type RowStatus } from "./ui";
+import { agentLabel, Icon, Logo, paneStatus, paneSummary, primaryPane, StatusIcon, tabStatus, type RowStatus } from "./ui";
 import { t, type MessageId } from "../i18n";
 
 function passes(status: RowStatus, agent: string | null | undefined, f: FilterState): boolean {
@@ -146,7 +146,10 @@ export function Home() {
   return (
     <div class="page">
       <div class="hdr">
-        <div class="lt">Pigeon</div>
+        <div class="logo-mark" aria-label="Pigeon">
+          <Logo />
+        </div>
+        <div class="sp" />
         <FilterButton />
       </div>
       <ConnectionBanner />

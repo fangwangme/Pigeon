@@ -14,38 +14,49 @@ A small daemon runs alongside Herdr on your computer and serves the app over you
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="docs/images/home-dark.png">
-    <img src="docs/images/home-light.png" width="200" alt="Home: every Herdr workspace with its tabs and agent status">
-  </picture>
-  &nbsp;
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="docs/images/session-dark.png">
-    <img src="docs/images/session-light.png" width="200" alt="A Claude Code session: the prompt, grouped tool calls and the answer">
-  </picture>
-  &nbsp;
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="docs/images/answer-dark.png">
-    <img src="docs/images/answer-light.png" width="200" alt="The agent's answer rendered as Markdown, with the reply box">
+    <img src="docs/images/home-light.png" width="260" alt="Home: workspaces, tabs, agent status dots and bionic logo mark">
   </picture>
   &nbsp;
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="docs/images/agents-dark.png">
-    <img src="docs/images/agents-light.png" width="200" alt="All agents grouped by status">
+    <img src="docs/images/agents-light.png" width="260" alt="All agents: unified multi-agent overview grouped by status">
+  </picture>
+  &nbsp;
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/images/session-dark.png">
+    <img src="docs/images/session-light.png" width="260" alt="Session feed: prioritized session title, collapsible reasoning, and grouped tool calls">
   </picture>
 </p>
 <p align="center">
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="docs/images/commands-dark.png">
-    <img src="docs/images/commands-light.png" width="200" alt="Typing / lists the agent's commands and skills">
+    <source media="(prefers-color-scheme: dark)" srcset="docs/images/answer-dark.png">
+    <img src="docs/images/answer-light.png" width="260" alt="Markdown rendering: tables, architecture diagrams, and syntax-highlighted code">
   </picture>
   &nbsp;
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="docs/images/resume-dark.png">
-    <img src="docs/images/resume-light.png" width="200" alt="Resume a past session in a new tab">
+    <source media="(prefers-color-scheme: dark)" srcset="docs/images/diff-dark.png">
+    <img src="docs/images/diff-light.png" width="260" alt="Code changes & diffs: per-file addition/deletion badges and patch comparisons">
+  </picture>
+  &nbsp;
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/images/commands-dark.png">
+    <img src="docs/images/commands-light.png" width="260" alt="Slash commands & skills: typing / lists built-in actions and project skills">
+  </picture>
+</p>
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/images/composer-dark.png">
+    <img src="docs/images/composer-light.png" width="260" alt="Expandable composer: 280px auto-growing input with smooth vertical scrolling">
+  </picture>
+  &nbsp;
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/images/model-dark.png">
+    <img src="docs/images/model-light.png" width="260" alt="Model sheet: switch active models and reasoning effort on the fly">
   </picture>
   &nbsp;
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="docs/images/settings-dark.png">
-    <img src="docs/images/settings-light.png" width="200" alt="Settings: appearance, language and paired devices">
+    <img src="docs/images/settings-light.png" width="260" alt="Settings: dark/light theme, accent colors, bilingual toggle, and paired devices">
   </picture>
 </p>
 
