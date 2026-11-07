@@ -1,6 +1,6 @@
-import { createStore, unwrap } from "solid-js/store";
+import { unwrap } from "solid-js/store";
 import { state, setState, applySyncedClientConfig, openTerminal, setUnread, showToast } from "./store";
-import { load, save, remove, clearAll, sweep, meta, migrateLocalStorageCache } from "./pane-cache";
+import { load, save, remove, clearAll, sweep, meta, migrateLocalStorageCache, type PaneCacheEntry } from "./pane-cache";
 import type { ClientMessage, ServerMessage, SnapshotPayload, PaneStatePayload, ClientConfig, AgentStatus, HaveInfo } from "../../../types/protocol";
 import { hashTurn } from "../../../types/protocol";
 import { t } from "../i18n";
@@ -23,16 +23,22 @@ const lastStatus = new Map<string, AgentStatus>();
 const pending = new Map<string, { resolve: (p: any) => void; reject: (e: { code: string; message: string }) => void }>();
 let freshDataArrivedPaneId: string | null = null;
 let lastAlivePanesKey = "";
+let pendingSelectViewId: string | null = null;
+
+function toPlain<T>(obj: T): T {
+  if (obj === null || typeof obj !== "object") return obj;
+  return JSON.parse(JSON.stringify(obj));
+}
 
 function saveActivePaneSnapshot(paneId: string): void {
   if (state.session?.bound && state.session.sessionId && state.normalizedTurns.length) {
     void save(paneId, {
       sessionId: state.session.sessionId,
-      turns: unwrap(state.normalizedTurns),
-      sessionStats: state.sessionStats ? unwrap(state.sessionStats) : null,
+      turns: toPlain(state.normalizedTurns),
+      sessionStats: state.sessionStats ? toPlain(state.sessionStats) : null,
       sessionTitle: state.sessionTitle,
-      todos: state.todos ? unwrap(state.todos) : null,
-      session: state.session ? unwrap(state.session) : null,
+      todos: state.todos ? toPlain(state.todos) : null,
+      session: state.session ? toPlain(state.session) : null,
     });
   }
 }
@@ -299,6 +305,9 @@ export function handleServerMessage(msg: ServerMessage): void {
 
     case "ack": {
       const p = msg.payload;
+      if (msg.replyTo === pendingSelectViewId) {
+        pendingSelectViewId = null;
+      }
       const waiter = pending.get(msg.replyTo);
       if (waiter) {
         pending.delete(msg.replyTo);
@@ -318,11 +327,12 @@ export function handleServerMessage(msg: ServerMessage): void {
         pending.delete(msg.replyTo!);
         waiter.reject(msg.error);
       }
+      if (msg.replyTo && msg.replyTo === pendingSelectViewId) {
+        setState("paneSyncing", false);
+        pendingSelectViewId = null;
+      }
       console.error("[Pigeon] server error", msg.error.code, msg.error.message);
       setState("lastError", { code: msg.error.code, message: errorText(msg.error.code, msg.error.message), at: Date.now() });
-      if (state.paneSyncing) {
-        setState("paneSyncing", false);
-      }
       if (msg.error.code === "ERR_INTERACTION_STALE" && state.activePaneId) {
         sendMessage({ type: "select_view", id: nextId(), payload: { paneId: state.activePaneId } });
       }
@@ -431,7 +441,12 @@ export async function selectPane(paneId: string): Promise<void> {
   }
   setUnread(paneId, false);
 
-  const cached = await load(paneId);
+  let cached: PaneCacheEntry | null = null;
+  try {
+    cached = await load(paneId);
+  } catch (err) {
+    console.error("[Pigeon] Failed to load pane cache, continuing with network view:", err);
+  }
   if (state.activePaneId !== paneId) return;
 
   let have: HaveInfo | undefined;
@@ -453,9 +468,11 @@ export async function selectPane(paneId: string): Promise<void> {
     }
   }
 
+  const selectViewId = nextId();
+  pendingSelectViewId = selectViewId;
   sendMessage({
     type: "select_view",
-    id: nextId(),
+    id: selectViewId,
     payload: {
       paneId,
       ...(have ? { have } : {}),

@@ -22,11 +22,21 @@ export const STORE_NAME = "paneCache";
 
 const metaIndex = new Map<string, { sessionId: string; turnCount: number; lastTurnHash: string }>();
 
+let dbInstance: IDBDatabase | null = null;
+let dbOpenPromise: Promise<IDBDatabase | null> | null = null;
+
 function openDb(): Promise<IDBDatabase | null> {
   if (typeof indexedDB === "undefined") {
     return Promise.resolve(null);
   }
-  return new Promise((resolve, reject) => {
+  if (dbInstance) {
+    return Promise.resolve(dbInstance);
+  }
+  if (dbOpenPromise) {
+    return dbOpenPromise;
+  }
+
+  dbOpenPromise = new Promise((resolve, reject) => {
     const req = indexedDB.open(DB_NAME, DB_VERSION);
     req.onupgradeneeded = () => {
       const db = req.result;
@@ -43,12 +53,32 @@ function openDb(): Promise<IDBDatabase | null> {
         store.createIndex("by_savedAt", "savedAt");
       }
     };
-    req.onsuccess = () => resolve(req.result);
+    req.onsuccess = () => {
+      const db = req.result;
+      dbInstance = db;
+      dbOpenPromise = null;
+      db.onversionchange = () => {
+        db.close();
+        dbInstance = null;
+      };
+      db.onclose = () => {
+        dbInstance = null;
+      };
+      resolve(db);
+    };
+    req.onblocked = () => {
+      console.error("[Pigeon] IndexedDB open blocked by existing connection");
+      dbOpenPromise = null;
+      reject(new Error("IndexedDB open blocked"));
+    };
     req.onerror = () => {
       console.error("[Pigeon] Failed to open IndexedDB:", req.error);
+      dbOpenPromise = null;
       reject(req.error);
     };
   });
+
+  return dbOpenPromise;
 }
 
 function updateMeta(entry: { paneId: string; sessionId: string; turns: NormalizedTurn[] }): void {
@@ -107,7 +137,7 @@ export async function save(
   if (!db) return;
 
   const now = Date.now();
-  const rawEntry: PaneCacheEntry = {
+  const fullEntry: PaneCacheEntry = {
     paneId,
     sessionId: entry.sessionId,
     savedAt: now,
@@ -118,9 +148,6 @@ export async function save(
     todos: entry.todos,
     session: entry.session,
   };
-
-  // Structured clone validates that the entry contains no raw Proxies (JSC DataCloneError)
-  const fullEntry = structuredClone(rawEntry);
 
   await new Promise<void>((resolve, reject) => {
     const tx = db.transaction(STORE_NAME, "readwrite");

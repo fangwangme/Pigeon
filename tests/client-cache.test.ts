@@ -1,5 +1,8 @@
 import "fake-indexeddb/auto";
-import { beforeEach, describe, expect, test } from "bun:test";
+import { beforeEach, describe, expect, spyOn, test } from "bun:test";
+// @ts-ignore
+import { createStore as createBrowserStore } from "solid-js/store/dist/store.js";
+import * as cache from "../src/client/src/state/pane-cache";
 import { load, save, remove, clearAll, sweep, meta, PANE_CACHE_TTL_MS, MAX_CACHED_PANES, DB_VERSION } from "../src/client/src/state/pane-cache";
 import { handleServerMessage, initWebSocket, selectPane } from "../src/client/src/state/ws";
 import { state, setState } from "../src/client/src/state/store";
@@ -88,6 +91,12 @@ describe("client pane cache (mobile-ui-and-themes.md §3.1)", () => {
   });
 
   test("leaving a pane via selectPane saves store state without Proxy cloning error (B1')", async () => {
+    const [browserStore] = createBrowserStore({
+      turns: [
+        dummyTurn,
+        { turnId: "t2", turnNumber: 2, timestamp: 2000, userPrompt: { text: "new turn from store" } },
+      ],
+    });
     setState("activePaneId", "pane_a");
     setState("session", {
       bound: true,
@@ -96,10 +105,7 @@ describe("client pane cache (mobile-ui-and-themes.md §3.1)", () => {
       model: { value: "opus", source: "launch" },
       thinking: { value: null, source: "unknown" },
     });
-    setState("normalizedTurns", [
-      dummyTurn,
-      { turnId: "t2", turnNumber: 2, timestamp: 2000, userPrompt: { text: "new turn from store" } },
-    ]);
+    setState("normalizedTurns", browserStore.turns);
 
     await selectPane("pane_b");
     await Bun.sleep(20);
@@ -109,6 +115,16 @@ describe("client pane cache (mobile-ui-and-themes.md §3.1)", () => {
     expect(loaded!.turns.length).toBe(2);
     expect(loaded!.turns[1].turnId).toBe("t2");
     expect(loaded!.turns[1].userPrompt?.text).toBe("new turn from store");
+  });
+
+  test("selectPane falls back to network select_view when load rejects (B2'')", async () => {
+    const spy = spyOn(cache, "load").mockImplementation(() => Promise.reject(new Error("IDB dead")));
+    try {
+      await selectPane("pane_fallback");
+      expect(state.activePaneId).toBe("pane_fallback");
+    } finally {
+      spy.mockRestore();
+    }
   });
 
   describe("invalidation through handleServerMessage (mobile-ui-and-themes.md §3.1, security-and-pairing.md §5)", () => {
