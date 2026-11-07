@@ -14,6 +14,10 @@ export interface SessionSource {
   readonly agent: string;
   /** Rule 1: the exact session from the process, when the agent records one. */
   exact?(facts: PaneFacts): string | null;
+  /** Rule 1: the session a file names, when the file is one of this agent's session files. */
+  sessionOfFile?(path: string): string | null;
+  /** Rule 6: when the session's records were last written, or null when they cannot be found. */
+  lastWritten(sessionId: string): number | null;
   /** Rule 2: the newest session of the folder written since the terminal started, skipping `exclude`. */
   newest(facts: PaneFacts, exclude: Set<string>): string | null;
   /** The file whose changes mean new records. */

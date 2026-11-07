@@ -51,6 +51,11 @@ export interface PairingTokenOptions {
   ttlMs?: number;
 }
 
+/** security-and-pairing.md §5: a device unused this long is removed. */
+const DEVICE_TTL_MS = 30 * 24 * 3_600_000;
+/** `lastUsedAt` reaches the registry at most this often per device. */
+const LAST_USED_WRITE_MS = 3_600_000;
+
 export class PairingManager extends EventEmitter {
   private activeToken: {
     token: string;
@@ -62,6 +67,8 @@ export class PairingManager extends EventEmitter {
   } | null = null;
 
   private sessions = new Map<string, DeviceSession>(); // tokenHash -> DeviceSession
+  /** tokenHash -> the `lastUsedAt` the registry on disk holds, so use is written at most hourly. */
+  private persistedUse = new Map<string, number>();
   private publicBaseUrl: string;
   private insecureDev: boolean;
   private adminSocketPath: string;
@@ -97,13 +104,22 @@ export class PairingManager extends EventEmitter {
       }
       if (Array.isArray(parsed.sessions)) {
         this.sessions.clear();
+        let expired = false;
         for (const s of parsed.sessions) {
-          if (s.tokenHash && s.deviceId) {
+          if (!s.tokenHash || !s.deviceId) continue;
+          if (this.isExpired(s)) expired = true;
+          else {
             this.sessions.set(s.tokenHash, s);
+            this.persistedUse.set(s.tokenHash, s.lastUsedAt);
           }
         }
+        if (expired) this.saveDevices();
       }
     }
+  }
+
+  private isExpired(session: DeviceSession): boolean {
+    return Date.now() - session.lastUsedAt > DEVICE_TTL_MS;
   }
 
   private saveDevices(): void {
@@ -118,6 +134,7 @@ export class PairingManager extends EventEmitter {
     writeFileSync(tmpPath, JSON.stringify(data, null, 2), { encoding: "utf-8", mode: 0o600 });
     chmodSync(tmpPath, 0o600);
     renameSync(tmpPath, this.devicesFilePath);
+    this.persistedUse = new Map(data.sessions.map((s) => [s.tokenHash, s.lastUsedAt]));
   }
 
   public getCookieName(): string {
@@ -167,10 +184,15 @@ export class PairingManager extends EventEmitter {
     return { token, url, expiresAt, permanent };
   }
 
-  /** `code` and `deviceName` are already validated strings (checked at the HTTP boundary). */
+  /**
+   * `code` and `deviceName` are already validated strings (checked at the HTTP boundary).
+   * `currentSessionToken` is the requesting browser's own cookie: when it is still valid, that device
+   * is replaced by the new one (security-and-pairing.md §2).
+   */
   public exchangeToken(
     code: string,
-    deviceName: string
+    deviceName: string,
+    currentSessionToken?: string
   ): { success: boolean; sessionToken?: string; deviceId?: string; error?: string } {
     const now = Date.now();
 
@@ -214,8 +236,10 @@ export class PairingManager extends EventEmitter {
       lastUsedAt: now,
     };
 
+    const replaced = this.validateSession(currentSessionToken);
     this.sessions.set(tokenHash, session);
     this.saveDevices();
+    if (replaced) this.revokeDevice(replaced.deviceId);
 
     return {
       success: true,
@@ -229,8 +253,14 @@ export class PairingManager extends EventEmitter {
     const hash = hashToken(sessionToken);
     const session = this.sessions.get(hash);
     if (!session) return null;
-
-    session.lastUsedAt = Date.now();
+    if (this.isExpired(session)) {
+      this.revokeDevice(session.deviceId);
+      return null;
+    }
+    const now = Date.now();
+    const persist = now - (this.persistedUse.get(hash) ?? 0) >= LAST_USED_WRITE_MS;
+    session.lastUsedAt = now;
+    if (persist) this.saveDevices();
     return session;
   }
 

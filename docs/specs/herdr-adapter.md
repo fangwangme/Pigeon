@@ -52,7 +52,7 @@ Status events for terminals the window does not show (hidden workers) change not
 
 ### 3.3 Screen Reads
 Herdr has no "output changed" event. The panes that connected clients are viewing (the union over all connections) are therefore read once per second with Core `terminal.read { terminal, lines: 200 }`.
-- **Full-screen programs**: Reading history of a full-screen program scrolls it on the desktop and back. Once a read answers `how: "stitched"`, Pigeon reads that terminal with `lines: 0` (the visible screen only) for as long as it exists.
+- **Full-screen programs**: Reading history of a full-screen program scrolls it on the desktop and back. Once a read answers `how: "stitched"` — or a history read times out, which happens when the Core cannot scroll a full-screen program — Pigeon reads that terminal with `lines: 0` (the visible screen only) for as long as it exists, falling back to `lines: 0` at once on the timeout.
 - A pane is not polled while a read of it is still in flight.
 - A read is dropped before classification when both the screen hash and the pane's Herdr status are unchanged. A status change alone is therefore classified again and reaches viewers (§3.2), even when the screen did not change.
 - A changed screen produces a new `PaneStatePayload` with the next `revision`.
@@ -78,13 +78,16 @@ A terminal is an agent while its program reports a status to the Core (OSC 7501)
 
 A pane's effective status is that status, with one override: a prompt recognized on screen (§8.2) makes it `blocked`. When the status is `blocked` but no prompt is recognized, the pane still gets a pending interaction. That interaction has no options, so the phone shows the raw key pad instead of hiding the fact that the agent is waiting.
 
+**Seen** (user decision, 2026-11-07): Herdr turns `done` into `idle` once the pane is looked at on the desktop, and the phone cannot tell Herdr it looked. The daemon therefore keeps its own seen mark per pane, shared by every phone. A pane is seen when a connected phone reports it is visible and viewing that pane (`presence_update`, `protocol.md` §2.1) while the pane is `done`, or when the pane turns `done` while such a phone is viewing it. A seen pane is reported as `idle` everywhere the phone gets a status (`snapshot_update`, `pane_state`, push triggers). The mark is cleared by the pane's next Core status change, so its next `done` is reported as `done` again. The mark changes only what is reported: the prompt queue (`protocol.md` §4.2) still follows the Core status. The desktop Herdr is not touched.
+
 Prompts are not refused while an agent is `working`: the agents queue typed input. A prompt sent while `blocked` is refused by the Core (`blocked`).
 
 The Core reports no agent session id. Pigeon binds a pane to its session from the pane's agent kind, foreground process id, folder and creation time (`agent-session-normalization.md` §2.0).
 
 ## 5. Tab Creation and Closing
 
-1. **Create**: App `do tab.new { space, name, folder, argv?, task? }`. `space` is the workspace id; `name` is the first line of the first message (at most 40 characters), else the recipe's label; `folder` is the requested `cwd`, else the workspace's folder. `task` is the first message, which Herdr sends once the agent is ready. `argv` is the recipe's command followed by its arguments (`src/server/agent-recipes.ts`): only flags the CLI documents, built by the server from validated choices, never from client text. Codex always gets `--no-daemon`, without which its commands would run outside the Core.
+1. **Create**: App `do tab.new { space, name, folder, argv?, task? }`. `space` is the workspace id; `name` is the first line of the first message (at most 40 characters), else the recipe's label; `folder` is the requested `cwd`, else the workspace's folder. `task` is the first message, which Herdr sends once the agent is ready (except for AGY and OpenCode, whose CLIs reject a positional prompt: AGY takes `-i <text>` and OpenCode takes `--prompt <text>` in `argv`, with `task` omitted). `argv` is the recipe's command followed by its arguments (`src/server/agent-recipes.ts`): only flags the CLI documents, built by the server from validated choices, never from client text (except the first message for AGY and OpenCode, passed as one `argv` element). Codex always gets `--no-daemon`, without which its commands would run outside the Core.
+   - **Model at launch**: claude, codex, agy and pi take the chosen model and effort as flags. OpenCode takes none: interactive `opencode` has no model flag, and with `OPENCODE_CONFIG_CONTENT` naming a listed model it still starts on its last-used model (checked 2026-11-07). Its recipe says so (`protocol.md` §5.7 `launchModel`).
    - **Resume**: with `resumeSessionId`, the recipe adds its resume arguments: claude `--resume <id>`, codex `resume <id>` (after `--no-daemon`), opencode `--session <id>`, pi `--session <file>` (the session file the id names, `agent-session-normalization.md` §2.6). AGY and a plain terminal cannot resume.
 2. **Result**: The reply names the new `terminal`. Pigeon takes a snapshot and answers with that terminal as the pane and the tab that holds it. A reply without a terminal, or a terminal in no tab, is `invalid_response`.
 3. **Failure**: When `tab.new` fails, the App has created nothing. A program that exits right after launch is shown by the App as an error toast, and its pane has no agent.
@@ -118,7 +121,31 @@ Pigeon does not drive agent menus with a state machine. An agent command such as
 - a recognized numbered prompt (§8.2), answered with one tap; or
 - a menu without numbers, answered with the raw key pad (arrows, Enter, Esc).
 
-**Runtime model switch** (`protocol.md` §4.9): claude accepts `/model <id>` as prompt text. No other recipe declares a runtime model or effort command, so the phone offers those values only when creating a session.
+**Runtime model switch** (`protocol.md` §4.9): claude accepts `/model <id>` as prompt text. Another agent declares a runtime model or effort switch only once it has been checked against the real CLI: either a command that takes the value as text, or its model menu driven the way the screen shows it (a numbered option, or the value typed into the menu's search followed by Enter). An agent without a checked switch has none, and the phone offers its values only when creating a session. Checked (2026-11-07):
+
+| Agent | Model | Effort |
+| :--- | :--- | :--- |
+| claude | `/model <id>` | none: `/effort <level>` also saves the level as the default for new sessions |
+| codex | `/model <id>` (this session only) | `/model --reasoning=<level>` (this session only) |
+| pi | none: `/model <text>` opens a fuzzy picker that can choose another model | `/thinking <level>` |
+| opencode | none: `/models` is a picker searched by label | none |
+| agy | none: `/model <id>` also saves the model as the default for new sessions | none (the model names its effort) |
+
+### 7.1 Model catalog
+Each recipe's model list (`protocol.md` §5.7) comes from a catalog the daemon keeps in memory, one list per agent, filled from the agent's own source:
+
+| Agent | Source | Thinking levels |
+| :--- | :--- | :--- |
+| claude | the CLI's aliases (`opus`, `sonnet`, `haiku`) | the effort ladder (`low` … `max`); none for `haiku` |
+| codex | `~/.codex/models_cache.json` (models not marked hidden) | the model's `supported_reasoning_levels` |
+| pi | `~/.pi/agent/models-store.json`: every provider's `models[]` (`id`, `name`, `reasoning`, `thinkingLevelMap`); the id sent is `<provider>/<id>` | when `reasoning` is true: the keys of `thinkingLevelMap` whose value is not null; without a map, the levels pi offers for the model (checked against the CLI) |
+| opencode | the output of `opencode models`, one `<provider>/<model>` per line | none |
+| agy | the output of `agy models`, one `<id>` TAB `<label>` per line | none: each model already names its effort (`gemini-3.8-flash-high`, label `Gemini 3.8 Flash (High)`) |
+
+- The sources are files and command output written by other programs: a trust boundary. An entry without a string id is skipped; a source that is missing, fails or times out leaves that agent's previous list in place and is not an error the phone sees.
+- The catalog is filled at daemon start, off the startup path, so `welcome` never waits for it. It is filled again when `models_refresh` asks for it (`protocol.md` §4.14), and when a bound session's records name a model (source `log`) that the agent's list lacks — at most once per model name, so a model the source never lists does not refresh in a loop.
+- After every fill that changes a list, every connected phone gets `recipes_sync` (`protocol.md` §5.9).
+
 
 ## 8. Screen Parse Rules
 

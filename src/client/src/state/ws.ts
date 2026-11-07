@@ -194,6 +194,10 @@ export function handleServerMessage(msg: ServerMessage): void {
       setState("recipes", msg.payload.recipes);
       return;
 
+    case "recipes_sync":
+      setState("recipes", msg.payload.recipes);
+      return;
+
     case "upstream_status":
       setState("herdrConnected", msg.payload.herdrConnected);
       return;
@@ -313,6 +317,11 @@ type Command = Exclude<ClientMessage, { type: "ping" } | { type: "presence_updat
 type WithoutId<T> = T extends any ? Omit<T, "id"> : never;
 
 /** Sends a command and resolves with its ack payload; rejects with the error (or offline). */
+/** protocol.md §4.14: the daemon reads every agent's model list again. */
+export function refreshModels(): Promise<any> {
+  return request({ type: "models_refresh", payload: {} });
+}
+
 export function request(msg: WithoutId<Command>): Promise<any> {
   const id = nextId();
   return new Promise((resolve, reject) => {

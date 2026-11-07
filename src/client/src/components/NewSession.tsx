@@ -3,7 +3,7 @@ import { navigate, showToast, state } from "../state/store";
 import { request, selectPane } from "../state/ws";
 import type { PastSession } from "../../../types/protocol";
 import { Composer, ModelSheet } from "./Composer";
-import { ago, agentLabel, Icon, Sheet } from "./ui";
+import { ago, agentLabel, Icon, Logo, Sheet } from "./ui";
 import { t } from "../i18n";
 
 function defaultAgent(): string | null {
@@ -32,7 +32,7 @@ export function NewSession(props: { workspaceId: string | null; mode: "new" | "r
 
   createEffect(
     on(agent, () => {
-      setModel(recipe()?.defaultModel ?? recipe()?.models[0]?.id ?? null);
+      setModel(recipe()?.launchModel ? (recipe()?.defaultModel ?? recipe()?.models[0]?.id ?? null) : null);
       setThinking(recipe()?.defaultThinking ?? null);
     })
   );
@@ -104,7 +104,7 @@ export function NewSession(props: { workspaceId: string | null; mode: "new" | "r
             {agent() ? agentLabel(agent()) : "Agent"}
             <Icon name="chevD" />
           </button>
-          <Show when={mode() === "new" && recipe()?.models.length}>
+          <Show when={mode() === "new" && recipe()?.launchModel && recipe()?.models.length}>
             <button class="chip" onClick={() => setSheet("model")}>
               <Icon name="layers" />
               {(recipe()!.models.find((m) => m.id === model())?.label ?? t("new.defaultModel")) + thinkingLabel()}
@@ -119,7 +119,7 @@ export function NewSession(props: { workspaceId: string | null; mode: "new" | "r
           when={mode() === "resume"}
           fallback={
             <div class="newempty">
-              <div class="logo">P</div>
+              <Logo />
               <div class="big">{t("new.start")}</div>
               <div class="mono" style={{ "font-size": "13px", "overflow-wrap": "anywhere" }}>
                 {ws()?.folder ?? ""}

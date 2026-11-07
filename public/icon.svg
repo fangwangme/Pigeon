@@ -1,17 +1,128 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="100%" height="100%">
-  <rect width="512" height="512" rx="112" fill="#282828" />
-  <rect x="6" y="6" width="500" height="500" rx="106" fill="none" stroke="#665C54" stroke-width="12" />
-  <g transform="translate(64, 76)">
-    <path d="M 60 270 L 10 230 L 70 200 Z" fill="#928374" />
-    <path d="M 70 200 L 180 300 L 300 240 L 330 140 L 220 120 Z" fill="#D5C4A1" />
-    <path d="M 170 160 L 260 20 L 220 120 Z" fill="#FE8019" opacity="0.8" />
-    <path d="M 180 180 L 220 30 L 120 140 Z" fill="#FE8019" />
-    <path d="M 300 140 L 350 90 L 380 110 L 330 180 Z" fill="#EBDBB2" />
-    <path d="M 380 110 L 415 118 L 375 130 Z" fill="#FABD2F" />
-    <circle cx="345" cy="115" r="9" fill="#282828" />
-    <circle cx="347" cy="113" r="3.5" fill="#FE8019" />
-    <path d="M 370 140 L 430 140 L 400 175 Z" fill="#8EC07C" />
-    <rect x="370" y="140" width="60" height="38" rx="4" fill="#8EC07C" />
-    <path d="M 370 140 L 400 162 L 430 140" fill="none" stroke="#282828" stroke-width="3" stroke-linecap="round" />
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <style>
+    .bg-0 { stop-color: #24272B; }
+    .bg-1 { stop-color: #16181A; }
+    .bd-0 { stop-color: #7C746B; }
+    .bd-1 { stop-color: #44474C; }
+    .w-back-1 { fill: #D65D0E; }
+    .w-back-2 { fill: #A63A04; }
+    .tail-1 { fill: #6E6A63; }
+    .tail-2 { fill: #8A847B; }
+    .belly { fill: #B0A99D; }
+    .flank-rear { fill: #C5BEB2; }
+    .dorsal { fill: #DED8CD; }
+    .flank-mid { fill: #D2CBC0; }
+    .breast { fill: #E8E2D7; }
+    .throat { fill: #E2DCD0; }
+    .crown { fill: #F5F0E6; }
+    .seam { stroke: #24272B; }
+    .beak-1 { fill: #FABD2F; }
+    .beak-2 { fill: #D79921; }
+    .w-front-1 { fill: #FF9838; }
+    .w-front-2 { fill: #E8600E; }
+    .env-base { fill: #8EC07C; }
+    .env-fold { fill: #78AD65; }
+    .env-flap { fill: #A9D697; }
+    @media (prefers-color-scheme: light) {
+      .bg-0 { stop-color: #F7F4EC; }
+      .bg-1 { stop-color: #E6DFCF; }
+      .bd-0 { stop-color: #CFC5B2; }
+      .bd-1 { stop-color: #A69B86; }
+      .tail-1 { fill: #5E5850; }
+      .tail-2 { fill: #787066; }
+      .belly { fill: #A39682; }
+      .flank-rear { fill: #B8AC97; }
+      .dorsal { fill: #D4C9B6; }
+      .flank-mid { fill: #C6BAA5; }
+      .breast { fill: #DFD5C3; }
+      .throat { fill: #DAD0BE; }
+      .crown { fill: #EFE7D8; }
+      .seam { stroke: #5E5850; }
+      .w-front-1 { fill: #FF8E2B; }
+      .w-front-2 { fill: #E05606; }
+      .env-base { fill: #68A85E; }
+      .env-fold { fill: #54944A; }
+      .env-flap { fill: #84C07A; }
+    }
+  </style>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop class="bg-0" offset="0%" stop-color="#24272B" />
+      <stop class="bg-1" offset="100%" stop-color="#16181A" />
+    </linearGradient>
+    <linearGradient id="border" x1="0" y1="0" x2="1" y2="1">
+      <stop class="bd-0" offset="0%" stop-color="#7C746B" />
+      <stop class="bd-1" offset="100%" stop-color="#44474C" />
+    </linearGradient>
+    <filter id="drop" x="-10%" y="-10%" width="125%" height="125%">
+      <feDropShadow dx="0" dy="10" stdDeviation="11" flood-color="#16181A" flood-opacity="0.28" />
+    </filter>
+  </defs>
+
+  <!-- Squircle container -->
+  <rect x="6" y="6" width="500" height="500" rx="110" fill="url(#bg)" stroke="url(#border)" stroke-width="12" />
+
+  <g filter="url(#drop)">
+    <!-- Back bionic wing (anodized copper-orange facets) -->
+    <path class="w-back-1" d="M 208 220 L 292 80 L 304 214 L 236 202 Z" fill="#D65D0E" />
+    <path class="w-back-2" d="M 268 208 L 292 80 L 304 214 Z" fill="#A63A04" />
+
+    <!-- Seamless titanium-ceramic under-silhouette -->
+    <path class="flank-mid" d="M 54 306 L 122 284 L 170 252 L 236 202 L 304 214 L 358 148 L 398 170 L 446 184 L 380 198 L 344 256 L 326 330 L 232 382 L 142 338 L 76 354 Z" fill="#D2CBC0" />
+
+    <!-- Articulated tail stabilizers (gunmetal titanium) -->
+    <path class="tail-1" d="M 54 306 L 142 338 L 76 354 Z" fill="#6E6A63" />
+    <path class="tail-2" d="M 54 306 L 122 284 L 142 338 Z" fill="#8A847B" />
+
+    <!-- Lower keel armor plate -->
+    <path class="belly" d="M 122 284 L 142 338 L 232 382 Z" fill="#B0A99D" />
+
+    <!-- Rear flank armor plate (locked to wing root 170,252 -> 230,296) -->
+    <path class="flank-rear" d="M 122 284 L 170 252 L 230 296 L 232 382 Z" fill="#C5BEB2" />
+
+    <!-- Upper dorsal deck plate (locked between wing root 230,296 and neck joint 344,256) -->
+    <path class="dorsal" d="M 170 252 L 236 202 L 304 214 L 344 256 L 230 296 Z" fill="#DED8CD" />
+
+    <!-- Mid-chest core plate (locked to wing root 230,296, neck joint 344,256, and keel 232,382) -->
+    <path class="flank-mid" d="M 230 296 L 344 256 L 232 382 Z" fill="#D2CBC0" />
+
+    <!-- Forward breast armor plate -->
+    <path class="breast" d="M 232 382 L 326 330 L 344 256 Z" fill="#E8E2D7" />
+
+    <!-- Neck & head armor plates -->
+    <path class="throat" d="M 304 214 L 398 170 L 380 198 L 344 256 Z" fill="#E2DCD0" />
+    <path class="crown" d="M 304 214 L 358 148 L 398 170 Z" fill="#F5F0E6" />
+
+    <!-- Precision mecha panel seams on body joints -->
+    <path class="seam" d="M 122 284 L 142 338 M 304 214 L 344 256" fill="none" stroke="#24272B" stroke-width="2.2" stroke-linecap="round" opacity="0.5" />
+
+    <!-- Two-facet metallic beak -->
+    <path class="beak-1" d="M 398 170 L 446 184 L 380 198 Z" fill="#FABD2F" />
+    <path class="beak-2" d="M 388 184 L 446 184 L 380 198 Z" fill="#D79921" />
+
+    <!-- Front bionic wing with precision neural pulse trace -->
+    <path class="w-front-1" d="M 170 252 L 246 86 L 230 296 Z" fill="#FF9838" />
+    <path class="w-front-2" d="M 202 275 L 246 86 L 230 296 Z" fill="#E8600E" />
+    <path d="M 202 275 L 220 198 L 229 186 L 236 140" fill="none" stroke="#FFF3D1" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" opacity="0.92" />
+    <circle cx="236" cy="140" r="3.8" fill="#FFF3D1" />
+    <circle cx="202" cy="275" r="3.6" fill="#FFF3D1" />
+
+    <!-- AI Optical Visor Eye (tilted hexagonal bezel + glowing amber neural lens) -->
+    <g transform="rotate(-14 363 178)">
+      <polygon points="350,178 356,168 370,168 376,178 370,188 356,188" fill="#181A1C" />
+      <polygon points="355,178 359,172 367,172 371,178 367,184 359,184" fill="#FE8019" />
+      <rect x="358" y="176.5" width="10" height="3" rx="1.5" fill="#FFF8E7" />
+    </g>
+
+    <!-- Messenger Terminal Envelope (tilted -6 deg, combining envelope flap + `>_` prompt) -->
+    <g transform="rotate(-6 416 232)">
+      <rect class="env-base" x="372" y="200" width="88" height="60" rx="8" fill="#8EC07C" />
+      <path class="env-fold" d="M 374 258 L 416 234 L 458 258 Z" fill="#78AD65" />
+      <path class="env-flap" d="M 373 202 L 416 219 L 459 202 Z" fill="#A9D697" />
+      <path d="M 374 202 L 416 219 L 458 202" fill="none" stroke="#1D2021" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round" opacity="0.8" />
+      <!-- Bold `>_` terminal prompt emblem -->
+      <path d="M 393 226 L 406 235 L 393 244" fill="none" stroke="#1D2021" stroke-width="5" stroke-linecap="round" stroke-linejoin="round" />
+      <path d="M 414 244 L 433 244" fill="none" stroke="#1D2021" stroke-width="5" stroke-linecap="round" />
+    </g>
   </g>
 </svg>

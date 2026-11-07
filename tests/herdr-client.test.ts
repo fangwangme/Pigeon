@@ -122,6 +122,25 @@ describe("screen reads (herdr-adapter.md §3.3)", () => {
       { terminal: "t1", lines: 0 },
     ]);
   });
+
+  test("a history read that times out falls back to the screen at once and reads only the screen from then on", async () => {
+    const fast = new HerdrClient({ appSocketPath: herdr.appSocketPath, coreSocketPath: herdr.coreSocketPath, requestTimeoutMs: 30, panePollMs: 60_000 });
+    try {
+      fast.applySnapshot(topologyOf([{ paneId: "t1" }]));
+      herdr.handlers["terminal.read"] = (params: any) =>
+        params.lines > 0 ? "no-reply" : { result: { text: "$ visible\n", complete: true, how: "screen" } };
+      const first = await fast.readAndClassifyPane("t1");
+      expect(first.rawScreen).toBe("$ visible\n");
+      await fast.readAndClassifyPane("t1");
+      expect(herdr.callsOf("terminal.read").map((c) => c.params)).toEqual([
+        { terminal: "t1", lines: 200 },
+        { terminal: "t1", lines: 0 },
+        { terminal: "t1", lines: 0 },
+      ]);
+    } finally {
+      fast.disconnect();
+    }
+  });
 });
 
 describe("prompting and answering (herdr-adapter.md §6)", () => {
@@ -272,6 +291,20 @@ describe("connection lifecycle (herdr-adapter.md §3.2, §3.4)", () => {
     await Bun.sleep(50);
     return updates;
   }
+
+  test("a status that arrives before the next snapshot survives a relabel, so a seen done pane stays idle (§4)", async () => {
+    herdr.serve([{ paneId: "t1", app: "codex", state: "working" }]);
+    await client.connect();
+    await Bun.sleep(50);
+    client.once("pane_status_changed", () => {
+      client.markSeen("t1");
+      client.relabelTabs(); // a session title changed before the event's snapshot arrived
+    });
+    herdr.serve([{ paneId: "t1", app: "codex", state: "done" }]);
+    herdr.emitEvent("status", "t1", { status: { state: "done", app: "codex" }, records: {}, reported: true });
+    await Bun.sleep(50);
+    expect(client.getSnapshot().workspaces[0].tabs[0].panes[0].agentStatus).toBe("idle");
+  });
 
   test("a status change on an unchanged screen still sends the new status", async () => {
     const updates = await viewPaneThenChangeStatus("$ bun test\n", "working", "idle");

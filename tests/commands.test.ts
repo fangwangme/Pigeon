@@ -143,9 +143,14 @@ describe("attachments (protocol.md §4.2, §7)", () => {
     await send(c.ws, { type: "agent_prompt", id: "a1", payload: { targetPaneId: "p2", text: "look", attachments: [shot.id] } });
     expect(herdr.callsOf("terminal.send")[0].params.text).toBe(`look\n\n${shot.path}`);
 
+    // A queued prompt shows what the phone sent (protocol.md §5.8) and sends the composed text.
+    await client.connect();
     const c1 = await viewer("p1");
     await send(c1.ws, { type: "agent_prompt", id: "a2", payload: { targetPaneId: "p1", text: "", attachments: [shot.id] } });
-    expect(c1.ofType("prompt_queue").at(-1).payload.items[0].text).toBe(`@${shot.path}`);
+    expect(c1.ofType("prompt_queue").at(-1).payload.items[0]).toMatchObject({ text: "", attachments: [shot.id] });
+    herdr.emitEvent("status", "p1", { status: { state: "idle", app: "claude-code" } });
+    await until(() => herdr.callsOf("terminal.send").length === 2);
+    expect(herdr.callsOf("terminal.send")[1].params.text).toBe(`@${shot.path}`);
   });
 
   test("an unknown upload id is ERR_INVALID_PAYLOAD and nothing is sent", async () => {
@@ -166,6 +171,14 @@ describe("creating sessions (protocol.md §4.5, herdr-adapter.md §5)", () => {
     const c = fakeWs();
     await send(c.ws, { type: "create_tab_and_agent", id: "n1", payload: { workspaceId: "w1", agentKind: "claude", firstMessage: "Fix the flaky test\nmore detail" } });
     expect(created()).toMatchObject({ space: "w1", name: "Fix the flaky test", folder: dir, task: "Fix the flaky test\nmore detail", argv: ["claude"] });
+  });
+
+  test("AGY and OpenCode pass the first message with their own prompt flags in argv instead of Herdr's positional task", async () => {
+    const c = fakeWs();
+    await send(c.ws, { type: "create_tab_and_agent", id: "n1", payload: { workspaceId: "w1", agentKind: "agy", firstMessage: "Review PR #4" } });
+    expect(created()).toEqual({ space: "w1", name: "Review PR #4", folder: dir, argv: ["agy", "-i", "Review PR #4"] });
+    await send(c.ws, { type: "create_tab_and_agent", id: "n2", payload: { workspaceId: "w1", agentKind: "opencode", firstMessage: "Fix the bug" } });
+    expect(created()).toEqual({ space: "w1", name: "Fix the bug", folder: dir, argv: ["opencode", "--prompt", "Fix the bug"] });
   });
 
   test("resuming adds the recipe's resume arguments", async () => {
@@ -212,7 +225,7 @@ describe("session actions", () => {
     expect(herdr.callsOf("tab.close")).toHaveLength(0);
   });
 
-  test("claude switches model with its own /model command; codex has none (protocol.md §4.9)", async () => {
+  test("claude switches model with its own /model command; a model the agent does not list is refused (protocol.md §4.9)", async () => {
     const c = await viewer("p1");
     await send(c.ws, { type: "agent_set_model", id: "m1", payload: { targetPaneId: "p1", modelId: "sonnet" } });
     // p1 is working, so the command waits in the queue like any prompt.
@@ -299,5 +312,39 @@ describe("snapshot fields (protocol.md §5.3, herdr-adapter.md §3.1)", () => {
   test("a space without a live terminal falls back to the App's folder", () => {
     const snap = client.applySnapshot(topologyOf([], { folder: "/start" }));
     expect(snap.workspaces[0].folder).toBe("/start");
+  });
+});
+
+describe("seen panes (herdr-adapter.md §4, protocol.md §5.3, issue #3)", () => {
+  const statusOf = (c: ReturnType<typeof fakeWs>, paneId: string) =>
+    c.ofType("snapshot_update").at(-1)?.payload.workspaces.flatMap((w: any) => w.tabs.flatMap((t: any) => t.panes)).find((p: any) => p.id === paneId)?.agentStatus;
+  /** The Core reports the new state both in its terminal list and as a status event. */
+  const setStatus = (paneId: string, state: string, app = "codex") => {
+    herdr.serve(PANES.map((p) => ({ ...p, cwd: dir, ...(p.paneId === paneId ? { state } : {}) })), { folder: "/start" });
+    herdr.emitEvent("status", paneId, { status: { state, app } });
+  };
+
+  test("a done pane viewed by a visible client is idle for every client until its status changes", async () => {
+    await client.connect();
+    const connect = async (deviceId: string, paneId: string) => {
+      const c = fakeWs(deviceId);
+      server.handleOpen(c.ws);
+      await send(c.ws, { type: "hello", id: "h", payload: { protocolVersion: "1.0.0", subscribePaneId: paneId } });
+      return c;
+    };
+    const looker = await connect("dev_looker", "p2");
+    const other = await connect("dev_other", "p1");
+    setStatus("p2", "done");
+    await until(() => statusOf(other, "p2") === "done");
+
+    await send(looker.ws, { type: "presence_update", isVisible: true, viewingPaneId: "p2" });
+    await until(() => statusOf(other, "p2") === "idle");
+    expect(statusOf(looker, "p2")).toBe("idle");
+
+    await send(looker.ws, { type: "presence_update", isVisible: false, viewingPaneId: "p2" });
+    setStatus("p2", "working");
+    await until(() => statusOf(other, "p2") === "working");
+    setStatus("p2", "done");
+    await until(() => statusOf(other, "p2") === "done");
   });
 });

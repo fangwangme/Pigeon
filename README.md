@@ -1,3 +1,10 @@
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="public/icon-dark.svg">
+    <img src="public/icon-light.svg" width="120" height="120" alt="Pigeon — bionic AI messenger pigeon carrying a >_ terminal envelope">
+  </picture>
+</p>
+
 # Pigeon
 
 Pigeon puts the coding agents running in [Herdr](https://herdr.dev) on your phone. Instead of pinching and zooming a terminal, you get a mobile web app for **Claude Code**, **Codex**, **OpenCode**, **Antigravity**, and **pi**. Check which agent is working or waiting on you, read its changes, answer prompts with a tap, queue your next message, or start and resume sessions from the couch.
@@ -51,6 +58,16 @@ A small daemon runs alongside Herdr on your computer and serves the app over you
 - **A real terminal when you need one.** Peek at any pane's live screen and send arrow keys, `Enter`, `Esc`, `Tab`, or `Ctrl+C`. Plain shell tabs open straight to the terminal view and let you run commands from the reply box.
 - **Start, resume, and manage tabs.** Launch an agent or shell in a new Herdr tab, or pick up a past Claude Code, Codex, OpenCode, or pi session where you left off. Pick the model and reasoning effort for Claude Code or Codex (and switch models mid-session in Claude Code). Rename or close tabs and switch between panes without disturbing focus on your computer.
 - **Light, dark, English, or Chinese.** Follow your system theme or pick light or dark with a shared accent color, plus a per-phone **Reduce transparency** toggle if you prefer solid panels over glass. Available in English and Simplified Chinese.
+
+### Visual identity
+
+<p align="center">
+  <img src="public/icon-dark.svg" width="128" height="128" alt="Pigeon icon — Dark Mode">
+  &nbsp;&nbsp;&nbsp;&nbsp;
+  <img src="public/icon-light.svg" width="128" height="128" alt="Pigeon icon — Light Mode">
+</p>
+
+Pigeon's emblem is a faceted bionic messenger pigeon in flight—sculpted from warm titanium-ceramic armor plates, a glowing hexagonal AI optical visor, and solar-orange wings traced with a neural pulse circuit—carrying a green `>_` terminal envelope beneath its beak. It captures what Pigeon does at a glance: an autonomous courier ferrying prompts, approvals, and replies between your phone and the terminal coding agents on your desk, with dedicated **Dark** (`public/icon-dark.svg`) and **Light** (`public/icon-light.svg`) palettes that adapt across the README, browser favicon (`public/icon.svg`), pairing screen, and new-session view.
 
 ## How it works
 

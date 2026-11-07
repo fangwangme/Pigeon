@@ -172,6 +172,8 @@ export interface AgentRecipeSummary {
   interruptKeys: string[];
   /** Whether `resumeSessionId` is accepted (`protocol.md` §4.5). */
   resumable: boolean;
+  /** Whether `create_tab_and_agent` can start the agent on a chosen model (`protocol.md` §4.5). */
+  launchModel: boolean;
   /** Which values `agent_set_model` can change (`protocol.md` §4.9). */
   runtimeSwitch: { model: boolean; thinking: boolean };
 }
@@ -260,6 +262,7 @@ export type ClientMessage =
   | { type: "devices_list"; id: string }
   | { type: "device_revoke"; id: string; payload: { deviceId: string } }
   | { type: "queue_cancel"; id: string; payload: { targetPaneId: string; queueId: string } }
+  | { type: "models_refresh"; id: string; payload: Record<string, never> }
   | { type: "skills_get"; id: string }
   | { type: "config_get"; id: string }
   | { type: "config_patch"; id: string; payload: { client: Partial<ClientConfig> } };
@@ -278,7 +281,8 @@ export type ServerMessage =
   | { type: "upstream_status"; payload: { herdrConnected: boolean; lastSyncTimestamp: number } }
   | { type: "normalized_turns"; payload: NormalizedTurnsPayload }
   | { type: "turns_delta"; payload: TurnsDeltaPayload }
-  | { type: "prompt_queue"; payload: PromptQueuePayload };
+  | { type: "prompt_queue"; payload: PromptQueuePayload }
+  | { type: "recipes_sync"; payload: { recipes: Record<string, AgentRecipeSummary> } };
 
 export const ProtocolErrors = {
   ERR_INVALID_PAYLOAD: "ERR_INVALID_PAYLOAD",

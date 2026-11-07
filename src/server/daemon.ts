@@ -8,6 +8,7 @@ import { PushManager, type PushSubscriptionData } from "./push";
 import { WsServer, newConnectionId, SERVER_VERSION, type ClientConnectionData } from "./ws-server";
 import { EMBEDDED_HTML } from "./embedded-html";
 import { ConfigManager } from "./config-manager";
+import { ModelCatalog } from "./model-catalog";
 import { MAX_UPLOAD_BYTES, UploadStore } from "./uploads";
 import { PWA_MANIFEST, PWA_SW_SCRIPT, PWA_ICON_SVG, PWA_ICON_192_BASE64, PWA_ICON_512_BASE64 } from "./pwa-assets";
 
@@ -173,6 +174,7 @@ export class PigeonDaemon {
       configManager: this.configManager,
       uploadStore: this.uploadStore,
       pairingManager: this.pairingManager,
+      modelCatalog: new ModelCatalog(),
     });
   }
 
@@ -192,6 +194,11 @@ export class PigeonDaemon {
     const origin = req.headers.get("origin");
     if (!origin || !this.allowedOrigins.has(origin)) return new Response("Forbidden Origin", { status: 403 });
     return null;
+  }
+
+  /** herdr-adapter.md §7.1: fill the agents' model lists in the background; `welcome` never waits for it. */
+  public fillModelCatalog(): void {
+    void this.wsServer.refreshModels();
   }
 
   public async start(): Promise<void> {
@@ -245,7 +252,7 @@ export class PigeonDaemon {
           if (typeof code !== "string" || code.length > 64 || (deviceName !== undefined && (typeof deviceName !== "string" || deviceName.length > 128))) {
             return Response.json({ success: false, error: "Expected { code: string, deviceName?: string }" }, { status: 400 });
           }
-          const res = self.pairingManager.exchangeToken(code, deviceName || "Mobile Chrome");
+          const res = self.pairingManager.exchangeToken(code, deviceName || "Mobile Chrome", self.parseCookie(req)[cookieName]);
           if (!res.success) return Response.json({ success: false, error: res.error }, { status: 400 });
           const secureFlag = isHttps ? "; Secure" : "";
           return Response.json(

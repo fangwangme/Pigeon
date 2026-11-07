@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, setSystemTime, test } from "bun:test";
 import { readFileSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { ConfigManager } from "../src/server/config-manager";
@@ -55,6 +55,43 @@ describe("pairing (security-and-pairing.md §2)", () => {
     const second = pairingIn(dir);
     expect(second.getActiveToken()?.token).toBe(token);
     expect(second.validateSession(ok.sessionToken)?.deviceName).toBe("Phone");
+  });
+
+  test("a device unused for 30 days is removed at startup and its token no longer authenticates", () => {
+    const dir = tempDir("pair");
+    const first = pairingIn(dir);
+    const { token } = first.createPairingToken();
+    const stale = first.exchangeToken(token, "Old phone");
+    const recent = first.exchangeToken(token, "Phone");
+    const file = join(dir, "devices.json");
+    const registry = JSON.parse(readFileSync(file, "utf-8"));
+    const day = 24 * 3_600_000;
+    const sessions: any[] = Array.isArray(registry.sessions) ? registry.sessions : Object.values(registry.sessions);
+    for (const s of sessions) s.lastUsedAt = Date.now() - (s.deviceId === stale.deviceId ? 31 : 29) * day;
+    writeFileSync(file, JSON.stringify(registry));
+    const second = pairingIn(dir);
+    expect(second.listDevices().map((d) => d.deviceName)).toEqual(["Phone"]);
+    expect(second.validateSession(stale.sessionToken)).toBeNull();
+    expect(second.validateSession(recent.sessionToken)?.deviceName).toBe("Phone");
+  });
+
+  test("a device used more often than hourly still has its use written within the hour (§5 expiry)", () => {
+    const dir = tempDir("pair");
+    const start = Date.now();
+    try {
+      setSystemTime(start);
+      const p = pairingIn(dir);
+      const { token } = p.createPairingToken();
+      const { sessionToken } = p.exchangeToken(token, "Phone");
+      setSystemTime(start + 30 * 60_000);
+      p.validateSession(sessionToken);
+      setSystemTime(start + 61 * 60_000);
+      p.validateSession(sessionToken);
+      const onDisk = JSON.parse(readFileSync(join(dir, "devices.json"), "utf-8")).sessions[0].lastUsedAt;
+      expect(onDisk).toBe(start + 61 * 60_000);
+    } finally {
+      setSystemTime();
+    }
   });
 
   test("a corrupt device registry stops startup and is left untouched", () => {
@@ -221,6 +258,19 @@ describe("HTTP and WebSocket gate (security-and-pairing.md §3, §4)", () => {
     expect(res.status).toBe(200);
     const cookie = res.headers.get("set-cookie")!;
     for (const part of ["HttpOnly", "SameSite=Strict", "Secure", "Max-Age=31536000"]) expect(cookie).toContain(part);
+  });
+
+  test("pairing again from an already paired browser replaces its device record", async () => {
+    const oldCookie = pairedCookie();
+    const oldToken = oldCookie.split("=")[1];
+    const before = daemon.pairingManager.listDevices().length;
+    const { token } = daemon.pairingManager.createPairingToken();
+    const res = await fetch(`${base}/api/pair`, { method: "POST", headers: { "Content-Type": "application/json", Cookie: oldCookie }, body: JSON.stringify({ code: token, deviceName: "Phone" }) });
+    expect(res.status).toBe(200);
+    const newToken = res.headers.get("set-cookie")!.split(";")[0].split("=")[1];
+    expect(daemon.pairingManager.listDevices().length).toBe(before);
+    expect(daemon.pairingManager.validateSession(oldToken)).toBeNull();
+    expect(daemon.pairingManager.validateSession(newToken)?.deviceName).toBe("Phone");
   });
 
   test("a malformed pairing body is 400", async () => {

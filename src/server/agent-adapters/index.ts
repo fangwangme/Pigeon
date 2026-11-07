@@ -1,13 +1,14 @@
 import { Database } from "bun:sqlite";
 import { existsSync, readdirSync, statSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { OpenCodeAdapter, type OpenCodeAdapterOptions } from "./opencode";
 import { AgyAdapter, type AgyAdapterOptions } from "./agy";
 import { ClaudeSource } from "../sessions/claude";
 import { CodexSource } from "../sessions/codex";
 import { PiSource } from "../sessions/pi";
 import type { SessionRead } from "../sessions/common";
+import { openFilesOf } from "../sessions/process-files";
 import type { PaneFacts, SessionSource } from "../sessions/source";
 import type { PastSession } from "../../types/protocol";
 
@@ -20,10 +21,25 @@ export interface AgentAdapterManagerOptions {
   agy?: AgyAdapterOptions;
 }
 
-/** AGY: brain folders carry no project folder, so only time binds (`agent-session-normalization.md` §2.2). */
+/**
+ * AGY: brain folders carry no project folder, so without an open file only time binds
+ * (`agent-session-normalization.md` §2.2).
+ */
 class AgySource implements SessionSource {
   public readonly agent = "agy";
-  constructor(private adapter: AgyAdapter, private brainDir: string) {}
+  private presenceDir: string;
+  constructor(private adapter: AgyAdapter, private brainDir: string) {
+    this.presenceDir = join(dirname(brainDir), "presence");
+  }
+  public sessionOfFile(path: string): string | null {
+    if (path.startsWith(this.presenceDir + "/") && path.endsWith(".lock")) return path.slice(this.presenceDir.length + 1, -".lock".length) || null;
+    if (!path.startsWith(this.brainDir + "/") || !/\/\.system_generated\/logs\/transcript(_full)?\.jsonl$/.test(path)) return null;
+    return path.slice(this.brainDir.length + 1).split("/")[0] || null;
+  }
+  public lastWritten(sessionId: string): number | null {
+    const log = this.adapter.getSessionLogPath(sessionId);
+    return existsSync(log) ? statSync(log).mtimeMs : null;
+  }
   public newest(facts: PaneFacts, exclude: Set<string>): string | null {
     if (!existsSync(this.brainDir)) return null;
     let best: { id: string; mtime: number } | null = null;
@@ -74,6 +90,9 @@ class OpenCodeSource implements SessionSource {
     );
     return rows.find((r) => !exclude.has(r.id))?.id ?? null;
   }
+  public lastWritten(sessionId: string): number | null {
+    return this.query<{ time_updated: number }>("SELECT time_updated FROM session_v2 WHERE id = ?", sessionId)[0]?.time_updated ?? null;
+  }
   public watchPath(): string {
     return `${this.adapter.getDbPath()}-wal`;
   }
@@ -91,9 +110,26 @@ class OpenCodeSource implements SessionSource {
       return undefined;
     }
   }
+  /** §2.1: the latest assistant message names the model as `{ providerID, id }`. */
+  private model(sessionId: string): string | undefined {
+    const row = this.query<{ data: string }>(
+      "SELECT data FROM session_message WHERE session_id = ? AND type = 'assistant' ORDER BY seq DESC, time_created DESC LIMIT 1",
+      sessionId
+    )[0];
+    if (!row) return undefined;
+    let data: unknown;
+    try {
+      data = JSON.parse(row.data);
+    } catch {
+      return undefined; // a record that is not JSON is skipped (§1)
+    }
+    const model = (data as any)?.model;
+    return typeof model?.providerID === "string" && typeof model?.id === "string" ? `${model.providerID}/${model.id}` : undefined;
+  }
   public read(id: string): SessionRead {
     const title = this.query<{ title: string | null }>("SELECT title FROM session_v2 WHERE id = ?", id)[0]?.title || this.firstPrompt(id)?.slice(0, 120);
-    return { ...this.adapter.getTurns(id), ...(title ? { sessionTitle: title } : {}) };
+    const model = this.model(id);
+    return { ...this.adapter.getTurns(id), ...(title ? { sessionTitle: title } : {}), ...(model ? { model } : {}) };
   }
   public forget(): void {}
   public list(folder: string): PastSession[] {
@@ -123,9 +159,25 @@ export class AgentAdapterManager {
     return this.sources.has(agent.toLowerCase());
   }
 
-  /** §2.0 rule 1: the exact session, when the agent records one for its process. */
+  /**
+   * §2.0 rule 1: the exact session, when the agent records one for its process (claude), else the
+   * session file the process or a descendant holds open.
+   */
   public exactSession(facts: PaneFacts): string | null {
-    return this.sources.get(facts.agent)?.exact?.(facts) ?? null;
+    const source = this.sources.get(facts.agent);
+    if (!source) return null;
+    if (source.exact) return source.exact(facts);
+    if (!source.sessionOfFile || !facts.pid) return null;
+    for (const file of openFilesOf(facts.pid)) {
+      const id = source.sessionOfFile(file);
+      if (id) return id;
+    }
+    return null;
+  }
+
+  /** §2.0 rule 6: when the session was last written. */
+  public lastWritten(agent: string, sessionId: string): number | null {
+    return this.sources.get(agent)?.lastWritten(sessionId) ?? null;
   }
 
   /** §2.0 rule 2. */

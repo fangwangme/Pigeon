@@ -31,6 +31,7 @@ To prevent manual input errors, brute-force enumeration, and accidental disclosu
      ```
    - The body is validated (`code` a string of at most 64 characters, optional `deviceName` a string of at most 128). A malformed body gets HTTP 400.
    - The server verifies the token, generates a unique server-side `deviceId` (UUID v4), and sanitizes `deviceName` (max 32 characters, stripping ANSI and control characters).
+   - **Re-pairing replaces**: when the request carries a session cookie that is still valid, that device record is removed in the same exchange and its connections close with `4403` (§5), so scanning the permanent QR code again from a paired browser does not add a device (user decision, 2026-11-07). A missing or unknown cookie changes nothing.
    - The server sets a session cookie:
      ```http
      Set-Cookie: __Host-pigeon_session=<SESSION_TOKEN>; Path=/; Secure; HttpOnly; SameSite=Strict; Max-Age=31536000
@@ -71,6 +72,7 @@ Both checks run on the WebSocket upgrade and on `POST /api/uploads`, before the 
 - **Disk Storage**:
   - Device registry is saved to `<stateDir>/devices.json` (`$XDG_STATE_HOME/pigeon` or `~/.local/state/pigeon`) with permissions `0600`, written atomically.
   - Session tokens are stored solely as SHA-256 hashes.
+  - **Expiry**: a device whose `lastUsedAt` is more than 30 days old is removed, at startup and when its token is next presented; that token then authenticates nothing (user decision, 2026-11-07). `lastUsedAt` is written to the registry at most once an hour per device, so expiry holds across restarts without a write per request.
   - A registry that cannot be parsed stops startup with an error naming the file. It is never silently replaced, because that would unpair every device.
 - **Bind Address**: The daemon listens dual-stack on every interface (user decision, 2026-10-25), unless `server.host` in `config.json` pins one address. Being reachable is not being trusted: every WebSocket still needs an allowed Host, the exact Origin and a session cookie (§3, §4).
 - **Development Mode (`--insecure-dev`)**:

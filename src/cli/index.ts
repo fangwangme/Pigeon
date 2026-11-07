@@ -99,6 +99,7 @@ async function main() {
 
     const daemon = new PigeonDaemon({ configManager, port, insecureDev, herdrAppSocketPath, herdrCoreSocketPath, publicBaseUrl: publicUrl });
     await daemon.start();
+    daemon.fillModelCatalog();
     console.log(`Pigeon daemon listening on port ${daemon.config.port} (insecureDev=${daemon.config.insecureDev})`);
 
     // Reuse the stored permanent link; only `pigeon pair` rotates it.
