@@ -119,7 +119,7 @@ export function NewSession(props: { workspaceId: string | null; mode: "new" | "r
           when={mode() === "resume"}
           fallback={
             <div class="newempty">
-              <div class="logo">P</div>
+              <img class="logo" src="/icon.svg" alt="" />
               <div class="big">{t("new.start")}</div>
               <div class="mono" style={{ "font-size": "13px", "overflow-wrap": "anywhere" }}>
                 {ws()?.folder ?? ""}

@@ -292,7 +292,7 @@ svg.i.sm { width: 16px; height: 16px; }
 .settings .sec { margin-top: 22px; }
 .note { font-size: 13px; color: var(--muted); margin: 8px 4px; line-height: 1.5; }
 .pair { flex: 1; display: flex; flex-direction: column; align-items: center; text-align: center; padding: calc(60px + env(safe-area-inset-top)) 24px 40px; overflow-y: auto; }
-.logo { width: 76px; height: 76px; border-radius: 22px; background: var(--accent); color: var(--onaccent); display: grid; place-items: center; font: 800 38px/1 -apple-system, Inter, sans-serif; margin: 20px 0 22px; flex: none; }
+.logo { width: 76px; height: 76px; border-radius: 17px; display: block; margin: 20px 0 22px; flex: none; }
 .steps { text-align: left; width: 100%; margin: 22px 0; counter-reset: s; }
 .steps div { display: flex; gap: 12px; padding: 10px 0; font-size: 15px; border-bottom: 1px solid var(--line); }
 .steps div::before { counter-increment: s; content: counter(s); width: 24px; height: 24px; border-radius: 50%; background: var(--surface); border: 1px solid var(--line); display: grid; place-items: center; font-size: 13px; font-weight: 700; flex: none; }
@@ -301,6 +301,6 @@ svg.i.sm { width: 16px; height: 16px; }
 .chip svg.i { width: 15px; height: 15px; color: var(--muted); }
 .chip.hi { background: var(--accentbg); color: var(--accent); border-color: transparent; }
 .newempty { text-align: center; color: var(--muted); padding: 40px 20px 20px; }
-.newempty .logo { width: 56px; height: 56px; border-radius: 16px; font-size: 28px; margin: 0 auto 12px; }
+.newempty .logo { width: 56px; height: 56px; border-radius: 13px; margin: 0 auto 12px; }
 .newempty .big { font-size: 22px; font-weight: 650; color: var(--fg); margin-bottom: 4px; }
 .reslist { padding: 0 16px; }

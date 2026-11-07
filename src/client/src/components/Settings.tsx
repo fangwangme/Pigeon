@@ -202,7 +202,7 @@ export function Pairing() {
   return (
     <div class="page">
       <div class="pair">
-        <div class="logo">P</div>
+        <img class="logo" src="/icon.svg" alt="" />
         <div style={{ "font-size": "24px", "font-weight": 700 }}>{t("pair.title")}</div>
         <p class="note" style={{ "font-size": "15px" }}>
           {t("pair.lead")}
