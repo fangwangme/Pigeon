@@ -1,4 +1,3 @@
-import { unwrap } from "solid-js/store";
 import { state, setState, applySyncedClientConfig, openTerminal, setUnread, showToast } from "./store";
 import { load, save, remove, clearAll, sweep, meta, migrateLocalStorageCache, type PaneCacheEntry } from "./pane-cache";
 import type { ClientMessage, ServerMessage, SnapshotPayload, PaneStatePayload, ClientConfig, AgentStatus, HaveInfo } from "../../../types/protocol";
