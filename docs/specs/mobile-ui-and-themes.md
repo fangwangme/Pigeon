@@ -44,10 +44,25 @@ A sheet shared by §2.1 and §2.2: status (等待你, 工作中, 已完成, 空�
 ## 3. Session page
 
 ### 3.1 Layout
-- A glass header: back, the session title (prioritizes named tab labels, falling back to the agent session's title, then agent recipe name per protocol.md §5.3; a spinner while working, an amber dot while waiting), the pane in the subtitle when the tab has several, and ⋯ (§6.1). Tapping the title switches pane when there are several (§6.8).
+- A glass header: back, the session title (prioritizes named tab labels, falling back to the agent session's title, then agent recipe name per `protocol.md` §5.3; a spinner while working, an amber dot while waiting), the pane in the subtitle when the tab has several, and ⋯ (§6.1). Tapping the title switches pane when there are several (§6.8).
 - The body is the transcript (§3.2) when the pane has a structured session, else the screen cards (§3.6). A plain terminal tab shows the terminal view (§5) as its body.
-- Visited sessions cache their normalized transcript and metadata in the browser's `localStorage` with a 7-day TTL (`pigeon_pane_cache_<paneId>`). Opening or refreshing a cached pane renders its transcript immediately without a blank loading screen, while fresh updates sync in the background. Caches older than 7 days expire and re-read from the daemon.
 - The composer (§6) floats at the bottom.
+
+#### Transcript Cache
+- **Store**: IndexedDB database `pigeon`, object store `paneCache`, keyed by `paneId`. Each entry holds `{ paneId, sessionId, savedAt, lastAccess, turns, sessionStats, sessionTitle, todos, session }`. Drafts and preferences stay in `localStorage`.
+- **Eviction**:
+  - TTL 7 days from `savedAt`;
+  - LRU by `lastAccess`, at most 10 panes;
+  - expired entries are swept at startup;
+  - entries for panes absent from a snapshot are deleted, but only from a snapshot taken while `herdrConnected` is true, so a Herdr outage does not wipe the cache.
+- **Restore**: opening a pane shows its cached transcript immediately if the entry's `sessionId` is the pane's current session as far as the client knows. While cached content is on screen, the header shows a "syncing" indicator (small spinner and "同步中 / Syncing" text). It clears when the server's first answer for that pane (`normalized_turns` or the resume `turns_delta`) arrives. The cache survives reloads; a pane opened after a reload is restored from it.
+- **Invalidation**: the server's answer names a different `sessionId`, or `session.bound` is false → the cached entry is deleted and the fresh data shown.
+- **Writes**, and only these:
+  - when leaving a pane;
+  - on `visibilitychange` to `hidden` and on `pagehide`;
+  - when the active pane's `agentStatus` leaves `working` (end of a streamed answer);
+  - after a full `normalized_turns`.
+  No write per `turns_delta`.
 
 ### 3.2 Messages
 - A user message is a right-aligned bubble; attachments show as thumbnails above it.

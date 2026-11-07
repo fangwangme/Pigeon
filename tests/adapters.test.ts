@@ -68,6 +68,16 @@ describe("structured session adapters (agent-session-normalization.md §2)", () 
         ["msg_u_untitled", "ses_untitled", "user", 1, 3000, JSON.stringify({ text: "First prompt fallback title" })]
       );
 
+      // Insert placeholder-titled session (agent-session-normalization.md §2.1)
+      db.run(
+        "INSERT INTO session_v2 (id, directory, title, time_updated) VALUES (?, ?, ?, ?)",
+        ["ses_placeholder", "/work", "New session - 2026-11-07T14:30:00.000Z", 4000]
+      );
+      db.run(
+        "INSERT INTO session_message (id, session_id, type, seq, time_created, data) VALUES (?, ?, ?, ?, ?, ?)",
+        ["msg_u_placeholder", "ses_placeholder", "user", 1, 4000, JSON.stringify({ text: "Placeholder prompt" })]
+      );
+
       // Insert User Message
       db.run(
         "INSERT INTO session_message (id, session_id, type, seq, time_created, data) VALUES (?, ?, ?, ?, ?, ?)",
@@ -162,9 +172,17 @@ describe("structured session adapters (agent-session-normalization.md §2)", () 
       expect(stats?.diffs?.length).toBe(2);
     });
 
-    test("OpenCode session listing falls back to the first prompt when title is empty (protocol.md §4.10)", () => {
+    test("an OpenCode session whose title is the placeholder carries no sessionTitle, and one with a real title carries it (agent-session-normalization.md §2.1)", () => {
+      const adapter = new OpenCodeAdapter({ dbPath: mockDbPath });
+      expect(adapter.getTurns("ses_mock_1").sessionTitle).toBe("Test Session");
+      expect(adapter.getTurns("ses_placeholder").sessionTitle).toBeUndefined();
+      expect(adapter.getTurns("ses_untitled").sessionTitle).toBeUndefined();
+    });
+
+    test("OpenCode session listing falls back to the first prompt when title is empty or placeholder (agent-session-normalization.md §2.1, protocol.md §4.10)", () => {
       const mgr = new AgentAdapterManager({ opencode: { dbPath: mockDbPath } });
       expect(mgr.listSessions("opencode", "/work")).toEqual([
+        { id: "ses_placeholder", title: "Placeholder prompt", updatedAt: 4000 },
         { id: "ses_untitled", title: "First prompt fallback title", updatedAt: 3000 },
         { id: "ses_mock_1", title: "Test Session", updatedAt: 2000 },
       ]);
@@ -297,7 +315,7 @@ describe("structured session adapters (agent-session-normalization.md §2)", () 
       writeFileSync(logFile, `${line1}\n${line2}\n`, "utf-8");
       const adapter = new AgyAdapter({ baseBrainDir: brain });
       const { model } = adapter.getTurns("s_model", false);
-      expect(model).toBe("gemini-3.8-flash-medium");
+      expect(model).toBe("Gemini 3.8 Flash (Medium)");
     });
   });
 
