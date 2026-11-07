@@ -239,6 +239,11 @@ export function SessionPage() {
             <span style={{ overflow: "hidden", "text-overflow": "ellipsis" }}>{tab()?.label ?? state.sessionTitle ?? t("session.fallbackTitle")}</span>
           </div>
           <div class="s">
+            <Show when={state.paneSyncing}>
+              <span class="spin" style={{ width: "10px", height: "10px", "border-width": "1.5px", "vertical-align": "-1px", "margin-right": "4px", display: "inline-block" }} />
+              <span>{t("session.syncing")}</span>
+              <span> · </span>
+            </Show>
             {pane() ? paneLabel(pane()!) : ""}
             <Show when={(tab()?.panes.length ?? 0) > 1}> · {t("home.paneCount", { count: tab()!.panes.length })} ▾</Show>
           </div>

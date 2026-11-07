@@ -58,6 +58,7 @@ export interface AppState {
   sessionTitle: string | null;
   todos: TodoItem[] | null;
   session: SessionInfo | null;
+  paneSyncing: boolean;
   queue: QueuedPrompt[];
   skills: SkillEntry[];
   recipes: Record<string, AgentRecipeSummary>;
@@ -90,85 +91,6 @@ export function writePref(key: string, value: string | null): void {
     else localStorage.setItem(key, value);
   } catch {
     // per-browser convenience only
-  }
-}
-
-export const PANE_CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
-export const MAX_CACHED_PANES = 5;
-const MAX_PANE_CACHE_CHARS = 1024 * 1024; // 1MB payload cap
-
-export interface PaneCacheEntry {
-  savedAt: number;
-  normalizedTurns: NormalizedTurn[];
-  sessionStats?: SessionStats | null;
-  sessionTitle?: string | null;
-  todos?: TodoItem[] | null;
-  session?: SessionInfo | null;
-}
-
-function prunePaneCaches(currentPaneId?: string): void {
-  try {
-    if (typeof localStorage === "undefined") return;
-    const now = Date.now();
-    const cacheEntries: { key: string; savedAt: number }[] = [];
-    for (let i = 0; i < localStorage.length; i++) {
-      const key = localStorage.key(i);
-      if (key?.startsWith("pigeon_pane_cache_")) {
-        const raw = localStorage.getItem(key);
-        if (!raw) continue;
-        try {
-          const entry = JSON.parse(raw);
-          if (!entry.savedAt || now - entry.savedAt > PANE_CACHE_TTL_MS) {
-            localStorage.removeItem(key);
-          } else {
-            cacheEntries.push({ key, savedAt: entry.savedAt });
-          }
-        } catch {
-          localStorage.removeItem(key);
-        }
-      }
-    }
-    if (cacheEntries.length >= MAX_CACHED_PANES) {
-      cacheEntries.sort((a, b) => a.savedAt - b.savedAt);
-      while (cacheEntries.length >= MAX_CACHED_PANES) {
-        const oldest = cacheEntries.shift();
-        if (oldest && (!currentPaneId || oldest.key !== `pigeon_pane_cache_${currentPaneId}`)) {
-          localStorage.removeItem(oldest.key);
-        }
-      }
-    }
-  } catch {}
-}
-
-export function readPaneCache(paneId: string): PaneCacheEntry | null {
-  const raw = readPref(`pigeon_pane_cache_${paneId}`);
-  if (!raw) return null;
-  try {
-    const entry: PaneCacheEntry = JSON.parse(raw);
-    if (!entry.savedAt || Date.now() - entry.savedAt > PANE_CACHE_TTL_MS) {
-      writePref(`pigeon_pane_cache_${paneId}`, null);
-      return null;
-    }
-    return entry;
-  } catch {
-    return null;
-  }
-}
-
-export function writePaneCache(paneId: string, entry: Omit<PaneCacheEntry, "savedAt"> | null): void {
-  try {
-    if (!entry) {
-      writePref(`pigeon_pane_cache_${paneId}`, null);
-      return;
-    }
-    prunePaneCaches(paneId);
-    const payload: PaneCacheEntry = { ...entry, savedAt: Date.now() };
-    const serialized = JSON.stringify(payload);
-    if (serialized.length <= MAX_PANE_CACHE_CHARS) {
-      writePref(`pigeon_pane_cache_${paneId}`, serialized);
-    }
-  } catch {
-    // quota exceeded or storage disabled
   }
 }
 
@@ -205,6 +127,7 @@ const [state, setState] = createStore<AppState>({
   sessionTitle: null,
   todos: null,
   session: null,
+  paneSyncing: false,
   queue: [],
   skills: [],
   recipes: {},

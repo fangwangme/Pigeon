@@ -196,6 +196,10 @@ export class PaneStore extends EventEmitter {
     };
   }
 
+  public getPaneState(paneId: string): PaneSessionState | undefined {
+    return this.paneStates.get(paneId);
+  }
+
   public closePane(paneId: string): void {
     const state = this.paneStates.get(paneId);
     if (state) this.release(state);

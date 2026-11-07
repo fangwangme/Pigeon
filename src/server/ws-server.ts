@@ -19,6 +19,9 @@ import {
   type AgentRecipeSummary,
   type PaneStatePayload,
   type QueuedPrompt,
+  type HaveInfo,
+  type TurnsDeltaPayload,
+  hashTurn,
 } from "../types/protocol";
 
 const PROTOCOL_VERSION = "1.0.0";
@@ -258,7 +261,10 @@ export class WsServer {
         const requested = msg.payload.subscribePaneId;
         const paneId =
           requested && this.herdrClient.hasPane(requested) ? requested : this.herdrClient.getFocusedPaneId();
-        if (paneId && this.herdrClient.hasPane(paneId)) await this.bootstrapPane(ws, paneId);
+        if (paneId && this.herdrClient.hasPane(paneId)) {
+          const have = requested === paneId ? msg.payload.have : undefined;
+          await this.bootstrapPane(ws, paneId, have);
+        }
         return;
       }
 
@@ -277,7 +283,7 @@ export class WsServer {
           this.sendError(ws, msg.id, ProtocolErrors.ERR_NOT_FOUND, `Unknown pane ${msg.payload.paneId}`);
           return;
         }
-        await this.bootstrapPane(ws, msg.payload.paneId);
+        await this.bootstrapPane(ws, msg.payload.paneId, msg.payload.have);
         this.sendAck(ws, msg.id);
         return;
       }
@@ -500,14 +506,46 @@ export class WsServer {
   }
 
   /** Subscribes the connection to one pane and sends everything the client needs to render it. */
-  private async bootstrapPane(ws: Ws, paneId: string): Promise<void> {
+  private async bootstrapPane(ws: Ws, paneId: string, have?: HaveInfo): Promise<void> {
     ws.data.subscribedPaneId = paneId;
     this.syncMonitoredPanes();
 
-    // Herdr Core reports no agent session (herdr-adapter.md §4), so the turns stay empty until a
-    // session source exists. Always sent, so the client never keeps showing the previous pane's
-    // conversation.
-    this.send(ws, { type: "normalized_turns", payload: this.paneStore.getPayload(paneId, this.herdrClient.getPaneAgentKind(paneId)) });
+    const agentKind = this.herdrClient.getPaneAgentKind(paneId);
+    const sessionState = this.paneStore.getPaneState(paneId);
+
+    let sentDelta = false;
+    if (
+      have &&
+      typeof have === "object" &&
+      typeof have.sessionId === "string" &&
+      typeof have.turnCount === "number" &&
+      Number.isInteger(have.turnCount) &&
+      have.turnCount > 0 &&
+      typeof have.lastTurnHash === "string" &&
+      sessionState &&
+      sessionState.sessionId === have.sessionId &&
+      sessionState.turns.length >= have.turnCount
+    ) {
+      const turnToMatch = sessionState.turns[have.turnCount - 1];
+      if (turnToMatch && hashTurn(turnToMatch) === have.lastTurnHash) {
+        const payload: TurnsDeltaPayload = {
+          paneId,
+          seqWatermark: sessionState.seqWatermark,
+          sinceTurnIndex: have.turnCount,
+          appendTurns: sessionState.turns.slice(have.turnCount),
+          ...(sessionState.stats ? { sessionStats: sessionState.stats } : {}),
+          ...(sessionState.sessionTitle ? { sessionTitle: sessionState.sessionTitle } : {}),
+          ...(sessionState.todos ? { todos: sessionState.todos } : {}),
+          session: this.paneStore.sessionInfo(paneId, agentKind),
+        };
+        this.send(ws, { type: "turns_delta", payload });
+        sentDelta = true;
+      }
+    }
+
+    if (!sentDelta) {
+      this.send(ws, { type: "normalized_turns", payload: this.paneStore.getPayload(paneId, agentKind) });
+    }
 
     this.sendSkills(ws, paneId);
     this.send(ws, { type: "prompt_queue", payload: { paneId, items: (this.queues.get(paneId) ?? []).map((q) => q.item) } });

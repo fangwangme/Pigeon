@@ -173,6 +173,7 @@ export const zh: Messages = {
   "session.fallbackTitle": "会话",
   "session.more": "更多",
   "session.loading": "正在读取这个 pane…",
+  "session.syncing": "同步中",
   "session.noMessages": "还没有消息。",
   "session.attachments": "{count} 个附件",
   "session.queued": "排队中，这一轮结束后发送",
