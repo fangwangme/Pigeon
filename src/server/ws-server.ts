@@ -22,7 +22,7 @@ import {
 } from "../types/protocol";
 
 const PROTOCOL_VERSION = "1.0.0";
-export const SERVER_VERSION = "0.1.0";
+export const SERVER_VERSION = "0.1.1";
 const PUSH_DEDUPE_MS = 60_000;
 
 export interface WsServerOptions {
