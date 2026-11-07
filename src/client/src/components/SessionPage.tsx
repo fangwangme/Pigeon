@@ -236,7 +236,7 @@ export function SessionPage() {
             <Show when={state.agentStatus === "blocked"}>
               <span class="wd" />
             </Show>
-            <span style={{ overflow: "hidden", "text-overflow": "ellipsis" }}>{state.sessionTitle ?? tab()?.label ?? t("session.fallbackTitle")}</span>
+            <span style={{ overflow: "hidden", "text-overflow": "ellipsis" }}>{tab()?.label ?? state.sessionTitle ?? t("session.fallbackTitle")}</span>
           </div>
           <div class="s">
             {pane() ? paneLabel(pane()!) : ""}
