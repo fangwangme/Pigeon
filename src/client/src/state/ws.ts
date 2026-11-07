@@ -1,3 +1,4 @@
+import { createStore, unwrap } from "solid-js/store";
 import { state, setState, applySyncedClientConfig, openTerminal, setUnread, showToast } from "./store";
 import { load, save, remove, clearAll, sweep, meta, migrateLocalStorageCache } from "./pane-cache";
 import type { ClientMessage, ServerMessage, SnapshotPayload, PaneStatePayload, ClientConfig, AgentStatus, HaveInfo } from "../../../types/protocol";
@@ -21,6 +22,20 @@ const paneRevisions = new Map<string, number>();
 const lastStatus = new Map<string, AgentStatus>();
 const pending = new Map<string, { resolve: (p: any) => void; reject: (e: { code: string; message: string }) => void }>();
 let freshDataArrivedPaneId: string | null = null;
+let lastAlivePanesKey = "";
+
+function saveActivePaneSnapshot(paneId: string): void {
+  if (state.session?.bound && state.session.sessionId && state.normalizedTurns.length) {
+    void save(paneId, {
+      sessionId: state.session.sessionId,
+      turns: unwrap(state.normalizedTurns),
+      sessionStats: state.sessionStats ? unwrap(state.sessionStats) : null,
+      sessionTitle: state.sessionTitle,
+      todos: state.todos ? unwrap(state.todos) : null,
+      session: state.session ? unwrap(state.session) : null,
+    });
+  }
+}
 
 function scheduleReconnect(): void {
   if (reconnectTimer) clearTimeout(reconnectTimer);
@@ -156,15 +171,8 @@ function applyPaneState(p: PaneStatePayload): void {
     rawScreen: p.rawScreen,
   });
   if (prevStatus === "working" && p.agentStatus !== "working") {
-    if (state.activePaneId && state.session?.bound && state.session.sessionId && state.normalizedTurns.length) {
-      void save(state.activePaneId, {
-        sessionId: state.session.sessionId,
-        turns: state.normalizedTurns,
-        sessionStats: state.sessionStats,
-        sessionTitle: state.sessionTitle,
-        todos: state.todos,
-        session: state.session,
-      });
+    if (state.activePaneId) {
+      saveActivePaneSnapshot(state.activePaneId);
     }
   }
 }
@@ -226,7 +234,11 @@ export function handleServerMessage(msg: ServerMessage): void {
       setState("workspaces", msg.payload.workspaces);
       if (state.herdrConnected) {
         const alive = msg.payload.workspaces.flatMap((w) => w.tabs.flatMap((t) => t.panes.map((p) => p.id)));
-        void sweep(alive);
+        const key = alive.slice().sort().join(",");
+        if (key !== lastAlivePanesKey) {
+          lastAlivePanesKey = key;
+          void sweep(alive);
+        }
       }
       return;
 
@@ -308,6 +320,9 @@ export function handleServerMessage(msg: ServerMessage): void {
       }
       console.error("[Pigeon] server error", msg.error.code, msg.error.message);
       setState("lastError", { code: msg.error.code, message: errorText(msg.error.code, msg.error.message), at: Date.now() });
+      if (state.paneSyncing) {
+        setState("paneSyncing", false);
+      }
       if (msg.error.code === "ERR_INTERACTION_STALE" && state.activePaneId) {
         sendMessage({ type: "select_view", id: nextId(), payload: { paneId: state.activePaneId } });
       }
@@ -386,16 +401,7 @@ export function respondInteraction(interactionId: string, optionId: string, fing
 export async function selectPane(paneId: string): Promise<void> {
   const previousPaneId = state.activePaneId;
   if (previousPaneId && previousPaneId !== paneId) {
-    if (state.session?.bound && state.session.sessionId && state.normalizedTurns.length) {
-      await save(previousPaneId, {
-        sessionId: state.session.sessionId,
-        turns: state.normalizedTurns,
-        sessionStats: state.sessionStats,
-        sessionTitle: state.sessionTitle,
-        todos: state.todos,
-        session: state.session,
-      });
-    }
+    saveActivePaneSnapshot(previousPaneId);
   }
 
   freshDataArrivedPaneId = null;
@@ -426,8 +432,10 @@ export async function selectPane(paneId: string): Promise<void> {
   setUnread(paneId, false);
 
   const cached = await load(paneId);
+  if (state.activePaneId !== paneId) return;
+
   let have: HaveInfo | undefined;
-  if (cached && state.activePaneId === paneId && freshDataArrivedPaneId !== paneId) {
+  if (cached && freshDataArrivedPaneId !== paneId) {
     setState({
       normalizedTurns: cached.turns,
       sessionStats: cached.sessionStats || null,
@@ -498,15 +506,8 @@ void sweep();
 
 if (typeof document !== "undefined") {
   document.addEventListener("visibilitychange", () => {
-    if (document.visibilityState === "hidden" && state.activePaneId && state.session?.bound && state.session.sessionId && state.normalizedTurns.length) {
-      void save(state.activePaneId, {
-        sessionId: state.session.sessionId,
-        turns: state.normalizedTurns,
-        sessionStats: state.sessionStats,
-        sessionTitle: state.sessionTitle,
-        todos: state.todos,
-        session: state.session,
-      });
+    if (document.visibilityState === "hidden" && state.activePaneId) {
+      saveActivePaneSnapshot(state.activePaneId);
     }
     if (document.visibilityState === "visible") {
       const stale = Date.now() - lastPongTime > 30000;
@@ -523,15 +524,8 @@ if (typeof document !== "undefined") {
 
 if (typeof window !== "undefined") {
   window.addEventListener("pagehide", () => {
-    if (state.activePaneId && state.session?.bound && state.session.sessionId && state.normalizedTurns.length) {
-      void save(state.activePaneId, {
-        sessionId: state.session.sessionId,
-        turns: state.normalizedTurns,
-        sessionStats: state.sessionStats,
-        sessionTitle: state.sessionTitle,
-        todos: state.todos,
-        session: state.session,
-      });
+    if (state.activePaneId) {
+      saveActivePaneSnapshot(state.activePaneId);
     }
   });
 }

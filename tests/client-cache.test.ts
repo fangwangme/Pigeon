@@ -1,6 +1,6 @@
 import "fake-indexeddb/auto";
 import { beforeEach, describe, expect, test } from "bun:test";
-import { load, save, remove, clearAll, sweep, meta, PANE_CACHE_TTL_MS, MAX_CACHED_PANES } from "../src/client/src/state/pane-cache";
+import { load, save, remove, clearAll, sweep, meta, PANE_CACHE_TTL_MS, MAX_CACHED_PANES, DB_VERSION } from "../src/client/src/state/pane-cache";
 import { handleServerMessage, initWebSocket, selectPane } from "../src/client/src/state/ws";
 import { state, setState } from "../src/client/src/state/store";
 import type { NormalizedTurn } from "../src/types/protocol";
@@ -47,7 +47,7 @@ describe("client pane cache (mobile-ui-and-themes.md §3.1)", () => {
     });
     // Manually age the entry beyond TTL
     const db = await new Promise<IDBDatabase>((resolve, reject) => {
-      const req = indexedDB.open("pigeon", 1);
+      const req = indexedDB.open("pigeon", DB_VERSION);
       req.onsuccess = () => resolve(req.result);
       req.onerror = () => reject(req.error);
     });
@@ -85,6 +85,30 @@ describe("client pane cache (mobile-ui-and-themes.md §3.1)", () => {
     await clearAll();
     expect(await load("p1")).toBeNull();
     expect(await load("p2")).toBeNull();
+  });
+
+  test("leaving a pane via selectPane saves store state without Proxy cloning error (B1')", async () => {
+    setState("activePaneId", "pane_a");
+    setState("session", {
+      bound: true,
+      agent: "claude",
+      sessionId: "ses_store",
+      model: { value: "opus", source: "launch" },
+      thinking: { value: null, source: "unknown" },
+    });
+    setState("normalizedTurns", [
+      dummyTurn,
+      { turnId: "t2", turnNumber: 2, timestamp: 2000, userPrompt: { text: "new turn from store" } },
+    ]);
+
+    await selectPane("pane_b");
+    await Bun.sleep(20);
+
+    const loaded = await load("pane_a");
+    expect(loaded).not.toBeNull();
+    expect(loaded!.turns.length).toBe(2);
+    expect(loaded!.turns[1].turnId).toBe("t2");
+    expect(loaded!.turns[1].userPrompt?.text).toBe("new turn from store");
   });
 
   describe("invalidation through handleServerMessage (mobile-ui-and-themes.md §3.1, security-and-pairing.md §5)", () => {

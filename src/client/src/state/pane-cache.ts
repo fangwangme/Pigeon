@@ -16,30 +16,42 @@ export interface PaneCacheEntry {
   session?: SessionInfo | null;
 }
 
-const DB_NAME = "pigeon";
-const DB_VERSION = 1;
-const STORE_NAME = "paneCache";
+export const DB_NAME = "pigeon";
+export const DB_VERSION = 2;
+export const STORE_NAME = "paneCache";
 
 const metaIndex = new Map<string, { sessionId: string; turnCount: number; lastTurnHash: string }>();
 
-function openDb(): Promise<IDBDatabase> {
+function openDb(): Promise<IDBDatabase | null> {
+  if (typeof indexedDB === "undefined") {
+    return Promise.resolve(null);
+  }
   return new Promise((resolve, reject) => {
-    if (typeof indexedDB === "undefined") {
-      return reject(new Error("IndexedDB unavailable"));
-    }
     const req = indexedDB.open(DB_NAME, DB_VERSION);
     req.onupgradeneeded = () => {
       const db = req.result;
+      let store: IDBObjectStore;
       if (!db.objectStoreNames.contains(STORE_NAME)) {
-        db.createObjectStore(STORE_NAME, { keyPath: "paneId" });
+        store = db.createObjectStore(STORE_NAME, { keyPath: "paneId" });
+      } else {
+        store = req.transaction!.objectStore(STORE_NAME);
+      }
+      if (!store.indexNames.contains("by_lastAccess")) {
+        store.createIndex("by_lastAccess", "lastAccess");
+      }
+      if (!store.indexNames.contains("by_savedAt")) {
+        store.createIndex("by_savedAt", "savedAt");
       }
     };
     req.onsuccess = () => resolve(req.result);
-    req.onerror = () => reject(req.error);
+    req.onerror = () => {
+      console.error("[Pigeon] Failed to open IndexedDB:", req.error);
+      reject(req.error);
+    };
   });
 }
 
-function updateMeta(entry: PaneCacheEntry): void {
+function updateMeta(entry: { paneId: string; sessionId: string; turns: NormalizedTurn[] }): void {
   const turnCount = entry.turns.length;
   const lastTurnHash = turnCount > 0 ? hashTurn(entry.turns[turnCount - 1]) : "";
   metaIndex.set(entry.paneId, {
@@ -49,45 +61,34 @@ function updateMeta(entry: PaneCacheEntry): void {
   });
 }
 
-function getAllEntries(db: IDBDatabase): Promise<PaneCacheEntry[]> {
-  return new Promise((resolve, reject) => {
-    const tx = db.transaction(STORE_NAME, "readonly");
-    const store = tx.objectStore(STORE_NAME);
-    const req = store.getAll();
-    req.onsuccess = () => resolve((req.result as PaneCacheEntry[]) || []);
-    req.onerror = () => reject(req.error);
-  });
-}
-
 export async function load(paneId: string): Promise<PaneCacheEntry | null> {
-  try {
-    const db = await openDb();
-    const entry = await new Promise<PaneCacheEntry | null>((resolve, reject) => {
-      const tx = db.transaction(STORE_NAME, "readwrite");
-      const store = tx.objectStore(STORE_NAME);
-      const req = store.get(paneId);
-      req.onsuccess = () => {
-        const val = req.result as PaneCacheEntry | undefined;
-        if (!val) return resolve(null);
-        if (Date.now() - val.savedAt > PANE_CACHE_TTL_MS) {
-          store.delete(paneId);
-          return resolve(null);
-        }
-        val.lastAccess = Date.now();
-        store.put(val);
-        resolve(val);
-      };
-      req.onerror = () => reject(req.error);
-    });
-    if (entry) {
-      updateMeta(entry);
-    } else {
-      metaIndex.delete(paneId);
-    }
-    return entry;
-  } catch {
-    return null;
-  }
+  const db = await openDb();
+  if (!db) return null;
+  return new Promise<PaneCacheEntry | null>((resolve, reject) => {
+    const tx = db.transaction(STORE_NAME, "readwrite");
+    const store = tx.objectStore(STORE_NAME);
+    const req = store.get(paneId);
+    req.onsuccess = () => {
+      const val = req.result as PaneCacheEntry | undefined;
+      if (!val) {
+        metaIndex.delete(paneId);
+        return resolve(null);
+      }
+      if (Date.now() - val.savedAt > PANE_CACHE_TTL_MS) {
+        store.delete(paneId);
+        metaIndex.delete(paneId);
+        return resolve(null);
+      }
+      val.lastAccess = Date.now();
+      store.put(val);
+      updateMeta(val);
+      resolve(val);
+    };
+    req.onerror = () => {
+      console.error("[Pigeon] Failed to load pane cache for", paneId, req.error);
+      reject(req.error);
+    };
+  });
 }
 
 export async function save(
@@ -102,117 +103,172 @@ export async function save(
   }
 ): Promise<void> {
   if (!entry.sessionId) return;
-  try {
-    const db = await openDb();
-    const all = await getAllEntries(db);
-    const now = Date.now();
-    const fullEntry: PaneCacheEntry = {
-      paneId,
-      sessionId: entry.sessionId,
-      savedAt: now,
-      lastAccess: now,
-      turns: entry.turns,
-      sessionStats: entry.sessionStats,
-      sessionTitle: entry.sessionTitle,
-      todos: entry.todos,
-      session: entry.session,
-    };
+  const db = await openDb();
+  if (!db) return;
 
-    await new Promise<void>((resolve, reject) => {
-      const tx = db.transaction(STORE_NAME, "readwrite");
-      const store = tx.objectStore(STORE_NAME);
-      const req = store.put(fullEntry);
-      req.onsuccess = () => resolve();
-      req.onerror = () => reject(req.error);
-    });
-    updateMeta(fullEntry);
+  const now = Date.now();
+  const rawEntry: PaneCacheEntry = {
+    paneId,
+    sessionId: entry.sessionId,
+    savedAt: now,
+    lastAccess: now,
+    turns: entry.turns,
+    sessionStats: entry.sessionStats,
+    sessionTitle: entry.sessionTitle,
+    todos: entry.todos,
+    session: entry.session,
+  };
 
-    // Evict oldest if exceeding MAX_CACHED_PANES
-    const pool = all.filter((e) => e.paneId !== paneId);
-    pool.push(fullEntry);
-    if (pool.length > MAX_CACHED_PANES) {
-      pool.sort((a, b) => b.lastAccess - a.lastAccess);
-      const toDelete = pool.slice(MAX_CACHED_PANES);
-      const tx = db.transaction(STORE_NAME, "readwrite");
-      const store = tx.objectStore(STORE_NAME);
-      for (const d of toDelete) {
-        store.delete(d.paneId);
-        metaIndex.delete(d.paneId);
+  // Structured clone validates that the entry contains no raw Proxies (JSC DataCloneError)
+  const fullEntry = structuredClone(rawEntry);
+
+  await new Promise<void>((resolve, reject) => {
+    const tx = db.transaction(STORE_NAME, "readwrite");
+    const store = tx.objectStore(STORE_NAME);
+    const putReq = store.put(fullEntry);
+    putReq.onerror = () => reject(putReq.error);
+
+    // Evict oldest entries exceeding MAX_CACHED_PANES without loading full turns
+    const countReq = store.count();
+    countReq.onsuccess = () => {
+      const count = countReq.result;
+      if (count > MAX_CACHED_PANES) {
+        const excess = count - MAX_CACHED_PANES;
+        const accessIdx = store.index("by_lastAccess");
+        const curReq = accessIdx.openKeyCursor();
+        let evicted = 0;
+        curReq.onsuccess = () => {
+          const cursor = curReq.result;
+          if (cursor && evicted < excess) {
+            const evictId = cursor.primaryKey as string;
+            if (evictId !== paneId) {
+              store.delete(evictId);
+              metaIndex.delete(evictId);
+              evicted++;
+            }
+            cursor.continue();
+          }
+        };
+        curReq.onerror = () => reject(curReq.error);
       }
-    }
-  } catch {
-    // storage unavailable
-  }
+    };
+    countReq.onerror = () => reject(countReq.error);
+
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => {
+      console.error("[Pigeon] Failed to save pane cache for", paneId, tx.error);
+      reject(tx.error);
+    };
+  });
+
+  updateMeta(fullEntry);
 }
 
 export async function remove(paneId: string): Promise<void> {
   metaIndex.delete(paneId);
-  try {
-    const db = await openDb();
-    await new Promise<void>((resolve, reject) => {
-      const tx = db.transaction(STORE_NAME, "readwrite");
-      const store = tx.objectStore(STORE_NAME);
-      const req = store.delete(paneId);
-      req.onsuccess = () => resolve();
-      req.onerror = () => reject(req.error);
-    });
-  } catch {}
+  const db = await openDb();
+  if (!db) return;
+  return new Promise<void>((resolve, reject) => {
+    const tx = db.transaction(STORE_NAME, "readwrite");
+    const store = tx.objectStore(STORE_NAME);
+    const req = store.delete(paneId);
+    req.onsuccess = () => resolve();
+    req.onerror = () => {
+      console.error("[Pigeon] Failed to remove pane cache for", paneId, req.error);
+      reject(req.error);
+    };
+  });
 }
 
 export async function clearAll(): Promise<void> {
   metaIndex.clear();
-  try {
-    const db = await openDb();
-    await new Promise<void>((resolve, reject) => {
-      const tx = db.transaction(STORE_NAME, "readwrite");
-      const store = tx.objectStore(STORE_NAME);
-      const req = store.clear();
-      req.onsuccess = () => resolve();
-      req.onerror = () => reject(req.error);
-    });
-  } catch {}
+  const db = await openDb();
+  if (!db) return;
+  return new Promise<void>((resolve, reject) => {
+    const tx = db.transaction(STORE_NAME, "readwrite");
+    const store = tx.objectStore(STORE_NAME);
+    const req = store.clear();
+    req.onsuccess = () => resolve();
+    req.onerror = () => {
+      console.error("[Pigeon] Failed to clear pane cache", req.error);
+      reject(req.error);
+    };
+  });
 }
 
 export async function sweep(alivePaneIds?: string[]): Promise<void> {
-  try {
-    const db = await openDb();
-    const all = await getAllEntries(db);
-    const now = Date.now();
-    const aliveSet = alivePaneIds ? new Set(alivePaneIds) : null;
-    const toDelete: string[] = [];
-    const valid: PaneCacheEntry[] = [];
+  const db = await openDb();
+  if (!db) return;
 
-    for (const e of all) {
-      if (now - e.savedAt > PANE_CACHE_TTL_MS) {
-        toDelete.push(e.paneId);
-      } else if (aliveSet && !aliveSet.has(e.paneId)) {
-        toDelete.push(e.paneId);
-      } else {
-        valid.push(e);
-      }
-    }
+  const now = Date.now();
+  const aliveSet = alivePaneIds ? new Set(alivePaneIds) : null;
 
-    if (valid.length > MAX_CACHED_PANES) {
-      valid.sort((a, b) => b.lastAccess - a.lastAccess);
-      const surplus = valid.slice(MAX_CACHED_PANES);
-      for (const s of surplus) toDelete.push(s.paneId);
-    }
+  return new Promise<void>((resolve, reject) => {
+    const tx = db.transaction(STORE_NAME, "readwrite");
+    const store = tx.objectStore(STORE_NAME);
 
-    if (toDelete.length > 0) {
-      const tx = db.transaction(STORE_NAME, "readwrite");
-      const store = tx.objectStore(STORE_NAME);
-      for (const id of toDelete) {
+    // 1. Delete TTL-expired entries using by_savedAt index without loading turns
+    const expiredRange = IDBKeyRange.upperBound(now - PANE_CACHE_TTL_MS);
+    const savedIdx = store.index("by_savedAt");
+    const expReq = savedIdx.openKeyCursor(expiredRange);
+    expReq.onsuccess = () => {
+      const cursor = expReq.result;
+      if (cursor) {
+        const id = cursor.primaryKey as string;
         store.delete(id);
         metaIndex.delete(id);
+        cursor.continue();
       }
+    };
+    expReq.onerror = () => reject(expReq.error);
+
+    // 2. If alivePaneIds is provided, delete dead panes using key cursor
+    if (aliveSet) {
+      const keyReq = store.openKeyCursor();
+      keyReq.onsuccess = () => {
+        const cursor = keyReq.result;
+        if (cursor) {
+          const id = cursor.primaryKey as string;
+          if (!aliveSet.has(id)) {
+            store.delete(id);
+            metaIndex.delete(id);
+          }
+          cursor.continue();
+        }
+      };
+      keyReq.onerror = () => reject(keyReq.error);
     }
 
-    const remaining = valid.filter((v) => !toDelete.includes(v.paneId));
-    metaIndex.clear();
-    for (const r of remaining) {
-      updateMeta(r);
-    }
-  } catch {}
+    // 3. LRU count eviction without loading turns
+    const countReq = store.count();
+    countReq.onsuccess = () => {
+      const count = countReq.result;
+      if (count > MAX_CACHED_PANES) {
+        const excess = count - MAX_CACHED_PANES;
+        const accessIdx = store.index("by_lastAccess");
+        const curReq = accessIdx.openKeyCursor();
+        let evicted = 0;
+        curReq.onsuccess = () => {
+          const cursor = curReq.result;
+          if (cursor && evicted < excess) {
+            const evictId = cursor.primaryKey as string;
+            store.delete(evictId);
+            metaIndex.delete(evictId);
+            evicted++;
+            cursor.continue();
+          }
+        };
+        curReq.onerror = () => reject(curReq.error);
+      }
+    };
+    countReq.onerror = () => reject(countReq.error);
+
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => {
+      console.error("[Pigeon] Failed to sweep pane cache", tx.error);
+      reject(tx.error);
+    };
+  });
 }
 
 export function meta(paneId: string): HaveInfo | null {
@@ -233,5 +289,7 @@ export function migrateLocalStorageCache(): void {
       }
     }
     for (const k of keysToRemove) localStorage.removeItem(k);
-  } catch {}
+  } catch (err) {
+    console.error("[Pigeon] Failed to migrate localStorage pane cache:", err);
+  }
 }
