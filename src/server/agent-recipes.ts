@@ -1,21 +1,16 @@
-import { existsSync, readFileSync } from "node:fs";
-import { homedir } from "node:os";
-import { join } from "node:path";
 import type { ModelOption } from "../types/protocol";
 
 export type { ModelOption };
 
 /**
- * Per-agent launch knowledge. Model lists come from the agent itself where it keeps one on disk
- * (Codex's models cache) or are the agent's own aliases (Claude); nothing names a model version
- * that would go stale. Flags are the ones each CLI's `--help` documents.
+ * Per-agent launch knowledge. Model lists live in the model catalog (`model-catalog.ts`,
+ * `herdr-adapter.md` §7.1). Flags are the ones each CLI's `--help` documents.
  */
 export interface AgentRecipe {
   kind: string;
   label: string;
   /** Program started in the new tab (`herdr-adapter.md` §5); none starts the machine's shell. */
   command?: string;
-  models(): ModelOption[];
   defaultModel?: string;
   defaultThinking?: string;
   /** `resume` is the value the resume argument takes (`herdr-adapter.md` §5); set only when `resumable`. */
@@ -29,31 +24,11 @@ export interface AgentRecipe {
   runtimeThinkingCommand?: (level: string) => string;
 }
 
-const EFFORT_LADDER = ["low", "medium", "high", "xhigh", "max"];
-
-function codexModels(): ModelOption[] {
-  const cachePath = join(homedir(), ".codex", "models_cache.json");
-  if (!existsSync(cachePath)) return [];
-  const data = JSON.parse(readFileSync(cachePath, "utf-8"));
-  return (data.models || [])
-    .filter((m: any) => m.visibility !== "hide" && typeof m.slug === "string")
-    .map((m: any) => ({
-      id: m.slug,
-      label: m.display_name || m.slug,
-      thinkingLevels: (m.supported_reasoning_levels || []).map((l: any) => l.effort).filter((e: unknown) => typeof e === "string"),
-    }));
-}
-
 const AGENT_RECIPES: Record<string, AgentRecipe> = {
   claude: {
     kind: "claude",
     label: "Claude Code",
     command: "claude",
-    models: () => [
-      { id: "opus", label: "Opus", thinkingLevels: EFFORT_LADDER },
-      { id: "sonnet", label: "Sonnet", thinkingLevels: EFFORT_LADDER },
-      { id: "haiku", label: "Haiku" },
-    ],
     launchArgs(o) {
       return [...(o?.resume ? ["--resume", o.resume] : []), ...(o?.modelId ? ["--model", o.modelId] : []), ...(o?.thinking ? ["--effort", o.thinking] : [])];
     },
@@ -66,7 +41,6 @@ const AGENT_RECIPES: Record<string, AgentRecipe> = {
     kind: "codex",
     label: "Codex",
     command: "codex",
-    models: codexModels,
     launchArgs(o) {
       // Without --no-daemon Codex runs its commands outside Herdr Core.
       return [
@@ -79,12 +53,14 @@ const AGENT_RECIPES: Record<string, AgentRecipe> = {
     interruptKeys: ["esc"],
     resumable: true,
     mentionPrefix: "",
+    // herdr-adapter.md §7, checked against Codex 0.167: both apply to this session only.
+    runtimeModelCommand: (id) => `/model ${id}`,
+    runtimeThinkingCommand: (level) => `/model --reasoning=${level}`,
   },
   agy: {
     kind: "agy",
     label: "Antigravity",
     command: "agy",
-    models: () => [],
     launchArgs(o) {
       return [...(o?.modelId ? ["--model", o.modelId] : []), ...(o?.thinking ? ["--effort", o.thinking] : [])];
     },
@@ -96,7 +72,6 @@ const AGENT_RECIPES: Record<string, AgentRecipe> = {
     kind: "opencode",
     label: "OpenCode",
     command: "opencode",
-    models: () => [],
     launchArgs: (o) => (o?.resume ? ["--session", o.resume] : []),
     interruptKeys: ["esc"],
     resumable: true,
@@ -106,18 +81,19 @@ const AGENT_RECIPES: Record<string, AgentRecipe> = {
     kind: "pi",
     label: "pi",
     command: "pi",
-    models: () => [],
     launchArgs(o) {
       return [...(o?.resume ? ["--session", o.resume] : []), ...(o?.modelId ? ["--model", o.modelId] : []), ...(o?.thinking ? ["--thinking", o.thinking] : [])];
     },
     interruptKeys: ["esc"],
     resumable: true,
     mentionPrefix: "@",
+    // herdr-adapter.md §7, checked against pi 1.5: `/thinking <level>` changes this session only. Its
+    // `/model <text>` opens a fuzzy picker that can pick another model, so pi has no model switch.
+    runtimeThinkingCommand: (level) => `/thinking ${level}`,
   },
   terminal: {
     kind: "terminal",
     label: "Terminal",
-    models: () => [],
     launchArgs: () => [],
     interruptKeys: ["ctrl+c"],
     resumable: false,

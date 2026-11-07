@@ -1,8 +1,8 @@
 import { createEffect, createMemo, createSignal, For, on, onCleanup, onMount, Show } from "solid-js";
 import { navigate, openTerminal, setState, showToast, state } from "../state/store";
 import { copyText, request, selectPane, sendKeys, sendPrompt } from "../state/ws";
-import type { FileDiffSummary } from "../../../types/protocol";
-import { Composer, insertIntoComposer, ModelSheet, PlusSheet, SkillsSheet } from "./Composer";
+import type { FileDiffSummary, QueuedPrompt } from "../../../types/protocol";
+import { Composer, insertIntoComposer, ModelSheet, PlusSheet, restoreIntoComposer, SkillsSheet } from "./Composer";
 import { ConnectionBanner } from "./Home";
 import { openOverlay } from "./overlays";
 import { PromptCard } from "./PromptCard";
@@ -139,6 +139,13 @@ function PaneSheet(props: { onClose: () => void }) {
 
 type Panel = "menu" | "changes" | "panes" | "plus" | "skills" | "model" | null;
 
+/** mobile-ui-and-themes.md §3.5: take a queued prompt out of the queue and back into the composer. */
+function editQueued(q: QueuedPrompt): void {
+  request({ type: "queue_cancel", payload: { targetPaneId: state.activePaneId!, queueId: q.queueId } })
+    .then(() => restoreIntoComposer(q.text, q.attachments))
+    .catch((e) => showToast(e.code === "ERR_NOT_FOUND" ? t("session.alreadySent") : e.message || t("session.undoFailed")));
+}
+
 export function SessionPage() {
   const [panel, setPanel] = createSignal<Panel>(null);
   const [nearBottom, setNearBottom] = createSignal(true);
@@ -201,7 +208,7 @@ export function SessionPage() {
   const modelValue = () => state.session?.model.value ?? null;
   const thinkingValue = () => state.session?.thinking.value ?? null;
   const modelChip = () => (
-    <Show when={recipe() && recipe()!.models.length}>
+    <Show when={recipe()}>
       <button class="mc" onMouseDown={(e) => e.preventDefault()} onClick={() => setPanel("model")}>
         {recipe()!.models.find((m) => m.id === modelValue())?.label ?? modelValue() ?? t("model.model")}
         <Show when={thinkingValue()}>
@@ -297,6 +304,7 @@ export function SessionPage() {
                   <div class="ub q">{q.text || t("session.attachments", { count: q.attachments.length })}</div>
                   <div class="ubm">
                     {t("session.queued")}
+                    <button onClick={() => editQueued(q)}>{t("session.edit")}</button>
                     <button
                       onClick={() =>
                         request({ type: "queue_cancel", payload: { targetPaneId: state.activePaneId!, queueId: q.queueId } }).catch((e) => showToast(e.message || t("session.undoFailed")))

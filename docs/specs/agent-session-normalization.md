@@ -32,13 +32,13 @@ Binding is re-evaluated on every snapshot (`herdr-adapter.md` §3.1). When the r
 - **Storage**: SQLite at `~/.local/share/opencode/opencode.db`, opened read-only with `PRAGMA query_only = ON` and `PRAGMA busy_timeout = 2000`, so the running OpenCode is never locked.
 - **Session**: `session_v2` (`id`, `directory`, `title`, `time_updated`, summary columns); messages and parts (`text`, `tool`, `reasoning`, …) in `session_message`.
 - **Binding and listing** use `directory` and `time_updated` (milliseconds). All sessions share one database file, so no open file names a session (§2.0 rule 1 does not apply).
-- **Model**: the model the session's latest assistant message names (source `log`).
+- **Model**: the latest assistant message's `model` (`{ providerID, id }`), as `<providerID>/<id>` like `opencode models` (source `log`).
 
 ### 2.2 Antigravity (`agy`)
 - **Storage**: `~/.gemini/antigravity-cli/brain/<id>/.system_generated/logs/transcript.jsonl` (NDJSON). Title from `~/.gemini/antigravity-cli/annotations/<id>.pbtxt` (`title: "…"`).
 - **Records**: `USER_INPUT`, `PLANNER_RESPONSE` (`thinking`, `tool_calls`, `content`), `GENERIC` (tool output). When a line has `truncated_fields`, the full line is read from `transcript_full.jsonl`.
 - **Binding**: exact (§2.0 rule 1) when the AGY process holds `~/.gemini/antigravity-cli/presence/<id>.lock` or the session's transcript open; otherwise the transcript's modification time (no folder).
-- **Model**: the model the records name, when they name one (source `log`).
+- **Model**: the records name no model, so it is the launch value or unknown (`protocol.md` §5.6).
 
 ### 2.3 Claude Code (`claude`)
 - **Storage**: `~/.claude/projects/<slug(cwd)>/<id>.jsonl` (NDJSON); live process map `~/.claude/sessions/<pid>.json`.
@@ -62,7 +62,7 @@ Binding is re-evaluated on every snapshot (`herdr-adapter.md` §3.1). When the r
 - **Storage**: `~/.pi/agent/sessions/--<path>--/<time>_<id>.jsonl`, where `<path>` is the folder without its leading `/` and with `/` replaced by `-`.
 - **Records used**: `message` records with `message.role` `user` (text blocks), `assistant` (`text`, `thinking`, `toolCall` blocks with `id`, `name`, `arguments`) and `toolResult` (`toolCallId`, `content` text, `isError`). `bash` tool calls are commands; `edit` (`path`, `oldText`, `newText`) and `write` (`path`, `content`) produce file diffs. Others are ignored.
 - **Binding**: exact (§2.0 rule 1) when the pi process holds a session file open; otherwise folder and time.
-- **Model**: the model the latest assistant message names (source `log`).
+- **Model**: the latest `model_change` record (`provider`, `modelId`) or assistant message (`provider`, `model`), as `<provider>/<id>` like the model catalog (`herdr-adapter.md` §7.1, source `log`).
 - **Title**: the first prompt (at most 120 characters).
 
 ### 2.6 Listing past sessions

@@ -296,7 +296,7 @@ Each recipe summary also carries `resumable` (the recipe can resume a session) a
 ```json
 { "type": "prompt_queue", "payload": { "paneId": "w1:p2", "items": [ { "queueId": "q_1a2b3c", "text": "also run lint", "attachments": [], "createdAt": 1729650000000 } ] } }
 ```
-The pane's whole queue, oldest first. Sent on pane selection (§3.3) and to the pane's viewers whenever its queue changes.
+The pane's whole queue, oldest first. Sent on pane selection (§3.3) and to the pane's viewers whenever its queue changes. An item's `text` and `attachments` are what the phone sent (its own text and upload ids), so a withdrawn prompt can go back into the composer (`mobile-ui-and-themes.md` §3.5); the prompt that reaches the agent is composed from them as in §4.2.
 
 ### 5.9 Recipes (`recipes_sync`)
 ```json

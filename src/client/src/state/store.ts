@@ -192,12 +192,8 @@ export function toggleCollapsed(workspaceId: string): void {
 
 export function setUnread(paneId: string, value: boolean): void {
   if (!!state.unread[paneId] === value) return;
-  setState("unread", (u) => {
-    const next = { ...u };
-    if (value) next[paneId] = true;
-    else delete next[paneId];
-    return next;
-  });
+  // A store merges objects, so a key is removed by setting it to undefined.
+  setState("unread", paneId, value ? true : undefined!);
   writePref("pigeon_unread", JSON.stringify(state.unread));
 }
 

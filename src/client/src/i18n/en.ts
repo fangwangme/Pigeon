@@ -109,6 +109,11 @@ export const en = {
   "model.sourceUnknown": "unknown",
   "model.switchSent": "Sent: switch to {value}",
   "model.switchFailed": "Couldn't switch",
+  "model.search": "Search models",
+  "model.refresh": "Refresh",
+  "model.refreshing": "Refreshing…",
+  "model.refreshFailed": "Couldn't refresh the model list",
+  "composer.attachment": "Attachment",
 
   "new.title": "New session",
   "new.listFailed": "Couldn't load past sessions",
@@ -171,6 +176,8 @@ export const en = {
   "session.queued": "Queued; sends when this turn ends",
   "session.undoFailed": "Couldn't undo",
   "session.undo": "Undo",
+  "session.edit": "Edit",
+  "session.alreadySent": "Already sent; nothing to edit",
   "session.jump": "Jump to latest",
 
   "settings.title": "Settings",

@@ -38,6 +38,11 @@ export class ClaudeSource implements SessionSource {
     return sessionId;
   }
 
+  public lastWritten(sessionId: string): number | null {
+    const path = this.paths.get(sessionId);
+    return path && existsSync(path) ? statSync(path).mtimeMs : null;
+  }
+
   public newest(facts: PaneFacts, exclude: Set<string>): string | null {
     if (!facts.cwd) return null;
     const dir = this.projectDir(facts.cwd);

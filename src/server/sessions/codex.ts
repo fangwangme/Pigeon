@@ -8,6 +8,10 @@ import type { PaneFacts, SessionSource } from "./source";
 const MAX_LISTED_ROLLOUTS = 2000;
 const NOT_PROMPT = /^\s*<(environment_context|user_instructions|user_action)/;
 
+function mtimeOf(path: string | undefined): number | null {
+  return path && existsSync(path) ? statSync(path).mtimeMs : null;
+}
+
 /** Codex (`agent-session-normalization.md` §2.4). */
 export class CodexSource implements SessionSource {
   public readonly agent = "codex";
@@ -49,6 +53,18 @@ export class CodexSource implements SessionSource {
     const id = str(first.payload.id);
     const cwd = str(first.payload.cwd);
     return id && cwd ? { id, cwd } : null;
+  }
+
+  public sessionOfFile(path: string): string | null {
+    const name = path.slice(path.lastIndexOf("/") + 1);
+    if (!path.startsWith(this.root + "/") || !name.startsWith("rollout-") || !name.endsWith(".jsonl")) return null;
+    const meta = this.meta(path);
+    if (meta) this.paths.set(meta.id, path);
+    return meta?.id ?? null;
+  }
+
+  public lastWritten(sessionId: string): number | null {
+    return mtimeOf(this.paths.get(sessionId));
   }
 
   public newest(facts: PaneFacts, exclude: Set<string>): string | null {
@@ -195,7 +211,10 @@ function applyRecord(b: TurnBuilder, r: unknown): void {
     case "message": {
       const text = messageText(p.content);
       if (p.role === "user") {
-        if (text && !NOT_PROMPT.test(text)) b.prompt(text, ts);
+        if (text && !NOT_PROMPT.test(text)) {
+          b.prompt(text, ts);
+          b.title ??= text.slice(0, 120); // §2.4: Codex keeps no title of its own
+        }
       } else if (p.role === "assistant") b.text(text, ts);
       return;
     }

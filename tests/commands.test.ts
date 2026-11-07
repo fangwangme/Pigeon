@@ -143,9 +143,14 @@ describe("attachments (protocol.md §4.2, §7)", () => {
     await send(c.ws, { type: "agent_prompt", id: "a1", payload: { targetPaneId: "p2", text: "look", attachments: [shot.id] } });
     expect(herdr.callsOf("terminal.send")[0].params.text).toBe(`look\n\n${shot.path}`);
 
+    // A queued prompt shows what the phone sent (protocol.md §5.8) and sends the composed text.
+    await client.connect();
     const c1 = await viewer("p1");
     await send(c1.ws, { type: "agent_prompt", id: "a2", payload: { targetPaneId: "p1", text: "", attachments: [shot.id] } });
-    expect(c1.ofType("prompt_queue").at(-1).payload.items[0].text).toBe(`@${shot.path}`);
+    expect(c1.ofType("prompt_queue").at(-1).payload.items[0]).toMatchObject({ text: "", attachments: [shot.id] });
+    herdr.emitEvent("status", "p1", { status: { state: "idle", app: "claude-code" } });
+    await until(() => herdr.callsOf("terminal.send").length === 2);
+    expect(herdr.callsOf("terminal.send")[1].params.text).toBe(`@${shot.path}`);
   });
 
   test("an unknown upload id is ERR_INVALID_PAYLOAD and nothing is sent", async () => {
@@ -212,7 +217,7 @@ describe("session actions", () => {
     expect(herdr.callsOf("tab.close")).toHaveLength(0);
   });
 
-  test("claude switches model with its own /model command; codex has none (protocol.md §4.9)", async () => {
+  test("claude switches model with its own /model command; a model the agent does not list is refused (protocol.md §4.9)", async () => {
     const c = await viewer("p1");
     await send(c.ws, { type: "agent_set_model", id: "m1", payload: { targetPaneId: "p1", modelId: "sonnet" } });
     // p1 is working, so the command waits in the queue like any prompt.

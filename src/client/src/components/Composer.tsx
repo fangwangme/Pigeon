@@ -1,6 +1,6 @@
 import { createMemo, createSignal, For, onCleanup, Show, type JSX } from "solid-js";
 import { draftKey, readPref, showToast, state, writePref } from "../state/store";
-import { uploadFile } from "../state/ws";
+import { refreshModels, uploadFile } from "../state/ws";
 import type { AgentRecipeSummary, SkillEntry } from "../../../types/protocol";
 import { Icon, Sheet } from "./ui";
 import { t, type MessageId } from "../i18n";
@@ -101,9 +101,22 @@ export function ModelSheet(props: {
   onPick: (change: { modelId?: string; thinking?: string }) => void;
   onClose: () => void;
 }) {
+  const [query, setQuery] = createSignal("");
+  const [refreshing, setRefreshing] = createSignal(false);
   const models = () => props.recipe?.models ?? [];
+  // mobile-ui-and-themes.md §6.4: the whole list, filtered by id and label.
+  const shown = () => {
+    const q = query().trim().toLowerCase();
+    return q ? models().filter((m) => m.id.toLowerCase().includes(q) || m.label.toLowerCase().includes(q)) : models();
+  };
   const current = () => models().find((m) => m.id === props.model);
   const levels = () => current()?.thinkingLevels ?? [];
+  const refresh = () => {
+    setRefreshing(true);
+    refreshModels()
+      .catch((e) => showToast(e.message || t("model.refreshFailed")))
+      .finally(() => setRefreshing(false));
+  };
   return (
     <Sheet title={t("model.title")} sub={props.recipe?.label} onClose={props.onClose}>
       <div class="fl">
@@ -111,10 +124,26 @@ export function ModelSheet(props: {
         <Show when={props.modelSource}>
           <span style={{ "font-weight": 500 }}>{t("model.source", { source: props.modelSource! })}</span>
         </Show>
+        <button class="lnk" disabled={refreshing()} onClick={refresh}>
+          {refreshing() ? t("model.refreshing") : t("model.refresh")}
+        </button>
       </div>
+      <Show when={models().length > 8}>
+        <div class="searchbar">
+          <Icon name="search" sm />
+          <input
+            placeholder={t("model.search")}
+            value={query()}
+            onInput={(e) => setQuery(e.currentTarget.value)}
+            autocomplete="off"
+            autocapitalize="off"
+            spellcheck={false}
+          />
+        </div>
+      </Show>
       <Show when={models().length} fallback={<p class="note">{t("model.none")}</p>}>
         <div class="card">
-          <For each={models()}>
+          <For each={shown()}>
             {(m) => (
               <button
                 class={`li${!props.canSwitchModel && m.id !== props.model ? " off" : ""}`}
@@ -186,6 +215,12 @@ export function insertIntoComposer(text: string): void {
   insertHook?.(text);
 }
 
+let restoreHook: ((text: string, uploadIds: string[]) => void) | null = null;
+/** §3.5 **编辑**: a withdrawn queued prompt's text goes in at the caret and its uploads join the attachments. */
+export function restoreIntoComposer(text: string, uploadIds: string[]): void {
+  restoreHook?.(text, uploadIds);
+}
+
 export function Composer(props: ComposerProps) {
   const [text, setText] = createSignal(readPref(draftKey(props.draftId)) ?? "");
   const [focused, setFocused] = createSignal(false);
@@ -253,6 +288,27 @@ export function Composer(props: ComposerProps) {
     }
   };
   addFilesHook = addFiles;
+
+  const restore = (s: string, uploadIds: string[]) => {
+    const v = text();
+    const at = ta ? ta.selectionStart : v.length;
+    const before = v.slice(0, at);
+    const gap = before && !before.endsWith("\n") && s ? "\n" : "";
+    save(`${before}${gap}${s}${v.slice(at)}`);
+    setAtts([...atts(), ...uploadIds.map((id) => ({ key: ++keySeq, name: t("composer.attachment"), id }))]);
+    setTimeout(() => {
+      if (!ta) return;
+      ta.focus();
+      const pos = before.length + gap.length + s.length;
+      ta.setSelectionRange(pos, pos);
+      setCaret(pos);
+      grow();
+    }, 20);
+  };
+  restoreHook = restore;
+  onCleanup(() => {
+    if (restoreHook === restore) restoreHook = null;
+  });
 
   const uploading = () => atts().some((a) => !a.id);
   const canSend = () => !sending() && !uploading() && (text().trim().length > 0 || atts().length > 0);
@@ -336,6 +392,10 @@ export function Composer(props: ComposerProps) {
           value={text()}
           placeholder={props.placeholder}
           enterkeyhint={isTouch() ? "enter" : "send"}
+          // mobile-ui-and-themes.md §1.2: no password, address or card suggestions above the keyboard.
+          autocomplete="off"
+          aria-autocomplete="none"
+          data-form-type="other"
           onFocus={() => setFocused(true)}
           onBlur={() => setTimeout(() => setFocused(false), 120)}
           onCompositionStart={() => setComposing(true)}

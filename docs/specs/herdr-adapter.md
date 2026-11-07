@@ -120,7 +120,15 @@ Pigeon does not drive agent menus with a state machine. An agent command such as
 - a recognized numbered prompt (§8.2), answered with one tap; or
 - a menu without numbers, answered with the raw key pad (arrows, Enter, Esc).
 
-**Runtime model switch** (`protocol.md` §4.9): claude accepts `/model <id>` as prompt text. Another agent declares a runtime model or effort switch only once it has been checked against the real CLI: either a command that takes the value as text, or its model menu driven the way the screen shows it (a numbered option, or the value typed into the menu's search followed by Enter). An agent without a checked switch has none, and the phone offers its values only when creating a session.
+**Runtime model switch** (`protocol.md` §4.9): claude accepts `/model <id>` as prompt text. Another agent declares a runtime model or effort switch only once it has been checked against the real CLI: either a command that takes the value as text, or its model menu driven the way the screen shows it (a numbered option, or the value typed into the menu's search followed by Enter). An agent without a checked switch has none, and the phone offers its values only when creating a session. Checked (2026-11-07):
+
+| Agent | Model | Effort |
+| :--- | :--- | :--- |
+| claude | `/model <id>` | none: `/effort <level>` also saves the level as the default for new sessions |
+| codex | `/model <id>` (this session only) | `/model --reasoning=<level>` (this session only) |
+| pi | none: `/model <text>` opens a fuzzy picker that can choose another model | `/thinking <level>` |
+| opencode | none: `/models` is a picker searched by label | none |
+| agy | none: `/model <id>` also saves the model as the default for new sessions | none (the model names its effort) |
 
 ### 7.1 Model catalog
 Each recipe's model list (`protocol.md` §5.7) comes from a catalog the daemon keeps in memory, one list per agent, filled from the agent's own source:
@@ -131,7 +139,7 @@ Each recipe's model list (`protocol.md` §5.7) comes from a catalog the daemon k
 | codex | `~/.codex/models_cache.json` (models not marked hidden) | the model's `supported_reasoning_levels` |
 | pi | `~/.pi/agent/models-store.json`: every provider's `models[]` (`id`, `name`, `reasoning`, `thinkingLevelMap`); the id sent is `<provider>/<id>` | when `reasoning` is true: the keys of `thinkingLevelMap` whose value is not null; without a map, the levels pi offers for the model (checked against the CLI) |
 | opencode | the output of `opencode models`, one `<provider>/<model>` per line | none |
-| agy | the output of `agy models` | `--effort` levels (`low` … `max`) |
+| agy | the output of `agy models`, one `<id>` TAB `<label>` per line | none: each model already names its effort (`gemini-3.8-flash-high`, label `Gemini 3.8 Flash (High)`) |
 
 - The sources are files and command output written by other programs: a trust boundary. An entry without a string id is skipped; a source that is missing, fails or times out leaves that agent's previous list in place and is not an error the phone sees.
 - The catalog is filled at daemon start, off the startup path, so `welcome` never waits for it. It is filled again when `models_refresh` asks for it (`protocol.md` §4.14), and when a bound session's records name a model (source `log`) that the agent's list lacks — at most once per model name, so a model the source never lists does not refresh in a loop.

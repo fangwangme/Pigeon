@@ -110,6 +110,11 @@ export class HerdrClient extends EventEmitter {
   private knownPanes = new Map<string, KnownPane>();
   private currentSnapshot: SnapshotPayload = { workspaces: [], workingAgents: [] };
   private focusedPaneId: string | null = null;
+  /** herdr-adapter.md §4: `done` panes a phone has looked at, reported as `idle`. */
+  private seenPanes = new Set<string>();
+  /** protocol.md §5.3: the title of the session bound to a pane, for tabs without a name of their own. */
+  private sessionTitleOf: (paneId: string) => string | undefined = () => undefined;
+  private lastTopology: HerdrTopology | null = null;
   private monitoredPaneIds = new Set<string>();
   private workspaceFolders = new Map<string, string>();
   private tabIds = new Set<string>();
@@ -380,6 +385,7 @@ export class HerdrClient extends EventEmitter {
       const known = this.knownPanes.get(paneId);
       if (!known) return; // a terminal the window does not show
       const status = this.normalizeStatus(params.data.status);
+      if (status !== "done") this.seenPanes.delete(paneId);
       known.herdrStatus = status;
       this.emit("pane_status_changed", { paneId, status });
       // The read re-classifies under the new status, which reaches viewers as a new pane_state.
@@ -409,8 +415,18 @@ export class HerdrClient extends EventEmitter {
     return this.applySnapshot({ ls, status, terminals: list.terminals });
   }
 
+  public setSessionTitleSource(source: (paneId: string) => string | undefined): void {
+    this.sessionTitleOf = source;
+  }
+
+  /** A bound session's title changed: rebuild the snapshot from the last topology, without asking Herdr. */
+  public relabelTabs(): void {
+    if (this.lastTopology) this.applySnapshot(this.lastTopology);
+  }
+
   /** Rebuilds the pane-derived caches from one topology. */
   public applySnapshot(topology: HerdrTopology): SnapshotPayload {
+    this.lastTopology = topology;
     const terminals = new Map<string, HerdrCoreTerminal>();
     for (const t of topology.terminals) terminals.set(t.address, t);
 
@@ -443,6 +459,7 @@ export class HerdrClient extends EventEmitter {
       this.paneClassifyKeys.delete(id);
     }
     for (const id of Array.from(this.fullScreenPanes)) if (!nextKnown.has(id)) this.fullScreenPanes.delete(id);
+    for (const id of Array.from(this.seenPanes)) if (nextKnown.get(id)?.herdrStatus !== "done") this.seenPanes.delete(id);
     this.knownPanes = nextKnown;
     this.focusedPaneId = focusedPaneId;
     // herdr-adapter.md §3.1: the App's space folder is where the space was started, not the project.
@@ -498,11 +515,12 @@ export class HerdrClient extends EventEmitter {
           };
         });
 
+        // protocol.md §5.3: a name the user gave the tab, else the bound session's title, else the agent.
         let tabLabel = tab.name;
         if (!tabLabel || /^\d+$/.test(tabLabel.trim())) {
           const primary = panes[0];
           const recipe = primary?.agent ? getAgentRecipe(primary.agent) : undefined;
-          tabLabel = recipe?.label || `Tab ${tabIdx + 1}`;
+          tabLabel = (primary && this.sessionTitleOf(primary.id)) || recipe?.label || `Tab ${tabIdx + 1}`;
         }
         const tabBranch = branchOf(nextKnown.get(tab.terminals[0]?.terminal ?? "")?.cwd);
         return { id: tab.id, label: tabLabel, ...(tabBranch ? { branch: tabBranch } : {}), paneCount: panes.length, panes };
@@ -553,7 +571,25 @@ export class HerdrClient extends EventEmitter {
   private effectiveStatus(paneId: string): AgentStatus {
     const state = this.paneStates.get(paneId);
     if (state?.pendingInteraction) return "blocked";
-    return this.knownPanes.get(paneId)?.herdrStatus ?? "unknown";
+    return this.reportedStatus(paneId);
+  }
+
+  /** Herdr's status, with a seen `done` reported as `idle` (herdr-adapter.md §4). */
+  private reportedStatus(paneId: string): AgentStatus {
+    const status = this.knownPanes.get(paneId)?.herdrStatus ?? "unknown";
+    return status === "done" && this.seenPanes.has(paneId) ? "idle" : status;
+  }
+
+  /**
+   * herdr-adapter.md §4: a phone visibly viewed this pane. A `done` pane is reported `idle` from now on,
+   * until the Core reports another status.
+   */
+  public markSeen(paneId: string): void {
+    if (this.knownPanes.get(paneId)?.herdrStatus !== "done" || this.seenPanes.has(paneId)) return;
+    this.seenPanes.add(paneId);
+    const state = this.paneStates.get(paneId);
+    if (state) this.applyScreen(paneId, state.rawScreen);
+    this.scheduleSnapshot();
   }
 
   /** herdr-adapter.md §4: the Core's `error` needs a person, like `blocked`. */
@@ -619,7 +655,7 @@ export class HerdrClient extends EventEmitter {
     if (!known) throw new HerdrError("not_found", `Pane ${paneId} is not in the Herdr snapshot`);
     const existing = this.paneStates.get(paneId);
     // herdr-adapter.md §3.3: a new Herdr status alone is classified again, even on an unchanged screen.
-    const classifyKey = `${createHash("sha256").update(rawScreen).digest("hex")}|${known.herdrStatus}`;
+    const classifyKey = `${createHash("sha256").update(rawScreen).digest("hex")}|${known.herdrStatus}|${this.seenPanes.has(paneId)}`;
     if (existing && this.paneClassifyKeys.get(paneId) === classifyKey) return existing;
 
     let { cards, pendingInteraction } = this.classifier.classifyScreen(rawScreen);
@@ -631,7 +667,7 @@ export class HerdrClient extends EventEmitter {
       paneId,
       workspaceId: known.workspaceId,
       tabId: known.tabId,
-      agentStatus: pendingInteraction ? "blocked" : known.herdrStatus,
+      agentStatus: pendingInteraction ? "blocked" : this.reportedStatus(paneId),
       cards,
       pendingInteraction,
       rawScreen,

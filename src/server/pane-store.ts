@@ -61,6 +61,10 @@ export class PaneStore extends EventEmitter {
     return this.launches.get(paneId);
   }
 
+  public sessionTitle(paneId: string): string | undefined {
+    return this.paneStates.get(paneId)?.sessionTitle;
+  }
+
   public boundSession(paneId: string): { agent: string; sessionId: string } | null {
     const s = this.paneStates.get(paneId);
     return s ? { agent: s.agent, sessionId: s.sessionId } : null;
@@ -102,6 +106,7 @@ export class PaneStore extends EventEmitter {
     this.release(state);
     this.paneStates.delete(paneId);
     this.emit("session_changed", paneId);
+    if (state.sessionTitle) this.emit("title_changed", paneId);
   }
 
   private release(state: PaneSessionState): void {
@@ -130,9 +135,13 @@ export class PaneStore extends EventEmitter {
     const oldInfo = JSON.stringify([state.todos, state.model]);
     state.turns = turns;
     state.stats = result.stats;
+    const titleChanged = state.sessionTitle !== result.sessionTitle;
     state.sessionTitle = result.sessionTitle;
+    if (titleChanged) this.emit("title_changed", paneId);
     state.todos = result.todos;
+    const oldModel = state.model;
     state.model = result.model;
+    if (state.model && state.model !== oldModel) this.emit("session_model", state.agent, state.model);
     state.seqWatermark += 1;
     const infoChanged = oldInfo !== JSON.stringify([state.todos, state.model]);
     const extra = {

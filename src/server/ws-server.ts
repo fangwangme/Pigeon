@@ -9,6 +9,7 @@ import { AgentAdapterManager } from "./agent-adapters/index";
 import { PaneStore } from "./pane-store";
 import { SkillScanner } from "./skill-scanner";
 import { getAgentRecipe, listAgentRecipes } from "./agent-recipes";
+import { ModelCatalog } from "./model-catalog";
 import { validateClientMessage } from "./ws-validate";
 import {
   type ClientMessage,
@@ -36,6 +37,8 @@ export interface WsServerOptions {
   uploadStore?: UploadStore;
   /** Device management from the phone (`protocol.md` §4.12). */
   pairingManager?: PairingManager;
+  /** Every agent's model list (`herdr-adapter.md` §7.1); without it only the static lists are known. */
+  modelCatalog?: ModelCatalog;
 }
 
 export interface ClientConnectionData {
@@ -65,6 +68,7 @@ export class WsServer {
   private buildId: string;
   private herdrClient: HerdrClient;
   private pushManager: PushManager;
+  private modelCatalog: ModelCatalog;
   public configManager: ConfigManager;
   public agentAdapters: AgentAdapterManager;
   public paneStore: PaneStore;
@@ -78,13 +82,15 @@ export class WsServer {
   private uploadStore?: UploadStore;
   private pairingManager?: PairingManager;
   // protocol.md §4.2: prompts waiting for the pane's turn to end, oldest first.
-  private queues = new Map<string, QueuedPrompt[]>();
+  /** `item` is what the phone sees (its own text and upload ids, so **编辑** can restore them); `send` is the composed prompt. */
+  private queues = new Map<string, Array<{ item: QueuedPrompt; send: string }>>();
   private flushing = new Set<string>();
 
   constructor(options: WsServerOptions) {
     this.buildId = options.buildId;
     this.herdrClient = options.herdrClient;
     this.pushManager = options.pushManager;
+    this.modelCatalog = options.modelCatalog ?? new ModelCatalog();
     this.configManager = options.configManager;
     this.agentAdapters = options.agentAdapters || new AgentAdapterManager();
     this.paneStore = new PaneStore(this.agentAdapters);
@@ -102,6 +108,13 @@ export class WsServer {
       this.sendToSubscribers(paneId, { type: "normalized_turns", payload: this.paneStore.getPayload(paneId, this.herdrClient.getPaneAgentKind(paneId)) });
     });
 
+    // herdr-adapter.md §7.1: a model named in a session's records that the catalog lacks fills it again.
+    this.paneStore.on("session_model", (agent: string, model: string) => {
+      void this.modelCatalog.noteModel(agent, model).then((changed) => changed && this.broadcastRecipes());
+    });
+    this.herdrClient.setSessionTitleSource((paneId) => this.paneStore.sessionTitle(paneId));
+    // Titles change while a snapshot is being handled (binding reads the session), so relabel after it.
+    this.paneStore.on("title_changed", () => queueMicrotask(() => this.herdrClient.relabelTabs()));
     this.herdrClient.on("snapshot_updated", (snapshot) => {
       for (const paneId of this.paneStore.trackedPaneIds()) {
         if (!this.herdrClient.hasPane(paneId)) this.paneStore.closePane(paneId);
@@ -120,6 +133,8 @@ export class WsServer {
       const previous = this.lastStatus.get(paneId);
       this.lastStatus.set(paneId, status);
       if (status === "idle" || status === "done") void this.flushQueue(paneId);
+      // herdr-adapter.md §4: finishing while a phone visibly watches it is finishing seen.
+      if (status === "done" && this.pushManager.shouldSuppressPush(paneId)) this.herdrClient.markSeen(paneId);
       // push.md §4: notify only on the transition into blocked, at most once per minute per pane.
       if (status !== "blocked" || previous === "blocked") return;
       const now = Date.now();
@@ -127,6 +142,15 @@ export class WsServer {
       this.lastPushAt.set(paneId, now);
       this.pushManager.sendNotification(this.pushMessage(paneId));
     });
+  }
+
+  /** herdr-adapter.md §7.1: fill the model catalog again; every client hears of a changed list. */
+  public async refreshModels(): Promise<void> {
+    if (await this.modelCatalog.refresh()) this.broadcastRecipes();
+  }
+
+  private broadcastRecipes(): void {
+    this.broadcast({ type: "recipes_sync", payload: { recipes: this.recipeSummaries() } });
   }
 
   /** `push.md` §4: the blocked pane's agent, workspace and tab, as data. */
@@ -167,7 +191,7 @@ export class WsServer {
       recipes[r.kind] = {
         kind: r.kind,
         label: r.label,
-        models: r.models(),
+        models: this.modelCatalog.models(r.kind),
         defaultModel: r.defaultModel,
         defaultThinking: r.defaultThinking,
         interruptKeys: r.interruptKeys,
@@ -244,6 +268,7 @@ export class WsServer {
 
       case "presence_update":
         this.pushManager.updatePresence(data.connectionId, msg.isVisible, msg.viewingPaneId);
+        if (msg.isVisible && msg.viewingPaneId) this.herdrClient.markSeen(msg.viewingPaneId);
         return;
 
       case "select_view": {
@@ -269,7 +294,7 @@ export class WsServer {
           paths.push(info.path);
         }
         const full = this.composePrompt(targetPaneId, text, paths);
-        await this.submitPrompt(ws, msg.id, targetPaneId, full, attachments ?? []);
+        await this.submitPrompt(ws, msg.id, targetPaneId, full, { text, attachments: attachments ?? [] });
         return;
       }
 
@@ -278,7 +303,7 @@ export class WsServer {
         if (!this.requireKnownPane(ws, msg.id, targetPaneId)) return;
         const kind = this.herdrClient.getPaneAgentKind(targetPaneId);
         const recipe = kind ? getAgentRecipe(kind) : undefined;
-        const models = recipe?.models() ?? [];
+        const models = kind ? this.modelCatalog.models(kind) : [];
         const commands: string[] = [];
         if (modelId) {
           if (!recipe?.runtimeModelCommand || !models.some((m) => m.id === modelId)) {
@@ -296,14 +321,14 @@ export class WsServer {
           }
           commands.push(recipe.runtimeThinkingCommand(thinking));
         }
-        for (const [i, text] of commands.entries()) await this.submitPrompt(ws, i === commands.length - 1 ? msg.id : null, targetPaneId, text, []);
+        for (const [i, text] of commands.entries()) await this.submitPrompt(ws, i === commands.length - 1 ? msg.id : null, targetPaneId, text, { text, attachments: [] });
         return;
       }
 
       case "queue_cancel": {
         const { targetPaneId, queueId } = msg.payload;
         const queue = this.queues.get(targetPaneId) ?? [];
-        const idx = queue.findIndex((q) => q.queueId === queueId);
+        const idx = queue.findIndex((q) => q.item.queueId === queueId);
         if (idx === -1) {
           this.sendError(ws, msg.id, ProtocolErrors.ERR_NOT_FOUND, "That prompt is no longer queued.");
           return;
@@ -311,6 +336,12 @@ export class WsServer {
         queue.splice(idx, 1);
         this.sendQueue(targetPaneId);
         this.sendAck(ws, msg.id, { queueId });
+        return;
+      }
+
+      case "models_refresh": {
+        await this.refreshModels();
+        this.sendAck(ws, msg.id, { recipes: this.recipeSummaries() });
         return;
       }
 
@@ -406,7 +437,7 @@ export class WsServer {
           this.sendError(ws, msg.id, ProtocolErrors.ERR_INVALID_PAYLOAD, `Unknown agent kind '${agentKind}'`);
           return;
         }
-        const model = modelId ? recipe.models().find((m) => m.id === modelId) : undefined;
+        const model = modelId ? this.modelCatalog.models(recipe.kind).find((m) => m.id === modelId) : undefined;
         if (modelId && !model) {
           this.sendError(ws, msg.id, ProtocolErrors.ERR_INVALID_PAYLOAD, `Unknown model '${modelId}' for ${agentKind}`);
           return;
@@ -474,7 +505,7 @@ export class WsServer {
     this.send(ws, { type: "normalized_turns", payload: this.paneStore.getPayload(paneId, this.herdrClient.getPaneAgentKind(paneId)) });
 
     this.sendSkills(ws, paneId);
-    this.send(ws, { type: "prompt_queue", payload: { paneId, items: this.queues.get(paneId) ?? [] } });
+    this.send(ws, { type: "prompt_queue", payload: { paneId, items: (this.queues.get(paneId) ?? []).map((q) => q.item) } });
     // The cached state renders at once; the fresh read reaches this subscriber as a `cards_updated`
     // pane_state only when the screen changed, so the client never gets the same state twice.
     const cached = this.herdrClient.getPaneState(paneId);
@@ -492,7 +523,8 @@ export class WsServer {
 
   /**
    * agent-session-normalization.md §2.0: rule 1 (exact) first, then a resumed or already-bound pane
-   * keeps its session (rules 5, 6), then unbound panes take the newest unclaimed session (rule 2).
+   * keeps its session (rules 5, 6), then unbound panes take the newest unclaimed session (rule 2), and
+   * last a kept pane moves to a newer unclaimed session of its folder (rule 6: `/clear`, `/new`).
    */
   private rebindSessions(): void {
     const panes = this.herdrClient
@@ -509,18 +541,30 @@ export class WsServer {
       result.set(p.paneId, id);
       return true;
     };
+    const claimedOf = (agent: string) => new Set([...claimed].filter((k) => k.startsWith(agent + "|")).map((k) => k.slice(agent.length + 1)));
     for (const p of panes) take(p, this.agentAdapters.exactSession(factsOf(p)));
+    const kept: typeof panes = [];
     for (const p of panes) {
       const launch = this.paneStore.getLaunch(p.paneId);
-      if (launch?.resumeSessionId && launch.agent === p.facts.agentKind) take(p, launch.resumeSessionId);
       const bound = this.paneStore.boundSession(p.paneId);
-      if (bound?.agent === p.facts.agentKind) take(p, bound.sessionId);
+      if (launch?.resumeSessionId && launch.agent === p.facts.agentKind && take(p, launch.resumeSessionId)) kept.push(p);
+      else if (bound?.agent === p.facts.agentKind && take(p, bound.sessionId)) kept.push(p);
     }
     for (const p of panes) {
       if (result.has(p.paneId)) continue;
+      take(p, this.agentAdapters.newestSession(factsOf(p), claimedOf(p.facts.agentKind!)));
+    }
+    for (const p of kept) {
       const agent = p.facts.agentKind!;
-      const exclude = new Set([...claimed].filter((k) => k.startsWith(agent + "|")).map((k) => k.slice(agent.length + 1)));
-      take(p, this.agentAdapters.newestSession(factsOf(p), exclude));
+      const current = result.get(p.paneId)!;
+      const candidate = this.agentAdapters.newestSession(factsOf(p), claimedOf(agent));
+      if (!candidate) continue;
+      const since = this.agentAdapters.lastWritten(agent, current);
+      const written = this.agentAdapters.lastWritten(agent, candidate);
+      if (written === null || (since !== null && written <= since)) continue;
+      claimed.delete(keyOf(agent, current));
+      claimed.add(keyOf(agent, candidate));
+      result.set(p.paneId, candidate);
     }
     for (const p of panes) {
       const id = result.get(p.paneId);
@@ -542,17 +586,17 @@ export class WsServer {
   }
 
   /** Queues while the agent works or others wait; sends otherwise (protocol.md §4.2). */
-  private async submitPrompt(ws: Ws, replyTo: string | null, paneId: string, text: string, attachments: string[]): Promise<void> {
+  private async submitPrompt(ws: Ws, replyTo: string | null, paneId: string, send: string, shown: { text: string; attachments: string[] }): Promise<void> {
     const queue = this.queues.get(paneId) ?? [];
     if (this.herdrClient.getPaneHerdrStatus(paneId) === "working" || queue.length > 0 || this.flushing.has(paneId)) {
-      const item: QueuedPrompt = { queueId: `q_${randomBytes(6).toString("hex")}`, text, attachments, createdAt: Date.now() };
-      queue.push(item);
+      const item: QueuedPrompt = { queueId: `q_${randomBytes(6).toString("hex")}`, ...shown, createdAt: Date.now() };
+      queue.push({ item, send });
       this.queues.set(paneId, queue);
       this.sendQueue(paneId);
       if (replyTo) this.sendAck(ws, replyTo, { queued: true, queueId: item.queueId });
       return;
     }
-    await this.herdrClient.sendPrompt(paneId, text);
+    await this.herdrClient.sendPrompt(paneId, send);
     if (replyTo) this.sendAck(ws, replyTo, { queued: false });
   }
 
@@ -560,11 +604,11 @@ export class WsServer {
   private async flushQueue(paneId: string): Promise<void> {
     const queue = this.queues.get(paneId);
     if (!queue?.length || this.flushing.has(paneId)) return;
-    const item = queue.shift()!;
+    const { item, send } = queue.shift()!;
     this.flushing.add(paneId);
     this.sendQueue(paneId);
     try {
-      await this.herdrClient.sendPrompt(paneId, item.text);
+      await this.herdrClient.sendPrompt(paneId, send);
     } catch (err) {
       const code = err instanceof HerdrError ? HERDR_ERROR_MAP[err.code] || ProtocolErrors.ERR_INTERNAL : ProtocolErrors.ERR_INTERNAL;
       if (!(err instanceof HerdrError)) console.error(`[pigeon] sending queued prompt to ${paneId} failed:`, err);
@@ -578,7 +622,7 @@ export class WsServer {
   }
 
   private sendQueue(paneId: string): void {
-    this.sendToSubscribers(paneId, { type: "prompt_queue", payload: { paneId, items: this.queues.get(paneId) ?? [] } });
+    this.sendToSubscribers(paneId, { type: "prompt_queue", payload: { paneId, items: (this.queues.get(paneId) ?? []).map((q) => q.item) } });
   }
 
   private requireKnownPane(ws: Ws, replyTo: string, paneId: string): boolean {

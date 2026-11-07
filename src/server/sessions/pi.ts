@@ -4,6 +4,10 @@ import type { PastSession } from "../../types/protocol";
 import { isObj, JsonlTail, lineDiff, readHeadJsonLines, str, TurnBuilder, tsOf, type SessionRead } from "./common";
 import type { PaneFacts, SessionSource } from "./source";
 
+function mtimeOf(path: string | undefined): number | null {
+  return path && existsSync(path) ? statSync(path).mtimeMs : null;
+}
+
 /** Pi (`agent-session-normalization.md` §2.5). Session ids are file names without `.jsonl`. */
 export class PiSource implements SessionSource {
   public readonly agent = "pi";
@@ -26,6 +30,17 @@ export class PiSource implements SessionSource {
       .filter((f) => f.endsWith(".jsonl"))
       .map((f) => ({ id: f.slice(0, -".jsonl".length), path: join(dir, f), mtime: statSync(join(dir, f)).mtimeMs }))
       .sort((a, b) => b.mtime - a.mtime);
+  }
+
+  public sessionOfFile(path: string): string | null {
+    if (!path.startsWith(this.root + "/") || !path.endsWith(".jsonl")) return null;
+    const id = path.slice(path.lastIndexOf("/") + 1, -".jsonl".length);
+    this.paths.set(id, path);
+    return id;
+  }
+
+  public lastWritten(sessionId: string): number | null {
+    return mtimeOf(this.paths.get(sessionId));
   }
 
   public newest(facts: PaneFacts, exclude: Set<string>): string | null {
@@ -86,12 +101,17 @@ function blocksText(content: unknown): string {
 }
 
 function applyRecord(b: TurnBuilder, r: unknown): void {
+  // §2.5: the model in use, as `<provider>/<id>` like the model catalog (herdr-adapter.md §7.1).
+  if (isObj(r) && r.type === "model_change" && str(r.provider) && str(r.modelId)) b.model = `${r.provider}/${r.modelId}`;
   if (!isObj(r) || r.type !== "message" || !isObj(r.message)) return;
   const m = r.message;
   const ts = tsOf(r.timestamp ?? m.timestamp, Date.now());
   if (m.role === "user") {
     const text = blocksText(m.content);
-    if (text) b.prompt(text, ts);
+    if (text) {
+      b.prompt(text, ts);
+      b.title ??= text.slice(0, 120); // §2.5: pi keeps no title of its own
+    }
     return;
   }
   if (m.role === "toolResult") {
@@ -100,6 +120,7 @@ function applyRecord(b: TurnBuilder, r: unknown): void {
     return;
   }
   if (m.role !== "assistant" || !Array.isArray(m.content)) return;
+  if (str(m.provider) && str(m.model)) b.model = `${m.provider}/${m.model}`;
   for (const block of m.content) {
     if (!isObj(block)) continue;
     if (block.type === "text") b.text(str(block.text) ?? "", ts);

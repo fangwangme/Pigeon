@@ -110,6 +110,11 @@ export const zh: Messages = {
   "model.sourceUnknown": "未知",
   "model.switchSent": "已发送切换到 {value}",
   "model.switchFailed": "切换失败",
+  "model.search": "搜索模型",
+  "model.refresh": "刷新",
+  "model.refreshing": "刷新中…",
+  "model.refreshFailed": "刷新模型列表失败",
+  "composer.attachment": "附件",
 
   "new.title": "新会话",
   "new.listFailed": "读取历史会话失败",
@@ -172,6 +177,8 @@ export const zh: Messages = {
   "session.queued": "排队中，这一轮结束后发送",
   "session.undoFailed": "撤销失败",
   "session.undo": "撤销",
+  "session.edit": "编辑",
+  "session.alreadySent": "已经发出，无法编辑",
   "session.jump": "到最新",
 
   "settings.title": "设置",

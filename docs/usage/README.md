@@ -49,7 +49,7 @@ How to set up Pigeon for daily use, manage paired phones, and ship changes to yo
    systemctl --user enable --now pigeon
    journalctl --user -u pigeon -f   # follow daemon logs
    ```
-5. Pair your phone: run `pigeon pair` in a terminal and scan the QR code with Chrome on the phone. Once paired, open Chrome's menu and choose **Add to Home screen** to install the PWA.
+5. Pair your phone: run `pigeon pair` in a terminal and scan the QR code with the phone's browser. To install the PWA: on Android, open Chrome's menu and choose **Add to Home screen**; on iOS (Safari or Chrome), tap the **Share** button and choose **Add to Home Screen**.
 
 ## Paired devices
 

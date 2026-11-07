@@ -96,6 +96,9 @@ export function validateClientMessage(raw: unknown): ValidationResult {
     case "queue_cancel":
       if (!isObj(p) || !isStr(p.targetPaneId) || !isStr(p.queueId, 64)) return fail(id, "queue_cancel needs targetPaneId and queueId");
       return ok();
+    case "models_refresh":
+      if (!isObj(p)) return fail(id, "models_refresh needs a payload object");
+      return ok();
     case "skills_get":
     case "config_get":
     case "devices_list":
