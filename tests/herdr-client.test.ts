@@ -122,6 +122,25 @@ describe("screen reads (herdr-adapter.md §3.3)", () => {
       { terminal: "t1", lines: 0 },
     ]);
   });
+
+  test("a history read that times out falls back to the screen at once and reads only the screen from then on", async () => {
+    const fast = new HerdrClient({ appSocketPath: herdr.appSocketPath, coreSocketPath: herdr.coreSocketPath, requestTimeoutMs: 30, panePollMs: 60_000 });
+    try {
+      fast.applySnapshot(topologyOf([{ paneId: "t1" }]));
+      herdr.handlers["terminal.read"] = (params: any) =>
+        params.lines > 0 ? "no-reply" : { result: { text: "$ visible\n", complete: true, how: "screen" } };
+      const first = await fast.readAndClassifyPane("t1");
+      expect(first.rawScreen).toBe("$ visible\n");
+      await fast.readAndClassifyPane("t1");
+      expect(herdr.callsOf("terminal.read").map((c) => c.params)).toEqual([
+        { terminal: "t1", lines: 200 },
+        { terminal: "t1", lines: 0 },
+        { terminal: "t1", lines: 0 },
+      ]);
+    } finally {
+      fast.disconnect();
+    }
+  });
 });
 
 describe("prompting and answering (herdr-adapter.md §6)", () => {

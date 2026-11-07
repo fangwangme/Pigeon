@@ -32,6 +32,7 @@ export interface HerdrClientOptions {
   coreSocketPath: string;
   debounceMs?: number;
   panePollMs?: number;
+  requestTimeoutMs?: number;
 }
 
 /**
@@ -86,6 +87,7 @@ export class HerdrClient extends EventEmitter {
   private coreSocketPath: string;
   private debounceMs: number;
   private panePollMs: number;
+  private requestTimeoutMs: number;
   private subSocket: Socket | null = null;
   private reachable: Record<Channel, boolean> = { app: false, core: false };
   private connected = false;
@@ -125,6 +127,7 @@ export class HerdrClient extends EventEmitter {
     this.coreSocketPath = options.coreSocketPath;
     this.debounceMs = options.debounceMs ?? 200;
     this.panePollMs = options.panePollMs ?? 1000;
+    this.requestTimeoutMs = options.requestTimeoutMs ?? REQUEST_TIMEOUT_MS;
   }
 
   public async connect(): Promise<void> {
@@ -287,7 +290,7 @@ export class HerdrClient extends EventEmitter {
 
       const timer = setTimeout(() => {
         finish(new HerdrError("timeout", `Herdr ${channel} request ${label} timed out`));
-      }, REQUEST_TIMEOUT_MS);
+      }, this.requestTimeoutMs);
       this.pendingRequests.add(finish);
 
       const parse = () => {
@@ -640,7 +643,17 @@ export class HerdrClient extends EventEmitter {
       if (previous) await previous.catch(() => undefined); // its failure is reported by its own caller
       // herdr-adapter.md §3.3: history reads scroll a full-screen program on the desktop.
       const lines = this.fullScreenPanes.has(paneId) ? 0 : READ_LINES;
-      const res = await this.coreRequest<HerdrCoreReadResult>("terminal.read", { terminal: paneId, lines });
+      let res: HerdrCoreReadResult;
+      try {
+        res = await this.coreRequest<HerdrCoreReadResult>("terminal.read", { terminal: paneId, lines });
+      } catch (err) {
+        if (lines > 0 && err instanceof HerdrError && err.code === "timeout") {
+          this.fullScreenPanes.add(paneId);
+          res = await this.coreRequest<HerdrCoreReadResult>("terminal.read", { terminal: paneId, lines: 0 });
+        } else {
+          throw err;
+        }
+      }
       if (res.how === "stitched") this.fullScreenPanes.add(paneId);
       return this.applyScreen(paneId, res.text);
     })();
@@ -722,7 +735,7 @@ export class HerdrClient extends EventEmitter {
   ): Promise<{ tabId: string; paneId: string }> {
     const recipe = getAgentRecipe(agentKind)!;
     const argv = recipe.command
-      ? [recipe.command, ...recipe.launchArgs({ modelId: options.modelId, thinking: options.thinking, resume: options.resume })]
+      ? [recipe.command, ...recipe.launchArgs({ modelId: options.modelId, thinking: options.thinking, resume: options.resume, firstMessage: options.firstMessage })]
       : null;
     const folder = options.cwd ?? this.workspaceFolders.get(workspaceId);
     const firstLine = options.firstMessage?.split("\n").map((l) => l.trim()).find(Boolean);
@@ -733,7 +746,7 @@ export class HerdrClient extends EventEmitter {
         name: firstLine ? firstLine.slice(0, 40) : recipe.label,
         ...(folder ? { folder } : {}),
         ...(argv ? { argv } : {}),
-        ...(options.firstMessage ? { task: options.firstMessage } : {}),
+        ...(options.firstMessage && !recipe.promptInArgv ? { task: options.firstMessage } : {}),
       },
     });
     const paneId = created.terminal;

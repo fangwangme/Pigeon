@@ -14,7 +14,9 @@ export interface AgentRecipe {
   defaultModel?: string;
   defaultThinking?: string;
   /** `resume` is the value the resume argument takes (`herdr-adapter.md` §5); set only when `resumable`. */
-  launchArgs(options?: { modelId?: string; thinking?: string; resume?: string }): string[];
+  launchArgs(options?: { modelId?: string; thinking?: string; resume?: string; firstMessage?: string }): string[];
+  /** True when the CLI takes the first message via its own flag in `argv` instead of Herdr's positional `task` (`herdr-adapter.md` §5). */
+  promptInArgv?: true;
   interruptKeys: string[];
   resumable: boolean;
   /** False when the agent takes no model at launch (`herdr-adapter.md` §5). */
@@ -64,8 +66,13 @@ const AGENT_RECIPES: Record<string, AgentRecipe> = {
     label: "Antigravity",
     command: "agy",
     launchArgs(o) {
-      return [...(o?.modelId ? ["--model", o.modelId] : []), ...(o?.thinking ? ["--effort", o.thinking] : [])];
+      return [
+        ...(o?.modelId ? ["--model", o.modelId] : []),
+        ...(o?.thinking ? ["--effort", o.thinking] : []),
+        ...(o?.firstMessage ? ["-i", o.firstMessage] : []),
+      ];
     },
+    promptInArgv: true,
     interruptKeys: ["esc"],
     resumable: false,
     mentionPrefix: "@",
@@ -74,7 +81,10 @@ const AGENT_RECIPES: Record<string, AgentRecipe> = {
     kind: "opencode",
     label: "OpenCode",
     command: "opencode",
-    launchArgs: (o) => (o?.resume ? ["--session", o.resume] : []),
+    launchArgs(o) {
+      return [...(o?.resume ? ["--session", o.resume] : []), ...(o?.firstMessage ? ["--prompt", o.firstMessage] : [])];
+    },
+    promptInArgv: true,
     launchModel: false,
     interruptKeys: ["esc"],
     resumable: true,
