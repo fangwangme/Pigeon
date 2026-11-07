@@ -41,6 +41,12 @@ describe("snapshot (herdr-adapter.md §3.1)", () => {
     expect(snap.workspaces[0].tabs[0].label).toBe("Codex");
   });
 
+  test("a tab with a bound session title uses that title over the recipe label or tab index", () => {
+    client.setSessionTitleSource((paneId) => (paneId === "t1" ? "AI Renamed Feature Task" : undefined));
+    const snap = client.applySnapshot(topologyOf([{ paneId: "t1", app: "claude-code" }]));
+    expect(snap.workspaces[0].tabs[0].label).toBe("AI Renamed Feature Task");
+  });
+
   test("a terminal the App shows but the Core does not list has no agent and status unknown", () => {
     const topology = topologyOf([{ paneId: "t1", app: "claude-code" }]);
     topology.terminals = [];
