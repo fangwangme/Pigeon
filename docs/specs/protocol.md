@@ -85,7 +85,7 @@ Every command except `ping` and `presence_update` carries a string `id`. Success
 ```
 - `text` may be empty only when `attachments` is not. `attachments` holds at most 10 upload ids from §7. An id the daemon does not know is `ERR_INVALID_PAYLOAD`, and nothing is sent.
 - **Attachments**: the daemon appends one line per attachment after a blank line: the file's absolute path, prefixed with the recipe's file-mention prefix (`@` for claude, opencode, pi and agy; none for codex and a plain terminal).
-- **Queue**: when the pane's Herdr status is `working`, or the pane already has queued prompts, the prompt is queued instead of sent (user decision, 2026-11-06). The ack carries `{ "queued": true, "queueId": "q_…" }`, and every viewer of the pane gets `prompt_queue` (§5.8). When the pane's status next becomes `idle` or `done`, the daemon sends the oldest queued prompt; the next one waits for the next `idle` or `done`. A queued prompt that fails to send is dropped from the queue and reported to the viewers as `error` with that prompt's `queueId` in `details`. The prompt queue is persisted to disk on each change (`queue.json` or `queue-<port>.json`) and restored on daemon restart; closing the pane drops its queue.
+- **Queue**: when the pane's Herdr status is `working`, or the pane already has queued prompts, the prompt is queued instead of sent (user decision, 2026-11-06). The ack carries `{ "queued": true, "queueId": "q_…" }`, and every viewer of the pane gets `prompt_queue` (§5.8). When the pane's status next becomes `idle` or `done`, the daemon sends the oldest queued prompt, marking it `sending: true` in `prompt_queue`. The prompt remains in `prompt_queue` in the `sending` state until a new user turn appears in this pane's transcript, or sending fails, or a safety timeout (30 seconds) expires. While in `sending` state, client edits and cancels respond with `ERR_NOT_FOUND`. A queued prompt that fails to send is dropped from the queue and reported to the viewers as `error` with that prompt's `queueId` in `details`. The prompt queue is persisted to disk on each change (`queue.json` or `queue-<port>.json`) and restored on daemon restart; closing the pane drops its queue.
 - **Immediate send**: otherwise the server calls Herdr Core's `terminal.send`, which pastes the text and presses Enter, for agents and plain shells alike, and acks `{ "queued": false }`. Herdr's `blocked` surfaces as `ERR_AGENT_BLOCKED`, `unavailable` as `ERR_AGENT_NOT_READY`, and a timed-out request as `ERR_TIMEOUT` (`herdr-adapter.md` §6).
 - Agent slash commands (`/compact`, a skill's invocation) are ordinary prompt text.
 
@@ -159,13 +159,13 @@ The ack carries `{ "sessions": [ { "id", "title", "updatedAt" } ] }`: the agent'
 ```json
 { "type": "queue_cancel", "id": "cli_17", "payload": { "targetPaneId": "w1:p2", "queueId": "q_1a2b3c" } }
 ```
-Removes the prompt from the pane's queue and sends `prompt_queue` to the viewers. A `queueId` that is no longer queued (it was already sent, or the queue was dropped) is `ERR_NOT_FOUND`.
+Removes the prompt from the pane's queue and sends `prompt_queue` to the viewers. A `queueId` that is no longer queued or is currently in `sending` state is `ERR_NOT_FOUND`.
 
 ### 4.14 Update a Queued Prompt (`queue_update`)
 ```json
 { "type": "queue_update", "id": "cli_18", "payload": { "targetPaneId": "w1:p2", "queueId": "q_1a2b3c", "text": "updated prompt", "attachments": ["up_0000000000000001"] } }
 ```
-Updates the text and attachments of an existing queued prompt in-place, preserving its exact queue index and order. Rebroadcasts `prompt_queue` to the viewers. A `queueId` that is no longer queued (it was already sent, or cancelled) responds with `ERR_NOT_FOUND`.
+Updates the text and attachments of an existing queued prompt in-place, preserving its exact queue index and order. Rebroadcasts `prompt_queue` to the viewers. A `queueId` that is no longer queued or is currently in `sending` state responds with `ERR_NOT_FOUND`.
 
 ### 4.15 Refresh Model Lists (`models_refresh`)
 ```json
@@ -335,9 +335,9 @@ Each recipe summary also carries `resumable` (the recipe can resume a session), 
 
 ### 5.8 Queue (`prompt_queue`)
 ```json
-{ "type": "prompt_queue", "payload": { "paneId": "w1:p2", "items": [ { "queueId": "q_1a2b3c", "text": "also run lint", "attachments": [], "createdAt": 1729650000000 } ] } }
+{ "type": "prompt_queue", "payload": { "paneId": "w1:p2", "items": [ { "queueId": "q_1a2b3c", "text": "also run lint", "attachments": [], "createdAt": 1729650000000, "sending": false } ] } }
 ```
-The pane's whole queue, oldest first. Sent on pane selection (§3.3) and to the pane's viewers whenever its queue changes. An item's `text` and `attachments` are what the phone sent (its own text and upload ids), so a withdrawn prompt can go back into the composer (`mobile-ui-and-themes.md` §3.5); the prompt that reaches the agent is composed from them as in §4.2.
+The pane's whole queue, oldest first. Sent on pane selection (§3.3) and to the pane's viewers whenever its queue changes. An item's `text` and `attachments` are what the phone sent (its own text and upload ids), so a withdrawn prompt can go back into the composer (`mobile-ui-and-themes.md` §3.5); the prompt that reaches the agent is composed from them as in §4.2. `sending: true` indicates that the prompt has been dispatched to the terminal and is awaiting detection as a user turn in the agent session.
 
 ### 5.9 Recipes (`recipes_sync`)
 ```json

@@ -85,7 +85,7 @@ function App() {
     });
     await checkPairingFromUrlHash();
     if (state.activePaneId) {
-      void selectPane(state.activePaneId);
+      await selectPane(state.activePaneId);
     }
     await initWebSocket();
     registerServiceWorker();

@@ -340,6 +340,7 @@ export interface QueuedPrompt {
   text: string;
   attachments: string[];
   createdAt: number;
+  sending?: boolean;
 }
 
 export interface PromptQueuePayload {

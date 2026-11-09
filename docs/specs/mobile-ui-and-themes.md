@@ -58,11 +58,10 @@ A sheet shared by §2.1 and §2.2: status (等待你, 工作中, 已完成, 空�
 - **Restore**: opening a pane shows its cached transcript immediately if the entry's `sessionId` is the pane's current session as far as the client knows. While cached content is on screen, the header shows a "syncing" indicator (small spinner and "同步中 / Syncing" text). It clears when the server's first answer for that pane (`normalized_turns` or the resume `turns_delta`) arrives. The cache survives reloads; a pane opened after a reload is restored from it.
 - **Invalidation**: the server's answer names a different `sessionId`, or `session.bound` is false → the cached entry is deleted and the fresh data shown.
 - **Writes**, and only these:
+  - after `normalized_turns` and after `turns_delta`, debounced (250–500ms), saving the latest turns together with the pane's current prompt queue;
   - when leaving a pane;
-  - on `visibilitychange` to `hidden` and on `pagehide`;
-  - when the active pane's `agentStatus` leaves `working` (end of a streamed answer);
-  - after a full `normalized_turns`.
-  No write per `turns_delta`.
+  - on `visibilitychange` to `hidden` and on `pagehide` (flushing any pending debounced write immediately);
+  - when the active pane's `agentStatus` leaves `working` (end of a streamed answer).
 
 ### 3.2 Messages
 - A user message is a right-aligned bubble; attachments show as thumbnails above it.
@@ -89,7 +88,7 @@ When the session has a todo list (`agent-session-normalization.md` §3), a capsu
 - New content scrolls the page to the bottom only when the page was within 40 px of the bottom. Otherwise a round ↓ button appears above the composer and scrolls to the newest message.
 
 ### 3.6 Screen-card fallback
-A pane with an agent but no bound session shows the classified screen cards (`herdr-adapter.md` §8.1) in the same message style: markdown text, tool lines, diffs, thoughts.
+A pane with an agent but no bound session shows the classified screen cards (`herdr-adapter.md` §8.1) in the same message style: markdown text, tool lines, diffs, thoughts. While waiting for the initial screen data (`!paneLoaded`), the view displays "正在读取这个 pane… / Reading this pane…". Once the initial screen state has loaded and no cards could be classified, the view displays the terminal raw screen fallback or an empty-session state ("无结构化会话") with an "打开终端 / Open terminal" button, rather than continuing to display "Reading this pane…".
 
 ## 4. Prompt cards
 

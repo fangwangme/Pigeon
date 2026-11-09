@@ -86,6 +86,14 @@ describe("prompt queue (protocol.md §4.2, §4.13, §5.8)", () => {
     herdr.emitEvent("status", "p1", { status: { state: "idle", app: "claude-code" } });
     await until(() => herdr.callsOf("terminal.send").length === 1);
     expect(herdr.callsOf("terminal.send")[0].params).toEqual({ terminal: "p1", text: "also run lint" });
+    expect(c.ofType("prompt_queue").at(-1).payload.items[0]).toMatchObject({ text: "also run lint", sending: true });
+
+    server.paneStore.emit("turns_delta", {
+      paneId: "p1",
+      seqWatermark: 1,
+      sinceTurnIndex: 0,
+      appendTurns: [{ turnId: "t1", turnNumber: 1, timestamp: Date.now(), userPrompt: { text: "also run lint" } }],
+    });
     await until(() => c.ofType("prompt_queue").at(-1).payload.items.length === 0);
   });
 
@@ -98,10 +106,53 @@ describe("prompt queue (protocol.md §4.2, §4.13, §5.8)", () => {
     await until(() => herdr.callsOf("terminal.send").length === 1);
     await Bun.sleep(50);
     expect(herdr.callsOf("terminal.send").map((x) => x.params.text)).toEqual(["one"]);
+
+    server.paneStore.emit("turns_delta", {
+      paneId: "p1",
+      seqWatermark: 1,
+      sinceTurnIndex: 0,
+      appendTurns: [{ turnId: "t1", turnNumber: 1, timestamp: Date.now(), userPrompt: { text: "one" } }],
+    });
+    await until(() => c.ofType("prompt_queue").at(-1).payload.items.length === 1);
+
     herdr.emitEvent("status", "p1", { status: { state: "working", app: "claude-code" } });
     herdr.emitEvent("status", "p1", { status: { state: "idle", app: "claude-code" } });
     await until(() => herdr.callsOf("terminal.send").length === 2);
     expect(herdr.callsOf("terminal.send")[1].params.text).toBe("two");
+  });
+
+  test("a prompt in sending state returns ERR_NOT_FOUND on queue_cancel and queue_update", async () => {
+    await client.connect();
+    const c = await viewer("p1");
+    await send(c.ws, { type: "agent_prompt", id: "a1", payload: { targetPaneId: "p1", text: "cannot cancel" } });
+    const queueId = lastAck(c).queueId;
+
+    herdr.emitEvent("status", "p1", { status: { state: "idle", app: "claude-code" } });
+    await until(() => herdr.callsOf("terminal.send").length === 1);
+    expect(c.ofType("prompt_queue").at(-1).payload.items[0]).toMatchObject({ queueId, sending: true });
+
+    // Cancel on sending item responds with ERR_NOT_FOUND
+    await send(c.ws, { type: "queue_cancel", id: "qc1", payload: { targetPaneId: "p1", queueId } });
+    expect(lastError(c)).toBe("ERR_NOT_FOUND");
+
+    // Update on sending item responds with ERR_NOT_FOUND
+    await send(c.ws, { type: "queue_update", id: "qu1", payload: { targetPaneId: "p1", queueId, text: "edited" } });
+    expect(lastError(c)).toBe("ERR_NOT_FOUND");
+  });
+
+  test("a sending prompt is removed after timeout when no user turn appears", async () => {
+    await client.connect();
+    const c = await viewer("p1");
+    await send(c.ws, { type: "agent_prompt", id: "a1", payload: { targetPaneId: "p1", text: "times out" } });
+    const queueId = lastAck(c).queueId;
+
+    herdr.emitEvent("status", "p1", { status: { state: "idle", app: "claude-code" } });
+    await until(() => herdr.callsOf("terminal.send").length === 1);
+    expect(c.ofType("prompt_queue").at(-1).payload.items[0]).toMatchObject({ queueId, sending: true });
+
+    // Trigger clearSendingPrompt directly as simulation of timeout
+    (server as any).clearSendingPrompt("p1", queueId);
+    await until(() => c.ofType("prompt_queue").at(-1).payload.items.length === 0);
   });
 
   test("a prompt to an idle agent is sent at once", async () => {

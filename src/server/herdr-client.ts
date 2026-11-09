@@ -52,6 +52,7 @@ type Channel = "app" | "core";
 const UNREACHABLE_CODES = new Set(["ECONNREFUSED", "ENOENT", "ECONNRESET", "EPIPE"]);
 const READ_LINES = 200;
 const REQUEST_TIMEOUT_MS = 8000;
+const HISTORY_READ_TIMEOUT_MS = 2000;
 const SNAPSHOT_RECONCILE_MS = 30000;
 const RECONNECT_MS = 3000;
 const SUBSCRIPTION_ID = "sub-pigeon";
@@ -251,7 +252,7 @@ export class HerdrClient extends EventEmitter {
   }
 
   /** One Herdr Core JSON-RPC request on a fresh connection, never on the subscription socket. */
-  public coreRequest<T = any>(method: string, params: Record<string, any> = {}): Promise<T> {
+  public coreRequest<T = any>(method: string, params: Record<string, any> = {}, timeoutMs?: number): Promise<T> {
     const id = ++this.requestId;
     return this.oneShot("core", JSON.stringify({ jsonrpc: "2.0", id, method, params }), method, (res) => {
       if (res.error) {
@@ -259,7 +260,7 @@ export class HerdrClient extends EventEmitter {
         throw new HerdrError(kind, res.error.message || kind);
       }
       return res.result as T;
-    });
+    }, timeoutMs);
   }
 
   /** One Herdr App socket request (`{"ls":{}}`, `{"do":…}`); the reply is the result itself. */
@@ -271,7 +272,7 @@ export class HerdrClient extends EventEmitter {
     });
   }
 
-  private oneShot<T>(channel: Channel, line: string, label: string, unwrap: (res: any) => T): Promise<T> {
+  private oneShot<T>(channel: Channel, line: string, label: string, unwrap: (res: any) => T, timeoutMs?: number): Promise<T> {
     const socketPath = channel === "app" ? this.appSocketPath : this.coreSocketPath;
     return new Promise((resolve, reject) => {
       let buffer = "";
@@ -290,7 +291,7 @@ export class HerdrClient extends EventEmitter {
 
       const timer = setTimeout(() => {
         finish(new HerdrError("timeout", `Herdr ${channel} request ${label} timed out`));
-      }, this.requestTimeoutMs);
+      }, timeoutMs ?? this.requestTimeoutMs);
       this.pendingRequests.add(finish);
 
       const parse = () => {
@@ -645,7 +646,11 @@ export class HerdrClient extends EventEmitter {
       const lines = this.fullScreenPanes.has(paneId) ? 0 : READ_LINES;
       let res: HerdrCoreReadResult;
       try {
-        res = await this.coreRequest<HerdrCoreReadResult>("terminal.read", { terminal: paneId, lines });
+        res = await this.coreRequest<HerdrCoreReadResult>(
+          "terminal.read",
+          { terminal: paneId, lines },
+          lines > 0 ? Math.min(HISTORY_READ_TIMEOUT_MS, this.requestTimeoutMs) : undefined
+        );
       } catch (err) {
         if (lines > 0 && err instanceof HerdrError && err.code === "timeout") {
           this.fullScreenPanes.add(paneId);

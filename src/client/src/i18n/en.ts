@@ -176,6 +176,8 @@ export const en = {
   "session.fallbackTitle": "Session",
   "session.more": "More",
   "session.loading": "Reading this pane…",
+  "session.noStructuredSession": "No structured session",
+  "session.openTerminal": "Open terminal",
   "session.syncing": "Syncing",
   "session.noMessages": "No messages yet.",
   "session.attachments": { one: "{count} attachment", other: "{count} attachments" },

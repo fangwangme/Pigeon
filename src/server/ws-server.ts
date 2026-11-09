@@ -22,6 +22,7 @@ import {
   type QueuedPrompt,
   type HaveInfo,
   type TurnsDeltaPayload,
+  type NormalizedTurn,
   hashTurn,
 } from "../types/protocol";
 
@@ -98,6 +99,7 @@ export class WsServer {
   private queueFilePath?: string;
   private queues = new Map<string, Array<{ item: QueuedPrompt; send: string }>>();
   private flushing = new Set<string>();
+  private sendingTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
   constructor(options: WsServerOptions) {
     this.buildId = options.buildId;
@@ -120,7 +122,12 @@ export class WsServer {
     this.herdrClient.on("connected", () => this.paneStore.setHerdrStatus(true));
     this.herdrClient.on("disconnected", () => this.paneStore.setHerdrStatus(false));
     this.paneStore.on("upstream_status", (status) => this.broadcast({ type: "upstream_status", payload: status }));
-    this.paneStore.on("turns_delta", (delta) => this.sendToSubscribers(delta.paneId, { type: "turns_delta", payload: delta }));
+    this.paneStore.on("turns_delta", (delta) => {
+      this.sendToSubscribers(delta.paneId, { type: "turns_delta", payload: delta });
+      if (delta.appendTurns && delta.appendTurns.length > 0 && delta.appendTurns.some((t: NormalizedTurn) => !!t.userPrompt)) {
+        this.clearSendingPrompt(delta.paneId);
+      }
+    });
     this.paneStore.on("session_changed", (paneId: string) => {
       this.sendToSubscribers(paneId, { type: "normalized_turns", payload: this.paneStore.getPayload(paneId, this.herdrClient.getPaneAgentKind(paneId)) });
     });
@@ -137,7 +144,18 @@ export class WsServer {
       for (const paneId of this.paneStore.trackedPaneIds()) {
         if (!this.herdrClient.hasPane(paneId)) this.paneStore.closePane(paneId);
       }
-      for (const paneId of Array.from(this.queues.keys())) if (!this.herdrClient.hasPane(paneId)) this.queues.delete(paneId);
+      for (const paneId of Array.from(this.queues.keys())) {
+        if (!this.herdrClient.hasPane(paneId)) {
+          this.queues.delete(paneId);
+          this.flushing.delete(paneId);
+          for (const [key, timer] of Array.from(this.sendingTimers.entries())) {
+            if (key.startsWith(`${paneId}:`)) {
+              clearTimeout(timer);
+              this.sendingTimers.delete(key);
+            }
+          }
+        }
+      }
       this.saveQueues();
       this.rebindSessions();
       this.broadcast({ type: "snapshot_update", payload: snapshot });
@@ -352,7 +370,7 @@ export class WsServer {
         const { targetPaneId, queueId } = msg.payload;
         const queue = this.queues.get(targetPaneId) ?? [];
         const idx = queue.findIndex((q) => q.item.queueId === queueId);
-        if (idx === -1) {
+        if (idx === -1 || queue[idx].item.sending) {
           this.sendError(ws, msg.id, ProtocolErrors.ERR_NOT_FOUND, "That prompt is no longer queued.");
           return;
         }
@@ -368,7 +386,7 @@ export class WsServer {
         if (!this.requireKnownPane(ws, msg.id, targetPaneId)) return;
         const queue = this.queues.get(targetPaneId) ?? [];
         const entry = queue.find((q) => q.item.queueId === queueId);
-        if (!entry) {
+        if (!entry || entry.item.sending) {
           this.sendError(ws, msg.id, ProtocolErrors.ERR_NOT_FOUND, "That prompt is no longer queued.");
           return;
         }
@@ -732,21 +750,58 @@ export class WsServer {
   private async flushQueue(paneId: string): Promise<void> {
     const queue = this.queues.get(paneId);
     if (!queue?.length || this.flushing.has(paneId)) return;
-    const { item, send } = queue.shift()!;
+    const entry = queue[0];
+    if (entry.item.sending) return;
+    entry.item.sending = true;
     this.flushing.add(paneId);
     this.saveQueues();
     this.sendQueue(paneId);
     try {
-      await this.herdrClient.sendPrompt(paneId, send);
+      await this.herdrClient.sendPrompt(paneId, entry.send);
+      this.armSendingCleanup(paneId, entry.item.queueId);
     } catch (err) {
+      this.clearSendingPrompt(paneId, entry.item.queueId);
       const code = err instanceof HerdrError ? HERDR_ERROR_MAP[err.code] || ProtocolErrors.ERR_INTERNAL : ProtocolErrors.ERR_INTERNAL;
       if (!(err instanceof HerdrError)) console.error(`[pigeon] sending queued prompt to ${paneId} failed:`, err);
       this.sendToSubscribers(paneId, {
         type: "error",
-        error: { code, message: err instanceof Error ? err.message : String(err), details: { queueId: item.queueId, paneId } },
+        error: { code, message: err instanceof Error ? err.message : String(err), details: { queueId: entry.item.queueId, paneId } },
       });
-    } finally {
+    }
+  }
+
+  private armSendingCleanup(paneId: string, queueId: string): void {
+    const key = `${paneId}:${queueId}`;
+    if (this.sendingTimers.has(key)) clearTimeout(this.sendingTimers.get(key)!);
+    const timer = setTimeout(() => {
+      this.sendingTimers.delete(key);
+      this.clearSendingPrompt(paneId, queueId);
+    }, 30000);
+    this.sendingTimers.set(key, timer);
+  }
+
+  private clearSendingPrompt(paneId: string, queueId?: string): void {
+    const queue = this.queues.get(paneId);
+    if (!queue) {
       this.flushing.delete(paneId);
+      return;
+    }
+    const idx = queueId ? queue.findIndex((q) => q.item.queueId === queueId) : queue.findIndex((q) => q.item.sending);
+    if (idx !== -1) {
+      const foundQueueId = queue[idx].item.queueId;
+      const key = `${paneId}:${foundQueueId}`;
+      if (this.sendingTimers.has(key)) {
+        clearTimeout(this.sendingTimers.get(key)!);
+        this.sendingTimers.delete(key);
+      }
+      queue.splice(idx, 1);
+      this.saveQueues();
+      this.sendQueue(paneId);
+    }
+    this.flushing.delete(paneId);
+    const status = this.herdrClient.getPaneHerdrStatus(paneId);
+    if (status === "idle" || status === "done") {
+      void this.flushQueue(paneId);
     }
   }
 
@@ -762,7 +817,13 @@ export class WsServer {
       if (typeof data === "object" && data !== null) {
         for (const [paneId, items] of Object.entries(data)) {
           if (Array.isArray(items)) {
-            this.queues.set(paneId, items as Array<{ item: QueuedPrompt; send: string }>);
+            this.queues.set(
+              paneId,
+              (items as Array<{ item: QueuedPrompt; send: string }>).map((entry) => {
+                if (entry?.item) delete entry.item.sending;
+                return entry;
+              })
+            );
           }
         }
       }
@@ -823,6 +884,8 @@ export class WsServer {
   }
 
   public destroy(): void {
+    for (const timer of this.sendingTimers.values()) clearTimeout(timer);
+    this.sendingTimers.clear();
     this.usageService?.destroy();
     this.paneStore.destroy();
   }

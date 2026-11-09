@@ -308,7 +308,17 @@ export function SessionPage() {
                 <>
                   <For each={state.cards}>{(c) => <ScreenCard card={c} />}</For>
                   <Show when={state.cards.length === 0}>
-                    <div class="newempty">{state.connected ? t("session.loading") : t("common.offline")}</div>
+                    <Show
+                      when={state.paneLoaded}
+                      fallback={<div class="newempty">{state.connected ? t("session.loading") : t("common.offline")}</div>}
+                    >
+                      <div class="newempty">
+                        <div style={{ "margin-bottom": "8px" }}>{t("session.noStructuredSession")}</div>
+                        <button class="btn primary" onClick={() => openTerminal()}>
+                          {t("session.openTerminal")}
+                        </button>
+                      </div>
+                    </Show>
                   </Show>
                 </>
               }
@@ -333,20 +343,22 @@ export function SessionPage() {
                 <>
                   <div class="ub q">{q.text || t("session.attachments", { count: q.attachments.length })}</div>
                   <div class="ubm">
-                    {t("session.queued")}
-                    <Show when={composerVisible()}>
-                      <button onClick={() => editQueued(q)}>{t("session.edit")}</button>
+                    {q.sending ? t("common.sending") : t("session.queued")}
+                    <Show when={!q.sending}>
+                      <Show when={composerVisible()}>
+                        <button onClick={() => editQueued(q)}>{t("session.edit")}</button>
+                      </Show>
+                      <button
+                        onClick={() => {
+                          cancelQueuedPromptEdit(q.queueId);
+                          request({ type: "queue_cancel", payload: { targetPaneId: state.activePaneId!, queueId: q.queueId } }).catch((e) =>
+                            showToast(e.message || t("session.undoFailed"))
+                          );
+                        }}
+                      >
+                        {t("session.undo")}
+                      </button>
                     </Show>
-                    <button
-                      onClick={() => {
-                        cancelQueuedPromptEdit(q.queueId);
-                        request({ type: "queue_cancel", payload: { targetPaneId: state.activePaneId!, queueId: q.queueId } }).catch((e) =>
-                          showToast(e.message || t("session.undoFailed"))
-                        );
-                      }}
-                    >
-                      {t("session.undo")}
-                    </button>
                   </div>
                 </>
               )}

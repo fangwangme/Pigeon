@@ -177,6 +177,8 @@ export const zh: Messages = {
   "session.fallbackTitle": "会话",
   "session.more": "更多",
   "session.loading": "正在读取这个 pane…",
+  "session.noStructuredSession": "无结构化会话",
+  "session.openTerminal": "打开终端",
   "session.syncing": "同步中",
   "session.noMessages": "还没有消息。",
   "session.attachments": "{count} 个附件",

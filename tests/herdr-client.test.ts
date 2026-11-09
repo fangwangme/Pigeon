@@ -171,6 +171,31 @@ describe("screen reads (herdr-adapter.md §3.3)", () => {
       fast.disconnect();
     }
   });
+
+  test("history read uses dedicated short timeout (2000ms) rather than full requestTimeoutMs", async () => {
+    const clientWithLongTimeout = new HerdrClient({ appSocketPath: herdr.appSocketPath, coreSocketPath: herdr.coreSocketPath, requestTimeoutMs: 8000, panePollMs: 60_000 });
+    try {
+      clientWithLongTimeout.applySnapshot(topologyOf([{ paneId: "t1" }]));
+      herdr.handlers["terminal.read"] = (params: any) =>
+        params.lines > 0 ? "no-reply" : { result: { text: "$ fallback\n", complete: true, how: "screen" } };
+
+      let recordedTimeout: number | undefined;
+      const origOneShot = (clientWithLongTimeout as any).oneShot.bind(clientWithLongTimeout);
+      (clientWithLongTimeout as any).oneShot = (channel: any, line: any, label: any, unwrap: any, timeoutMs?: number) => {
+        if (line.includes('"lines":200')) {
+          recordedTimeout = timeoutMs;
+          return Promise.reject(new HerdrError("timeout", "history read timed out"));
+        }
+        return origOneShot(channel, line, label, unwrap, timeoutMs);
+      };
+
+      const res = await clientWithLongTimeout.readAndClassifyPane("t1");
+      expect(recordedTimeout).toBe(2000);
+      expect(res.rawScreen).toBe("$ fallback\n");
+    } finally {
+      clientWithLongTimeout.disconnect();
+    }
+  });
 });
 
 describe("prompting and answering (herdr-adapter.md §6)", () => {
