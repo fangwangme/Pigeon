@@ -188,23 +188,38 @@ export class AntigravityQuotaProvider {
           refresh_token: tokenObj.refresh_token,
           grant_type: "refresh_token",
         }),
+        signal: AbortSignal.timeout(10000),
       });
       if (refreshRes.ok) {
         const refreshData = (await refreshRes.json()) as any;
         accessToken = refreshData.access_token;
         const nextExpiry = new Date(this.now() + (refreshData.expires_in || 3600) * 1000).toISOString();
-        const updated = {
-          ...data,
-          token: {
-            ...tokenObj,
-            access_token: accessToken,
-            expiry: nextExpiry,
-            refresh_token: refreshData.refresh_token || tokenObj.refresh_token,
-          },
-        };
-        const tmp = `${p}.${process.pid}.tmp`;
-        writeFileSync(tmp, JSON.stringify(updated, null, 2), { mode: 0o600 });
-        renameSync(tmp, p);
+        // Check if disk file was rotated by CLI during refresh
+        let currentDiskRaw = "";
+        try {
+          currentDiskRaw = readFileSync(p, "utf-8");
+        } catch {}
+        if (currentDiskRaw && currentDiskRaw !== raw) {
+          try {
+            const diskData = JSON.parse(currentDiskRaw);
+            if (diskData?.token?.access_token) {
+              accessToken = diskData.token.access_token;
+            }
+          } catch {}
+        } else {
+          const updated = {
+            ...data,
+            token: {
+              ...tokenObj,
+              access_token: accessToken,
+              expiry: nextExpiry,
+              refresh_token: refreshData.refresh_token || tokenObj.refresh_token,
+            },
+          };
+          const tmp = `${p}.${process.pid}.tmp`;
+          writeFileSync(tmp, JSON.stringify(updated, null, 2), { mode: 0o600 });
+          renameSync(tmp, p);
+        }
       }
     }
 
@@ -216,6 +231,7 @@ export class AntigravityQuotaProvider {
         "User-Agent": "antigravity/hub/2.9.1 linux/amd64",
       },
       body: JSON.stringify({}),
+      signal: AbortSignal.timeout(10000),
     });
     if (!res.ok) return null;
     const body = (await res.json()) as any;

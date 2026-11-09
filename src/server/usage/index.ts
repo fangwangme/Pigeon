@@ -56,6 +56,9 @@ export class UsageService {
       this.backgroundTimer = setInterval(() => {
         void this.scan().catch((err) => console.error("[Pigeon] background usage scan failed:", err));
       }, ms);
+      if (typeof this.backgroundTimer.unref === "function") {
+        this.backgroundTimer.unref();
+      }
       // Trigger non-blocking initial scan if not done yet
       if (!this.hasScannedOnce) {
         void this.scan().catch(() => {});
@@ -72,6 +75,7 @@ export class UsageService {
       clearInterval(this.backgroundTimer);
       this.backgroundTimer = null;
     }
+    this.store.close();
   }
 
   public async scan(): Promise<{ scannedFiles: number; recordsAdded: number }> {
@@ -109,7 +113,9 @@ export class UsageService {
     const nowDt = new Date(this.now());
     const today = `${nowDt.getFullYear()}-${String(nowDt.getMonth() + 1).padStart(2, "0")}-${String(nowDt.getDate()).padStart(2, "0")}`;
 
+    const firstDay = this.store.getFirstDay(req.agents);
     const range = resolveRange(req.preset as UsagePreset, today, {
+      firstDay,
       from: req.from,
       to: req.to,
     });

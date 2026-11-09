@@ -71,6 +71,7 @@ export class ClaudeQuotaProvider {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
+        signal: AbortSignal.timeout(10000),
       });
     } catch (err) {
       throw new Error(`Claude token refresh failed: ${(err as Error).message}`);
@@ -257,6 +258,7 @@ export class ClaudeQuotaProvider {
         "anthropic-beta": "oauth-2025-04-20",
         Accept: "application/json",
       },
+      signal: AbortSignal.timeout(10000),
     });
   }
 }

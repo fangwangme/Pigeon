@@ -368,7 +368,7 @@ export function QuotaPage() {
                             <For each={p.snapshot?.credits}>
                               {(c) => (
                                 <div style={{ display: "flex", color: "var(--muted)", "margin-top": "4px", "font-variant-numeric": "tabular-nums" }}>
-                                  <span style={{ flex: 1 }}>{c.amount}</span>
+                                  <span style={{ flex: 1 }}>{c.label ?? (c.amount != null ? c.amount.toString() : "—")}</span>
                                   <span>{c.expiresAt ? new Date(c.expiresAt).toLocaleDateString() : "—"}</span>
                                 </div>
                               )}

@@ -54,8 +54,10 @@ export function Settings() {
           })
             .then((res: UsageGetPayload) => {
               if (res && res.totals && res.days) {
-                const todayCost = res.days[res.days.length - 1]?.cost ?? 0;
-                setUsageSummaryText(`今日 ${fmtCost(todayCost)} · 近 7 天 ${fmtCost(res.totals.cost)}`);
+                const now = new Date();
+                const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+                const todayCost = res.days.find((d) => d.date === todayStr)?.cost ?? 0;
+                setUsageSummaryText(t("settings.usageSummary", { today: fmtCost(todayCost), week: fmtCost(res.totals.cost) }));
               }
             })
             .catch(() => {});
@@ -74,7 +76,8 @@ export function Settings() {
       const w = snap.windows[0];
       const name = pKey === "claude" ? "Claude 5h" : pKey === "codex" ? "Codex" : "Antigravity";
       const pct = Math.round(used ? w.usedPercent : Math.max(0, 100 - w.usedPercent));
-      items.push(`${name} ${used ? "用" : "剩"} ${pct}%`);
+      const remOrUsed = used ? t("settings.quotaUsedSummary", { pct: pct.toString() }) : t("settings.quotaRemSummary", { pct: pct.toString() });
+      items.push(`${name} ${remOrUsed}`);
     }
     return items.length ? items.join(" · ") : "—";
   };

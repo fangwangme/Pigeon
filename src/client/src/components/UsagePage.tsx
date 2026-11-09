@@ -386,7 +386,7 @@ export function UsagePage() {
         if (currentWeekCells.length === 7) {
           let monthLabel = "";
           for (const d of currentWeekDays) {
-            if (d.getDate() === 1) {
+            if (d >= startDt && d <= endDt && d.getDate() === 1) {
               monthLabel = formatMonthName(d.getMonth());
               break;
             }
@@ -432,7 +432,7 @@ export function UsagePage() {
       if (currentWeekCells.length === 7) {
         let monthLabel = "";
         for (const d of currentWeekDays) {
-          if (d.getDate() === 1) {
+          if (d >= startDt && d <= endDt && d.getDate() === 1) {
             monthLabel = formatMonthName(d.getMonth());
             break;
           }

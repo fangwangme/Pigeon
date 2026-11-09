@@ -12,7 +12,7 @@ import type {
   UsageModelSummary,
   UsageTotals,
 } from "../../types/protocol";
-import { comparisonRange, daysBetween, addDays, type UsagePreset } from "../../shared/usage";
+import { comparisonRange, daysBetween, addDays, resolveRange, type UsagePreset } from "../../shared/usage";
 import { canonical, detectCompany, resolveAntigravityModel } from "./model-id";
 import { PricingManager, type ModelPrice } from "./pricing";
 import {
@@ -130,19 +130,7 @@ export class UsageStore {
     const defaultDataDir = process.env.XDG_DATA_HOME ? join(process.env.XDG_DATA_HOME, "pigeon") : join(this.home, ".local", "share", "pigeon");
     const pigeonAgyCacheDir = join(defaultDataDir, "antigravity-cache");
     const pigeonAgyCacheDb = join(pigeonAgyCacheDir, "cache.db");
-    const tokenpulseAgyCacheDb = join(this.home, ".local", "share", "tokenpulse", "antigravity-cache", "cache.db");
-    let agyCachePath: string | null = null;
-    if (existsSync(pigeonAgyCacheDb)) {
-      agyCachePath = pigeonAgyCacheDb;
-    } else if (existsSync(tokenpulseAgyCacheDb)) {
-      try {
-        mkdirSync(pigeonAgyCacheDir, { recursive: true });
-        copyFileSync(tokenpulseAgyCacheDb, pigeonAgyCacheDb);
-        agyCachePath = pigeonAgyCacheDb;
-      } catch {
-        agyCachePath = tokenpulseAgyCacheDb;
-      }
-    }
+    const agyCachePath: string | null = existsSync(pigeonAgyCacheDb) ? pigeonAgyCacheDb : null;
 
     const opencodeDataDir = process.env.XDG_DATA_HOME ? join(process.env.XDG_DATA_HOME, "opencode") : join(this.home, ".local", "share", "opencode");
     const opencodeFiles = findFilesRecursive(opencodeDataDir, ".db").filter((f) => !f.endsWith("-wal") && !f.endsWith("-shm") && !f.endsWith("-journal"));
@@ -246,8 +234,19 @@ export class UsageStore {
         continue;
       }
 
+      let fingerprintMtime = Math.floor(st.mtimeMs);
+      let fingerprintSize = st.size;
+      const walPath = `${item.path}-wal`;
+      if (existsSync(walPath)) {
+        try {
+          const walSt = statSync(walPath);
+          fingerprintMtime = Math.max(fingerprintMtime, Math.floor(walSt.mtimeMs));
+          fingerprintSize += walSt.size;
+        } catch {}
+      }
+
       const existing: any = getFileState.get(item.path);
-      if (existing && existing.mtime_ms === Math.floor(st.mtimeMs) && existing.size_bytes === st.size) {
+      if (existing && existing.mtime_ms === fingerprintMtime && existing.size_bytes === fingerprintSize) {
         continue;
       }
 
@@ -279,7 +278,7 @@ export class UsageStore {
         recordsAdded += rawRecords.length;
       }
 
-      setFileState.run(item.path, Math.floor(st.mtimeMs), st.size);
+      setFileState.run(item.path, fingerprintMtime, fingerprintSize);
     }
 
     if (pricing.arePricesAvailable()) {
@@ -363,6 +362,15 @@ export class UsageStore {
     };
   }
 
+  public getFirstDay(agents: string[]): string | null {
+    if (!agents.length) return null;
+    const placeholders = agents.map(() => "?").join(",");
+    const row: any = this.db
+      .query(`SELECT MIN(date) as first_day FROM usage_records WHERE agent IN (${placeholders})`)
+      .get(...agents);
+    return row?.first_day ?? null;
+  }
+
   public getUsageReport(
     req: { preset: string; from?: string; to?: string; agents: string[] },
     resolvedRange: { from: string; to: string },
@@ -373,10 +381,10 @@ export class UsageStore {
     const placeholders = agentsList.map(() => "?").join(",");
 
     // First day
-    const firstDayRow: any = this.db
-      .query(`SELECT MIN(date) as first_day FROM usage_records WHERE agent IN (${placeholders})`)
-      .get(...agentsList);
-    const firstDay = firstDayRow?.first_day ?? null;
+    const firstDay = this.getFirstDay(agentsList);
+    if (req.preset === "all" && firstDay) {
+      resolvedRange = resolveRange("all", today, { firstDay });
+    }
 
     // Totals for range
     const totalsRow: any = this.db

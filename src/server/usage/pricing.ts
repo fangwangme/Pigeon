@@ -47,15 +47,9 @@ export class PricingManager {
       return;
     }
 
-    // Fallback seed cache from pigeon or tokenpulse if present
+    // Fallback seed cache from pigeon if present
     const pigeonPricing = join(dirname(this.cachePath), "pricing.json");
-    const seedPath = join(process.env.HOME || "", ".local", "share", "tokenpulse", "pricing.json");
-    if (existsSync(pigeonPricing) && this.loadFromTokenpulseSeed(pigeonPricing)) {
-      this.loaded = true;
-      this.pricesAvailable = true;
-      return;
-    }
-    if (existsSync(seedPath) && this.loadFromTokenpulseSeed(seedPath)) {
+    if (existsSync(pigeonPricing) && this.loadFromSeedCache(pigeonPricing)) {
       this.loaded = true;
       this.pricesAvailable = true;
       return;
@@ -64,10 +58,8 @@ export class PricingManager {
     // 2. Try fetching from network
     try {
       await this.refreshFromNetwork();
-      this.pricesAvailable = true;
-    } catch {
-      this.pricesAvailable = this.catalog.size > 0;
-    }
+    } catch {}
+    this.pricesAvailable = this.catalog.size > 0;
     this.loaded = true;
   }
 
@@ -90,7 +82,7 @@ export class PricingManager {
     return false;
   }
 
-  private loadFromTokenpulseSeed(path: string): boolean {
+  private loadFromSeedCache(path: string): boolean {
     try {
       const raw = readFileSync(path, "utf-8");
       const data = JSON.parse(raw);
@@ -106,7 +98,7 @@ export class PricingManager {
               outputCostPerToken: p.output_cost_per_token || 0,
               cacheReadCostPerToken: p.cache_read_input_token_cost,
               cacheWriteCostPerToken: p.cache_creation_input_token_cost,
-              source: rec?.source || "tokenpulse-seed",
+              source: rec?.source || "seed-cache",
             };
             if (!this.catalog.has(canonicalKey)) this.catalog.set(canonicalKey, price);
             this.catalog.set(pricingKey(k), price);

@@ -76,6 +76,7 @@ export class CodexQuotaProvider {
         method: "POST",
         headers: { "Content-Type": "application/x-www-form-urlencoded" },
         body: params.toString(),
+        signal: AbortSignal.timeout(10000),
       });
     } catch (err) {
       throw new Error(`Codex token refresh failed: ${(err as Error).message}`);
@@ -239,6 +240,7 @@ export class CodexQuotaProvider {
     try {
       const credsRes = await fetch(this.creditsUrl, {
         headers: { Authorization: `Bearer ${accessToken}`, Accept: "application/json" },
+        signal: AbortSignal.timeout(10000),
       });
       if (credsRes.ok) {
         const credsData = (await credsRes.json()) as any;
@@ -281,6 +283,7 @@ export class CodexQuotaProvider {
         Authorization: `Bearer ${accessToken}`,
         Accept: "application/json",
       },
+      signal: AbortSignal.timeout(10000),
     });
   }
 }

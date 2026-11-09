@@ -159,7 +159,7 @@ export function loadModelAliases(): Map<string, string> {
 
   try {
     const home = process.env.HOME || "";
-    const p = join(home, ".local", "share", "tokenpulse", "antigravity-cache", "model-aliases.json");
+    const p = join(home, ".local", "share", "pigeon", "antigravity-cache", "model-aliases.json");
     if (existsSync(p)) {
       const content = readFileSync(p, "utf-8");
       const parsed = JSON.parse(content);

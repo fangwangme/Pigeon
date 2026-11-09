@@ -149,7 +149,11 @@ async function main() {
       // Daemon not running or socket unavailable, perform direct rebuild
       const { UsageService } = await import("../server/usage/index");
       const service = new UsageService();
-      res = await service.rebuild();
+      try {
+        res = await service.rebuild();
+      } finally {
+        service.destroy();
+      }
     }
     if (args.includes("--json")) {
       console.log(JSON.stringify(res, null, 2));
