@@ -1227,9 +1227,20 @@ export function UsagePage() {
                       >
                         {r.title}
                       </span>
-                      <span style={{ display: "flex", gap: "8px", "align-items": "baseline", "margin-top": "3px", "font-size": "12.5px" }}>
+                      <span style={{ display: "flex", gap: "10px", "align-items": "baseline", "margin-top": "3px", "font-size": "12.5px" }}>
                         <span style={{ color: r.subColor, flex: 1, "min-width": 0, "white-space": "nowrap", overflow: "hidden", "text-overflow": "ellipsis" }}>
                           {r.sub}
+                        </span>
+                        <span
+                          style={{
+                            color: "var(--fig-cost)",
+                            "white-space": "nowrap",
+                            flex: "none",
+                            "text-align": "right",
+                            "font-variant-numeric": "tabular-nums",
+                          }}
+                        >
+                          {r.cost}
                         </span>
                         <span
                           style={{
@@ -1242,18 +1253,6 @@ export function UsagePage() {
                           }}
                         >
                           {r.tokens}
-                        </span>
-                        <span
-                          style={{
-                            color: "var(--fig-cost)",
-                            "white-space": "nowrap",
-                            flex: "none",
-                            width: "66px",
-                            "text-align": "right",
-                            "font-variant-numeric": "tabular-nums",
-                          }}
-                        >
-                          {r.cost}
                         </span>
                       </span>
                       <span
@@ -1518,26 +1517,27 @@ export function UsagePage() {
                           <span
                             style={{
                               "font-size": "13px",
+                              color: "var(--fig-cost)",
+                              "white-space": "nowrap",
+                              flex: "none",
+                              "text-align": "right",
+                              "font-variant-numeric": "tabular-nums",
+                            }}
+                          >
+                            {fmtCost(ag.cost)}
+                          </span>
+                          <span
+                            style={{
+                              "font-size": "13px",
                               color: "var(--fig-tokens)",
                               "white-space": "nowrap",
                               flex: "none",
                               width: "76px",
                               "text-align": "right",
+                              "font-variant-numeric": "tabular-nums",
                             }}
                           >
                             {fmtTokens(ag.tokens)}
-                          </span>
-                          <span
-                            style={{
-                              "font-size": "13px",
-                              color: "var(--fig-cost)",
-                              "white-space": "nowrap",
-                              flex: "none",
-                              width: "66px",
-                              "text-align": "right",
-                            }}
-                          >
-                            {fmtCost(ag.cost)}
                           </span>
                         </div>
                       )}
