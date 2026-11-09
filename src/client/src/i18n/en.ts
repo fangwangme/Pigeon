@@ -372,4 +372,9 @@ export const en = {
   "settings.providerPlan": "Logged in · {plan}",
   "settings.providerDisabled": "Do not query",
   "settings.providerNotLoggedIn": "Not logged in",
+  "settings.usageScanMode": "Usage calculation mode",
+  "settings.usageScanRealtime": "Realtime",
+  "settings.usageScanScheduled": "Scheduled background",
+  "settings.usageScanInterval": "Background interval",
+  "settings.usageScanModeHint": "Scheduled mode displays cached usage immediately; Realtime mode calculates fresh token counts on demand",
 } as const;

@@ -373,4 +373,9 @@ export const zh: Messages = {
   "settings.providerPlan": "已登录 · {plan}",
   "settings.providerDisabled": "不查询",
   "settings.providerNotLoggedIn": "未登录",
+  "settings.usageScanMode": "用量计算模式",
+  "settings.usageScanRealtime": "实时扫描",
+  "settings.usageScanScheduled": "定时后台扫描",
+  "settings.usageScanInterval": "后台扫描间隔",
+  "settings.usageScanModeHint": "定时扫描模式下前端直接显示最新缓存，秒开秒显；实时扫描模式在触发时悬挂等待最新数据计算完成后返回",
 };

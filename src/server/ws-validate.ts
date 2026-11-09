@@ -172,6 +172,8 @@ const CONFIG_CHECKS: Record<keyof ClientConfig, (v: unknown) => boolean> = {
   quotaDisplay: (v) => v === "remaining" || v === "used",
   quotaButton: (v) => typeof v === "boolean",
   quotaShowAccount: (v) => typeof v === "boolean",
+  usageScanMode: (v) => v === "realtime" || v === "scheduled",
+  usageScanInterval: (v) => v === "1m" || v === "2m" || v === "5m" || v === "10m" || v === "15m",
   quotaProviders: (v) => {
     if (!isObj(v)) return false;
     const keys = Object.keys(v);

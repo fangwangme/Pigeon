@@ -229,6 +229,94 @@ export function Settings() {
               <div class="tx">{t("settings.quotaShowAccount")}</div>
               <span class={`tg${state.quotaShowAccount !== false ? "" : " off"}`} />
             </button>
+            <div class="li" style={{ "justify-content": "space-between", "align-items": "center" }}>
+              <div class="tx" style={{ "max-width": "60%" }}>
+                {t("settings.usageScanMode")}
+                <small>{t("settings.usageScanModeHint")}</small>
+              </div>
+              <div
+                style={{
+                  display: "inline-flex",
+                  padding: "3px",
+                  background: "var(--line)",
+                  "border-radius": "9px",
+                  gap: "2px",
+                }}
+              >
+                <button
+                  style={{
+                    height: "30px",
+                    padding: "0 8px",
+                    "text-align": "center",
+                    "border-radius": "7px",
+                    border: 0,
+                    font: "inherit",
+                    "font-size": "12.5px",
+                    "font-weight": state.usageScanMode !== "realtime" ? 600 : 500,
+                    "white-space": "nowrap",
+                    background: state.usageScanMode !== "realtime" ? "var(--bg)" : "transparent",
+                    color: state.usageScanMode !== "realtime" ? "var(--fg)" : "var(--muted)",
+                    "box-shadow": state.usageScanMode !== "realtime" ? "0 1px 3px rgba(0,0,0,.15)" : "none",
+                    transition: "background .15s, color .15s",
+                  }}
+                  onClick={() => sendConfigPatch({ usageScanMode: "scheduled" })}
+                >
+                  {t("settings.usageScanScheduled")}
+                </button>
+                <button
+                  style={{
+                    height: "30px",
+                    padding: "0 8px",
+                    "text-align": "center",
+                    "border-radius": "7px",
+                    border: 0,
+                    font: "inherit",
+                    "font-size": "12.5px",
+                    "font-weight": state.usageScanMode === "realtime" ? 600 : 500,
+                    "white-space": "nowrap",
+                    background: state.usageScanMode === "realtime" ? "var(--bg)" : "transparent",
+                    color: state.usageScanMode === "realtime" ? "var(--fg)" : "var(--muted)",
+                    "box-shadow": state.usageScanMode === "realtime" ? "0 1px 3px rgba(0,0,0,.15)" : "none",
+                    transition: "background .15s, color .15s",
+                  }}
+                  onClick={() => sendConfigPatch({ usageScanMode: "realtime" })}
+                >
+                  {t("settings.usageScanRealtime")}
+                </button>
+              </div>
+            </div>
+
+            <Show when={state.usageScanMode !== "realtime"}>
+              <div class="li" style={{ "justify-content": "space-between", "align-items": "center" }}>
+                <div class="tx">{t("settings.usageScanInterval")}</div>
+                <div style={{ display: "inline-flex", gap: "6px" }}>
+                  <For each={["1m", "2m", "5m", "10m", "15m"] as const}>
+                    {(interval) => {
+                      const isSel = () => (state.usageScanInterval || "5m") === interval;
+                      return (
+                        <button
+                          style={{
+                            height: "28px",
+                            padding: "0 8px",
+                            "border-radius": "6px",
+                            border: "1px solid var(--line)",
+                            font: "inherit",
+                            "font-size": "12px",
+                            "font-weight": isSel() ? 650 : 500,
+                            background: isSel() ? "var(--accentbg)" : "var(--surface)",
+                            color: isSel() ? "var(--accent)" : "var(--fg)",
+                            transition: "all .15s",
+                          }}
+                          onClick={() => sendConfigPatch({ usageScanInterval: interval })}
+                        >
+                          {interval}
+                        </button>
+                      );
+                    }}
+                  </For>
+                </div>
+              </div>
+            </Show>
           </div>
 
           <div class="sec">{t("settings.queriedProviders")}</div>

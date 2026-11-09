@@ -108,7 +108,7 @@ export class WsServer {
     this.uploadStore = options.uploadStore;
     this.pairingManager = options.pairingManager;
     this.quotaService = options.quotaService;
-    this.usageService = options.usageService;
+    this.usageService = options.usageService ?? (this.configManager ? new UsageService({ configManager: this.configManager }) : undefined);
     // security-and-pairing.md §5: a revoked device (from the phone or `pigeon devices revoke`) is cut off at once.
     this.pairingManager?.on("device_revoked", (deviceId: string) => this.closeDevice(deviceId));
 
@@ -507,6 +507,7 @@ export class WsServer {
 
       case "config_patch": {
         const client = this.configManager.patchClientConfig(msg.payload.client);
+        this.usageService?.updateConfig(client);
         this.configVersion++;
         this.sendAck(ws, msg.id, { version: this.configVersion, client });
         this.broadcastConfigUpdated(client, ws);
@@ -755,6 +756,7 @@ export class WsServer {
   }
 
   public destroy(): void {
+    this.usageService?.destroy();
     this.paneStore.destroy();
   }
 }

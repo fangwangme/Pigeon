@@ -110,7 +110,7 @@ export function UsagePage() {
 
   const backTarget = () => (state.route.name === "usage" ? (state.route.from ?? "home") : "home");
 
-  const loadUsage = async () => {
+  const loadUsage = async (force = false) => {
     setLoading(true);
     try {
       const res: UsageGetPayload = await request({
@@ -120,6 +120,7 @@ export function UsagePage() {
           from: range() === "custom" ? customFrom() : undefined,
           to: range() === "custom" ? customTo() : undefined,
           agents: Array.from(activeAgents()),
+          force,
         },
       });
       setUsageReport(res);
@@ -546,7 +547,7 @@ export function UsagePage() {
               : ""}
           </div>
         </div>
-        <button class="cbtn" aria-label={t("app.reload")} onClick={() => void loadUsage()}>
+        <button class="cbtn" aria-label={t("app.reload")} onClick={() => void loadUsage(true)}>
           <Show when={loading()} fallback={<Icon name="clock" />}>
             <span
               style={{

@@ -81,6 +81,8 @@ export interface AppState {
   quotaDisplay: "remaining" | "used";
   quotaButton: boolean;
   quotaShowAccount: boolean;
+  usageScanMode: "realtime" | "scheduled";
+  usageScanInterval: "1m" | "2m" | "5m" | "10m" | "15m";
   quotaProviders: QuotaProvidersConfig;
   quotaSnapshots: QuotaProviderState[];
   quotaUpdated: number | null;
@@ -154,6 +156,8 @@ const [state, setState] = createStore<AppState>({
   quotaDisplay: "remaining",
   quotaButton: true,
   quotaShowAccount: true,
+  usageScanMode: "scheduled",
+  usageScanInterval: "5m",
   quotaProviders: { claude: true, codex: true, antigravity: true },
   quotaSnapshots: [],
   quotaUpdated: null,
@@ -183,6 +187,8 @@ export function applySyncedClientConfig(config: Partial<ClientConfig> | undefine
   if (config.quotaDisplay !== undefined) setState("quotaDisplay", config.quotaDisplay);
   if (config.quotaButton !== undefined) setState("quotaButton", config.quotaButton);
   if (config.quotaShowAccount !== undefined) setState("quotaShowAccount", config.quotaShowAccount);
+  if (config.usageScanMode !== undefined) setState("usageScanMode", config.usageScanMode);
+  if (config.usageScanInterval !== undefined) setState("usageScanInterval", config.usageScanInterval);
   if (config.quotaProviders !== undefined) setState("quotaProviders", config.quotaProviders);
   writePref("pigeon_mode", state.themeMode);
   writePref("pigeon_accent", state.accent);
