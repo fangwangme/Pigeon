@@ -30,10 +30,14 @@ describe("reconnecting (protocol.md §2.2)", () => {
   test("a pairing check that cannot reach the daemon is retried 3 seconds later", async () => {
     const original = globalThis.fetch;
     let checks = 0;
-    globalThis.fetch = (async () => {
-      checks++;
-      if (checks === 1) throw new TypeError("Failed to fetch"); // daemon restarting
-      return Response.json({ authenticated: false }); // not paired: ends the loop without a socket
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.href : (input as Request)?.url ?? "";
+      if (url.includes("/api/auth/status")) {
+        checks++;
+        if (checks === 1) throw new TypeError("Failed to fetch"); // daemon restarting
+        return Response.json({ authenticated: false }); // not paired: ends the loop without a socket
+      }
+      return original(input, init);
     }) as unknown as typeof fetch;
     try {
       await initWebSocket();
