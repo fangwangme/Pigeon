@@ -76,7 +76,7 @@ A sheet shared by §2.1 and §2.2: status (等待你, 工作中, 已完成, 空�
 - **Group sheet**: the summary as its title, then a timeline of the calls. Each item shows its verb (运行, 编辑, 创建, 读取, 搜索, or the tool name) and its object; a command shows the agent's own description of it when the transcript has one, else the command.
 - **Detail** (pushed inside the sheet, with back instead of close):
   - Command: description, command (wrapped, copyable), output (monospace, wrapped, copyable, truncated with "展开" past 40 lines), then exit code and duration; a non-zero exit code is red.
-  - Edit / write: the file path (copyable) and the change as a diff with line numbers and add/remove bars. Diff lines do not wrap; the block scrolls horizontally.
+  - Edit / write: the file path (copyable, displayed with reverse truncation anchored to the file name so the tail is always visible and leading paths truncate first) and the change as a diff with line numbers and add/remove bars. Diff lines do not wrap; the block scrolls horizontally.
   - Other tools: parameters above, result below.
 
 ### 3.4 Todo
@@ -120,7 +120,7 @@ A prompt without numbered options, or `blocked` with nothing recognized, shows i
 ## 6. Composer and session actions
 
 ### 6.1 Composer
-- Collapsed: a glass capsule with `+`, a text field and send. Focused: attachment thumbnails, the model capsule (§6.4) and send.
+- Collapsed: a glass capsule with `+`, a text field and send. Focused: expanded multi-line textarea (min-height: 64px) for comfortable scrolling and dragging, attachment thumbnails, the bottom toolbar with compact 33px helper buttons, a widened model capsule (`max-width: calc(100% - 92px)`), and a full-size 44px send button.
 - **+ sheet**: 相机, 照片, 文件 (the system pickers; files are uploaded at once, `protocol.md` §7), **Skills 与命令** (§6.3), **从历史会话恢复** (§7.2).
 - Sending with attachments passes their upload ids; the daemon writes them into the prompt (`protocol.md` §4.2).
 
@@ -238,4 +238,5 @@ Behavior and numbers come from `quota-and-usage.md`; this section is the present
 - **额度显示**: 剩余 / 已用 (`client.quotaDisplay`).
 - **列表页显示额度按钮** (`client.quotaButton`).
 - **显示账号信息** (`client.quotaShowAccount`, 默认开启；关闭时额度卡片不显示套餐级别与账号邮箱).
+- **用量统计模式**: 定时扫描 / 实时扫描 (`client.usageScanMode`, 默认 `scheduled`)；在定时扫描模式下提供扫描间隔选择 (**1m**, **2m**, **5m**, **10m**, **15m**，`client.usageScanInterval`，默认 `5m`)。
 - **查询额度的服务**: Claude Code, Codex, Antigravity, each a switch (`client.quotaProviders`) with a subtitle (**已登录 · <plan>**, or **不查询** when off).

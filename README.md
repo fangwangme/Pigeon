@@ -165,6 +165,10 @@ While the daemon is running, you can manage pairing and devices from another ter
   ```bash
   pigeon status
   ```
+- Rebuild the token usage and cost cache from scratch:
+  ```bash
+  pigeon rebuild-cache
+  ```
 
 ## Build from source
 
