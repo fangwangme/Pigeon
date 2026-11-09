@@ -80,6 +80,7 @@ export interface AppState {
   canInstallPWA: boolean;
   quotaDisplay: "remaining" | "used";
   quotaButton: boolean;
+  quotaShowAccount: boolean;
   quotaProviders: QuotaProvidersConfig;
   quotaSnapshots: QuotaProviderState[];
   quotaUpdated: number | null;
@@ -152,6 +153,7 @@ const [state, setState] = createStore<AppState>({
   canInstallPWA: false,
   quotaDisplay: "remaining",
   quotaButton: true,
+  quotaShowAccount: true,
   quotaProviders: { claude: true, codex: true, antigravity: true },
   quotaSnapshots: [],
   quotaUpdated: null,
@@ -180,6 +182,7 @@ export function applySyncedClientConfig(config: Partial<ClientConfig> | undefine
   if (config.accent) setState("accent", config.accent);
   if (config.quotaDisplay !== undefined) setState("quotaDisplay", config.quotaDisplay);
   if (config.quotaButton !== undefined) setState("quotaButton", config.quotaButton);
+  if (config.quotaShowAccount !== undefined) setState("quotaShowAccount", config.quotaShowAccount);
   if (config.quotaProviders !== undefined) setState("quotaProviders", config.quotaProviders);
   writePref("pigeon_mode", state.themeMode);
   writePref("pigeon_accent", state.accent);

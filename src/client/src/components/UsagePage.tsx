@@ -12,12 +12,12 @@ import type {
 import { Icon } from "./ui";
 import { t } from "../i18n";
 
-const AGENT_KEYS = ["claude", "codex", "antigravity", "opencode", "pi"] as const;
+const AGENT_KEYS = ["claude", "codex", "agy", "opencode", "pi"] as const;
 
 const AGENT_NAMES: Record<string, string> = {
   claude: "Claude Code",
   codex: "Codex",
-  antigravity: "Antigravity",
+  agy: "Antigravity",
   opencode: "OpenCode",
   pi: "Pi",
 };

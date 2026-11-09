@@ -50,7 +50,7 @@ export function Settings() {
         if (c) {
           void request({
             type: "usage_get",
-            payload: { preset: "7d", agents: ["claude", "codex", "antigravity", "opencode", "pi"] },
+            payload: { preset: "7d", agents: ["claude", "codex", "agy", "opencode", "pi"] },
           })
             .then((res: UsageGetPayload) => {
               if (res && res.totals && res.days) {
@@ -190,6 +190,13 @@ export function Settings() {
             <button class="li" onClick={() => sendConfigPatch({ quotaButton: !state.quotaButton })}>
               <div class="tx">{t("settings.showQuotaButton")}</div>
               <span class={`tg${state.quotaButton ? "" : " off"}`} />
+            </button>
+            <button class="li" onClick={() => sendConfigPatch({ quotaShowAccount: state.quotaShowAccount === false })}>
+              <div class="tx">
+                {t("settings.quotaShowAccount")}
+                <small>{t("settings.quotaShowAccountHint")}</small>
+              </div>
+              <span class={`tg${state.quotaShowAccount !== false ? "" : " off"}`} />
             </button>
           </div>
 

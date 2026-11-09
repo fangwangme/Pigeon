@@ -191,7 +191,19 @@ export function QuotaPage() {
           <div style={{ "margin-top": "10px", display: "flex", "flex-direction": "column", gap: "12px" }}>
             <For each={enabledProviders()}>
               {(p) => {
-                const colorToken = () => `var(--agent-${p.provider})`;
+                const providerDotColor = () => {
+                  const windows = p.snapshot?.windows ?? [];
+                  const hasExhausted = windows.some(
+                    (w) => quotaLevel(w.usedPercent) === "exhausted" || quotaPace(w, now())?.kind === "ahead"
+                  );
+                  if (hasExhausted) return "var(--danger)";
+                  const hasWarn = windows.some(
+                    (w) => quotaLevel(w.usedPercent) === "warn" || quotaPace(w, now())?.kind === "on_track"
+                  );
+                  if (hasWarn) return "var(--warn)";
+                  return "var(--addfg)";
+                };
+
                 return (
                   <div>
                     {/* Error banner above card if failed */}
@@ -228,10 +240,10 @@ export function QuotaPage() {
                         <div style={{ display: "flex", "align-items": "center", gap: "8px" }}>
                           <span
                             style={{
-                              width: "10px",
-                              height: "10px",
-                              "border-radius": "3px",
-                              background: colorToken(),
+                              width: "8px",
+                              height: "8px",
+                              "border-radius": "50%",
+                              background: providerDotColor(),
                               flex: "none",
                             }}
                           />
@@ -240,18 +252,20 @@ export function QuotaPage() {
                               "font-weight": 700,
                               "font-size": "15px",
                               "letter-spacing": ".02em",
-                              color: colorToken(),
+                              color: "var(--fg)",
                             }}
                           >
                             {PROVIDER_NAMES[p.provider] || p.provider.toUpperCase()}
                           </span>
                         </div>
-                        <div style={{ "font-size": "12.5px", color: "var(--muted)", "margin-top": "2px" }}>
-                          <Show when={p.snapshot?.plan}>
-                            <b style={{ color: "var(--fg)", "font-weight": 600 }}>{p.snapshot?.plan} · </b>
-                          </Show>
-                          <span>{p.snapshot?.account ?? ""}</span>
-                        </div>
+                        <Show when={state.quotaShowAccount !== false && (p.snapshot?.plan || p.snapshot?.account)}>
+                          <div style={{ "font-size": "12.5px", color: "var(--muted)", "margin-top": "2px" }}>
+                            <Show when={p.snapshot?.plan}>
+                              <b style={{ color: "var(--fg)", "font-weight": 600 }}>{p.snapshot?.plan} · </b>
+                            </Show>
+                            <span>{p.snapshot?.account ?? ""}</span>
+                          </div>
+                        </Show>
 
                         {/* Windows */}
                         <For each={p.snapshot?.windows ?? []}>
@@ -274,12 +288,16 @@ export function QuotaPage() {
                               return `${Math.min(100, Math.max(0, share))}%`;
                             };
 
-                            const barColor = () => {
+                            const statusColor = () => {
                               const l = lvl();
                               if (l === "exhausted") return "var(--danger)";
-                              if (l === "warn") return "var(--warn)";
-                              return colorToken();
+                              const pace = pResult();
+                              if (pace?.kind === "ahead") return "var(--danger)";
+                              if (pace?.kind === "on_track" || l === "warn") return "var(--warn)";
+                              return "var(--addfg)";
                             };
+
+                            const barColor = () => statusColor();
 
                             const markerPos = () => {
                               const pace = pResult();
@@ -299,9 +317,8 @@ export function QuotaPage() {
                                 : t("quota.used", { pct: Math.round(u()).toString() });
 
                             const firstColor = () => {
-                              const l = lvl();
-                              if (l === "exhausted") return "var(--danger)";
-                              if (l === "warn") return "var(--warn)";
+                              if (statusColor() === "var(--danger)") return "var(--danger)";
+                              if (statusColor() === "var(--warn)") return "var(--warn)";
                               return "var(--fg)";
                             };
 
@@ -309,17 +326,17 @@ export function QuotaPage() {
                               if (u() >= 100) return { text: t("quota.exhausted"), color: "var(--danger)" };
                               const pace = pResult();
                               if (!pace) return null;
-                              if (pace.kind === "on_track") return { text: t("quota.onTrack"), color: "var(--muted)" };
+                              if (pace.kind === "on_track") return { text: t("quota.onTrack"), color: "var(--warn)" };
                               if (pace.kind === "ahead") {
                                 const eta = pace.etaMs ? formatDurationShort(pace.etaMs) : "";
                                 return {
                                   text: t("quota.ahead", { deficit: Math.round(pace.deficit).toString(), eta }),
-                                  color: "var(--warn)",
+                                  color: "var(--danger)",
                                 };
                               }
                               return {
                                 text: t("quota.behind", { deficit: Math.round(-pace.deficit).toString() }),
-                                color: "var(--muted)",
+                                color: "var(--addfg)",
                               };
                             };
 

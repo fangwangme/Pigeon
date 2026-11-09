@@ -171,6 +171,7 @@ const CONFIG_CHECKS: Record<keyof ClientConfig, (v: unknown) => boolean> = {
   accent: (v) => typeof v === "string" && (ACCENT_NAMES as readonly string[]).includes(v),
   quotaDisplay: (v) => v === "remaining" || v === "used",
   quotaButton: (v) => typeof v === "boolean",
+  quotaShowAccount: (v) => typeof v === "boolean",
   quotaProviders: (v) => {
     if (!isObj(v)) return false;
     const keys = Object.keys(v);

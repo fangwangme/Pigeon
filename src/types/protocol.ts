@@ -140,6 +140,7 @@ export interface ClientConfig {
   quotaProviders?: QuotaProvidersConfig;
   quotaDisplay?: QuotaDisplayMode;
   quotaButton?: boolean;
+  quotaShowAccount?: boolean;
 }
 
 export interface QuotaWindow {

@@ -7,6 +7,7 @@ export const DEFAULT_CLIENT_CONFIG: ClientConfig = {
   accent: "blue",
   quotaDisplay: "remaining",
   quotaButton: true,
+  quotaShowAccount: true,
 };
 
 export const ACCENT_NAMES = ["blue", "purple", "green", "orange", "pink"] as const;

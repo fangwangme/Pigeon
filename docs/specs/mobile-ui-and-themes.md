@@ -237,4 +237,5 @@ Behavior and numbers come from `quota-and-usage.md`; this section is the present
 - **订阅额度** (summary: one short item per enabled provider following **额度显示**, e.g. **Claude 5h 剩 48%**) and **Token 用量** (summary: **今日 $x · 近 7 天 $y**).
 - **额度显示**: 剩余 / 已用 (`client.quotaDisplay`).
 - **列表页显示额度按钮** (`client.quotaButton`).
+- **显示账号信息** (`client.quotaShowAccount`, 默认开启；关闭时额度卡片不显示套餐级别与账号邮箱).
 - **查询额度的服务**: Claude Code, Codex, Antigravity, each a switch (`client.quotaProviders`) with a subtitle (**已登录 · <plan>**, or **不查询** when off).

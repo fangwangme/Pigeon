@@ -1,7 +1,7 @@
 import { render } from "solid-js/web";
 import { createEffect, createSignal, Match, on, onMount, Show, Switch } from "solid-js";
 import "./styles.css";
-import { setState, state, systemReducesTransparency } from "./state/store";
+import { navigate, setState, state, systemReducesTransparency } from "./state/store";
 import { applyTheme } from "./themes";
 import { checkPairingFromUrlHash, initWebSocket, reportPresence } from "./state/ws";
 import { AgentsPage, Home } from "./components/Home";
@@ -75,6 +75,7 @@ function Toast() {
 function App() {
   const [systemReduce, setSystemReduce] = createSignal(systemReducesTransparency());
   onMount(async () => {
+    (window as any).__pigeon = { state, setState, navigate, applyTheme };
     window.matchMedia("(prefers-color-scheme: light)").addEventListener("change", () => applyTheme(state.themeMode, state.accent));
     window.matchMedia("(prefers-reduced-transparency: reduce)").addEventListener?.("change", (e) => setSystemReduce(e.matches));
     window.addEventListener("beforeinstallprompt", (e) => {

@@ -358,6 +358,8 @@ export const en = {
   "settings.remaining": "Remaining",
   "settings.used": "Used",
   "settings.showQuotaButton": "Show quota button on list pages",
+  "settings.quotaShowAccount": "Show account info",
+  "settings.quotaShowAccountHint": "Display plan tier and account email in subscription quota",
   "settings.queriedProviders": "Queried quota providers",
   "settings.providerActive": "Logged in",
   "settings.providerPlan": "Logged in · {plan}",

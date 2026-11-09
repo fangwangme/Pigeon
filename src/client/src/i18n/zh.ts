@@ -359,6 +359,8 @@ export const zh: Messages = {
   "settings.remaining": "剩余",
   "settings.used": "已用",
   "settings.showQuotaButton": "列表页显示额度按钮",
+  "settings.quotaShowAccount": "显示账号信息",
+  "settings.quotaShowAccountHint": "在额度查询页面展示账号级别与邮箱",
   "settings.queriedProviders": "查询额度的服务",
   "settings.providerActive": "已登录",
   "settings.providerPlan": "已登录 · {plan}",
