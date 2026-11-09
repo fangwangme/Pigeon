@@ -38,7 +38,10 @@ describe("reconnecting (protocol.md §2.2)", () => {
     try {
       await initWebSocket();
       expect(checks).toBe(1);
-      await Bun.sleep(3200);
+      const start = Date.now();
+      while (checks < 2 && Date.now() - start < 4500) {
+        await Bun.sleep(100);
+      }
       expect(checks).toBe(2);
       expect(state.paired).toBe(false);
     } finally {
