@@ -355,6 +355,8 @@ export const zh: Messages = {
   "usage.agentAndModel": "Agent 与模型",
   "usage.zoomOut": "缩小",
   "usage.zoomIn": "放大",
+  "usage.level": "第 {level} 级",
+  "usage.levelEmpty": "0（无用量）",
 
   "settings.quotaUsage": "额度与用量",
   "settings.subscriptionQuota": "订阅额度",

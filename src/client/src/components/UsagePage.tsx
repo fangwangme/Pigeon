@@ -100,6 +100,13 @@ export function UsagePage() {
   // Zoom for week-columns heatmap
   const ZOOM_LEVELS = [16, 24, 32, 44];
   const [zoomIndex, setZoomIndex] = createSignal<number | null>(null); // null = fit
+  const [selectedLegendBucket, setSelectedLegendBucket] = createSignal<number | null>(null);
+
+  createEffect(() => {
+    metric();
+    range();
+    setSelectedLegendBucket(null);
+  });
 
   const backTarget = () => (state.route.name === "usage" ? (state.route.from ?? "home") : "home");
 
@@ -344,7 +351,7 @@ export function UsagePage() {
           val,
         });
       }
-      return { layout, cells, activeDays, currentStreak, longestStreak };
+      return { layout, cells, activeDays, currentStreak, longestStreak, vmax };
     }
 
     // Week rows (<= 42 days, Monday-to-Sunday rows)
@@ -384,7 +391,7 @@ export function UsagePage() {
           monthLabel = "";
         }
       }
-      return { layout, weeks, activeDays, currentStreak, longestStreak };
+      return { layout, weeks, activeDays, currentStreak, longestStreak, vmax };
     }
 
     // Week columns (longer periods, weeks as vertical columns, reverse scroll)
@@ -423,8 +430,30 @@ export function UsagePage() {
       }
     }
 
-    return { layout, weeks, activeDays, currentStreak, longestStreak };
+    return { layout, weeks, activeDays, currentStreak, longestStreak, vmax };
   });
+
+  const bucketRangeText = () => {
+    const b = selectedLegendBucket();
+    if (b === null) return "";
+    const hm = heatmapData();
+    const vmax = hm?.vmax ?? 0;
+    const isCost = metric() === "cost";
+    const fmt = (v: number) => (isCost ? fmtCost(v) : fmtTokens(v));
+
+    if (b === 0) {
+      return `${t("usage.levelEmpty")}: ${isCost ? "$0.00" : "0"}`;
+    }
+
+    if (vmax <= 0) {
+      return `${t("usage.level", { level: b.toString() })}: ${isCost ? "$0.00" : "0"}`;
+    }
+
+    const low = b === 1 ? 0 : vmax * ((b - 1) * 0.2);
+    const high = b === 5 ? vmax : vmax * (b * 0.2);
+
+    return `${t("usage.level", { level: b.toString() })}: ${fmt(low)} – ${fmt(high)}`;
+  };
 
   // Table rows: date rows or model rows
   const tableRows = createMemo(() => {
@@ -1041,16 +1070,71 @@ export function UsagePage() {
                   </Show>
 
                   {/* Heatmap Legend */}
-                  <div style={{ display: "flex", "align-items": "center", gap: "3px", "margin-top": "10px", "font-size": "11px", color: "var(--faint)" }}>
-                    <span style={{ flex: 1 }} />
-                    <span style={{ "margin-right": "3px" }}>{t("usage.less")}</span>
-                    <span style={{ width: "11px", height: "11px", "border-radius": "3px", background: "var(--heat-empty)" }} />
-                    <span style={{ width: "11px", height: "11px", "border-radius": "3px", background: `var(--heat-${metric()}-1)` }} />
-                    <span style={{ width: "11px", height: "11px", "border-radius": "3px", background: `var(--heat-${metric()}-2)` }} />
-                    <span style={{ width: "11px", height: "11px", "border-radius": "3px", background: `var(--heat-${metric()}-3)` }} />
-                    <span style={{ width: "11px", height: "11px", "border-radius": "3px", background: `var(--heat-${metric()}-4)` }} />
-                    <span style={{ width: "11px", height: "11px", "border-radius": "3px", background: `var(--heat-${metric()}-5)` }} />
-                    <span style={{ "margin-left": "3px" }}>{t("usage.more")}</span>
+                  <div
+                    style={{
+                      display: "flex",
+                      "align-items": "center",
+                      gap: "4px",
+                      "margin-top": "10px",
+                      "font-size": "11px",
+                      color: "var(--faint)",
+                      "flex-wrap": "wrap",
+                    }}
+                  >
+                    <span
+                      style={{
+                        flex: 1,
+                        "min-width": "120px",
+                        "font-size": "11.5px",
+                        "font-weight": 600,
+                        color: "var(--fg)",
+                        "font-variant-numeric": "tabular-nums",
+                      }}
+                    >
+                      {bucketRangeText()}
+                    </span>
+                    <div style={{ display: "flex", "align-items": "center", gap: "3px", "margin-left": "auto" }}>
+                      <span style={{ "margin-right": "3px" }}>{t("usage.less")}</span>
+                      <button
+                        type="button"
+                        aria-label={t("usage.levelEmpty")}
+                        onClick={() => setSelectedLegendBucket((c) => (c === 0 ? null : 0))}
+                        style={{
+                          width: "12px",
+                          height: "12px",
+                          padding: 0,
+                          "border-radius": "2px",
+                          border: selectedLegendBucket() === 0 ? "1.5px solid var(--fg)" : "1px solid var(--line)",
+                          background: "var(--heat-empty)",
+                          cursor: "pointer",
+                          outline: "none",
+                          transform: selectedLegendBucket() === 0 ? "scale(1.25)" : "none",
+                          transition: "transform .15s, border-color .15s",
+                        }}
+                      />
+                      <For each={[1, 2, 3, 4, 5]}>
+                        {(lvl) => (
+                          <button
+                            type="button"
+                            aria-label={t("usage.level", { level: lvl.toString() })}
+                            onClick={() => setSelectedLegendBucket((c) => (c === lvl ? null : lvl))}
+                            style={{
+                              width: "12px",
+                              height: "12px",
+                              padding: 0,
+                              "border-radius": "2px",
+                              border: selectedLegendBucket() === lvl ? "1.5px solid var(--fg)" : "1px solid transparent",
+                              background: `var(--heat-${metric()}-${lvl})`,
+                              cursor: "pointer",
+                              outline: "none",
+                              transform: selectedLegendBucket() === lvl ? "scale(1.25)" : "none",
+                              transition: "transform .15s, border-color .15s",
+                            }}
+                          />
+                        )}
+                      </For>
+                      <span style={{ "margin-left": "3px" }}>{t("usage.more")}</span>
+                    </div>
                   </div>
                 </div>
               );

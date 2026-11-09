@@ -354,6 +354,8 @@ export const en = {
   "usage.agentAndModel": "Agents & models",
   "usage.zoomOut": "Zoom out",
   "usage.zoomIn": "Zoom in",
+  "usage.level": "Level {level}",
+  "usage.levelEmpty": "0 (Empty)",
 
   "settings.quotaUsage": "Quota & usage",
   "settings.subscriptionQuota": "Subscription quota",
