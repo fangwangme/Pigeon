@@ -46,7 +46,7 @@ describe("distribution and packaging (distribution.md, issue #9)", () => {
     expect(existsSync(launcherBinPath)).toBe(true);
     const content = readFileSync(launcherBinPath, "utf-8");
     expect(content).toContain("@fangwangme/pigeon-");
-    expect(content).toContain("spawnSync");
+    expect(content).toContain("spawn(");
     expect(content).toContain("bun add -g --force @fangwangme/pigeon");
   });
 

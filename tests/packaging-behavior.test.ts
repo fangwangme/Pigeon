@@ -1,13 +1,14 @@
 import { describe, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 const rootDir = join(import.meta.dir, "..");
 
 describe("packaging behavior end-to-end (distribution.md §3, §5, issue #9 review)", () => {
   test("build-packages.mjs assembles platform manifests, launcher dependencies, and publish order", () => {
-    const tmpDir = join("/tmp", `pigeon-test-pkg-${Date.now()}`);
+    const tmpDir = mkdtempSync(join(tmpdir(), "pigeon-test-pkg-"));
     const artifactsDir = join(tmpDir, "artifacts");
     const outDir = join(tmpDir, "out");
     mkdirSync(artifactsDir, { recursive: true });
@@ -20,13 +21,17 @@ describe("packaging behavior end-to-end (distribution.md §3, §5, issue #9 revi
     ];
 
     try {
-      // Setup mock artifacts
+      // Mock artifacts in the layout release.yml uploads: pigeon-<target>/pigeon-<target>.tar.gz
       for (const target of targets) {
         const targetDir = join(artifactsDir, `pigeon-${target.key}`);
+        const stageDir = join(tmpDir, "stage", target.key);
         mkdirSync(targetDir, { recursive: true });
-        const binPath = join(targetDir, "pigeon");
+        mkdirSync(stageDir, { recursive: true });
+        const binPath = join(stageDir, "pigeon");
         writeFileSync(binPath, "#!/bin/sh\necho 'pigeon mock binary'\n");
         chmodSync(binPath, 0o755);
+        const tar = spawnSync("tar", ["-C", stageDir, "-czf", join(targetDir, `pigeon-${target.key}.tar.gz`), "pigeon"]);
+        expect(tar.status).toBe(0);
       }
 
       const rootPkg = JSON.parse(readFileSync(join(rootDir, "package.json"), "utf8"));
@@ -89,9 +94,8 @@ describe("packaging behavior end-to-end (distribution.md §3, §5, issue #9 revi
   });
 
   test("build-packages.mjs halts with exit code 1 when tag version mismatches root package.json", () => {
-    const tmpDir = join("/tmp", `pigeon-test-mismatch-${Date.now()}`);
+    const tmpDir = mkdtempSync(join(tmpdir(), "pigeon-test-mismatch-"));
     try {
-      mkdirSync(tmpDir, { recursive: true });
       const run = spawnSync(
         "node",
         [
@@ -114,9 +118,8 @@ describe("packaging behavior end-to-end (distribution.md §3, §5, issue #9 revi
   });
 
   test("pigeon.js exits with code 1 and prints installation guidance when platform package is missing", () => {
-    const tmpDir = join("/tmp", `pigeon-test-launcher-${Date.now()}`);
+    const tmpDir = mkdtempSync(join(tmpdir(), "pigeon-test-launcher-"));
     try {
-      mkdirSync(tmpDir, { recursive: true });
       const run = spawnSync("node", [join(rootDir, "npm", "launcher", "bin", "pigeon.js")], {
         cwd: tmpDir,
         encoding: "utf8",

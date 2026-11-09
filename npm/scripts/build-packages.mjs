@@ -2,8 +2,9 @@
 // Assembles the npm packages for a release from the binaries built by CI.
 //
 // Layout produced under --out:
-//   <out>/@fangwangme/pigeon-<platform>-<arch>/   one per target, holds the binary
-//   <out>/launcher/                               what users actually install
+//   <out>/@fangwangme__pigeon-<platform>-<arch>/   one per target, holds the binary
+//   <out>/launcher/                                what users actually install
+//   <out>/packages.json                            publish order, launcher last
 //
 // Publish the platform packages first: the launcher pins them as
 // optionalDependencies, and npm resolves those at install time.
@@ -17,33 +18,13 @@ const HERE = path.dirname(fileURLToPath(import.meta.url));
 const LAUNCHER_SRC = path.join(HERE, "..", "launcher");
 const REPO_ROOT = path.join(HERE, "..", "..");
 
-/** Supported targets. Keep in sync with release.yml. */
-const TARGETS = [
-  {
-    targetKey: "darwin-arm64",
-    asset: "pigeon-darwin-arm64",
-    os: "darwin",
-    cpu: "arm64",
+/** Supported targets (distribution.md §2). Keep in sync with release.yml. */
+const TARGETS = ["darwin-arm64", "darwin-x64", "linux-arm64", "linux-x64"].map(
+  (key) => {
+    const [os, cpu] = key.split("-");
+    return { key, os, cpu };
   },
-  {
-    targetKey: "darwin-x64",
-    asset: "pigeon-darwin-x64",
-    os: "darwin",
-    cpu: "x64",
-  },
-  {
-    targetKey: "linux-arm64",
-    asset: "pigeon-linux-arm64",
-    os: "linux",
-    cpu: "arm64",
-  },
-  {
-    targetKey: "linux-x64",
-    asset: "pigeon-linux-x64",
-    os: "linux",
-    cpu: "x64",
-  },
-];
+);
 
 function parseArgs(argv) {
   const args = {};
@@ -58,9 +39,6 @@ function parseArgs(argv) {
     if (!args[required]) {
       throw new Error(`Missing --${required}`);
     }
-  }
-  if (!/^\d+\.\d+\.\d+/.test(args.version)) {
-    throw new Error(`--version must look like X.Y.Z, got "${args.version}"`);
   }
   return args;
 }
@@ -79,31 +57,13 @@ function assertVersionMatchesPackage(version) {
 }
 
 /**
- * CI uploads one artifact directory per target, each holding a tarball. Accept
- * either the extracted binary or the tarball so the script also works against a
- * locally assembled directory.
+ * release.yml uploads one artifact directory per target, holding
+ * `pigeon-<target>.tar.gz` with a single `pigeon` executable (distribution.md §2).
  */
-function binaryFor(artifactsDir, target) {
-  const artifactName = `pigeon-${target.targetKey}`;
-  const direct = path.join(artifactsDir, artifactName, "pigeon");
-  if (fs.existsSync(direct)) return direct;
-
-  const tarball = path.join(
-    artifactsDir,
-    artifactName,
-    `${target.asset}.tar.gz`,
-  );
-  if (!fs.existsSync(tarball)) {
-    throw new Error(
-      `No binary or ${target.asset}.tar.gz for ${target.targetKey} under ${artifactsDir}`,
-    );
-  }
-  const extractDir = path.join(artifactsDir, artifactName);
-  execFileSync("tar", ["-xzf", tarball, "-C", extractDir]);
-  if (!fs.existsSync(direct)) {
-    throw new Error(`${tarball} did not contain a "pigeon" binary`);
-  }
-  return direct;
+function extractBinary(artifactsDir, target) {
+  const dir = path.join(artifactsDir, `pigeon-${target.key}`);
+  execFileSync("tar", ["-xzf", path.join(dir, `pigeon-${target.key}.tar.gz`), "-C", dir]);
+  return path.join(dir, "pigeon");
 }
 
 function writeJson(file, value) {
@@ -112,13 +72,12 @@ function writeJson(file, value) {
 }
 
 function buildPlatformPackage({ target, version, artifactsDir, outDir }) {
-  const name = `@fangwangme/pigeon-${target.os}-${target.cpu}`;
+  const name = `@fangwangme/pigeon-${target.key}`;
   const dir = path.join(outDir, name.replace("/", "__"));
-  const binary = binaryFor(artifactsDir, target);
 
   fs.mkdirSync(path.join(dir, "bin"), { recursive: true });
   const dest = path.join(dir, "bin", "pigeon");
-  fs.copyFileSync(binary, dest);
+  fs.copyFileSync(extractBinary(artifactsDir, target), dest);
   fs.chmodSync(dest, 0o755);
 
   writeJson(path.join(dir, "package.json"), {
@@ -152,29 +111,16 @@ function buildLauncher({ version, outDir, platformNames }) {
   // The repo README is the package page on npmjs.com.
   fs.copyFileSync(path.join(REPO_ROOT, "README.md"), path.join(dir, "README.md"));
 
-  const template = JSON.parse(
+  const manifest = JSON.parse(
     fs.readFileSync(path.join(LAUNCHER_SRC, "package.json"), "utf8"),
   );
-  template.version = version;
-  template.optionalDependencies = Object.fromEntries(
+  manifest.version = version;
+  manifest.optionalDependencies = Object.fromEntries(
     platformNames.map((name) => [name, version]),
   );
 
-  // A platform package that exists but is not pinned would never be installed.
-  const declared = Object.keys(
-    JSON.parse(fs.readFileSync(path.join(LAUNCHER_SRC, "package.json"), "utf8"))
-      .optionalDependencies ?? {},
-  );
-  const missing = declared.filter((name) => !platformNames.includes(name));
-  if (missing.length > 0) {
-    throw new Error(
-      `launcher/package.json pins ${missing.join(", ")}, but no such package was built. ` +
-        `Update the template or the target list.`,
-    );
-  }
-
-  writeJson(path.join(dir, "package.json"), template);
-  return { name: template.name, dir };
+  writeJson(path.join(dir, "package.json"), manifest);
+  return { name: manifest.name, dir };
 }
 
 function main() {
@@ -200,12 +146,10 @@ function main() {
     platformNames: platforms.map((p) => p.name),
   });
 
-  // Publish order matters, so report it explicitly.
-  const manifest = {
+  writeJson(path.join(outDir, "packages.json"), {
     version: args.version,
     publishOrder: [...platforms.map((p) => p.dir), launcher.dir],
-  };
-  writeJson(path.join(outDir, "packages.json"), manifest);
+  });
 
   for (const { name, dir } of [...platforms, launcher]) {
     console.log(`${name} -> ${dir}`);

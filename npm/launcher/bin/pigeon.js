@@ -7,12 +7,10 @@
 // `optionalDependencies`, and package managers install only the one whose
 // `os`/`cpu` match.
 
-const { spawn, spawnSync } = require("node:child_process");
-const fs = require("node:fs");
-const path = require("node:path");
+const { spawn } = require("node:child_process");
 
-const platformPackage = `@fangwangme/pigeon-${process.platform}-${process.arch}`;
-const executable = "pigeon";
+const platformKey = `${process.platform}-${process.arch}`;
+const platformPackage = `@fangwangme/pigeon-${platformKey}`;
 
 const SUPPORTED_PLATFORMS = new Set([
   "darwin-arm64",
@@ -21,20 +19,11 @@ const SUPPORTED_PLATFORMS = new Set([
   "linux-x64",
 ]);
 
-function readJsonSafe(filePath) {
-  try {
-    return JSON.parse(fs.readFileSync(filePath, "utf8"));
-  } catch {
-    return null;
-  }
-}
-
 let binary;
 try {
-  binary = require.resolve(`${platformPackage}/bin/${executable}`);
+  binary = require.resolve(`${platformPackage}/bin/pigeon`);
 } catch {
-  const currentPlatformKey = `${process.platform}-${process.arch}`;
-  if (SUPPORTED_PLATFORMS.has(currentPlatformKey)) {
+  if (SUPPORTED_PLATFORMS.has(platformKey)) {
     console.error(
       `pigeon: binary package ${platformPackage} was not installed.\n` +
         `This usually happens when the package manager skips optional dependencies or encounters registry delays.\n` +
@@ -44,57 +33,20 @@ try {
     );
   } else {
     console.error(
-      `pigeon: no prebuilt binary for ${process.platform}-${process.arch}.\n` +
+      `pigeon: no prebuilt binary for ${platformKey}.\n` +
         `Pigeon currently supports macOS and Linux on arm64 and x64 architectures.\n`,
     );
   }
   process.exit(1);
 }
 
-// Check version consistency between launcher shell and platform binary package.
-try {
-  const launcherPkg = readJsonSafe(path.join(__dirname, "..", "package.json"));
-  let platformPkg = readJsonSafe(path.join(path.dirname(binary), "..", "package.json"));
-  if (!platformPkg) {
-    try {
-      platformPkg = readJsonSafe(require.resolve(`${platformPackage}/package.json`));
-    } catch {
-      // ignore
-    }
-  }
-
-  if (
-    launcherPkg &&
-    platformPkg &&
-    launcherPkg.version &&
-    platformPkg.version &&
-    launcherPkg.version !== platformPkg.version
-  ) {
-    console.warn(
-      `pigeon: warning: version mismatch detected.\n` +
-        `  launcher shell: v${launcherPkg.version}\n` +
-        `  binary package: v${platformPkg.version} (${platformPackage})\n` +
-        `This can occur if optional dependencies were cached or skipped during update.\n` +
-        `To update the binary package, run:\n` +
-        `  bun add -g --force @fangwangme/pigeon@${launcherPkg.version}\n` +
-        `  # or: npm install -g --force @fangwangme/pigeon@${launcherPkg.version}\n`,
-    );
-  }
-} catch {
-  // Best-effort check; do not block execution if package inspection fails.
-}
-
 const child = spawn(binary, process.argv.slice(2), { stdio: "inherit" });
 
-const forwardSignal = (signal) => {
-  if (child.pid) {
-    child.kill(signal);
-  }
-};
-
-process.on("SIGINT", forwardSignal);
-process.on("SIGTERM", forwardSignal);
-process.on("SIGHUP", forwardSignal);
+// Forward termination signals so the daemon shuts down cleanly instead of
+// being orphaned when only the launcher is signalled (distribution.md §3.3).
+const FORWARDED_SIGNALS = ["SIGINT", "SIGTERM", "SIGHUP"];
+const forwardSignal = (signal) => child.kill(signal);
+for (const signal of FORWARDED_SIGNALS) process.on(signal, forwardSignal);
 
 child.on("error", (error) => {
   console.error(`pigeon: failed to launch ${binary}: ${error.message}`);
@@ -102,10 +54,9 @@ child.on("error", (error) => {
 });
 
 child.on("exit", (code, signal) => {
-  process.removeListener("SIGINT", forwardSignal);
-  process.removeListener("SIGTERM", forwardSignal);
-  process.removeListener("SIGHUP", forwardSignal);
-
+  // Drop the handlers first, or re-raising the child's signal below would be
+  // forwarded again instead of terminating the launcher.
+  for (const s of FORWARDED_SIGNALS) process.removeListener(s, forwardSignal);
   if (signal) {
     process.kill(process.pid, signal);
   } else {
