@@ -215,8 +215,8 @@ export class UsageStore {
           unpriced = 0;
           const inpCost = r.inputTokens * p.inputCostPerToken;
           const outCost = r.outputTokens * p.outputCostPerToken;
-          const crCost = r.cacheReadTokens * (p.cacheReadCostPerToken ?? (p.inputCostPerToken * 0.1));
-          const cwCost = r.cacheWriteTokens * (p.cacheWriteCostPerToken ?? (p.inputCostPerToken * 1.25));
+          const crCost = r.cacheReadTokens * (p.cacheReadCostPerToken ?? p.inputCostPerToken);
+          const cwCost = r.cacheWriteTokens * (p.cacheWriteCostPerToken ?? p.inputCostPerToken);
           cost = inpCost + outCost + crCost + cwCost;
         }
 
@@ -338,8 +338,8 @@ export class UsageStore {
           unpriced = 0;
           const inpCost = row.input_tokens * p.inputCostPerToken;
           const outCost = row.output_tokens * p.outputCostPerToken;
-          const crCost = row.cache_read_tokens * (p.cacheReadCostPerToken ?? (p.inputCostPerToken * 0.1));
-          const cwCost = row.cache_write_tokens * (p.cacheWriteCostPerToken ?? (p.inputCostPerToken * 1.25));
+          const crCost = row.cache_read_tokens * (p.cacheReadCostPerToken ?? p.inputCostPerToken);
+          const cwCost = row.cache_write_tokens * (p.cacheWriteCostPerToken ?? p.inputCostPerToken);
           cost = inpCost + outCost + crCost + cwCost;
         }
         update.run(

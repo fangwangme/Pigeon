@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - **Subscription quota dashboard**: view Claude, Codex, and Antigravity subscription usage windows, time-based pace, reset times, and reset credits in a mobile-optimized card layout with live dot indicators (#13).
-- **Token usage dashboard**: view multi-agent token consumption and estimated costs with presets (Today, 7D, 30D, This month, Last month, Year, All), custom date picker, heatmap visualizations (day strip, week rows, month calendar), daily breakdowns, and model details (#13).
+- **Token usage dashboard**: view multi-agent token consumption and estimated costs with presets (Today, 7D, 30D, Year, All, Custom), responsive heatmap visualizations (strip, week-rows, week-columns with zoom and scroll), daily breakdowns, and model details (#13).
 - **Settings integration**: customize quota provider visibility, remaining vs used bar direction, and dashboard button visibility (#13).
 
 ## [0.1.5] - 2026-11-09
