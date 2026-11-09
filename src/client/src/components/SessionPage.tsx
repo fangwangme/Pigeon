@@ -15,7 +15,7 @@ import {
 import { ConnectionBanner } from "./Home";
 import { openOverlay } from "./overlays";
 import { PromptCard } from "./PromptCard";
-import { DiffView, openDiffs, ScreenCard, TodoCapsule, TodoSheet, ToolSheet, Turn } from "./Transcript";
+import { DiffView, openDiffs, renderPath, ScreenCard, TodoCapsule, TodoSheet, ToolSheet, Turn } from "./Transcript";
 import { DiffBadge, findPane, Icon, paneLabel, paneStatus, paneSummary, Sheet, StatusIcon } from "./ui";
 import { t, type MessageId } from "../i18n";
 
@@ -104,7 +104,7 @@ function ChangesSheet(props: { onClose: () => void }) {
                   <button class="li" onClick={() => setExpanded(isExp() ? null : path)}>
                     <div class="tx mono" style={{ "font-size": "13.5px", "overflow-wrap": "anywhere" }}>
                       {path.split("/").pop()}
-                      <small>{path}</small>
+                      <small class="path-rev">{renderPath(path)}</small>
                     </div>
                     <DiffBadge add={f.add} del={f.del} />
                     <Icon name={isExp() ? "chevD" : "chevR"} sm class="chev" />

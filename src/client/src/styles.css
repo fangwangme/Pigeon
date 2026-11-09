@@ -170,7 +170,7 @@ svg.i.sm { width: 16px; height: 16px; }
 .rb.send:disabled { background: rgba(127,127,127,.16); color: var(--faint); }
 .rb.stop { background: var(--fg); color: var(--bg); }
 .rb.stop svg { fill: currentColor; stroke: none; }
-.mc { height: 33px; border-radius: 17px; background: rgba(127,127,127,.16); display: inline-flex; align-items: center; gap: 5px; padding: 0 10px; font-size: 13px; max-width: 46%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.mc { height: 33px; border-radius: 17px; background: rgba(127,127,127,.16); display: inline-flex; align-items: center; gap: 5px; padding: 0 10px; font-size: 13px; max-width: calc(100% - 92px); min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .mc em { font-style: normal; color: var(--muted); }
 .mc svg.i { width: 14px; height: 14px; }
 .qedit-bar { display: flex; align-items: center; justify-content: space-between; padding: 2px 8px 6px; font-size: 12.5px; color: var(--accent); font-weight: 500; }
@@ -208,6 +208,7 @@ svg.i.sm { width: 16px; height: 16px; }
 .tli .tx { flex: 1; min-width: 0; }
 .tli .v { font-size: 15.5px; }
 .tli .o { font-size: 14px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.path-rev { direction: rtl; text-align: left; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .fl { display: flex; justify-content: space-between; align-items: center; font-size: 13.5px; font-weight: 600; color: var(--muted); margin: 14px 2px 8px; }
 .fl button { color: var(--accent); min-height: 32px; display: inline-flex; align-items: center; gap: 4px; font-weight: 600; }
 .fbox { background: var(--code); border: 1px solid var(--line); border-radius: 14px; padding: 10px 12px; font-size: 13px; line-height: 1.55; white-space: pre-wrap; word-break: break-all; }
