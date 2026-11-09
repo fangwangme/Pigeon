@@ -28,6 +28,9 @@ const PROTOCOL_VERSION = "1.0.0";
 export const SERVER_VERSION = "0.1.5";
 const PUSH_DEDUPE_MS = 60_000;
 
+import { QuotaService } from "./quota/index";
+import { UsageService } from "./usage/index";
+
 export interface WsServerOptions {
   /** Identifies the client bundle being served (protocol.md §3.2). */
   buildId: string;
@@ -42,6 +45,8 @@ export interface WsServerOptions {
   pairingManager?: PairingManager;
   /** Every agent's model list (`herdr-adapter.md` §7.1); without it only the static lists are known. */
   modelCatalog?: ModelCatalog;
+  quotaService?: QuotaService;
+  usageService?: UsageService;
 }
 
 export interface ClientConnectionData {
@@ -84,6 +89,8 @@ export class WsServer {
   private answeringPanes = new Set<string>();
   private uploadStore?: UploadStore;
   private pairingManager?: PairingManager;
+  private quotaService?: QuotaService;
+  private usageService?: UsageService;
   // protocol.md §4.2: prompts waiting for the pane's turn to end, oldest first.
   /** `item` is what the phone sees (its own text and upload ids, so **编辑** can restore them); `send` is the composed prompt. */
   private queues = new Map<string, Array<{ item: QueuedPrompt; send: string }>>();
@@ -100,6 +107,8 @@ export class WsServer {
     this.skillScanner = options.skillScanner || new SkillScanner();
     this.uploadStore = options.uploadStore;
     this.pairingManager = options.pairingManager;
+    this.quotaService = options.quotaService;
+    this.usageService = options.usageService;
     // security-and-pairing.md §5: a revoked device (from the phone or `pigeon devices revoke`) is cut off at once.
     this.pairingManager?.on("device_revoked", (deviceId: string) => this.closeDevice(deviceId));
 
@@ -501,6 +510,43 @@ export class WsServer {
         this.configVersion++;
         this.sendAck(ws, msg.id, { version: this.configVersion, client });
         this.broadcastConfigUpdated(client, ws);
+        return;
+      }
+
+      case "quota_get": {
+        if (!this.quotaService) {
+          this.quotaService = new QuotaService({ configManager: this.configManager });
+        }
+        const force = msg.payload?.force ?? false;
+        const res = await this.quotaService.getQuota(force, this.configManager.getClientConfig());
+        this.sendAck(ws, msg.id, { providers: res.providers });
+        return;
+      }
+
+      case "usage_get": {
+        if (!this.usageService) {
+          this.usageService = new UsageService();
+        }
+        const res = await this.usageService.getUsage(msg.payload);
+        this.sendAck(ws, msg.id, res as any);
+        return;
+      }
+
+      case "usage_day": {
+        if (!this.usageService) {
+          this.usageService = new UsageService();
+        }
+        const res = await this.usageService.getDay(msg.payload);
+        this.sendAck(ws, msg.id, res as any);
+        return;
+      }
+
+      case "usage_model": {
+        if (!this.usageService) {
+          this.usageService = new UsageService();
+        }
+        const res = await this.usageService.getModel(msg.payload);
+        this.sendAck(ws, msg.id, res as any);
         return;
       }
     }

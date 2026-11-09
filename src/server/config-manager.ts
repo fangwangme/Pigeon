@@ -1,7 +1,32 @@
 import { existsSync, readFileSync, writeFileSync, mkdirSync, renameSync } from "node:fs";
 import { dirname, join } from "node:path";
-import type { ClientConfig, ServerConfig, PigeonConfig } from "../types/protocol";
+import type { ClientConfig, ServerConfig, PigeonConfig, QuotaProvidersConfig } from "../types/protocol";
 import { DEFAULT_CLIENT_CONFIG } from "../shared/defaults";
+
+export function detectQuotaProviders(home: string, env: NodeJS.ProcessEnv = process.env): QuotaProvidersConfig {
+  let claude = existsSync(join(home, ".claude", ".credentials.json"));
+  if (!claude && process.platform === "darwin") {
+    try {
+      const res = Bun.spawnSync(["security", "find-generic-password", "-s", "Claude Code-credentials"]);
+      if (res.exitCode === 0) claude = true;
+    } catch {
+      // ignore
+    }
+  }
+
+  const codexHome = env.CODEX_HOME;
+  const codex =
+    (codexHome ? existsSync(join(codexHome, "auth.json")) : false) ||
+    existsSync(join(home, ".config", "codex", "auth.json")) ||
+    existsSync(join(home, ".codex", "auth.json"));
+
+  const antigravity =
+    existsSync(join(home, ".gemini", "antigravity-cli", "antigravity-oauth-token")) ||
+    existsSync(join(home, ".config", "Antigravity")) ||
+    (process.platform === "darwin" && existsSync(join(home, "Library", "Application Support", "Antigravity")));
+
+  return { claude, codex, antigravity };
+}
 
 /** Server settings that do not depend on the environment, written into a fresh config file. */
 const STATIC_SERVER_DEFAULTS = { port: 4100, host: "", insecureDev: false, publicBaseUrl: "" };
@@ -70,9 +95,14 @@ export class ConfigManager {
   constructor(customPath?: string, env: NodeJS.ProcessEnv = process.env) {
     this.configPath = resolveConfigPath(customPath, env);
     this.stored = this.loadOrCreate();
+    const detectedProviders = detectQuotaProviders(env.HOME || "", env);
+    const clientDefaults: ClientConfig = {
+      ...DEFAULT_CLIENT_CONFIG,
+      quotaProviders: detectedProviders,
+    };
     this.config = {
       server: { ...STATIC_SERVER_DEFAULTS, ...resolveRuntimeServerDefaults(env), ...(this.stored.server || {}) } as ServerConfig,
-      client: deepMerge({ ...DEFAULT_CLIENT_CONFIG }, this.stored.client || {}),
+      client: deepMerge(clientDefaults, this.stored.client || {}),
     };
   }
 

@@ -37,6 +37,8 @@ export const ICONS = {
   "edit": "<path d=\"M4 20l1-4L16 5l3 3L8 19z\"/><path d=\"M14 7l3 3\"/>",
   "panes": "<rect x=\"3\" y=\"4\" width=\"18\" height=\"16\" rx=\"2.5\"/><path d=\"M12 4v16\"/>",
   "read": "<path d=\"M4 5h6a2 2 0 0 1 2 2v12a2 2 0 0 0-2-2H4zM20 5h-6a2 2 0 0 0-2 2v12a2 2 0 0 1 2-2h6z\"/>",
+  "gauge": "<path d=\"M3.5 16a8.5 8.5 0 0 1 17 0\"/><path d=\"M12 16l4.2-4.2\"/><circle cx=\"12\" cy=\"16\" r=\"1.2\"/><path d=\"M6.5 16h0M17.5 16h0\"/>",
+  "barChart": "<path d=\"M5 20V12M10 20V6M15 20v-9M20 20V9\"/>",
 } as const;
 
 export type IconName = keyof typeof ICONS;

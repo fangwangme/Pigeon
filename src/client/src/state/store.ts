@@ -8,6 +8,8 @@ import type {
   InteractionCardData,
   NormalizedTurn,
   QueuedPrompt,
+  QuotaProvidersConfig,
+  QuotaProviderState,
   SessionInfo,
   SessionStats,
   SkillEntry,
@@ -25,7 +27,9 @@ export type Route =
   | { name: "agents" }
   | { name: "session"; from: "home" | "agents" }
   | { name: "new"; workspaceId: string | null; mode: "new" | "resume" }
-  | { name: "settings" };
+  | { name: "settings" }
+  | { name: "quota"; from?: "home" | "agents" | "settings" }
+  | { name: "usage"; from?: "home" | "agents" | "settings"; initialPreset?: "today" | "7d" | "30d" | "year" | "all" | "custom" };
 
 /** mobile-ui-and-themes.md §2.3: stored in this browser only. */
 export interface FilterState {
@@ -74,6 +78,11 @@ export interface AppState {
   collapsed: Record<string, boolean>;
   unread: Record<string, boolean>;
   canInstallPWA: boolean;
+  quotaDisplay: "remaining" | "used";
+  quotaButton: boolean;
+  quotaProviders: QuotaProvidersConfig;
+  quotaSnapshots: QuotaProviderState[];
+  quotaUpdated: number | null;
 }
 
 /** localStorage can throw (private mode, blocked site data); preferences then fall back to defaults. */
@@ -141,6 +150,11 @@ const [state, setState] = createStore<AppState>({
   collapsed: readJson<Record<string, boolean>>("pigeon_collapsed", {}),
   unread: readJson<Record<string, boolean>>("pigeon_unread", {}),
   canInstallPWA: false,
+  quotaDisplay: "remaining",
+  quotaButton: true,
+  quotaProviders: { claude: true, codex: true, antigravity: true },
+  quotaSnapshots: [],
+  quotaUpdated: null,
 });
 
 export { state, setState };
@@ -164,6 +178,9 @@ export function applySyncedClientConfig(config: Partial<ClientConfig> | undefine
   if (!config) return;
   if (config.themeMode) setState("themeMode", config.themeMode);
   if (config.accent) setState("accent", config.accent);
+  if (config.quotaDisplay !== undefined) setState("quotaDisplay", config.quotaDisplay);
+  if (config.quotaButton !== undefined) setState("quotaButton", config.quotaButton);
+  if (config.quotaProviders !== undefined) setState("quotaProviders", config.quotaProviders);
   writePref("pigeon_mode", state.themeMode);
   writePref("pigeon_accent", state.accent);
   applyTheme(state.themeMode, state.accent);

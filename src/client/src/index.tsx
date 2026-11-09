@@ -9,6 +9,8 @@ import { NewSession } from "./components/NewSession";
 import { Overlays } from "./components/overlays";
 import { SessionPage } from "./components/SessionPage";
 import { Pairing, Settings } from "./components/Settings";
+import { QuotaPage } from "./components/QuotaPage";
+import { UsagePage } from "./components/UsagePage";
 import { t } from "./i18n";
 
 applyTheme(state.themeMode, state.accent);
@@ -107,6 +109,12 @@ function App() {
         </Match>
         <Match when={state.route.name === "settings"}>
           <Settings />
+        </Match>
+        <Match when={state.route.name === "quota"}>
+          <QuotaPage />
+        </Match>
+        <Match when={state.route.name === "usage"}>
+          <UsagePage />
         </Match>
       </Switch>
       <Overlays />

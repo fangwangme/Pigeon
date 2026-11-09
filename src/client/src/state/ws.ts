@@ -1,6 +1,6 @@
 import { state, setState, applySyncedClientConfig, openTerminal, setUnread, showToast } from "./store";
 import { load, save, remove, clearAll, sweep, meta, migrateLocalStorageCache, type PaneCacheEntry } from "./pane-cache";
-import type { ClientMessage, ServerMessage, SnapshotPayload, PaneStatePayload, ClientConfig, AgentStatus, HaveInfo } from "../../../types/protocol";
+import type { ClientMessage, ServerMessage, SnapshotPayload, PaneStatePayload, ClientConfig, AgentStatus, HaveInfo, QuotaProviderState } from "../../../types/protocol";
 import { hashTurn } from "../../../types/protocol";
 import { t } from "../i18n";
 
@@ -212,6 +212,7 @@ export function handleServerMessage(msg: ServerMessage): void {
       applySyncedClientConfig(msg.payload.clientConfig);
       setState("recipes", msg.payload.recipes);
       setState("serverVersion", msg.payload.serverVersion);
+      void fetchQuota(false);
       return;
 
     case "skills_sync":
@@ -483,6 +484,20 @@ export async function selectPane(paneId: string): Promise<void> {
 export function sendConfigPatch(patch: Partial<ClientConfig>): void {
   applySyncedClientConfig(patch);
   sendMessage({ type: "config_patch", id: nextId(), payload: { client: patch } });
+}
+
+export async function fetchQuota(force = false): Promise<QuotaProviderState[]> {
+  try {
+    const res = await request({ type: "quota_get", payload: { force } });
+    if (res?.providers) {
+      setState("quotaSnapshots", res.providers);
+      setState("quotaUpdated", Date.now());
+      return res.providers;
+    }
+  } catch (err) {
+    console.error("[Pigeon] fetchQuota error", err);
+  }
+  return state.quotaSnapshots;
 }
 
 /** protocol.md §7: uploads go over HTTP before the prompt names them. */

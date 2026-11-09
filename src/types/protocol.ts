@@ -125,11 +125,126 @@ export interface PaneStatePayload {
 
 export type ThemeMode = "system" | "light" | "dark";
 export type AccentName = "blue" | "purple" | "green" | "orange" | "pink";
+export type QuotaDisplayMode = "remaining" | "used";
 
-/** Appearance shared by every paired phone (`protocol.md` §6). */
+export interface QuotaProvidersConfig {
+  claude: boolean;
+  codex: boolean;
+  antigravity: boolean;
+}
+
+/** Appearance and quota settings shared by every paired phone (`protocol.md` §6). */
 export interface ClientConfig {
   themeMode: ThemeMode;
   accent: AccentName;
+  quotaProviders?: QuotaProvidersConfig;
+  quotaDisplay?: QuotaDisplayMode;
+  quotaButton?: boolean;
+}
+
+export interface QuotaWindow {
+  id: string;
+  label: string;
+  family?: string;
+  usedPercent: number;
+  periodMs: number | null;
+  resetsAt: number | null;
+}
+
+export interface QuotaCredit {
+  id?: string;
+  label?: string;
+  expiresAt: number | null;
+  [key: string]: any;
+}
+
+export interface QuotaSnapshot {
+  provider: "claude" | "codex" | "antigravity";
+  plan?: string;
+  account?: string;
+  windows: QuotaWindow[];
+  credits: QuotaCredit[];
+  fetchedAt: number;
+}
+
+export interface QuotaProviderState {
+  provider: "claude" | "codex" | "antigravity";
+  enabled: boolean;
+  snapshot: QuotaSnapshot | null;
+  error: { message: string; at: number } | null;
+}
+
+export interface QuotaGetPayload {
+  providers: QuotaProviderState[];
+}
+
+export interface UsageTotals {
+  cost: number;
+  tokens: number;
+  input: number;
+  output: number;
+  cacheRead: number;
+  cacheWrite: number;
+  messages: number;
+  sessions: number;
+}
+
+export interface UsageDaySummary extends UsageTotals {
+  date: string;
+}
+
+export interface UsageModelSummary extends UsageTotals {
+  model: string;
+  company: string;
+  agents: string[];
+  lastUsed: string;
+  unpriced: boolean;
+}
+
+export interface UsageGetPayload {
+  range: { from: string; to: string };
+  firstDay: string | null;
+  scannedAt: number;
+  pricesAvailable: boolean;
+  totals: UsageTotals;
+  comparison: { from: string; to: string; totals: UsageTotals } | null;
+  days: UsageDaySummary[];
+  models: UsageModelSummary[];
+}
+
+export interface UsageDayAgentModel extends UsageTotals {
+  model: string;
+  company?: string;
+}
+
+export interface UsageDayAgent extends UsageTotals {
+  agent: string;
+  models: UsageDayAgentModel[];
+}
+
+export interface UsageDayPayload {
+  date: string;
+  totals: UsageTotals;
+  agents: UsageDayAgent[];
+}
+
+export interface UsageModelPerDay {
+  date: string;
+  tokens: number;
+  cost: number;
+}
+
+export interface UsageModelAgentTotals extends UsageTotals {
+  agent: string;
+}
+
+export interface UsageModelPayload {
+  model: string;
+  company: string;
+  totals: UsageTotals;
+  lastUsed: string;
+  agents: UsageModelAgentTotals[];
+  perDay: UsageModelPerDay[];
 }
 
 export interface ServerConfig {
@@ -284,7 +399,11 @@ export type ClientMessage =
   | { type: "models_refresh"; id: string; payload: Record<string, never> }
   | { type: "skills_get"; id: string }
   | { type: "config_get"; id: string }
-  | { type: "config_patch"; id: string; payload: { client: Partial<ClientConfig> } };
+  | { type: "config_patch"; id: string; payload: { client: Partial<ClientConfig> } }
+  | { type: "quota_get"; id: string; payload?: { force?: boolean } }
+  | { type: "usage_get"; id: string; payload: { preset: string; from?: string; to?: string; agents: string[] } }
+  | { type: "usage_day"; id: string; payload: { date: string; agents: string[] } }
+  | { type: "usage_model"; id: string; payload: { model: string; from: string; to: string; agents: string[] } };
 
 // Server -> Client messages
 export type ServerMessage =

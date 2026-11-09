@@ -37,6 +37,8 @@ svg.i.sm { width: 16px; height: 16px; }
 .cap { height: 44px; border-radius: 22px; display: flex; align-items: center; padding: 0 2px; flex: none; position: relative; }
 .cap button { width: 42px; height: 42px; display: grid; place-items: center; position: relative; }
 .cap .dot, .cbtn .dot { position: absolute; top: 9px; right: 9px; width: 8px; height: 8px; border-radius: 50%; background: var(--accent); }
+.cap .dot.amber { background: var(--warn); }
+.cap .dot.red { background: var(--danger); }
 
 /* ---------- status ---------- */
 .si { width: 22px; height: 22px; display: grid; place-items: center; flex: none; color: var(--faint); }
