@@ -94,6 +94,11 @@ jobs:
   publish-npm:
     needs: build
     runs-on: ubuntu-latest
+    # npm Trusted Publishing: `npm publish` trades this run's OIDC token for
+    # publish rights, so no npm token is stored anywhere (distribution.md §5).
+    permissions:
+      contents: read
+      id-token: write
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -106,7 +111,8 @@ jobs:
       - name: Set up Node
         uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          # Trusted Publishing needs Node >= 22.14 and npm >= 11.5.1.
+          node-version: "24"
           registry-url: "https://registry.npmjs.org"
 
       - name: Assemble packages
@@ -117,6 +123,4 @@ jobs:
             --out .local/npm-dist
 
       - name: Publish to npm
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: node npm/scripts/publish-packages.mjs .local/npm-dist
