@@ -356,6 +356,33 @@ export class WsServer {
         return;
       }
 
+      case "queue_update": {
+        const { targetPaneId, queueId, text, attachments } = msg.payload;
+        if (!this.requireKnownPane(ws, msg.id, targetPaneId)) return;
+        const queue = this.queues.get(targetPaneId) ?? [];
+        const entry = queue.find((q) => q.item.queueId === queueId);
+        if (!entry) {
+          this.sendError(ws, msg.id, ProtocolErrors.ERR_NOT_FOUND, "That prompt is no longer queued.");
+          return;
+        }
+        const paths: string[] = [];
+        for (const id of attachments ?? []) {
+          const info = this.uploadStore?.get(id);
+          if (!info) {
+            this.sendError(ws, msg.id, ProtocolErrors.ERR_INVALID_PAYLOAD, `Unknown upload '${id}'`);
+            return;
+          }
+          paths.push(info.path);
+        }
+        const full = this.composePrompt(targetPaneId, text, paths);
+        entry.item.text = text;
+        entry.item.attachments = attachments ?? [];
+        entry.send = full;
+        this.sendQueue(targetPaneId);
+        this.sendAck(ws, msg.id, { queueId, updated: true });
+        return;
+      }
+
       case "models_refresh": {
         await this.refreshModels();
         this.sendAck(ws, msg.id, { recipes: this.recipeSummaries() });

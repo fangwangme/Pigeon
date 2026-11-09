@@ -96,6 +96,14 @@ export function validateClientMessage(raw: unknown): ValidationResult {
     case "queue_cancel":
       if (!isObj(p) || !isStr(p.targetPaneId) || !isStr(p.queueId, 64)) return fail(id, "queue_cancel needs targetPaneId and queueId");
       return ok();
+    case "queue_update":
+      if (!isObj(p) || !isStr(p.targetPaneId) || !isStr(p.queueId, 64) || typeof p.text !== "string") {
+        return fail(id, "queue_update needs targetPaneId, queueId and text");
+      }
+      if (p.attachments !== undefined && (!Array.isArray(p.attachments) || !p.attachments.every((a: unknown) => isStr(a, 64)))) {
+        return fail(id, "queue_update attachments must be string[]");
+      }
+      return ok();
     case "models_refresh":
       if (!isObj(p)) return fail(id, "models_refresh needs a payload object");
       return ok();

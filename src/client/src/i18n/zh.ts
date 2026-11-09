@@ -185,6 +185,9 @@ export const zh: Messages = {
   "session.undo": "撤销",
   "session.edit": "编辑",
   "session.alreadySent": "已经发出，无法编辑",
+  "session.editingQueued": "正在修改排队中的消息",
+  "session.cancelEdit": "取消修改",
+  "session.updateFailed": "修改排队消息失败",
   "session.jump": "到最新",
 
   "settings.title": "设置",

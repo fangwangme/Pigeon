@@ -2,7 +2,16 @@ import { createEffect, createMemo, createSignal, For, on, onCleanup, onMount, Sh
 import { navigate, openTerminal, setState, showToast, state } from "../state/store";
 import { copyText, request, selectPane, sendKeys, sendPrompt } from "../state/ws";
 import type { FileDiffSummary, QueuedPrompt } from "../../../types/protocol";
-import { Composer, insertIntoComposer, ModelSheet, PlusSheet, restoreIntoComposer, SkillsSheet } from "./Composer";
+import {
+  cancelQueuedPromptEdit,
+  Composer,
+  editQueuedPrompt,
+  insertIntoComposer,
+  ModelSheet,
+  PlusSheet,
+  restoreIntoComposer,
+  SkillsSheet,
+} from "./Composer";
 import { ConnectionBanner } from "./Home";
 import { openOverlay } from "./overlays";
 import { PromptCard } from "./PromptCard";
@@ -157,11 +166,9 @@ function PaneSheet(props: { onClose: () => void }) {
 
 type Panel = "menu" | "changes" | "panes" | "plus" | "skills" | "model" | null;
 
-/** mobile-ui-and-themes.md §3.5: take a queued prompt out of the queue and back into the composer. */
+/** mobile-ui-and-themes.md §3.5: edit a queued prompt in-place on the server without changing queue position. */
 function editQueued(q: QueuedPrompt): void {
-  request({ type: "queue_cancel", payload: { targetPaneId: state.activePaneId!, queueId: q.queueId } })
-    .then(() => restoreIntoComposer(q.text, q.attachments))
-    .catch((e) => showToast(e.code === "ERR_NOT_FOUND" ? t("session.alreadySent") : e.message || t("session.undoFailed")));
+  editQueuedPrompt(q.queueId, q.text, q.attachments);
 }
 
 export function SessionPage() {
@@ -331,9 +338,12 @@ export function SessionPage() {
                       <button onClick={() => editQueued(q)}>{t("session.edit")}</button>
                     </Show>
                     <button
-                      onClick={() =>
-                        request({ type: "queue_cancel", payload: { targetPaneId: state.activePaneId!, queueId: q.queueId } }).catch((e) => showToast(e.message || t("session.undoFailed")))
-                      }
+                      onClick={() => {
+                        cancelQueuedPromptEdit(q.queueId);
+                        request({ type: "queue_cancel", payload: { targetPaneId: state.activePaneId!, queueId: q.queueId } }).catch((e) =>
+                          showToast(e.message || t("session.undoFailed"))
+                        );
+                      }}
                     >
                       {t("session.undo")}
                     </button>
@@ -363,7 +373,15 @@ export function SessionPage() {
             <Composer
               draftId={paneId}
               placeholder={isTerminal() ? t("composer.placeholderCommand") : working() ? t("composer.placeholderQueued") : t("composer.placeholderReply")}
-              onSend={(text, ids) => sendPrompt(text, ids)}
+              onSend={(text, ids, queueId) => {
+                if (queueId) {
+                  return request({
+                    type: "queue_update",
+                    payload: { targetPaneId: state.activePaneId!, queueId, text, attachments: ids },
+                  });
+                }
+                return sendPrompt(text, ids);
+              }}
               working={working()}
               onStop={stop}
               onPlus={isTerminal() ? undefined : () => setPanel("plus")}

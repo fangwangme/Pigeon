@@ -184,6 +184,9 @@ export const en = {
   "session.undo": "Undo",
   "session.edit": "Edit",
   "session.alreadySent": "Already sent; nothing to edit",
+  "session.editingQueued": "Editing queued message",
+  "session.cancelEdit": "Cancel edit",
+  "session.updateFailed": "Failed to update queued message",
   "session.jump": "Jump to latest",
 
   "settings.title": "Settings",

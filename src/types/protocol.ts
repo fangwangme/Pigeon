@@ -402,6 +402,7 @@ export type ClientMessage =
   | { type: "devices_list"; id: string }
   | { type: "device_revoke"; id: string; payload: { deviceId: string } }
   | { type: "queue_cancel"; id: string; payload: { targetPaneId: string; queueId: string } }
+  | { type: "queue_update"; id: string; payload: { targetPaneId: string; queueId: string; text: string; attachments?: string[] } }
   | { type: "models_refresh"; id: string; payload: Record<string, never> }
   | { type: "skills_get"; id: string }
   | { type: "config_get"; id: string }

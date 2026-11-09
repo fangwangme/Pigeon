@@ -12,7 +12,7 @@ import { WsServer } from "../src/server/ws-server";
 import { FakeHerdr, fakeWs, tempDir, topologyOf, type FakePane } from "./helpers/fixtures";
 
 // protocol.md §4.2 (queue, attachments), §4.5 (first message, resume), §4.9 (model), §4.11 (rename),
-// §4.12 (devices), §4.13 (queue cancel), §5.3 (snapshot fields), §5.8 (prompt_queue).
+// §4.12 (devices), §4.13 (queue cancel), §4.14 (queue update), §5.3 (snapshot fields), §5.8 (prompt_queue).
 let dir: string;
 let herdr: FakeHerdr;
 let client: HerdrClient;
@@ -131,6 +131,28 @@ describe("prompt queue (protocol.md §4.2, §4.13, §5.8)", () => {
     await send(c.ws, { type: "queue_cancel", id: "q1", payload: { targetPaneId: "p1", queueId } });
     expect(c.ofType("prompt_queue").at(-1).payload.items).toEqual([]);
     await send(c.ws, { type: "queue_cancel", id: "q2", payload: { targetPaneId: "p1", queueId } });
+    expect(lastError(c)).toBe("ERR_NOT_FOUND");
+  });
+
+  test("a queued prompt can be updated in-place, preserving queue order and index", async () => {
+    const c = await viewer("p1");
+    await send(c.ws, { type: "agent_prompt", id: "a1", payload: { targetPaneId: "p1", text: "one" } });
+    const q1 = lastAck(c).queueId;
+    await send(c.ws, { type: "agent_prompt", id: "a2", payload: { targetPaneId: "p1", text: "two" } });
+    const q2 = lastAck(c).queueId;
+    await send(c.ws, { type: "agent_prompt", id: "a3", payload: { targetPaneId: "p1", text: "three" } });
+    const q3 = lastAck(c).queueId;
+
+    expect(c.ofType("prompt_queue").at(-1).payload.items.map((i: any) => i.text)).toEqual(["one", "two", "three"]);
+
+    // Update the middle prompt #2
+    await send(c.ws, { type: "queue_update", id: "u1", payload: { targetPaneId: "p1", queueId: q2, text: "two edited" } });
+    expect(lastAck(c)).toMatchObject({ status: "ok", updated: true });
+    expect(c.ofType("prompt_queue").at(-1).payload.items.map((i: any) => i.text)).toEqual(["one", "two edited", "three"]);
+    expect(c.ofType("prompt_queue").at(-1).payload.items[1].queueId).toBe(q2);
+
+    // Updating a nonexistent queueId is ERR_NOT_FOUND
+    await send(c.ws, { type: "queue_update", id: "u2", payload: { targetPaneId: "p1", queueId: "no-such-id", text: "x" } });
     expect(lastError(c)).toBe("ERR_NOT_FOUND");
   });
 });

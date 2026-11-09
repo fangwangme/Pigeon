@@ -241,8 +241,8 @@ const isTouch = () => typeof window !== "undefined" && !!window.matchMedia?.("(p
 export interface ComposerProps {
   draftId: string | null;
   placeholder: string;
-  /** Resolves when sent; a rejection keeps the draft (§1.2). */
-  onSend: (text: string, attachmentIds: string[]) => Promise<unknown>;
+  /** Resolves when sent; a rejection keeps the draft (§1.2). queueId is present when updating an in-place queued prompt. */
+  onSend: (text: string, attachmentIds: string[], queueId?: string) => Promise<unknown>;
   working?: boolean;
   onStop?: () => void;
   allowAttachments?: boolean;
@@ -263,13 +263,25 @@ export function restoreIntoComposer(text: string, uploadIds: string[]): void {
   restoreHook?.(text, uploadIds);
 }
 
+let editQueueHook: ((queueId: string, text: string, uploadIds: string[]) => void) | null = null;
+/** Modifies a queued prompt in-place on the server without changing queue position. */
+export function editQueuedPrompt(queueId: string, text: string, uploadIds: string[]): void {
+  editQueueHook?.(queueId, text, uploadIds);
+}
+
+let cancelEditQueueHook: ((queueId?: string) => void) | null = null;
+export function cancelQueuedPromptEdit(queueId?: string): void {
+  cancelEditQueueHook?.(queueId);
+}
+
 export function Composer(props: ComposerProps) {
   const [text, setText] = createSignal(readPref(draftKey(props.draftId)) ?? "");
   const [focused, setFocused] = createSignal(false);
   const [composing, setComposing] = createSignal(false);
   const [caret, setCaret] = createSignal(0);
   const [atts, setAtts] = createSignal<Attachment[]>([]);
-  const [sending, setSending] = createSignal(false);
+  const [sending, setSending] = createSignal<boolean>(false);
+  const [editingQueueId, setEditingQueueId] = createSignal<string | null>(null);
   let keySeq = 0;
   let ta: HTMLTextAreaElement | undefined;
 
@@ -348,8 +360,35 @@ export function Composer(props: ComposerProps) {
     }, 20);
   };
   restoreHook = restore;
+
+  const startEditQueue = (queueId: string, s: string, uploadIds: string[]) => {
+    setEditingQueueId(queueId);
+    save(s);
+    setAtts(uploadIds.map((id) => ({ key: ++keySeq, name: t("composer.attachment"), id })));
+    setTimeout(() => {
+      if (!ta) return;
+      ta.focus();
+      ta.setSelectionRange(s.length, s.length);
+      setCaret(s.length);
+      grow();
+    }, 20);
+  };
+  editQueueHook = startEditQueue;
+
+  const cancelEdit = (qId?: string) => {
+    if (qId && editingQueueId() !== qId) return;
+    setEditingQueueId(null);
+    save("");
+    for (const a of atts()) if (a.preview) URL.revokeObjectURL(a.preview);
+    setAtts([]);
+    setTimeout(grow, 0);
+  };
+  cancelEditQueueHook = cancelEdit;
+
   onCleanup(() => {
     if (restoreHook === restore) restoreHook = null;
+    if (editQueueHook === startEditQueue) editQueueHook = null;
+    if (cancelEditQueueHook === cancelEdit) cancelEditQueueHook = null;
   });
 
   const uploading = () => atts().some((a) => !a.id);
@@ -357,10 +396,12 @@ export function Composer(props: ComposerProps) {
   const send = () => {
     if (!canSend()) return;
     const ids = atts().map((a) => a.id!);
+    const qId = editingQueueId();
     setSending(true);
     props
-      .onSend(text().trim(), ids)
+      .onSend(text().trim(), ids, qId ?? undefined)
       .then(() => {
+        setEditingQueueId(null);
         save("");
         for (const a of atts()) if (a.preview) URL.revokeObjectURL(a.preview);
         setAtts([]);
@@ -370,7 +411,7 @@ export function Composer(props: ComposerProps) {
       .finally(() => setSending(false));
   };
 
-  const open = () => focused() || atts().length > 0 || text().includes("\n");
+  const open = () => focused() || atts().length > 0 || text().includes("\n") || !!editingQueueId();
   const showStop = () => props.working && !text().trim() && atts().length === 0;
 
   return (
@@ -393,6 +434,14 @@ export function Composer(props: ComposerProps) {
         </div>
       </Show>
       <div class={`comp${open() ? " open" : ""}`}>
+        <Show when={editingQueueId()}>
+          <div class="qedit-bar">
+            <span>{t("session.editingQueued")}</span>
+            <button type="button" onClick={() => cancelEdit()}>
+              {t("session.cancelEdit")}
+            </button>
+          </div>
+        </Show>
         <Show when={atts().length}>
           <div class="thumbs">
             <For each={atts()}>
