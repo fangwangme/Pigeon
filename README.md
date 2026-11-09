@@ -60,6 +60,35 @@ A small daemon runs alongside Herdr on your computer and serves the app over you
   </picture>
 </p>
 
+## Installation
+
+Install Pigeon on the computer where Herdr runs:
+
+```bash
+npm install -g @fangwangme/pigeon
+# or
+bun add -g @fangwangme/pigeon
+```
+
+Or run it without installing:
+
+```bash
+npx @fangwangme/pigeon
+# or
+bunx @fangwangme/pigeon
+```
+
+Then expose it to your tailnet and start it:
+
+```bash
+tailscale serve --bg 4100   # serves local port 4100 over HTTPS in your tailnet
+pigeon start                # starts the daemon and prints a pairing QR code
+```
+
+Scan the QR code with Chrome on your phone, then open the browser menu and choose **Add to Home screen** to install the app.
+
+Prebuilt binaries are published for macOS (Apple Silicon and Intel) and Linux (x64 and arm64); npm or bun picks the one for your machine. On other platforms, [build from source](#build-from-source). See [Requirements](#requirements) for Herdr, Tailscale, and the phone browser.
+
 ## What it does
 
 - **Every workspace at a glance.** Browse your Herdr workspaces and tabs with live status (`waiting for you`, `working`, `done`, `idle`, or plain terminal) and unread dots for sessions that finished while you were away. Open **All agents** to see every active agent across workspaces grouped by state, or search and filter by status, agent, or name.
@@ -97,29 +126,29 @@ The full design and contracts live in [`docs/specs/`](docs/specs/).
 ## Requirements
 
 - The [Herdr](https://herdr.dev) desktop app (`herdr-app` + `herdr-core`) running on your computer with its window open. (The older terminal-only `herdr` TUI is not supported.)
-- [Bun](https://bun.sh) to build from source.
+- [Node.js](https://nodejs.org) or [Bun](https://bun.sh) to install from npm, or Bun to build from source.
 - [Tailscale](https://tailscale.com) on both your computer and your phone, signed into the same tailnet, so the phone gets an HTTPS address.
 - Chrome (or another modern Chromium browser) on Android. iOS Safari isn't supported yet.
 
-## Quick start
-
-```bash
-bun install
-bun run build                        # builds the single binary at dist/pigeon
-tailscale serve --bg 4100            # serves local port 4100 over HTTPS in your tailnet
-./dist/pigeon start                  # starts the daemon and prints a pairing QR code
-```
-
-Scan the QR code with Chrome on your phone, then open the browser menu and choose **Add to Home screen** to install the app.
+## Pairing and devices
 
 While the daemon is running, you can manage pairing and devices from another terminal (or from **Settings** in the app):
 
 ```bash
-./dist/pigeon pair                   # rotate the pairing link and print a new QR code
-./dist/pigeon pair --ephemeral       # print a single-use link that expires in 10 minutes
-./dist/pigeon devices                # list paired browsers
-./dist/pigeon devices revoke <id>    # revoke a paired browser immediately
-./dist/pigeon status                 # show active session count and public URL
+pigeon pair                   # rotate the pairing link and print a new QR code
+pigeon pair --ephemeral       # print a single-use link that expires in 10 minutes
+pigeon devices                # list paired browsers
+pigeon devices revoke <id>    # revoke a paired browser immediately
+pigeon status                 # show active session count and public URL
+```
+
+## Build from source
+
+```bash
+bun install
+bun run build                 # builds the single binary at dist/pigeon
+tailscale serve --bg 4100
+./dist/pigeon start
 ```
 
 To put `pigeon` on your `PATH`, keep it running with `systemd`, and push updates to your phone as you work, see [`docs/usage/README.md`](docs/usage/README.md).

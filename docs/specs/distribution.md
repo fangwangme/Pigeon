@@ -72,7 +72,8 @@ When `pigeon` is invoked via CLI or `npx`/`bunx`:
   - Downloads all built artifacts.
   - Creates a GitHub Release via `gh release create` attaching all release archives, extracting changelog notes when present or falling back to `--generate-notes`.
 - **Job 3: NPM Assembly and Publication (`publish-npm`)**:
-  - Prepares Node environment (`actions/setup-node@v4` with registry url `https://registry.npmjs.org`).
+  - Job permissions: `contents: read` and `id-token: write`, so npm can authenticate the run through Trusted Publishing (OIDC).
+  - Prepares Node environment (`actions/setup-node@v4`, Node 24, registry url `https://registry.npmjs.org`). Trusted Publishing needs Node ≥ 22.14 and npm CLI ≥ 11.5.1.
   - Executes `node npm/scripts/build-packages.mjs`:
     - Asserts tag version matches root `package.json` version.
     - Assembles platform packages and launcher package into output directory (`.local/npm-dist`).
@@ -86,5 +87,6 @@ When `pigeon` is invoked via CLI or `npx`/`bunx`:
 ## 5. Trust Boundaries and Error Handling
 
 - **Tag and Version Integrity**: `build-packages.mjs` strictly verifies that the release git tag matches root `package.json` version before assembling packages. A mismatch halts the workflow immediately.
-- **Authentication**: `NODE_AUTH_TOKEN` is supplied strictly via GitHub Action secret `NPM_TOKEN` at runtime and never committed or logged.
+- **Authentication**: npm publishing authenticates only through npm Trusted Publishing. Each published package (`@fangwangme/pigeon` and every `@fangwangme/pigeon-<os>-<arch>`) lists a GitHub Actions trusted publisher for repository `fangwangme/Pigeon` and workflow `release.yml`; `npm publish` exchanges the run's short-lived OIDC token for publish rights. No npm token is stored in the repository, its secrets, or the workflow environment. A run whose OIDC exchange fails stops at the first `npm publish`, before any package is published, and is safe to rerun.
+  - Decision: Trusted Publishing replaces the `NPM_TOKEN` secret because write-capable npm tokens expire within 90 days and bypass-2FA direct-publish tokens are being retired; a short-lived per-run credential removes both the rotation chore and the stored secret.
 - **Fail-Safe Execution**: The launcher checks binary execution results; errors or non-zero exit codes terminate cleanly with matching exit status.

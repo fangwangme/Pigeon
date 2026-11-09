@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.5] - 2026-11-09
+
+### Added
+- **README: Installation**: a new section right below the screenshots shows how to install Pigeon from npm (`npm install -g @fangwangme/pigeon`, `bun add -g`, or `npx` / `bunx` without installing) and start it (#11).
+
+### Changed
+- **Releases publish to npm through Trusted Publishing**: the release workflow authenticates to npm with a short-lived GitHub Actions OIDC credential instead of a stored npm token, and npm attaches provenance to each published package (#11).
+
 ## [0.1.4] - 2026-11-09
 
 ### Added

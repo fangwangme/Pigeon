@@ -25,7 +25,15 @@ describe("distribution and packaging (distribution.md, issue #9)", () => {
     expect(content).toContain("linux-x64");
     expect(content).toContain("build-packages.mjs");
     expect(content).toContain("publish-packages.mjs");
-    expect(content).toContain("NPM_TOKEN");
+  });
+
+  test("test_release_npm_trusted_publishing: publish-npm authenticates through OIDC, never an npm token (distribution.md §4.2, §5)", () => {
+    const content = readFileSync(join(rootDir, ".github", "workflows", "release.yml"), "utf-8");
+    const publishNpmJob = content.slice(content.indexOf("\n  publish-npm:"));
+    expect(publishNpmJob).toContain("id-token: write");
+    expect(publishNpmJob).toContain('node-version: "24"');
+    expect(content).not.toContain("NPM_TOKEN");
+    expect(content).not.toContain("NODE_AUTH_TOKEN");
   });
 
   test("test_launcher_package_json: launcher declares @fangwangme/pigeon and 4 optionalDependencies", () => {
