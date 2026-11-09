@@ -79,3 +79,13 @@ Both checks run on the WebSocket upgrade and on `POST /api/uploads`, before the 
 - **Development Mode (`--insecure-dev`)**:
   - Listens on every interface (dual-stack) over plain HTTP. The pairing link uses the first private LAN IPv4 found on a physical interface, or `--public-url`.
   - Session cookie drops the `__Host-` prefix and `Secure` attribute, Web Push is disabled, and the console emits high-visibility security warnings.
+
+## 6. Agent Credentials and Outbound Requests
+
+The quota feature (`quota-and-usage.md` §2) reads, and on refresh writes, the credentials of the agents on this computer.
+
+- **What is read**: the Claude Code credential file (and, on macOS, its Keychain item), Codex's `auth.json`, and the Antigravity CLI's OAuth token cache. Only providers enabled in `client.quotaProviders` are read. Usage scanning (`quota-and-usage.md` §3.1) reads the agents' session data and never their credentials.
+- **What is written**: refreshed tokens back to the same credential source, only when it still holds what was read before the refresh (`quota-and-usage.md` §2.3), keeping every other field and the file's permissions. Nothing else of an agent's is written.
+- **Never leaves the daemon**: access tokens, refresh tokens and ID tokens are never sent to the phone, logged, or written anywhere else. Errors name the provider and the cause, never a token or a header value. The phone receives only the snapshot of `quota-and-usage.md` §2.1 (plan, account email, windows, credits).
+- **Outbound hosts** (HTTPS only): `api.anthropic.com`, `platform.claude.com`, `chatgpt.com`, `auth.openai.com`, Google's Cloud Code and OAuth endpoints for Antigravity, and the price lists at `models.dev`, `raw.githubusercontent.com` (LiteLLM) and `openrouter.ai`. The Antigravity language server is reached on the loopback interface only. Responses are untrusted input, validated before use (`architecture.md` §5).
+- **Local processes**: `agy -p /usage` is the only command the quota feature runs, with a fixed argument list and a timeout.

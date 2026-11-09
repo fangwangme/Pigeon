@@ -167,6 +167,41 @@ Removes the prompt from the pane's queue and sends `prompt_queue` to the viewers
 ```
 Fills the model catalog again from every agent's source (`herdr-adapter.md` §7.1). The ack comes once the fill has finished and carries `{ "recipes": { … } }` in the shape of §5.7; every connected client also gets `recipes_sync` (§5.9) when a list changed.
 
+### 4.15 Quota (`quota_get`)
+```json
+{ "type": "quota_get", "id": "cli_19", "payload": { "force": false } }
+```
+Answers with the quota of every provider (`quota-and-usage.md` §2). `force: true` (the refresh button) bypasses the daemon's 60-second cache; otherwise a cached snapshot is returned. The ack carries:
+```json
+{ "providers": [ { "provider": "claude", "enabled": true,
+    "snapshot": { "provider": "claude", "plan": "pro", "account": "you@example.com", "fetchedAt": 1794218000000, "credits": [],
+      "windows": [ { "id": "five_hour", "label": "5h", "usedPercent": 52, "periodMs": 18000000, "resetsAt": 1794228620000 } ] },
+    "error": null } ] }
+```
+One entry per provider, enabled or not; a disabled provider has `snapshot: null` and is not fetched. A provider that failed has `error: { "message", "at" }` and keeps its previous `snapshot` (or null when it never had one). Provider failures never turn into a command error.
+
+### 4.16 Usage Report (`usage_get`)
+```json
+{ "type": "usage_get", "id": "cli_20", "payload": { "preset": "custom", "from": "2026-10-01", "to": "2026-10-31", "agents": ["claude", "codex", "agy", "opencode", "pi"] } }
+```
+`preset` is `today`, `7d`, `30d`, `year`, `all` or `custom`; `custom` requires `from` and `to` (`YYYY-MM-DD`), which other presets must not carry. `agents` is a non-empty list of distinct agent kinds and filters every figure in the reply. Anything else is `ERR_INVALID_PAYLOAD` and nothing is scanned. The ack carries:
+- `range` (`from`, `to`), `firstDay` (the first day with usage, or null), `scannedAt`, `pricesAvailable`;
+- `totals` and, when `quota-and-usage.md` §3.5 gives one, `comparison` (`from`, `to`, `totals`); totals are `{ cost, tokens, input, output, cacheRead, cacheWrite, messages, sessions }`;
+- `days`: every day of the range with usage, newest first, each with the totals fields and `date`;
+- `models`: every model with usage in the range, each with the totals fields, `model`, `company`, `agents` (kinds), `lastUsed` and `unpriced`.
+
+### 4.17 Day Detail (`usage_day`)
+```json
+{ "type": "usage_day", "id": "cli_21", "payload": { "date": "2026-11-06", "agents": ["claude", "codex"] } }
+```
+The ack carries `date`, `totals`, and `agents`: per agent its totals and `models` (each model's totals), sorted by cost.
+
+### 4.18 Model Detail (`usage_model`)
+```json
+{ "type": "usage_model", "id": "cli_22", "payload": { "model": "gpt-5-6-sol", "from": "2026-10-11", "to": "2026-11-09", "agents": ["codex"] } }
+```
+The ack carries `model`, `company`, `totals`, `lastUsed`, `agents` (per agent: kind and totals) and `perDay` (every day of the range in order, with `date`, `tokens` and `cost`, zero on days without use). An unknown model is answered with zero totals, not an error.
+
 ## 5. Server Events (`server -> client`)
 
 ### 5.1 Command Acknowledgment (`ack`)
@@ -324,9 +359,9 @@ The client part of `config.json` (appearance) is shared by all paired devices.
 { "type": "config_patch", "id": "cli_21", "payload": { "client": { "accent": "green" } } }
 ```
 *Server Behavior*:
-1. The patch is validated against a whitelist of keys and value types: `themeMode` (`system`, `light`, `dark`) and `accent` (`blue`, `purple`, `green`, `orange`, `pink`). Any unknown key or bad value rejects the whole patch with `ERR_INVALID_PAYLOAD`, and nothing is saved.
+1. The patch is validated against a whitelist of keys and value types: `themeMode` (`system`, `light`, `dark`), `accent` (`blue`, `purple`, `green`, `orange`, `pink`), `quotaProviders` (an object with any of `claude`, `codex`, `antigravity`, each a boolean), `quotaDisplay` (`remaining`, `used`) and `quotaButton` (boolean). Any unknown key or bad value rejects the whole patch with `ERR_INVALID_PAYLOAD`, and nothing is saved.
 2. The patch is deep-merged and written to `config.json` before the reply. A write error is reported as `ERR_INTERNAL`.
-3. Defaults are `themeMode: "system"` and `accent: "blue"`. The config version is bumped. The sender gets `ack` with `{ "version", "client" }`.
+3. Defaults are `themeMode: "system"`, `accent: "blue"`, `quotaDisplay: "remaining"` and `quotaButton: true`; `quotaProviders` defaults to the providers logged in on this computer (`quota-and-usage.md` §2.5). The config version is bumped. The sender gets `ack` with `{ "version", "client" }`.
 4. Every other client gets `{ "type": "config_updated", "payload": { "version", "client" } }`. Clients ignore a `config_sync` or `config_updated` whose version is older than one they have already applied.
 
 ## 7. Uploads (`POST /api/uploads`)

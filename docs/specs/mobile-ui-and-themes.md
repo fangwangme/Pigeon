@@ -26,7 +26,7 @@ Pigeon is a phone app for Herdr, written as a PWA. It follows the interaction mo
 ## 2. Home
 
 ### 2.1 Workspaces (the start screen)
-- Top left, the bionic pigeon logo mark (a compact 34×34px SVG `<Logo />` with subtle rounded border and gradient backdrop). Top right, one glass capsule with **filter** (§2.3) and **settings** (§8.1). There is no ☰, no device row, no tab bar, no pane row and no drawer.
+- Top left, the bionic pigeon logo mark (a compact 34×34px SVG `<Logo />` with subtle rounded border and gradient backdrop). Top right, one glass capsule with **filter** (§2.3), **quota** (§11.1) and **settings** (§8.1). There is no ☰, no device row, no tab bar, no pane row and no drawer.
 - An **所有 Agent** summary row (count of agents, and of those waiting) opens §2.2.
 - One collapsible group per Herdr workspace, in Herdr's order. The group header shows the workspace name, its git branch when it has one, and its tab count; its `+` opens a new session (§7.1) in that workspace. Collapsed state is kept in this browser.
 - One row per tab. The left icon is the tab's status (its primary pane's): amber dot = waiting for you (`blocked`), spinner = working, check = done, hollow circle = idle, `>_` = plain terminal. The title is the tab label (`protocol.md` §5.3: the Herdr name the user gave the tab, else the session's title, else the agent's name); the subtitle names the agent and, when the tab has more than one pane, the pane count.
@@ -36,7 +36,7 @@ Pigeon is a phone app for Herdr, written as a PWA. It follows the interaction mo
 - While the daemon or Herdr is unreachable, the connection banner (§8.3) sits above the list.
 
 ### 2.2 All agents
-Every pane with an agent, across workspaces, grouped by status in this order: **等待你** → **工作中** → **已完成** → **空闲**. Every group starts expanded each time the page opens; a group header collapses or expands its group, and its chevron points down when expanded and right when collapsed. Each row shows the tab label as its title; the subtitle shows the agent as a tinted label, then the workspace with a folder icon in muted text, so the two read apart at a glance. A waiting row adds one amber line saying what it waits for (the pane's summary). A tap opens that session; back returns here.
+The header's glass capsule holds **quota** (§11.1) left of **filter**. Every pane with an agent, across workspaces, grouped by status in this order: **等待你** → **工作中** → **已完成** → **空闲**. Every group starts expanded each time the page opens; a group header collapses or expands its group, and its chevron points down when expanded and right when collapsed. Each row shows the tab label as its title; the subtitle shows the agent as a tinted label, then the workspace with a folder icon in muted text, so the two read apart at a glance. A waiting row adds one amber line saying what it waits for (the pane's summary). A tap opens that session; back returns here.
 
 ### 2.3 Filter
 A sheet shared by §2.1 and §2.2: status (等待你, 工作中, 已完成, 空闲, 终端), agent kind, and display options (show plain terminals, show idle tabs). While a filter is active the filter button carries a dot. Stored in this browser's `localStorage` only, never synced.
@@ -158,6 +158,7 @@ The **恢复** segment (also reached from `+`) lists the agent's past sessions f
 ### 8.1 Settings (gear on home)
 - **外观**: 跟随系统 / 浅色 / 深色; **降低透明度** (§9.2); **强调色**.
 - **语言**: 跟随系统 / 中文 / English (§10).
+- **额度与用量** (§11.4): rows **订阅额度** and **Token 用量** open §11.2 and §11.3, each with a live one-line summary; **额度显示** 剩余 / 已用; **列表页显示额度按钮**; and under **查询额度的服务** one switch per quota provider.
 - **通知**: the push switches (`push.md` §5). Until delivery exists they are shown disabled with the note "推送投递尚未接通".
 - **设备与配对**: the connection to the computer and to Herdr; paired devices, newest paired first, each with **移除** (revokes at once, `protocol.md` §4.12). The five newest show; any others sit behind one row that expands them; how to pair another phone (`pigeon pair` on the computer).
 - **关于**: version; install-as-app hint.
@@ -176,6 +177,7 @@ Without a valid pairing only the pairing guide shows: scan the QR code from `pig
 - Two palettes, light and dark; **跟随系统** follows `prefers-color-scheme`. No third-party branding.
 - **Accent** (blue, purple, green, orange, pink) drives buttons, links and the working state. Waiting is always amber; errors red.
 - Components use semantic tokens only: `--bg`, `--surface`, `--elev`, `--fg`, `--muted`, `--faint`, `--line`, `--accent`, `--onaccent`, `--accentbg`, `--warn`, `--warnbg`, `--danger`, `--addbg`, `--addfg`, `--delbg`, `--delfg`, `--code`.
+- Data colors for the quota and usage pages (§11) are tokens too, each with a light and a dark value: one per agent (`--agent-claude`, `--agent-codex`, `--agent-agy`, `--agent-opencode`, `--agent-pi`), one per model company (`--co-anthropic`, `--co-openai`, `--co-google`, `--co-other`), the figure colors (`--fig-tokens`, `--fig-cost`, `--fig-input`, `--fig-output`, `--fig-cache`, `--fig-hit`), the two five-step heatmap scales (`--heat-tokens-1…5`, `--heat-cost-1…5`) and `--heat-empty`. The light values are darker than the dark ones so text in these colors keeps 4.5:1 on `--surface`; the heatmap scales are shared by both palettes, only `--heat-empty` differs.
 - Text tokens meet WCAG AA: `--fg`, `--muted` and `--faint` reach 4.5:1 against `--bg` in both palettes.
 - The theme is applied before first paint from `localStorage` (keys `pigeon_mode`, `pigeon_accent`), so the page never flashes the wrong palette.
 - The document shell declares `<meta name="color-scheme" content="light dark">` and critical inline background and color styling on `html` and `body` in `<head>` so the browser canvas initializes to dark mode without a white flash before scripts execute. The pre-paint script and `applyTheme` synchronize `colorScheme` alongside `data-theme`.
@@ -203,3 +205,36 @@ Without a valid pairing only the pairing guide shows: scan the QR code from `pig
 - Another language may lack messages; a missing message shows the English text, never the id.
 - A message's placeholders are named (`{count}`, `{name}`) and every language uses the same set. A message that depends on a count has plural forms chosen by `Intl.PluralRules`.
 
+## 11. Quota and usage
+
+Behavior and numbers come from `quota-and-usage.md`; this section is the presentation. The approved mockups are kept with issue #13's notes. Both pages share a header (back, the title **额度与用量** with the last refresh time, a refresh button) and a segmented **额度 | 用量** switch below it.
+
+### 11.1 Quota button
+- A gauge icon in the home capsule (left of settings) and in the All Agents capsule (left of filter); both open §11.2. **列表页显示额度按钮** hides both.
+- A dot on the button: amber when any enabled provider's last snapshot has a window at level warn, red when one is exhausted (`quota-and-usage.md` §2.4); none otherwise.
+
+### 11.2 Quota page
+- One card per enabled provider, in the order Claude Code, Codex, Antigravity: the provider name in its agent color, then `plan · account` (plan omitted when there is none).
+- One block per window, exactly as reported: the label (e.g. **5 小时**, **每周**, **每周 · Gemini 4 Argon**) and `重置 <time>` on one line (`Xd Yh` above a day, `Xh Ym`, else `Xm`; **未开始** at 0%); a bar; under it the primary figure, the secondary figure and the pace text.
+- **额度显示** decides the direction everywhere on the page: `remaining` draws the bar as the remaining share, shows **剩余 N%** first and **已用 N%** second, and places the time marker at the share that should remain; `used` mirrors that. The legend says which (**白线 = 按时间应该剩下的位置** / **…应该用到的位置**) and links to the setting.
+- Colors (`quota-and-usage.md` §2.4): the bar uses the provider's agent color at level normal, `--warn` at warn, `--danger` when exhausted; the primary figure is `--fg` at normal and the level color otherwise. Pace text: **节奏正常**, **超出 N% · 约 <eta> 后用完**, **低于节奏 N%**, muted, except **超出**, which is `--warn`. A window with no pace shows no marker.
+- Reset credits, when a provider reports them, are listed under its windows with their expiry.
+- A provider error shows as a red line naming the provider and the cause, above its card; the card keeps the previous snapshot. No enabled provider with data: an empty state with a link to **管理查询的服务** (§11.4).
+- Under the cards: **管理查询的服务**, and one line explaining the colors.
+
+### 11.3 Usage page
+- **Range chips** at the top: **今天** (default) / **7 天** / **30 天** / **今年** / **全部** / **自定义**. **自定义** opens a bottom sheet with start and end date inputs bounded by the first day with usage and today, and **应用**; once applied, its chip shows `MM-DD ~ MM-DD`. Under the chips: the range in text, and the agent filter button (**全部 Agent** or `n/5`), which opens a sheet of the five agents with **全选**; at least one stays on, and the filter applies to the whole page.
+- **按 Token | 按花费**: one page-wide switch; it decides the heatmap's scale, the list's order and the share column.
+- **Figure cards**: 花费, Token, 会话, each with the change against the comparison (`quota-and-usage.md` §3.5), and one line naming what is compared (e.g. **与上周一（11-02）截至 17:33 比较**). Increase is `--danger`, decrease `--addfg`.
+- **Single day** (today, or a custom range of one day): the cards, then the model list. **Period**: the cards, the heatmap, then the list with **按日期 | 按模型**.
+- **Heatmap** (`quota-and-usage.md` §3.6): strip and week-row layouts fill the card width with cells labeled by date and need no zoom; the week-column layout opens at the newest week, scrolls sideways, and has **− / 适配 / +** zoom steps (cells of fit, 16, 24, 32 and 44px; dates show from 28px). The card shows active days and the current and longest streak in the range, and a five-step legend. Tapping a day with usage opens the day sheet.
+- **List rows** show the full date or model name on the first line (never truncated) and, on the second, sessions (date rows) or agents (model rows), tokens, cost and the share; a bar under them shows the row against the largest. Date rows are newest first, model rows sorted by the page switch, or by cache-hit ratio when the model list's **排序** is set to **缓存命中**, which then shows **命中 N%**. Ten rows show, more load on scroll. Every row opens a sheet.
+- **Day sheet**: the date and weekday; cost, tokens, input, output, cache read, cache write, cache hit, messages, sessions; then per agent its cost and its models with their figures.
+- **Model sheet**: the model in its company color, the company and the range; cost, tokens, input, output, cache read, cache write, cache hit, messages, last used; per agent its tokens and cost; a small bar chart of the model's use per day in the range.
+- Under the list: costs are estimates at public API prices, which subscriptions are not billed by; unpriced models and unavailable prices are named (`quota-and-usage.md` §3.3).
+
+### 11.4 Settings group
+- **订阅额度** (summary: one short item per enabled provider following **额度显示**, e.g. **Claude 5h 剩 48%**) and **Token 用量** (summary: **今日 $x · 近 7 天 $y**).
+- **额度显示**: 剩余 / 已用 (`client.quotaDisplay`).
+- **列表页显示额度按钮** (`client.quotaButton`).
+- **查询额度的服务**: Claude Code, Codex, Antigravity, each a switch (`client.quotaProviders`) with a subtitle (**已登录 · <plan>**, or **不查询** when off).
