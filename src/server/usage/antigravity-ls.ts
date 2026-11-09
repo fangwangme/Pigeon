@@ -11,6 +11,8 @@ export interface AntigravityLsConnection {
   pid?: number;
 }
 
+export type DiscoveredLsCandidate = AntigravityLsConnection;
+
 /** Check if address is strictly loopback (127.0.0.1, localhost, [::1]) per security §6. */
 export function isLoopbackAddress(address: string): boolean {
   if (!address) return false;
@@ -49,109 +51,207 @@ export function parseProcEnviron(bytes: Uint8Array): { csrfToken?: string; lsAdd
 }
 
 /**
+ * Discovers language server hub JSON files written by running Antigravity processes in ~/.gemini/* /daemon/.
+ */
+export function discoverDaemonHubFiles(homeDir: string): DiscoveredLsCandidate[] {
+  const candidates: DiscoveredLsCandidate[] = [];
+  const dirs: Array<{ dir: string; runtimeKind: "desktop" | "ide" | "cli" }> = [
+    { dir: join(homeDir, ".gemini", "antigravity", "daemon"), runtimeKind: "desktop" },
+    { dir: join(homeDir, ".gemini", "antigravity-ide", "daemon"), runtimeKind: "ide" },
+    { dir: join(homeDir, ".gemini", "antigravity-cli", "daemon"), runtimeKind: "cli" },
+  ];
+
+  for (const { dir, runtimeKind } of dirs) {
+    if (!existsSync(dir)) continue;
+    try {
+      const files = readdirSync(dir);
+      for (const file of files) {
+        if (!file.endsWith(".json")) continue;
+        try {
+          const raw = readFileSync(join(dir, file), "utf-8");
+          const data = JSON.parse(raw);
+          const port = data.httpPort || data.port;
+          const pid = data.pid;
+          if (port && typeof port === "number" && port > 0 && port <= 65535) {
+            let isAlive = true;
+            if (typeof pid === "number" && pid > 0) {
+              try {
+                process.kill(pid, 0);
+              } catch {
+                isAlive = false;
+              }
+            }
+            if (isAlive) {
+              candidates.push({
+                pid: pid || 0,
+                address: `127.0.0.1:${port}`,
+                port,
+                csrfToken: data.csrfToken,
+                runtimeKind,
+              });
+            }
+          }
+        } catch {}
+      }
+    } catch {}
+  }
+  return candidates;
+}
+
+/**
+ * Pure function to extract LS candidates from `ps -eo pid,args` output lines.
+ */
+export function parseProcessListCandidates(lines: string[]): DiscoveredLsCandidate[] {
+  const candidates: DiscoveredLsCandidate[] = [];
+  const validBinaries = new Set(["language_server", "antigravity", "agy"]);
+
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    const lower = trimmed.toLowerCase();
+    if (!lower.includes("antigravity") && !lower.includes("language_server") && !lower.includes("agy")) {
+      continue;
+    }
+    if (lower.includes("--type=renderer") || lower.includes("--type=gpu-process") || lower.includes("--type=zygote") || lower.includes("--type=utility")) {
+      continue;
+    }
+
+    const spaceIdx = trimmed.indexOf(" ");
+    if (spaceIdx === -1) continue;
+    const pidStr = trimmed.slice(0, spaceIdx).trim();
+    const pid = parseInt(pidStr, 10);
+    if (isNaN(pid)) continue;
+    const cmdline = trimmed.slice(spaceIdx + 1).trim();
+
+    // Check executable binary name
+    const rawExe = cmdline.split(/\s+/)[0];
+    const exeName = rawExe.split("/").pop()?.toLowerCase() || "";
+    if (!validBinaries.has(exeName) && !exeName.endsWith("language_server") && !exeName.endsWith("antigravity") && !exeName.endsWith("agy")) {
+      continue;
+    }
+
+    let runtimeKind: "desktop" | "ide" | "cli" = "desktop";
+    if (lower.includes("antigravity-cli") || lower.includes("/agy") || lower.includes("--app_data_dir antigravity-cli")) {
+      runtimeKind = "cli";
+    } else if (lower.includes("antigravity-ide") || lower.includes("--app_data_dir antigravity-ide")) {
+      runtimeKind = "ide";
+    } else if (lower.includes("/opt/antigravity") || lower.includes("antigravity.app") || lower.includes("--app_data_dir antigravity")) {
+      runtimeKind = "desktop";
+    }
+
+    let csrfToken: string | undefined;
+    let lsAddress: string | undefined;
+
+    // Check environ on Linux for this specific PID
+    try {
+      if (existsSync(`/proc/${pid}/environ`)) {
+        const environBuf = readFileSync(`/proc/${pid}/environ`);
+        const envTokens = parseProcEnviron(environBuf);
+        csrfToken = envTokens.csrfToken;
+        lsAddress = envTokens.lsAddress;
+      }
+    } catch {}
+
+    // Check cmdline arguments
+    const parts = cmdline.split(/\s+/);
+    for (let i = 0; i < parts.length; i++) {
+      if (parts[i] === "--csrf_token" && parts[i + 1]) {
+        csrfToken = parts[i + 1];
+      } else if ((parts[i] === "--extension_server_port" || parts[i] === "--port") && parts[i + 1]) {
+        const p = parseInt(parts[i + 1], 10);
+        if (!isNaN(p) && p > 0) lsAddress = `127.0.0.1:${p}`;
+      }
+    }
+
+    if (lsAddress) {
+      const parsed = parseLsAddress(lsAddress);
+      if (parsed && isLoopbackAddress(parsed.host)) {
+        candidates.push({
+          pid,
+          address: `127.0.0.1:${parsed.port}`,
+          port: parsed.port,
+          csrfToken,
+          runtimeKind,
+        });
+      }
+    }
+  }
+  return candidates;
+}
+
+export interface DiscoverLsOptions {
+  homeDir?: string;
+  address?: string;
+  csrfToken?: string;
+}
+
+/**
  * Automatically discovers the local Antigravity Language Server on loopback,
  * prioritizing Desktop over IDE and CLI.
  */
-export async function discoverAntigravityLs(envOverride?: {
-  address?: string;
-  csrfToken?: string;
-}): Promise<AntigravityLsConnection | null> {
-  const envAddr = envOverride?.address || process.env.ANTIGRAVITY_LS_ADDRESS;
-  const envCsrf = envOverride?.csrfToken || process.env.ANTIGRAVITY_CSRF_TOKEN;
+export async function discoverAntigravityLs(
+  optionsOrHome?: string | DiscoverLsOptions,
+  envOverride?: {
+    address?: string;
+    csrfToken?: string;
+  }
+): Promise<AntigravityLsConnection | null> {
+  let homeDir = process.env.HOME || "";
+  let explicitAddr: string | undefined;
+  let explicitCsrf: string | undefined;
 
-  if (envAddr) {
-    const parsed = parseLsAddress(envAddr);
+  if (typeof optionsOrHome === "string") {
+    homeDir = optionsOrHome;
+    if (envOverride?.address) explicitAddr = envOverride.address;
+    if (envOverride?.csrfToken) explicitCsrf = envOverride.csrfToken;
+  } else if (typeof optionsOrHome === "object" && optionsOrHome !== null) {
+    if (optionsOrHome.homeDir) homeDir = optionsOrHome.homeDir;
+    if (optionsOrHome.address) explicitAddr = optionsOrHome.address;
+    if (optionsOrHome.csrfToken) explicitCsrf = optionsOrHome.csrfToken;
+  }
+
+  // Explicit address passed directly in options/tests
+  if (explicitAddr) {
+    const parsed = parseLsAddress(explicitAddr);
     if (!parsed || !isLoopbackAddress(parsed.host)) {
-      console.warn(`[Pigeon] Refusing non-loopback Antigravity LS address: ${envAddr}`);
+      console.warn(`[Pigeon] Refusing non-loopback Antigravity LS address: ${explicitAddr}`);
       return null;
     }
     return {
       address: `${parsed.host}:${parsed.port}`,
       port: parsed.port,
-      csrfToken: envCsrf,
+      csrfToken: explicitCsrf,
       runtimeKind: "desktop",
     };
   }
 
-  // Fast process discovery using ps
-  const candidates: Array<{
-    pid: number;
-    address: string;
-    port: number;
-    csrfToken?: string;
-    runtimeKind: "desktop" | "ide" | "cli";
-  }> = [];
+  const candidates: DiscoveredLsCandidate[] = [];
 
+  // 1. Check daemon hub JSON files
+  candidates.push(...discoverDaemonHubFiles(homeDir));
+
+  // 2. Check running processes
   try {
     const proc = Bun.spawn(["ps", "-eo", "pid,args"], { stdout: "pipe", stderr: "pipe" });
     const output = await new Response(proc.stdout).text();
-    const lines = output.split("\n");
-
-    for (const line of lines) {
-      const trimmed = line.trim();
-      if (!trimmed) continue;
-      const lower = trimmed.toLowerCase();
-      if (!lower.includes("antigravity") && !lower.includes("language_server") && !lower.includes("agy")) {
-        continue;
-      }
-      if (lower.includes("--type=renderer") || lower.includes("--type=gpu-process")) {
-        continue;
-      }
-
-      const spaceIdx = trimmed.indexOf(" ");
-      if (spaceIdx === -1) continue;
-      const pidStr = trimmed.slice(0, spaceIdx).trim();
-      const pid = parseInt(pidStr, 10);
-      if (isNaN(pid)) continue;
-      const cmdline = trimmed.slice(spaceIdx + 1).trim();
-
-      let runtimeKind: "desktop" | "ide" | "cli" = "desktop";
-      if (lower.includes("antigravity-cli") || lower.includes("agy")) {
-        runtimeKind = "cli";
-      } else if (lower.includes("antigravity-ide")) {
-        runtimeKind = "ide";
-      } else if (lower.includes("antigravity")) {
-        runtimeKind = "desktop";
-      }
-
-      let csrfToken: string | undefined;
-      let lsAddress: string | undefined;
-
-      // Check environ on Linux for this specific PID
-      try {
-        if (existsSync(`/proc/${pid}/environ`)) {
-          const environBuf = readFileSync(`/proc/${pid}/environ`);
-          const envTokens = parseProcEnviron(environBuf);
-          csrfToken = envTokens.csrfToken;
-          lsAddress = envTokens.lsAddress;
-        }
-      } catch {}
-
-      // Check cmdline arguments
-      const parts = cmdline.split(/\s+/);
-      for (let i = 0; i < parts.length; i++) {
-        if (parts[i] === "--csrf_token" && parts[i + 1]) {
-          csrfToken = parts[i + 1];
-        } else if ((parts[i] === "--extension_server_port" || parts[i] === "--port") && parts[i + 1]) {
-          const p = parseInt(parts[i + 1], 10);
-          if (!isNaN(p) && p > 0) lsAddress = `127.0.0.1:${p}`;
-        }
-      }
-
-      if (lsAddress) {
-        const parsed = parseLsAddress(lsAddress);
-        if (parsed && isLoopbackAddress(parsed.host)) {
-          candidates.push({
-            pid,
-            address: `127.0.0.1:${parsed.port}`,
-            port: parsed.port,
-            csrfToken,
-            runtimeKind,
-          });
-        }
-      }
-    }
+    candidates.push(...parseProcessListCandidates(output.split("\n")));
   } catch {}
+
+  // 3. Fallback: CLI environment variable
+  const envAddr = process.env.ANTIGRAVITY_LS_ADDRESS;
+  const envCsrf = process.env.ANTIGRAVITY_CSRF_TOKEN;
+  if (envAddr) {
+    const parsed = parseLsAddress(envAddr);
+    if (parsed && isLoopbackAddress(parsed.host)) {
+      candidates.push({
+        pid: 0,
+        address: `${parsed.host}:${parsed.port}`,
+        port: parsed.port,
+        csrfToken: envCsrf,
+        runtimeKind: "cli",
+      });
+    }
+  }
 
   if (candidates.length === 0) return null;
 
@@ -160,7 +260,7 @@ export async function discoverAntigravityLs(envOverride?: {
   candidates.sort((a, b) => {
     const diff = priorityOrder[b.runtimeKind] - priorityOrder[a.runtimeKind];
     if (diff !== 0) return diff;
-    return b.pid - a.pid;
+    return (b.pid || 0) - (a.pid || 0);
   });
 
   // Probe candidates with a short heartbeat to ensure it's responsive
@@ -186,26 +286,22 @@ export async function discoverAntigravityLs(envOverride?: {
     } catch {}
   }
 
-  return candidates[0] || null;
+  return null;
 }
 
 /**
  * Initializes Pigeon's native Antigravity cache database.
  */
 export function initAntigravityCacheDb(dbPath: string): Database {
-  const dir = dbPath.slice(0, dbPath.lastIndexOf("/"));
-  if (dir && !existsSync(dir)) {
-    mkdirSync(dir, { recursive: true, mode: 0o700 });
-  }
-
+  mkdirSync(join(dbPath, ".."), { recursive: true });
   const db = new Database(dbPath);
+  db.run("PRAGMA busy_timeout = 5000;");
   db.run("PRAGMA journal_mode = WAL;");
-  db.run("PRAGMA busy_timeout = 3000;");
 
   db.run(`
     CREATE TABLE IF NOT EXISTS sessions (
       session_id TEXT PRIMARY KEY,
-      client TEXT NOT NULL,
+      client TEXT,
       last_modified_ms INTEGER,
       step_count INTEGER
     );
@@ -215,34 +311,36 @@ export function initAntigravityCacheDb(dbPath: string): Database {
     CREATE TABLE IF NOT EXISTS session_usage (
       id TEXT PRIMARY KEY,
       session_id TEXT NOT NULL,
-      client TEXT NOT NULL,
+      client TEXT,
       model_enum TEXT,
       served_model TEXT,
-      model_id TEXT NOT NULL,
-      timestamp INTEGER NOT NULL,
-      input_tokens INTEGER NOT NULL,
-      output_tokens INTEGER NOT NULL,
-      cache_read_tokens INTEGER NOT NULL,
-      cache_write_tokens INTEGER NOT NULL,
+      model_id TEXT,
+      timestamp INTEGER,
+      input_tokens INTEGER DEFAULT 0,
+      output_tokens INTEGER DEFAULT 0,
+      cache_read_tokens INTEGER DEFAULT 0,
+      cache_write_tokens INTEGER DEFAULT 0,
       response_id TEXT,
-      step_index INTEGER
+      step_index INTEGER DEFAULT 0
     );
   `);
 
   db.run(`CREATE INDEX IF NOT EXISTS idx_session_usage_session ON session_usage(session_id);`);
+  db.run(`CREATE INDEX IF NOT EXISTS idx_session_usage_ts ON session_usage(timestamp);`);
   return db;
 }
 
 /**
- * Pulls Desktop/IDE sessions over Language Server RPC and stores them in Pigeon's own cache.
+ * Syncs Desktop .pb session token usage from Antigravity Language Server RPC
+ * into Pigeon's native SQLite cache.
  */
 export async function syncAntigravityDesktopSessions(
   conn: AntigravityLsConnection,
   cacheDbPath: string,
-  homeDir: string = process.env.HOME || "."
+  homeDir = process.env.HOME || ""
 ): Promise<number> {
   if (!isLoopbackAddress(conn.address)) {
-    console.warn(`[Pigeon] Skipping non-loopback Antigravity LS sync: ${conn.address}`);
+    console.warn(`[Pigeon] Refusing to sync Antigravity sessions from non-loopback address: ${conn.address}`);
     return 0;
   }
 
@@ -250,10 +348,39 @@ export async function syncAntigravityDesktopSessions(
     "Content-Type": "application/json",
     "Connect-Protocol-Version": "1",
   };
-  if (conn.csrfToken) headers["X-Codeium-Csrf-Token"] = conn.csrfToken;
+  if (conn.csrfToken) {
+    headers["X-Codeium-Csrf-Token"] = conn.csrfToken;
+  }
 
-  // 1. Query GetAllCascadeTrajectories
-  let trajectoryEntries: Array<{ sessionId: string; stepCount?: number }> = [];
+  // 1. Scan candidate dirs strictly for .pb files
+  const candidateDirs = [
+    join(homeDir, ".gemini", "antigravity", "conversations"),
+    join(homeDir, ".gemini", "antigravity-ide", "conversations"),
+  ];
+
+  const fileMtimes = new Map<string, number>();
+  const pbSessionIds = new Set<string>();
+
+  for (const dir of candidateDirs) {
+    if (!existsSync(dir)) continue;
+    try {
+      const files = readdirSync(dir);
+      for (const f of files) {
+        if (!f.endsWith(".pb")) continue;
+        const stem = f.slice(0, -3);
+        try {
+          const st = statSync(join(dir, f));
+          fileMtimes.set(stem, Math.floor(st.mtimeMs));
+          pbSessionIds.add(stem);
+        } catch {}
+      }
+    } catch {}
+  }
+
+  if (pbSessionIds.size === 0) return 0;
+
+  // Query GetAllCascadeTrajectories
+  const trajectoryEntries = new Map<string, number | undefined>();
   try {
     const res = await fetch(`http://${conn.address}/exa.language_server_pb.LanguageServerService/GetAllCascadeTrajectories`, {
       method: "POST",
@@ -261,45 +388,20 @@ export async function syncAntigravityDesktopSessions(
       body: JSON.stringify({}),
       signal: AbortSignal.timeout(10000),
     });
-    if (!res.ok) return 0;
-    const data = (await res.json()) as any;
-    const summaries = data?.trajectorySummaries || data?.cascadeTrajectories || data;
-    if (Array.isArray(summaries)) {
-      for (const item of summaries) {
-        if (item?.cascadeId) trajectoryEntries.push({ sessionId: item.cascadeId, stepCount: item.stepCount });
-      }
-    } else if (typeof summaries === "object" && summaries !== null) {
-      for (const [k, v] of Object.entries(summaries)) {
-        trajectoryEntries.push({ sessionId: k, stepCount: (v as any)?.stepCount });
+    if (res.ok) {
+      const data = (await res.json()) as any;
+      const summaries = data?.trajectorySummaries || data?.cascadeTrajectories || data;
+      if (Array.isArray(summaries)) {
+        for (const item of summaries) {
+          if (item?.cascadeId) trajectoryEntries.set(item.cascadeId, item.stepCount);
+        }
+      } else if (typeof summaries === "object" && summaries !== null) {
+        for (const [k, v] of Object.entries(summaries)) {
+          trajectoryEntries.set(k, (v as any)?.stepCount);
+        }
       }
     }
-  } catch {
-    return 0;
-  }
-
-  if (trajectoryEntries.length === 0) return 0;
-
-  // Check which local files correspond to .pb or .db
-  const candidateDirs = [
-    join(homeDir, ".gemini", "antigravity", "conversations"),
-    join(homeDir, ".gemini", "antigravity-ide", "conversations"),
-  ];
-
-  const fileMtimes = new Map<string, number>();
-  for (const dir of candidateDirs) {
-    if (!existsSync(dir)) continue;
-    try {
-      const files = readdirSync(dir);
-      for (const f of files) {
-        if (!f.endsWith(".pb") && !f.endsWith(".db")) continue;
-        const stem = f.replace(/\.(pb|db)$/, "");
-        try {
-          const st = statSync(join(dir, f));
-          fileMtimes.set(stem, Math.floor(st.mtimeMs));
-        } catch {}
-      }
-    } catch {}
-  }
+  } catch {}
 
   // 2. Open / initialize native cache
   const db = initAntigravityCacheDb(cacheDbPath);
@@ -325,17 +427,21 @@ export async function syncAntigravityDesktopSessions(
       VALUES (?, ?, ?, ?)
     `);
 
-    for (const entry of trajectoryEntries) {
-      const sId = entry.sessionId;
-      const fileMtime = fileMtimes.get(sId) || Date.now();
+    // Sync only sessions whose .pb file exists on disk
+    for (const sId of pbSessionIds) {
+      const fileMtime = fileMtimes.get(sId);
+      if (!fileMtime) continue;
+
+      const stepCount = trajectoryEntries.get(sId);
       const existing = cachedMap.get(sId);
 
       // Skip if already cached and file has not changed
-      if (existing && existing.lastMod === fileMtime && (entry.stepCount === undefined || existing.stepCount === entry.stepCount)) {
+      if (existing && existing.lastMod === fileMtime && (stepCount === undefined || existing.stepCount === stepCount)) {
         continue;
       }
 
       // 3. Query GetCascadeTrajectoryGeneratorMetadata
+      let inTx = false;
       try {
         const metaRes = await fetch(
           `http://${conn.address}/exa.language_server_pb.LanguageServerService/GetCascadeTrajectoryGeneratorMetadata`,
@@ -351,6 +457,7 @@ export async function syncAntigravityDesktopSessions(
         const generatorMetadata = metaData?.generatorMetadata || [];
 
         db.run("BEGIN TRANSACTION;");
+        inTx = true;
         db.run(`DELETE FROM session_usage WHERE session_id = ?`, [sId]);
 
         for (let stepIdx = 0; stepIdx < generatorMetadata.length; stepIdx++) {
@@ -399,11 +506,16 @@ export async function syncAntigravityDesktopSessions(
           }
         }
 
-        upsertSession.run(sId, conn.runtimeKind, fileMtime, entry.stepCount || generatorMetadata.length);
+        upsertSession.run(sId, conn.runtimeKind, fileMtime, stepCount || generatorMetadata.length);
         db.run("COMMIT;");
+        inTx = false;
         synced++;
-      } catch {
-        db.run("ROLLBACK;");
+      } catch (err) {
+        if (inTx) {
+          try {
+            db.run("ROLLBACK;");
+          } catch {}
+        }
       }
     }
   } finally {

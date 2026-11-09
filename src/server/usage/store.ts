@@ -25,22 +25,29 @@ import {
   scanPiFile,
   type RawUsageRecord,
 } from "./sources";
-import { discoverAntigravityLs, syncAntigravityDesktopSessions } from "./antigravity-ls";
+import {
+  discoverAntigravityLs,
+  syncAntigravityDesktopSessions,
+  type AntigravityLsConnection,
+} from "./antigravity-ls";
 
 export interface UsageStoreOptions {
   dbPath?: string;
   home?: string;
   now?: () => number;
+  discoverLs?: () => Promise<AntigravityLsConnection | null>;
 }
 
 export class UsageStore {
   private db: Database;
   private home: string;
   private now: () => number;
+  private discoverLs: () => Promise<AntigravityLsConnection | null>;
 
   constructor(options: UsageStoreOptions = {}) {
     this.home = options.home ?? process.env.HOME ?? "";
     this.now = options.now ?? (() => Date.now());
+    this.discoverLs = options.discoverLs ?? (() => discoverAntigravityLs(this.home));
     const defaultDataDir = process.env.XDG_DATA_HOME ? join(process.env.XDG_DATA_HOME, "pigeon") : join(this.home, ".local", "share", "pigeon");
     const dbPath = options.dbPath ?? join(defaultDataDir, "usage.db");
     mkdirSync(dirname(dbPath), { recursive: true });
@@ -130,17 +137,14 @@ export class UsageStore {
     ];
 
     // Sync Antigravity Desktop sessions via local Language Server if running
-    const isProductionHome = !this.home.includes("/tmp/") && !this.home.includes("/var/");
     const defaultDataDir = process.env.XDG_DATA_HOME ? join(process.env.XDG_DATA_HOME, "pigeon") : join(this.home, ".local", "share", "pigeon");
     const pigeonAgyCacheDb = join(defaultDataDir, "antigravity-cache", "cache.db");
-    if (isProductionHome || process.env.ANTIGRAVITY_LS_ADDRESS) {
-      try {
-        const lsConn = await discoverAntigravityLs();
-        if (lsConn) {
-          await syncAntigravityDesktopSessions(lsConn, pigeonAgyCacheDb, this.home);
-        }
-      } catch {}
-    }
+    try {
+      const lsConn = await this.discoverLs();
+      if (lsConn) {
+        await syncAntigravityDesktopSessions(lsConn, pigeonAgyCacheDb, this.home);
+      }
+    } catch {}
 
     const agyCachePath = existsSync(pigeonAgyCacheDb) ? pigeonAgyCacheDb : null;
 

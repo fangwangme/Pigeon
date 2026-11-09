@@ -5,6 +5,8 @@ import { join } from "node:path";
 import {
   isLoopbackAddress,
   parseLsAddress,
+  parseProcessListCandidates,
+  discoverDaemonHubFiles,
   discoverAntigravityLs,
   syncAntigravityDesktopSessions,
 } from "../src/server/usage/antigravity-ls";
@@ -23,6 +25,67 @@ describe("Antigravity Language Server discovery and native cache (quota-and-usag
     expect(isLoopbackAddress("0.0.0.0:8080")).toBe(false);
   });
 
+  test("process list parsing extracts port, csrf token, and prioritizes desktop over CLI", () => {
+    const mockPsOutput = [
+      "  101 /bin/bash /some/script",
+      "  202 /opt/Antigravity/antigravity --type=renderer --something",
+      "  303 /home/user/.local/share/agy/antigravity language_server --port 41845 --csrf_token cli-secret",
+      "  404 /opt/Antigravity/resources/bin/language_server --extension_server_port 43915 --csrf_token desktop-secret",
+    ];
+
+    const candidates = parseProcessListCandidates(mockPsOutput);
+    expect(candidates).toHaveLength(2);
+
+    // Desktop candidate
+    const desktop = candidates.find((c) => c.pid === 404);
+    expect(desktop).toBeDefined();
+    expect(desktop?.runtimeKind).toBe("desktop");
+    expect(desktop?.port).toBe(43915);
+    expect(desktop?.csrfToken).toBe("desktop-secret");
+
+    // CLI candidate
+    const cli = candidates.find((c) => c.pid === 303);
+    expect(cli).toBeDefined();
+    expect(cli?.runtimeKind).toBe("cli");
+    expect(cli?.port).toBe(41845);
+    expect(cli?.csrfToken).toBe("cli-secret");
+
+    // Verify sorting order: desktop has higher priority than cli
+    const priorityOrder: Record<string, number> = { desktop: 3, ide: 2, cli: 1 };
+    candidates.sort((a, b) => priorityOrder[b.runtimeKind] - priorityOrder[a.runtimeKind]);
+    expect(candidates[0].runtimeKind).toBe("desktop");
+    expect(candidates[1].runtimeKind).toBe("cli");
+  });
+
+  test("daemon hub file discovery reads port and csrf token for live processes", () => {
+    const testDir = join("/tmp", `pigeon-hub-test-${Date.now()}`);
+    const daemonDir = join(testDir, ".gemini", "antigravity", "daemon");
+    mkdirSync(daemonDir, { recursive: true });
+
+    // Write a mock hub json pointing to the current test process PID (guaranteed alive)
+    const hubFile = join(daemonDir, "hub_43915.json");
+    writeFileSync(
+      hubFile,
+      JSON.stringify({
+        pid: process.pid,
+        httpPort: 43915,
+        csrfToken: "live-csrf-token",
+        lsVersion: "2.29.1",
+      })
+    );
+
+    const candidates = discoverDaemonHubFiles(testDir);
+    expect(candidates).toHaveLength(1);
+    expect(candidates[0].pid).toBe(process.pid);
+    expect(candidates[0].port).toBe(43915);
+    expect(candidates[0].csrfToken).toBe("live-csrf-token");
+    expect(candidates[0].runtimeKind).toBe("desktop");
+
+    try {
+      rmSync(testDir, { recursive: true, force: true });
+    } catch {}
+  });
+
   test("discovery refuses a non-loopback override address", async () => {
     const conn = await discoverAntigravityLs({ address: "192.168.1.50:45678" });
     expect(conn).toBeNull();
@@ -39,6 +102,11 @@ describe("Antigravity Language Server discovery and native cache (quota-and-usag
     const sampleSessionId = "c4d7e8f9a0b1c2d3e4f50123456789ab";
     const samplePbFile = join(testConversations, `${sampleSessionId}.pb`);
     writeFileSync(samplePbFile, Buffer.from("dummy-pb-content"));
+
+    // Write a .db file to ensure LS sync ignores .db files (handled by scanAntigravityDb directly)
+    const sampleDbSessionId = "d5e8f9a0b1c2d3e4f50123456789ab01";
+    const sampleDbFile = join(testConversations, `${sampleDbSessionId}.db`);
+    writeFileSync(sampleDbFile, Buffer.from("dummy-db-content"));
 
     let metadataRequests = 0;
 
