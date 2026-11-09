@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { AgentAdapterManager } from "../src/server/agent-adapters/index";
 import { ConfigManager } from "../src/server/config-manager";
@@ -46,6 +46,7 @@ beforeEach(async () => {
     agentAdapters: new AgentAdapterManager({ home: dir }),
     uploadStore: uploads,
     pairingManager: pairing,
+    queueFilePath: join(dir, "queue.json"),
   });
 });
 
@@ -154,6 +155,28 @@ describe("prompt queue (protocol.md §4.2, §4.13, §5.8)", () => {
     // Updating a nonexistent queueId is ERR_NOT_FOUND
     await send(c.ws, { type: "queue_update", id: "u2", payload: { targetPaneId: "p1", queueId: "no-such-id", text: "x" } });
     expect(lastError(c)).toBe("ERR_NOT_FOUND");
+  });
+
+  test("queued prompts are persisted to disk and reloaded on server restart", async () => {
+    const queueFile = join(dir, "queue.json");
+    const c1 = await viewer("p1");
+    await send(c1.ws, { type: "agent_prompt", id: "a1", payload: { targetPaneId: "p1", text: "persistent prompt" } });
+    expect(lastAck(c1)).toMatchObject({ queued: true });
+    expect(existsSync(queueFile)).toBe(true);
+
+    const newServer = new WsServer({
+      buildId: "b",
+      herdrClient: client,
+      pushManager: new PushManager(join(dir, "vapid.json")),
+      configManager: new ConfigManager(join(dir, "config.json"), { HOME: dir }),
+      skillScanner: new SkillScanner(dir),
+      uploadStore: uploads,
+      pairingManager: pairing,
+      queueFilePath: queueFile,
+    });
+    const clientQueue = (newServer as any).queues.get("p1");
+    expect(clientQueue).toHaveLength(1);
+    expect(clientQueue[0].item.text).toBe("persistent prompt");
   });
 });
 

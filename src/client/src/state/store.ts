@@ -118,6 +118,8 @@ function readJson<T>(key: string, fallback: T): T {
 
 const storedRt = readPref("pigeon_reduce_transparency");
 const storedLocale = readPref("pigeon_locale");
+const storedActivePane = readPref("pigeon_active_pane");
+const storedRoute = readJson<Route>("pigeon_route", { name: "home" });
 
 const [state, setState] = createStore<AppState>({
   connected: false,
@@ -129,7 +131,7 @@ const [state, setState] = createStore<AppState>({
   herdrConnected: true,
   workspaces: [],
   activeTabId: null,
-  activePaneId: null,
+  activePaneId: storedRoute.name === "session" ? storedActivePane : null,
   agentStatus: "idle",
   cards: [],
   pendingInteraction: null,
@@ -147,7 +149,7 @@ const [state, setState] = createStore<AppState>({
   accent: (readPref("pigeon_accent") as AccentName | null) || "blue",
   reduceTransparency: storedRt === null ? null : storedRt === "1",
   localePref: storedLocale && storedLocale in LOCALES ? (storedLocale as LocalePref) : "system",
-  route: { name: "home" },
+  route: storedRoute,
   terminalOpen: false,
   filter: readJson<FilterState>("pigeon_filter", EMPTY_FILTER),
   collapsed: readJson<Record<string, boolean>>("pigeon_collapsed", {}),
@@ -227,6 +229,10 @@ export function setUnread(paneId: string, value: boolean): void {
 
 export function navigate(route: Route): void {
   setState("route", route);
+  writePref("pigeon_route", JSON.stringify(route));
+  if (route.name === "home") {
+    writePref("pigeon_active_pane", null);
+  }
 }
 
 export function showToast(message: string): void {

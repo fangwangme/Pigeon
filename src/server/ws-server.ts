@@ -1,4 +1,5 @@
 import { randomBytes } from "node:crypto";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import type { ServerWebSocket } from "bun";
 import { HerdrError, type HerdrClient } from "./herdr-client";
 import type { DeviceSession, PairingManager } from "./pairing";
@@ -47,6 +48,7 @@ export interface WsServerOptions {
   modelCatalog?: ModelCatalog;
   quotaService?: QuotaService;
   usageService?: UsageService;
+  queueFilePath?: string;
 }
 
 export interface ClientConnectionData {
@@ -93,11 +95,14 @@ export class WsServer {
   private usageService?: UsageService;
   // protocol.md §4.2: prompts waiting for the pane's turn to end, oldest first.
   /** `item` is what the phone sees (its own text and upload ids, so **编辑** can restore them); `send` is the composed prompt. */
+  private queueFilePath?: string;
   private queues = new Map<string, Array<{ item: QueuedPrompt; send: string }>>();
   private flushing = new Set<string>();
 
   constructor(options: WsServerOptions) {
     this.buildId = options.buildId;
+    this.queueFilePath = options.queueFilePath;
+    this.loadQueues();
     this.herdrClient = options.herdrClient;
     this.pushManager = options.pushManager;
     this.modelCatalog = options.modelCatalog ?? new ModelCatalog();
@@ -133,6 +138,7 @@ export class WsServer {
         if (!this.herdrClient.hasPane(paneId)) this.paneStore.closePane(paneId);
       }
       for (const paneId of Array.from(this.queues.keys())) if (!this.herdrClient.hasPane(paneId)) this.queues.delete(paneId);
+      this.saveQueues();
       this.rebindSessions();
       this.broadcast({ type: "snapshot_update", payload: snapshot });
     });
@@ -351,6 +357,7 @@ export class WsServer {
           return;
         }
         queue.splice(idx, 1);
+        this.saveQueues();
         this.sendQueue(targetPaneId);
         this.sendAck(ws, msg.id, { queueId });
         return;
@@ -378,6 +385,7 @@ export class WsServer {
         entry.item.text = text;
         entry.item.attachments = attachments ?? [];
         entry.send = full;
+        this.saveQueues();
         this.sendQueue(targetPaneId);
         this.sendAck(ws, msg.id, { queueId, updated: true });
         return;
@@ -711,6 +719,7 @@ export class WsServer {
       const item: QueuedPrompt = { queueId: `q_${randomBytes(6).toString("hex")}`, ...shown, createdAt: Date.now() };
       queue.push({ item, send });
       this.queues.set(paneId, queue);
+      this.saveQueues();
       this.sendQueue(paneId);
       if (replyTo) this.sendAck(ws, replyTo, { queued: true, queueId: item.queueId });
       return;
@@ -725,6 +734,7 @@ export class WsServer {
     if (!queue?.length || this.flushing.has(paneId)) return;
     const { item, send } = queue.shift()!;
     this.flushing.add(paneId);
+    this.saveQueues();
     this.sendQueue(paneId);
     try {
       await this.herdrClient.sendPrompt(paneId, send);
@@ -742,6 +752,36 @@ export class WsServer {
 
   private sendQueue(paneId: string): void {
     this.sendToSubscribers(paneId, { type: "prompt_queue", payload: { paneId, items: (this.queues.get(paneId) ?? []).map((q) => q.item) } });
+  }
+
+  private loadQueues(): void {
+    if (!this.queueFilePath || !existsSync(this.queueFilePath)) return;
+    try {
+      const raw = readFileSync(this.queueFilePath, "utf8");
+      const data = JSON.parse(raw);
+      if (typeof data === "object" && data !== null) {
+        for (const [paneId, items] of Object.entries(data)) {
+          if (Array.isArray(items)) {
+            this.queues.set(paneId, items as Array<{ item: QueuedPrompt; send: string }>);
+          }
+        }
+      }
+    } catch (e) {
+      console.error("[Pigeon] failed to load queues from disk:", e);
+    }
+  }
+
+  private saveQueues(): void {
+    if (!this.queueFilePath) return;
+    try {
+      const obj: Record<string, Array<{ item: QueuedPrompt; send: string }>> = {};
+      for (const [paneId, list] of this.queues.entries()) {
+        if (list.length > 0) obj[paneId] = list;
+      }
+      writeFileSync(this.queueFilePath, JSON.stringify(obj, null, 2), "utf8");
+    } catch (e) {
+      console.error("[Pigeon] failed to save queues to disk:", e);
+    }
   }
 
   private requireKnownPane(ws: Ws, replyTo: string, paneId: string): boolean {

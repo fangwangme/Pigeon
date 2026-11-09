@@ -1,4 +1,4 @@
-import { state, setState, applySyncedClientConfig, openTerminal, setUnread, showToast } from "./store";
+import { state, setState, applySyncedClientConfig, openTerminal, setUnread, showToast, writePref } from "./store";
 import { load, save, remove, clearAll, sweep, meta, migrateLocalStorageCache, type PaneCacheEntry } from "./pane-cache";
 import type { ClientMessage, ServerMessage, SnapshotPayload, PaneStatePayload, ClientConfig, AgentStatus, HaveInfo, QuotaProviderState } from "../../../types/protocol";
 import { hashTurn } from "../../../types/protocol";
@@ -38,6 +38,7 @@ function saveActivePaneSnapshot(paneId: string): void {
       sessionTitle: state.sessionTitle,
       todos: state.todos ? toPlain(state.todos) : null,
       session: state.session ? toPlain(state.session) : null,
+      queue: toPlain(state.queue),
     });
   }
 }
@@ -419,6 +420,7 @@ export function respondInteraction(interactionId: string, optionId: string, fing
 
 /** The one navigation entry point into a pane: workspace and tab follow from it. */
 export async function selectPane(paneId: string): Promise<void> {
+  writePref("pigeon_active_pane", paneId);
   const previousPaneId = state.activePaneId;
   if (previousPaneId && previousPaneId !== paneId) {
     saveActivePaneSnapshot(previousPaneId);
@@ -467,6 +469,7 @@ export async function selectPane(paneId: string): Promise<void> {
       sessionTitle: cached.sessionTitle || null,
       todos: cached.todos || null,
       session: cached.session || null,
+      queue: cached.queue || [],
       paneSyncing: true,
     });
     if (cached.sessionId && cached.turns.length > 0) {

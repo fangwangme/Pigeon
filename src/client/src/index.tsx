@@ -3,7 +3,7 @@ import { createEffect, createSignal, Match, on, onMount, Show, Switch } from "so
 import "./styles.css";
 import { navigate, setState, state, systemReducesTransparency } from "./state/store";
 import { applyTheme } from "./themes";
-import { checkPairingFromUrlHash, initWebSocket, reportPresence } from "./state/ws";
+import { checkPairingFromUrlHash, initWebSocket, reportPresence, selectPane } from "./state/ws";
 import { AgentsPage, Home } from "./components/Home";
 import { NewSession } from "./components/NewSession";
 import { Overlays } from "./components/overlays";
@@ -84,6 +84,9 @@ function App() {
       setState("canInstallPWA", true);
     });
     await checkPairingFromUrlHash();
+    if (state.activePaneId) {
+      void selectPane(state.activePaneId);
+    }
     await initWebSocket();
     registerServiceWorker();
   });

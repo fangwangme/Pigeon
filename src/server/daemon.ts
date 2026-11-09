@@ -22,6 +22,7 @@ export interface DaemonConfig {
   /** Overrides for tests; production derives these from the config's state directory. */
   adminSocketPath?: string;
   devicesFilePath?: string;
+  queueFilePath?: string;
   vapidPath?: string;
   uploadsDir?: string;
   embeddedHtml?: string;
@@ -36,6 +37,7 @@ export interface ResolvedDaemonConfig {
   herdrCoreSocketPath: string;
   adminSocketPath: string;
   devicesFilePath: string;
+  queueFilePath: string;
   vapidPath: string;
   uploadsDir: string;
 }
@@ -134,6 +136,7 @@ export class PigeonDaemon {
       herdrCoreSocketPath: opts.herdrCoreSocketPath || serverCfg.herdrCoreSocketPath,
       adminSocketPath: opts.adminSocketPath || (port !== 4100 ? join(dirname(serverCfg.adminSocketPath), `pigeon-${port}.sock`) : serverCfg.adminSocketPath),
       devicesFilePath: opts.devicesFilePath || (port !== 4100 ? join(serverCfg.stateDir, `devices-${port}.json`) : join(serverCfg.stateDir, "devices.json")),
+      queueFilePath: opts.queueFilePath || (port !== 4100 ? join(serverCfg.stateDir, `queue-${port}.json`) : join(serverCfg.stateDir, "queue.json")),
       vapidPath: opts.vapidPath || join(serverCfg.stateDir, "vapid.json"),
       uploadsDir: opts.uploadsDir || join(serverCfg.stateDir, "uploads"),
     };
@@ -175,6 +178,7 @@ export class PigeonDaemon {
       uploadStore: this.uploadStore,
       pairingManager: this.pairingManager,
       modelCatalog: new ModelCatalog(),
+      queueFilePath: this.config.queueFilePath,
     });
   }
 
