@@ -2,11 +2,99 @@ import { existsSync, openSync, readSync, closeSync, statSync, readFileSync } fro
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import type {
+  FileDiffSummary,
   NormalizedToolCall,
   NormalizedTurn,
   SessionStats,
+  ToolVerb,
 } from "../../shared/agent-session";
-import { targetForInput, verbForName } from "../sessions/common";
+import { lineDiff, targetForInput, verbForName } from "../sessions/common";
+
+function cleanArgValue(val: unknown): any {
+  if (typeof val === "string") {
+    const trimmed = val.trim();
+    if (trimmed.startsWith('"') && trimmed.endsWith('"') && trimmed.length >= 2) {
+      try {
+        const parsed = JSON.parse(trimmed);
+        return parsed;
+      } catch {
+        return trimmed.slice(1, -1);
+      }
+    }
+    return val;
+  }
+  if (Array.isArray(val)) return val.map(cleanArgValue);
+  if (typeof val === "object" && val !== null) {
+    const out: Record<string, any> = {};
+    for (const [k, v] of Object.entries(val)) out[k] = cleanArgValue(v);
+    return out;
+  }
+  return val;
+}
+
+function boolArg(val: unknown): boolean {
+  if (typeof val === "boolean") return val;
+  if (typeof val === "string") {
+    const s = val.trim().toLowerCase();
+    return s === "true" || s === "1";
+  }
+  return false;
+}
+
+function extractAgyDiff(name: string, args: Record<string, any>): { diff?: FileDiffSummary; verb?: ToolVerb } | undefined {
+  const filePath = (args.Path || args.path || args.filePath || args.file_path) as string | undefined;
+  if (!filePath || typeof filePath !== "string") return undefined;
+
+  const n = name.toLowerCase();
+  if (n.includes("edit") || n.includes("replace") || n.includes("patch")) {
+    const target = (args.Target ?? args.target ?? args.old_string ?? args.oldText ?? "") as string;
+    const replacement = (args.Replacement ?? args.replacement ?? args.new_string ?? args.newText ?? "") as string;
+    return {
+      verb: "edit",
+      diff: lineDiff(filePath, typeof target === "string" ? target : "", typeof replacement === "string" ? replacement : "", "modified"),
+    };
+  }
+
+  if (n.includes("write")) {
+    const content = (args.Content ?? args.content ?? "") as string;
+    const overwrite = boolArg(args.Overwrite ?? args.overwrite);
+    const append = boolArg(args.Append ?? args.append);
+    const isEdit = overwrite || append;
+    return {
+      verb: isEdit ? "edit" : "create",
+      diff: lineDiff(filePath, "", typeof content === "string" ? content : "", isEdit ? "modified" : "created"),
+    };
+  }
+
+  return undefined;
+}
+
+function computeSessionStats(turns: NormalizedTurn[]): SessionStats {
+  const fileOrder: string[] = [];
+  const perFile = new Map<string, FileDiffSummary>();
+  for (const t of turns) {
+    for (const c of t.toolCalls || []) {
+      if (!c.diff) continue;
+      const d = c.diff;
+      if (!fileOrder.includes(d.filePath)) fileOrder.push(d.filePath);
+      const cur = perFile.get(d.filePath);
+      if (!cur) {
+        perFile.set(d.filePath, { ...d });
+      } else {
+        cur.additions += d.additions;
+        cur.deletions += d.deletions;
+        if (d.patch) cur.patch = (cur.patch ? cur.patch + "\n" : "") + d.patch;
+      }
+    }
+  }
+  const diffs = fileOrder.map((f) => perFile.get(f)).filter((d): d is FileDiffSummary => !!d);
+  return {
+    filesModified: diffs.length,
+    additions: diffs.reduce((n, d) => n + d.additions, 0),
+    deletions: diffs.reduce((n, d) => n + d.deletions, 0),
+    diffs,
+  };
+}
 
 export interface AgyAdapterOptions {
   baseBrainDir?: string;
@@ -211,22 +299,25 @@ export class AgyAdapter {
             currentTurn.toolCalls = currentTurn.toolCalls || [];
             currentTurn.items = currentTurn.items || [];
             for (const tc of record.tool_calls) {
-              const args = tc.args || {};
-              const target = targetForInput(args);
+              const cleanedArgs = cleanArgValue(tc.args || {});
+              const target = targetForInput(cleanedArgs);
               const description =
-                typeof args.toolSummary === "string"
-                  ? args.toolSummary
-                  : typeof args.description === "string"
-                  ? args.description
+                typeof cleanedArgs.toolSummary === "string"
+                  ? cleanedArgs.toolSummary
+                  : typeof cleanedArgs.description === "string"
+                  ? cleanedArgs.description
                   : undefined;
+              const diffInfo = extractAgyDiff(tc.name || "", cleanedArgs);
+              const verb: ToolVerb = diffInfo?.verb ?? verbForName(tc.name || "");
               const call: NormalizedToolCall = {
                 id: `tc_${currentTurn.turnNumber}_${currentTurn.toolCalls.length}`,
                 name: tc.name || "tool",
-                verb: verbForName(tc.name || ""),
+                verb,
                 ...(target ? { target } : {}),
                 ...(description ? { description } : {}),
-                input: args,
+                input: cleanedArgs,
                 status: "completed",
+                ...(diffInfo?.diff ? { diff: diffInfo.diff } : {}),
               };
               currentTurn.toolCalls.push(call);
               currentTurn.items.push({ kind: "tool", call });
@@ -252,9 +343,10 @@ export class AgyAdapter {
         }
       }
 
+      const stats = computeSessionStats(turns);
       this.cachedTurns.set(sessionId, turns);
       const finalModel = this.cachedModels.get(sessionId);
-      return { turns, sessionTitle: title, ...(finalModel ? { model: finalModel } : {}) };
+      return { turns, stats, sessionTitle: title, ...(finalModel ? { model: finalModel } : {}) };
     } finally {
       if (fd !== null) closeSync(fd);
     }
