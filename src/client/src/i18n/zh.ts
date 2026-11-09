@@ -40,6 +40,7 @@ export const zh: Messages = {
 
   "common.close": "关闭",
   "common.back": "返回",
+  "common.confirm": "确认",
   "common.rename": "重命名",
   "common.saving": "保存中…",
   "common.save": "保存",

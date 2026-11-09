@@ -103,14 +103,30 @@ export function ModelSheet(props: {
 }) {
   const [query, setQuery] = createSignal("");
   const [refreshing, setRefreshing] = createSignal(false);
+  const [selectedModel, setSelectedModel] = createSignal<string | null>(props.model);
+  const [selectedThinking, setSelectedThinking] = createSignal<string | null>(props.thinking);
+
   const models = () => props.recipe?.models ?? [];
   // mobile-ui-and-themes.md §6.4: the whole list, filtered by id and label.
   const shown = () => {
     const q = query().trim().toLowerCase();
     return q ? models().filter((m) => m.id.toLowerCase().includes(q) || m.label.toLowerCase().includes(q)) : models();
   };
-  const current = () => models().find((m) => m.id === props.model);
+  const current = () => models().find((m) => m.id === selectedModel());
   const levels = () => current()?.thinkingLevels ?? [];
+
+  const handleConfirm = () => {
+    const mId = selectedModel();
+    const th = selectedThinking();
+    if (mId !== props.model || th !== props.thinking) {
+      props.onPick({
+        ...(mId !== props.model ? { modelId: mId ?? undefined } : {}),
+        ...(th !== props.thinking ? { thinking: th ?? undefined } : {}),
+      });
+    }
+    props.onClose();
+  };
+
   const refresh = () => {
     setRefreshing(true);
     refreshModels()
@@ -118,7 +134,22 @@ export function ModelSheet(props: {
       .finally(() => setRefreshing(false));
   };
   return (
-    <Sheet title={t("model.title")} sub={props.recipe?.label} onClose={props.onClose}>
+    <Sheet
+      title={t("model.title")}
+      sub={props.recipe?.label}
+      onClose={props.onClose}
+      right={
+        <button
+          class="cbtn"
+          style={{ color: "var(--accent)" }}
+          aria-label={t("common.confirm")}
+          title={t("common.confirm")}
+          onClick={handleConfirm}
+        >
+          <Icon name="check" />
+        </button>
+      }
+    >
       <div class="fl">
         <span>{t("model.model")}</span>
         <Show when={props.modelSource}>
@@ -146,14 +177,21 @@ export function ModelSheet(props: {
           <For each={shown()}>
             {(m) => (
               <button
-                class={`li${!props.canSwitchModel && m.id !== props.model ? " off" : ""}`}
-                onClick={() => props.canSwitchModel && m.id !== props.model && props.onPick({ modelId: m.id })}
+                class={`li${!props.canSwitchModel ? " off" : ""}`}
+                onClick={() => {
+                  if (!props.canSwitchModel) return;
+                  setSelectedModel(m.id);
+                  const lvls = m.thinkingLevels ?? [];
+                  if (selectedThinking() && !lvls.includes(selectedThinking()!)) {
+                    setSelectedThinking(lvls[0] ?? null);
+                  }
+                }}
               >
                 <div class="tx">
                   {m.label}
                   <small class="mono">{m.id}</small>
                 </div>
-                <Show when={m.id === props.model}>
+                <Show when={m.id === selectedModel()}>
                   <span class="ck">
                     <Icon name="check" />
                   </span>
@@ -173,7 +211,11 @@ export function ModelSheet(props: {
         <div class="seg">
           <For each={levels()}>
             {(l) => (
-              <button class={l === props.thinking ? "on" : ""} disabled={!props.canSwitchThinking} onClick={() => props.canSwitchThinking && l !== props.thinking && props.onPick({ thinking: l })}>
+              <button
+                class={l === selectedThinking() ? "on" : ""}
+                disabled={!props.canSwitchThinking}
+                onClick={() => props.canSwitchThinking && setSelectedThinking(l)}
+              >
                 {l}
               </button>
             )}

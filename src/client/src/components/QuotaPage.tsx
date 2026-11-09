@@ -82,23 +82,16 @@ export function QuotaPage() {
           </div>
         </div>
         <button class="cbtn" aria-label={t("app.reload")} onClick={doRefresh}>
-          <Show
-            when={refreshing()}
-            fallback={<Icon name="clock" />}
+          <span
+            style={{
+              display: "inline-flex",
+              "align-items": "center",
+              "justify-content": "center",
+              animation: refreshing() ? "spin .8s linear infinite" : "none",
+            }}
           >
-            <span
-              style={{
-                width: "16px",
-                height: "16px",
-                "border-radius": "50%",
-                border: "2px solid var(--line2)",
-                "border-top-color": "var(--accent)",
-                "box-sizing": "border-box",
-                display: "block",
-                animation: "spin .8s linear infinite",
-              }}
-            />
-          </Show>
+            <Icon name="refresh" />
+          </span>
         </button>
       </div>
 

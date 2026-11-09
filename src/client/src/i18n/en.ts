@@ -39,6 +39,7 @@ export const en = {
 
   "common.close": "Close",
   "common.back": "Back",
+  "common.confirm": "Confirm",
   "common.rename": "Rename",
   "common.saving": "Saving…",
   "common.save": "Save",
