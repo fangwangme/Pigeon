@@ -149,6 +149,7 @@ export class WsServer {
         if (!this.herdrClient.hasPane(paneId)) {
           this.queues.delete(paneId);
           this.flushing.delete(paneId);
+          this.sawWorkingAfterSend.delete(paneId);
           for (const [key, timer] of Array.from(this.sendingTimers.entries())) {
             if (key.startsWith(`${paneId}:`)) {
               clearTimeout(timer);

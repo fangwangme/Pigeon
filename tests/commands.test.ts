@@ -193,6 +193,32 @@ describe("prompt queue (protocol.md §4.2, §4.13, §5.8)", () => {
     expect(herdr.callsOf("terminal.send")[1].params.text).toBe("second unbound");
   });
 
+  test("the agent finished during sending, then clearSendingPrompt flushes the next prompt", async () => {
+    await client.connect();
+    server.paneStore.registerPaneSession("p1", "claude", "ses_fast");
+    const c = await viewer("p1");
+    await send(c.ws, { type: "agent_prompt", id: "f1", payload: { targetPaneId: "p1", text: "fast one" } });
+    await send(c.ws, { type: "agent_prompt", id: "f2", payload: { targetPaneId: "p1", text: "fast two" } });
+    herdr.emitEvent("status", "p1", { status: { state: "idle", app: "claude-code" } });
+    await until(() => herdr.callsOf("terminal.send").length === 1);
+    expect(herdr.callsOf("terminal.send")[0].params.text).toBe("fast one");
+
+    // Agent quickly starts and finishes while entry is still marked sending
+    herdr.emitEvent("status", "p1", { status: { state: "working", app: "claude-code" } });
+    herdr.emitEvent("status", "p1", { status: { state: "idle", app: "claude-code" } });
+
+    // Turns delta arrives after the agent already became idle; clearSendingPrompt should flush next prompt
+    server.paneStore.emit("turns_delta", {
+      paneId: "p1",
+      seqWatermark: 1,
+      sinceTurnIndex: 1,
+      appendTurns: [{ turnId: "t1", turnNumber: 1, timestamp: Date.now(), userPrompt: { text: "fast one" } }],
+    });
+
+    await until(() => herdr.callsOf("terminal.send").length === 2);
+    expect(herdr.callsOf("terminal.send")[1].params.text).toBe("fast two");
+  });
+
   test("a prompt in sending state returns ERR_NOT_FOUND on queue_cancel and queue_update", async () => {
     await client.connect();
     server.paneStore.registerPaneSession("p1", "claude", "ses_guard");
