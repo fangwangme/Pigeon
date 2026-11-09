@@ -177,6 +177,7 @@ describe("prompt queue (protocol.md §4.2, §4.13, §5.8)", () => {
     const clientQueue = (newServer as any).queues.get("p1");
     expect(clientQueue).toHaveLength(1);
     expect(clientQueue[0].item.text).toBe("persistent prompt");
+    newServer.destroy();
   });
 });
 

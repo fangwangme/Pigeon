@@ -35,7 +35,7 @@ Each provider reads the agent's own credentials (`security-and-pairing.md` §6) 
 - **Claude Code.** Credentials: `~/.claude/.credentials.json` (`claudeAiOauth`), and on macOS also the login Keychain item `Claude Code-credentials`. Usage: `GET https://api.anthropic.com/api/oauth/usage` with the access token and the `anthropic-beta: oauth-2025-04-20` header. `five_hour` maps to a 5-hour window, `seven_day` to a 7-day window, `seven_day_<family>` to a 7-day window of that family. The plan is the credential's `subscriptionType`. Token refresh: `POST https://platform.claude.com/v1/oauth/token`.
 - **Codex.** Credentials: `$CODEX_HOME/auth.json`, then `~/.config/codex/auth.json`, then `~/.codex/auth.json`; the first readable one is used. Usage: `GET https://chatgpt.com/backend-api/wham/usage`; reset credits: `GET https://chatgpt.com/backend-api/wham/rate-limit-reset-credits`. Token refresh: `POST https://auth.openai.com/oauth/token`. The account is the email in the ID token.
 - **Antigravity.** Three sources, tried in order; the first that answers wins:
-  1. the running Antigravity language server (desktop app first, then the CLI's), over its local RPC;
+  1. the running Antigravity language server (desktop app first, then the CLI's), over its local RPC. The language server is discovered by inspecting running processes for arguments (`--app_data_dir`) or process environment variables (`ANTIGRAVITY_LS_ADDRESS`, `ANTIGRAVITY_CSRF_TOKEN`). Connections are strictly restricted to local loopback addresses (`127.0.0.1` or `::1`) with a 10-second timeout; `ANTIGRAVITY_LS_ADDRESS` in daemon environment acts as a test override;
   2. `agy -p /usage` when the installed `agy` version supports it, parsing its JSON output;
   3. the Cloud Code API, with the CLI's cached OAuth token (`~/.gemini/antigravity-cli/antigravity-oauth-token`), refreshed when expired.
 
@@ -82,7 +82,7 @@ The daemon reads each agent's local session data. It only reads; it never change
 | :--- | :--- |
 | Claude Code | `~/.claude/projects/**/*.jsonl` and `~/.claude/transcripts/**/*.jsonl`; assistant messages with `usage`. A message counted twice (same message id and request id) is counted once, keeping the latest copy. |
 | Codex | `$CODEX_HOME/sessions` and `archived_sessions`, else `~/.codex/sessions` and `~/.codex/archived_sessions`, `**/*.jsonl`; token-count events. |
-| Antigravity | the CLI's conversations (`~/.gemini/antigravity-cli/conversations`) and the desktop app's (`~/.gemini/antigravity/conversations`). |
+| Antigravity | The CLI's SQLite conversations (`~/.gemini/antigravity-cli/conversations/*.db`) and Desktop's (`~/.gemini/antigravity/conversations/*.db`) are scanned directly. For Desktop binary protobuf (`.pb`) sessions, when the local Antigravity Language Server is online, Pigeon queries its local loopback RPC (`GetAllCascadeTrajectories` and `GetCascadeTrajectoryGeneratorMetadata`) and caches the parsed usage records incrementally into Pigeon's local cache under `$XDG_DATA_HOME/pigeon/antigravity-cache/cache.db`. When the Language Server is offline, Pigeon reads previously cached records without error. |
 | OpenCode | its SQLite databases (`opencode.db`, and the `-next`/`-dev`/`-beta` variants) under its data directory, opened read-only. |
 | Pi | `~/.pi/agent/sessions/**/*.jsonl`. |
 
@@ -160,6 +160,7 @@ The rules of §2.4 and §3.4–§3.6 and the Claude provider are reachable as mo
 ## 5. Decisions
 
 - **Rewrite inside Pigeon instead of calling `tokenpulse`** — users install one program. Rejected: running the `tokenpulse` binary or reading its databases.
+- **Build Antigravity Desktop cache natively without copying external data** — Desktop `.pb` sessions are queried from the local loopback Language Server RPC and cached incrementally into Pigeon's native SQLite cache (`$XDG_DATA_HOME/pigeon/antigravity-cache/cache.db`). When the Language Server is offline, existing cache is used without error. Rejected: copying database files or alias mapping files from external tools.
 - **Only the windows a provider reports** — the pages once showed windows that exist in code branches but not in the user's data, which misled. Rejected: fixed window lists per provider.
 - **One color rule, by used share** — two rules (pace for bars, share for numbers) put a red bar next to a yellow number. Rejected: pace-colored bars.
 - **Remaining or used is a setting, not a page toggle** — the bar, the time marker and the legend all follow it, so the page never mixes the two. Rejected: a toggle on the quota page.

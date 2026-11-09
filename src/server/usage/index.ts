@@ -4,6 +4,7 @@ import type { ClientConfig, UsageDayPayload, UsageGetPayload, UsageModelPayload 
 import { PricingManager } from "./pricing";
 import { UsageStore } from "./store";
 import type { ConfigManager } from "../config-manager";
+import { join } from "node:path";
 
 export interface UsageServiceOptions {
   store?: UsageStore;
@@ -22,9 +23,11 @@ export class UsageService {
   private hasScannedOnce = false;
 
   constructor(options: UsageServiceOptions = {}) {
-    this.store = options.store ?? new UsageStore();
-    this.pricing = options.pricing ?? new PricingManager();
     this.configManager = options.configManager;
+    const stateDir = options.configManager?.getServerConfig().stateDir;
+    const dbPath = stateDir ? join(stateDir, "usage.db") : undefined;
+    this.store = options.store ?? new UsageStore({ dbPath });
+    this.pricing = options.pricing ?? new PricingManager();
     this.now = options.now ?? (() => Date.now());
     this.startBackgroundTimer();
   }

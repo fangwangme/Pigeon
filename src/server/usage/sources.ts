@@ -376,7 +376,7 @@ export function scanAntigravityDb(path: string): RawUsageRecord[] {
   return records;
 }
 
-// 4. Antigravity cache scanner (historical sqlite records)
+// 4. Pigeon native Antigravity cache scanner (built from Language Server)
 export function scanAntigravityCacheDb(path: string): RawUsageRecord[] {
   const records: RawUsageRecord[] = [];
   let db: Database | null = null;

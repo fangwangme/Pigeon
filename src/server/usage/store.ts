@@ -25,6 +25,7 @@ import {
   scanPiFile,
   type RawUsageRecord,
 } from "./sources";
+import { discoverAntigravityLs, syncAntigravityDesktopSessions } from "./antigravity-ls";
 
 export interface UsageStoreOptions {
   dbPath?: string;
@@ -45,6 +46,7 @@ export class UsageStore {
     mkdirSync(dirname(dbPath), { recursive: true });
 
     this.db = new Database(dbPath);
+    this.db.run("PRAGMA busy_timeout = 5000;");
     this.db.run("PRAGMA journal_mode = WAL;");
     this.db.run("PRAGMA synchronous = NORMAL;");
     this.initSchema();
@@ -127,10 +129,20 @@ export class UsageStore {
       ...findFilesRecursive(join(this.home, ".gemini", "antigravity", "conversations"), ".db"),
     ];
 
+    // Sync Antigravity Desktop sessions via local Language Server if running
+    const isProductionHome = !this.home.includes("/tmp/") && !this.home.includes("/var/");
     const defaultDataDir = process.env.XDG_DATA_HOME ? join(process.env.XDG_DATA_HOME, "pigeon") : join(this.home, ".local", "share", "pigeon");
-    const pigeonAgyCacheDir = join(defaultDataDir, "antigravity-cache");
-    const pigeonAgyCacheDb = join(pigeonAgyCacheDir, "cache.db");
-    const agyCachePath: string | null = existsSync(pigeonAgyCacheDb) ? pigeonAgyCacheDb : null;
+    const pigeonAgyCacheDb = join(defaultDataDir, "antigravity-cache", "cache.db");
+    if (isProductionHome || process.env.ANTIGRAVITY_LS_ADDRESS) {
+      try {
+        const lsConn = await discoverAntigravityLs();
+        if (lsConn) {
+          await syncAntigravityDesktopSessions(lsConn, pigeonAgyCacheDb, this.home);
+        }
+      } catch {}
+    }
+
+    const agyCachePath = existsSync(pigeonAgyCacheDb) ? pigeonAgyCacheDb : null;
 
     const opencodeDataDir = process.env.XDG_DATA_HOME ? join(process.env.XDG_DATA_HOME, "opencode") : join(this.home, ".local", "share", "opencode");
     const opencodeFiles = findFilesRecursive(opencodeDataDir, ".db").filter((f) => !f.endsWith("-wal") && !f.endsWith("-shm") && !f.endsWith("-journal"));

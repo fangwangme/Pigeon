@@ -10,6 +10,8 @@ import { EMBEDDED_HTML } from "./embedded-html";
 import { ConfigManager } from "./config-manager";
 import { ModelCatalog } from "./model-catalog";
 import { MAX_UPLOAD_BYTES, UploadStore } from "./uploads";
+import { QuotaService } from "./quota/index";
+import { UsageService } from "./usage/index";
 import { PWA_MANIFEST, PWA_SW_SCRIPT, PWA_ICON_SVG, PWA_ICON_192_BASE64, PWA_ICON_512_BASE64 } from "./pwa-assets";
 
 export interface DaemonConfig {
@@ -170,6 +172,8 @@ export class PigeonDaemon {
     });
     this.pushManager = new PushManager(this.config.vapidPath);
     this.uploadStore = new UploadStore(this.config.uploadsDir);
+    const quotaService = new QuotaService({ configManager: this.configManager });
+    const usageService = new UsageService({ configManager: this.configManager });
     this.wsServer = new WsServer({
       buildId: createHash("sha256").update(this.html).digest("hex").slice(0, 12),
       herdrClient: this.herdrClient,
@@ -179,6 +183,8 @@ export class PigeonDaemon {
       pairingManager: this.pairingManager,
       modelCatalog: new ModelCatalog(),
       queueFilePath: this.config.queueFilePath,
+      quotaService,
+      usageService,
     });
   }
 

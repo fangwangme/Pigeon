@@ -2,6 +2,7 @@
 import { existsSync, readFileSync, writeFileSync, renameSync, mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import type { QuotaSnapshot, QuotaWindow } from "../../types/protocol";
+import { discoverAntigravityLs, isLoopbackAddress } from "../usage/antigravity-ls";
 
 export interface AntigravityQuotaProviderOptions {
   home?: string;
@@ -83,14 +84,15 @@ export class AntigravityQuotaProvider {
   public async fetch(): Promise<QuotaSnapshot> {
     const errors: string[] = [];
 
-    // Source 1: Language Server RPC (if address available)
-    if (process.env.ANTIGRAVITY_LS_ADDRESS) {
-      try {
-        const snap = await this.probeLanguageServer(process.env.ANTIGRAVITY_LS_ADDRESS, process.env.ANTIGRAVITY_CSRF_TOKEN);
+    // Source 1: Language Server RPC (auto discovery or override)
+    try {
+      const lsConn = await discoverAntigravityLs();
+      if (lsConn) {
+        const snap = await this.probeLanguageServer(lsConn.address, lsConn.csrfToken);
         if (snap) return snap;
-      } catch (err) {
-        errors.push(`Language server RPC: ${(err as Error).message}`);
       }
+    } catch (err) {
+      errors.push(`Language server RPC: ${(err as Error).message}`);
     }
 
     // Source 2: agy -p /usage --output-format json
@@ -113,6 +115,7 @@ export class AntigravityQuotaProvider {
   }
 
   private async probeLanguageServer(address: string, csrfToken?: string): Promise<QuotaSnapshot | null> {
+    if (!isLoopbackAddress(address)) return null;
     const url = `http://${address}/exa.language_server_pb.LanguageServerService/RetrieveUserQuotaSummary`;
     const headers: Record<string, string> = {
       "Content-Type": "application/json",

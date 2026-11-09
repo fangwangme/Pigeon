@@ -113,7 +113,7 @@ export class WsServer {
     this.uploadStore = options.uploadStore;
     this.pairingManager = options.pairingManager;
     this.quotaService = options.quotaService;
-    this.usageService = options.usageService ?? (this.configManager ? new UsageService({ configManager: this.configManager }) : undefined);
+    this.usageService = options.usageService;
     // security-and-pairing.md §5: a revoked device (from the phone or `pigeon devices revoke`) is cut off at once.
     this.pairingManager?.on("device_revoked", (deviceId: string) => this.closeDevice(deviceId));
 
@@ -561,7 +561,7 @@ export class WsServer {
 
       case "usage_get": {
         if (!this.usageService) {
-          this.usageService = new UsageService();
+          this.usageService = new UsageService({ configManager: this.configManager });
         }
         const res = await this.usageService.getUsage(msg.payload);
         this.sendAck(ws, msg.id, res as any);
@@ -570,7 +570,7 @@ export class WsServer {
 
       case "usage_day": {
         if (!this.usageService) {
-          this.usageService = new UsageService();
+          this.usageService = new UsageService({ configManager: this.configManager });
         }
         const res = await this.usageService.getDay(msg.payload);
         this.sendAck(ws, msg.id, res as any);
@@ -579,7 +579,7 @@ export class WsServer {
 
       case "usage_model": {
         if (!this.usageService) {
-          this.usageService = new UsageService();
+          this.usageService = new UsageService({ configManager: this.configManager });
         }
         const res = await this.usageService.getModel(msg.payload);
         this.sendAck(ws, msg.id, res as any);

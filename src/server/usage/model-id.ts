@@ -157,26 +157,6 @@ export function loadModelAliases(): Map<string, string> {
     dynamicAliases.set(`model-placeholder-${k}`.toLowerCase(), formatted);
   }
 
-  try {
-    const home = process.env.HOME || "";
-    const p = join(home, ".local", "share", "pigeon", "antigravity-cache", "model-aliases.json");
-    if (existsSync(p)) {
-      const content = readFileSync(p, "utf-8");
-      const parsed = JSON.parse(content);
-      if (parsed?.aliases) {
-        for (const [key, entry] of Object.entries(parsed.aliases)) {
-          const mId = (entry as any)?.modelId;
-          if (mId) {
-            const formatted = formatModelId(mId);
-            dynamicAliases.set(key.toLowerCase(), formatted);
-            const raw = (entry as any)?.rawModelId;
-            if (raw) dynamicAliases.set(raw.toLowerCase(), formatted);
-          }
-        }
-      }
-    }
-  } catch {}
-
   return dynamicAliases;
 }
 
