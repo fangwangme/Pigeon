@@ -50,13 +50,13 @@ A small daemon runs alongside Herdr on your computer and serves the app over you
   </picture>
   &nbsp;
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="docs/images/new-dark.png">
-    <img src="docs/images/new-light.png" width="260" alt="Start a new session with your chosen agent, model, and effort">
+    <source media="(prefers-color-scheme: dark)" srcset="docs/images/quota-dark.png">
+    <img src="docs/images/quota-light.png" width="260" alt="Track rate-limit windows, pace, and reset times across providers">
   </picture>
   &nbsp;
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="docs/images/resume-dark.png">
-    <img src="docs/images/resume-light.png" width="260" alt="Pick up past sessions where you left off from agent-assigned titles">
+    <source media="(prefers-color-scheme: dark)" srcset="docs/images/usage-dark.png">
+    <img src="docs/images/usage-light.png" width="260" alt="Inspect token usage, estimated costs, and daily activity trends">
   </picture>
 </p>
 
