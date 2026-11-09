@@ -96,7 +96,7 @@ Pigeon daemon listens on an isolated local Unix socket:
 ### 4.7 Configuration Management and Bidirectional Persistence
 Pigeon uses a centralized, structured JSON configuration file to support pre-configured environments and seamless multi-device roaming:
 1. **Standard Storage Path**:
-   - Location: `$XDG_CONFIG_HOME/pigeon/config.json` (defaults to `~/.config/pigeon/config.json`).
+   - Location: `$XDG_DATA_HOME/pigeon/config.json` (defaults to `~/.local/share/pigeon/config.json`), falling back to `$XDG_CONFIG_HOME/pigeon/config.json`.
    - If the configuration file does not exist upon daemon startup, Pigeon automatically generates a default `config.json` with standard presets.
    - A file that is not valid JSON, or not a JSON object, stops startup with an error naming the file. It is never overwritten with defaults, so hand edits are not lost.
 2. **Configuration Namespaces**:

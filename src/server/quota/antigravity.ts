@@ -123,6 +123,7 @@ export class AntigravityQuotaProvider {
     const res = await fetch(url, {
       method: "POST",
       headers,
+      signal: AbortSignal.timeout(10000),
       body: JSON.stringify({
         metadata: {
           ideName: "antigravity",
@@ -199,14 +200,7 @@ export class AntigravityQuotaProvider {
         try {
           currentDiskRaw = readFileSync(p, "utf-8");
         } catch {}
-        if (currentDiskRaw && currentDiskRaw !== raw) {
-          try {
-            const diskData = JSON.parse(currentDiskRaw);
-            if (diskData?.token?.access_token) {
-              accessToken = diskData.token.access_token;
-            }
-          } catch {}
-        } else {
+        if (currentDiskRaw === raw) {
           const updated = {
             ...data,
             token: {
@@ -219,7 +213,16 @@ export class AntigravityQuotaProvider {
           const tmp = `${p}.${process.pid}.tmp`;
           writeFileSync(tmp, JSON.stringify(updated, null, 2), { mode: 0o600 });
           renameSync(tmp, p);
+        } else if (currentDiskRaw) {
+          try {
+            const diskData = JSON.parse(currentDiskRaw);
+            if (diskData?.token?.access_token) {
+              accessToken = diskData.token.access_token;
+            }
+          } catch {}
         }
+      } else {
+        throw new Error(`Antigravity token refresh rejected with status ${refreshRes.status}`);
       }
     }
 

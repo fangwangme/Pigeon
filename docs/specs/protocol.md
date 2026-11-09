@@ -177,7 +177,7 @@ Fills the model catalog again from every agent's source (`herdr-adapter.md` §7.
 ```json
 { "type": "quota_get", "id": "cli_20", "payload": { "force": false } }
 ```
-Answers with the quota of every provider (`quota-and-usage.md` §2). `force: true` (the refresh button) bypasses the daemon's 60-second cache; otherwise a cached snapshot is returned. The ack carries:
+Answers with the quota of every provider (`quota-and-usage.md` §2). Answers from the daemon's 60-second provider cache to protect upstream provider rate limits. The ack carries:
 ```json
 { "providers": [ { "provider": "claude", "enabled": true,
     "snapshot": { "provider": "claude", "plan": "pro", "account": "you@example.com", "fetchedAt": 1794218000000, "credits": [],

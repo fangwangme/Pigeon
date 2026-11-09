@@ -342,8 +342,12 @@ export class PairingManager extends EventEmitter {
         case "usage.rebuild-cache": {
           const { UsageService } = await import("./usage/index");
           const usageService = new UsageService();
-          const res = await usageService.rebuild();
-          socket.write(JSON.stringify({ id, result: res }) + "\n");
+          try {
+            const res = await usageService.rebuild();
+            socket.write(JSON.stringify({ id, result: res }) + "\n");
+          } finally {
+            usageService.destroy();
+          }
           break;
         }
         case "pair.create": {

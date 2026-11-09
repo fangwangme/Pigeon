@@ -67,7 +67,7 @@ Both are computed on the phone from a window (`src/shared/quota.ts`) so that eve
 
 ### 2.6 Fetching, caching and failures
 
-- The phone asks for quota when the quota page opens and when the user taps refresh (`protocol.md` §4.15). The daemon answers from a cache younger than 60 seconds, unless the request forces a refresh. Providers are fetched in parallel; one slow or failing provider never delays the others' results past its own timeout.
+- The phone asks for quota when the quota page opens and when the user taps refresh (`protocol.md` §4.16). The daemon answers from a rate-limiting protection cache younger than 60 seconds. Providers are fetched in parallel; one slow or failing provider never delays the others' results past its own timeout.
 - **Expected errors**, reported per provider in the reply and never as a protocol error: credentials missing, credentials rejected or not refreshable, network unreachable or timed out, an unexpected HTTP status, a response that cannot be parsed. Each carries a short message naming the provider and the cause.
 - A provider that fails keeps its previous snapshot in the reply, next to the error; the phone shows both.
 - The list-page dot (`mobile-ui-and-themes.md` §11.1) comes from the last snapshots the daemon holds; the home page asks with the cache allowed and never forces a fetch.
