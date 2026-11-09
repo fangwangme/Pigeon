@@ -160,11 +160,37 @@ describe("prompt queue (protocol.md §4.2, §4.13, §5.8)", () => {
       appendTurns: [{ turnId: "t1", turnNumber: 1, timestamp: Date.now(), userPrompt: { text: "one" } }],
     });
     await until(() => c.ofType("prompt_queue").at(-1).payload.items.length === 1);
+    expect(herdr.callsOf("terminal.send").length).toBe(1);
+    expect(c.ofType("prompt_queue").at(-1).payload.items[0]).toMatchObject({ text: "two" });
+    expect(c.ofType("prompt_queue").at(-1).payload.items[0].sending).toBeFalsy();
 
     herdr.emitEvent("status", "p1", { status: { state: "working", app: "claude-code" } });
     herdr.emitEvent("status", "p1", { status: { state: "idle", app: "claude-code" } });
     await until(() => herdr.callsOf("terminal.send").length === 2);
     expect(herdr.callsOf("terminal.send")[1].params.text).toBe("two");
+  });
+
+  test("queued prompts on unbound pane wait for next idle after working", async () => {
+    await client.connect();
+    // Do NOT register session -> unbound pane
+    const c = await viewer("p1");
+    await send(c.ws, { type: "agent_prompt", id: "u1", payload: { targetPaneId: "p1", text: "first unbound" } });
+    await send(c.ws, { type: "agent_prompt", id: "u2", payload: { targetPaneId: "p1", text: "second unbound" } });
+    herdr.emitEvent("status", "p1", { status: { state: "idle" } });
+    await until(() => herdr.callsOf("terminal.send").length === 1);
+    await Bun.sleep(50);
+    expect(herdr.callsOf("terminal.send").map((x) => x.params.text)).toEqual(["first unbound"]);
+
+    // For unbound pane, prompt 1 cleared immediately after send, but prompt 2 waits for next idle
+    await until(() => c.ofType("prompt_queue").at(-1).payload.items.length === 1);
+    expect(herdr.callsOf("terminal.send").length).toBe(1);
+    expect(c.ofType("prompt_queue").at(-1).payload.items[0]).toMatchObject({ text: "second unbound" });
+    expect(c.ofType("prompt_queue").at(-1).payload.items[0].sending).toBeFalsy();
+
+    herdr.emitEvent("status", "p1", { status: { state: "working" } });
+    herdr.emitEvent("status", "p1", { status: { state: "idle" } });
+    await until(() => herdr.callsOf("terminal.send").length === 2);
+    expect(herdr.callsOf("terminal.send")[1].params.text).toBe("second unbound");
   });
 
   test("a prompt in sending state returns ERR_NOT_FOUND on queue_cancel and queue_update", async () => {

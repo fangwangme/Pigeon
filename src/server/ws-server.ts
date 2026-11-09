@@ -99,6 +99,7 @@ export class WsServer {
   private queueFilePath?: string;
   private queues = new Map<string, Array<{ item: QueuedPrompt; send: string }>>();
   private flushing = new Set<string>();
+  private sawWorkingAfterSend = new Map<string, boolean>();
   private sendingTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
   constructor(options: WsServerOptions) {
@@ -169,6 +170,9 @@ export class WsServer {
     this.herdrClient.on("pane_status_changed", ({ paneId, status }: { paneId: string; status: string }) => {
       const previous = this.lastStatus.get(paneId);
       this.lastStatus.set(paneId, status);
+      if (status === "working") {
+        this.sawWorkingAfterSend.set(paneId, true);
+      }
       if (status === "idle" || status === "done") void this.flushQueue(paneId);
       // herdr-adapter.md §4: finishing while a phone visibly watches it is finishing seen.
       if (status === "done" && this.pushManager.shouldSuppressPush(paneId)) this.herdrClient.markSeen(paneId);
@@ -754,6 +758,7 @@ export class WsServer {
     if (entry.item.sending) return;
     entry.item.sending = true;
     this.flushing.add(paneId);
+    this.sawWorkingAfterSend.set(paneId, false);
     this.saveQueues();
     this.sendQueue(paneId);
     try {
@@ -788,6 +793,7 @@ export class WsServer {
     const queue = this.queues.get(paneId);
     if (!queue) {
       this.flushing.delete(paneId);
+      this.sawWorkingAfterSend.delete(paneId);
       return;
     }
     const idx = queueId ? queue.findIndex((q) => q.item.queueId === queueId) : queue.findIndex((q) => q.item.sending);
@@ -803,9 +809,12 @@ export class WsServer {
       this.sendQueue(paneId);
     }
     this.flushing.delete(paneId);
-    const status = this.herdrClient.getPaneHerdrStatus(paneId);
-    if (status === "idle" || status === "done") {
-      void this.flushQueue(paneId);
+    if (this.sawWorkingAfterSend.get(paneId)) {
+      this.sawWorkingAfterSend.delete(paneId);
+      const status = this.herdrClient.getPaneHerdrStatus(paneId);
+      if (status === "idle" || status === "done") {
+        void this.flushQueue(paneId);
+      }
     }
   }
 
