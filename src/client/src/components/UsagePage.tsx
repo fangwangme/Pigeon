@@ -1041,7 +1041,7 @@ export function UsagePage() {
 
                   {/* Heatmap Legend */}
                   <div style={{ display: "flex", "align-items": "center", gap: "3px", "margin-top": "10px", "font-size": "11px", color: "var(--faint)" }}>
-                    <span style={{ flex: 1 }}>{t("usage.heatTapHint")}</span>
+                    <span style={{ flex: 1 }} />
                     <span style={{ "margin-right": "3px" }}>{t("usage.less")}</span>
                     <span style={{ width: "11px", height: "11px", "border-radius": "3px", background: "var(--heat-empty)" }} />
                     <span style={{ width: "11px", height: "11px", "border-radius": "3px", background: `var(--heat-${metric()}-1)` }} />
@@ -1266,15 +1266,12 @@ export function UsagePage() {
             </Show>
           </div>
 
-          {/* Bottom disclaimer */}
-          <div style={{ padding: "12px 8px 0", "font-size": "12.5px", color: "var(--faint)", "line-height": 1.6 }}>
-            {t("usage.disclaimer")}
-            <Show when={usageReport() && usageReport()!.models.some((m) => m.unpriced)}>
-              <span style={{ display: "block", "margin-top": "4px" }}>
-                {t("usage.unpricedNote")}
-              </span>
-            </Show>
-          </div>
+          {/* Bottom notes if unpriced */}
+          <Show when={usageReport() && usageReport()!.models.some((m) => m.unpriced)}>
+            <div style={{ padding: "12px 8px 0", "font-size": "12px", color: "var(--faint)" }}>
+              {t("usage.unpricedNote")}
+            </div>
+          </Show>
         </div>
       </div>
 

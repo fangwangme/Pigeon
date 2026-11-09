@@ -168,10 +168,7 @@ export function Settings() {
               <Icon name="chevR" sm />
             </button>
             <div class="li">
-              <div class="tx">
-                {t("settings.quotaDisplay")}
-                <small>{t("settings.quotaDisplayHint")}</small>
-              </div>
+              <div class="tx">{t("settings.quotaDisplay")}</div>
               <div class="seg" style={{ margin: 0, padding: "2px" }}>
                 <button
                   class={state.quotaDisplay !== "used" ? "on" : ""}
@@ -192,10 +189,7 @@ export function Settings() {
               <span class={`tg${state.quotaButton ? "" : " off"}`} />
             </button>
             <button class="li" onClick={() => sendConfigPatch({ quotaShowAccount: state.quotaShowAccount === false })}>
-              <div class="tx">
-                {t("settings.quotaShowAccount")}
-                <small>{t("settings.quotaShowAccountHint")}</small>
-              </div>
+              <div class="tx">{t("settings.quotaShowAccount")}</div>
               <span class={`tg${state.quotaShowAccount !== false ? "" : " off"}`} />
             </button>
           </div>

@@ -147,20 +147,6 @@ export function QuotaPage() {
             </div>
           </div>
 
-          {/* Subheader line */}
-          <div style={{ padding: "14px 4px 0", display: "flex", "align-items": "center", gap: "10px" }}>
-            <span style={{ "font-size": "12.5px", color: "var(--faint)", flex: 1, display: "flex", "align-items": "center", gap: "6px" }}>
-              <span style={{ display: "inline-block", width: "2px", height: "12px", background: "var(--fg)", "border-radius": "1px" }} />
-              {used() ? t("quota.legendUsed") : t("quota.legendRemaining")}
-            </span>
-            <button
-              onClick={() => navigate({ name: "settings" })}
-              style={{ "font-size": "12.5px", color: "var(--faint)" }}
-            >
-              {used() ? t("quota.modeUsed") : t("quota.modeRemaining")}
-            </button>
-          </div>
-
           {/* Empty state */}
           <Show when={!hasAnyData()}>
             <div
@@ -311,11 +297,6 @@ export function QuotaPage() {
                                 ? t("quota.used", { pct: Math.round(u()).toString() })
                                 : t("quota.remaining", { pct: Math.round(Math.max(0, 100 - u())).toString() });
 
-                            const secondText = () =>
-                              used()
-                                ? t("quota.remaining", { pct: Math.round(Math.max(0, 100 - u())).toString() })
-                                : t("quota.used", { pct: Math.round(u()).toString() });
-
                             const firstColor = () => {
                               if (statusColor() === "var(--danger)") return "var(--danger)";
                               if (statusColor() === "var(--warn)") return "var(--warn)";
@@ -386,7 +367,6 @@ export function QuotaPage() {
                                 </div>
                                 <div style={{ display: "flex", "align-items": "baseline", gap: "10px", "font-size": "12.5px", "font-variant-numeric": "tabular-nums" }}>
                                   <span style={{ color: firstColor(), "font-weight": 600 }}>{firstText()}</span>
-                                  <span style={{ color: "var(--faint)" }}>{secondText()}</span>
                                   <span style={{ flex: 1 }} />
                                   <Show when={paceInfo()}>
                                     <span style={{ color: paceInfo()!.color, "font-weight": 550, "text-align": "right" }}>
@@ -453,11 +433,6 @@ export function QuotaPage() {
               <Icon name="sliders" sm />
               {t("quota.manageProviders")}
             </button>
-          </div>
-
-          {/* Explanatory text */}
-          <div style={{ padding: "12px 8px 0", "font-size": "12.5px", color: "var(--faint)", "line-height": 1.6 }}>
-            {t("quota.colorExplanation")}
           </div>
         </div>
       </div>
