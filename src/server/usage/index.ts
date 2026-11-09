@@ -1,6 +1,6 @@
 // Issue #13. quota-and-usage.md §3, protocol.md §4.16–§4.18.
-import { resolveRange, type UsagePreset } from "../../shared/usage";
-import type { ClientConfig, UsageDayPayload, UsageGetPayload, UsageModelPayload } from "../../types/protocol";
+import { formatYMD, resolveRange, type UsagePreset } from "../../shared/usage";
+import type { UsageDayPayload, UsageGetPayload, UsageModelPayload } from "../../types/protocol";
 import { PricingManager } from "./pricing";
 import { UsageStore } from "./store";
 import type { ConfigManager } from "../config-manager";
@@ -19,15 +19,16 @@ export class UsageService {
   private configManager?: ConfigManager;
   private now: () => number;
   private scanPromise: Promise<{ scannedFiles: number; recordsAdded: number }> | null = null;
-  private backgroundTimer: any = null;
+  private backgroundTimer: ReturnType<typeof setInterval> | null = null;
   private hasScannedOnce = false;
 
   constructor(options: UsageServiceOptions = {}) {
     this.configManager = options.configManager;
+    // The usage database sits in the daemon's state directory; the agents' files are under the config's home.
     const stateDir = options.configManager?.getServerConfig().stateDir;
-    const dbPath = stateDir ? join(stateDir, "usage.db") : undefined;
-    this.store = options.store ?? new UsageStore({ dbPath });
-    this.pricing = options.pricing ?? new PricingManager();
+    this.store =
+      options.store ?? new UsageStore({ dbPath: stateDir ? join(stateDir, "usage.db") : undefined, home: options.configManager?.home });
+    this.pricing = options.pricing ?? new PricingManager({ cachePath: stateDir ? join(stateDir, "pricing-cache.json") : undefined });
     this.now = options.now ?? (() => Date.now());
     this.startBackgroundTimer();
   }
@@ -53,23 +54,16 @@ export class UsageService {
       clearInterval(this.backgroundTimer);
       this.backgroundTimer = null;
     }
-    const mode = this.getScanMode();
-    if (mode === "scheduled") {
-      const ms = this.getScanIntervalMs();
-      this.backgroundTimer = setInterval(() => {
-        void this.scan().catch((err) => console.error("[Pigeon] background usage scan failed:", err));
-      }, ms);
-      if (typeof this.backgroundTimer.unref === "function") {
-        this.backgroundTimer.unref();
-      }
-      // Trigger non-blocking initial scan if not done yet
-      if (!this.hasScannedOnce) {
-        void this.scan().catch(() => {});
-      }
-    }
+    if (this.getScanMode() !== "scheduled") return;
+    const backgroundScan = () => void this.scan().catch((err) => console.error("[Pigeon] background usage scan failed:", err));
+    // §3.7: scheduled mode scans in the background; the timer never keeps a one-shot CLI process alive.
+    this.backgroundTimer = setInterval(backgroundScan, this.getScanIntervalMs());
+    this.backgroundTimer.unref();
+    if (!this.hasScannedOnce) backgroundScan();
   }
 
-  public updateConfig(client: ClientConfig): void {
+  /** The scan mode or interval may have changed (`config_patch`). */
+  public updateConfig(): void {
     this.startBackgroundTimer();
   }
 
@@ -78,7 +72,10 @@ export class UsageService {
       clearInterval(this.backgroundTimer);
       this.backgroundTimer = null;
     }
-    this.store.close();
+    // A scan still in flight keeps the database until it settles; its own failure is reported by its caller.
+    const close = () => this.store.close();
+    if (this.scanPromise) this.scanPromise.then(close, close);
+    else close();
   }
 
   public async scan(): Promise<{ scannedFiles: number; recordsAdded: number }> {
@@ -114,7 +111,7 @@ export class UsageService {
     }
 
     const nowDt = new Date(this.now());
-    const today = `${nowDt.getFullYear()}-${String(nowDt.getMonth() + 1).padStart(2, "0")}-${String(nowDt.getDate()).padStart(2, "0")}`;
+    const today = formatYMD(nowDt);
 
     const firstDay = this.store.getFirstDay(req.agents);
     const range = resolveRange(req.preset as UsagePreset, today, {

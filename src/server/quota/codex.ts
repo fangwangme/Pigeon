@@ -1,7 +1,8 @@
 // Issue #13. quota-and-usage.md §2.2, §2.3.
-import { existsSync, readFileSync, writeFileSync, renameSync, mkdirSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { existsSync } from "node:fs";
+import { join } from "node:path";
 import type { QuotaCredit, QuotaSnapshot, QuotaWindow } from "../../types/protocol";
+import { decodeJwtPayload, fileCredentialSource, storeRefreshed } from "./credentials";
 
 export interface CodexQuotaProviderOptions {
   home?: string;
@@ -16,18 +17,6 @@ const DEFAULT_USAGE_URL = "https://chatgpt.com/backend-api/wham/usage";
 const DEFAULT_CREDITS_URL = "https://chatgpt.com/backend-api/wham/rate-limit-reset-credits";
 const DEFAULT_TOKEN_URL = "https://auth.openai.com/oauth/token";
 const CODEX_CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann";
-
-function decodeJwtPayload(token: string): any {
-  try {
-    const parts = token.split(".");
-    if (parts.length < 2) return null;
-    const base64 = parts[1].replace(/-/g, "+").replace(/_/g, "/");
-    const json = Buffer.from(base64, "base64").toString("utf-8");
-    return JSON.parse(json);
-  } catch {
-    return null;
-  }
-}
 
 export class CodexQuotaProvider {
   private home: string;
@@ -98,100 +87,51 @@ export class CodexQuotaProvider {
     };
   }
 
-  private writeBackCreds(path: string, originalRaw: string, tokens: { accessToken: string; refreshToken?: string; idToken?: string }): boolean {
-    let currentRaw: string | null = null;
-    try {
-      currentRaw = readFileSync(path, "utf-8");
-    } catch {
-      return false;
-    }
-
-    if (currentRaw !== originalRaw) {
-      return false;
-    }
-
-    let parsed: any;
-    try {
-      parsed = JSON.parse(originalRaw);
-    } catch {
-      return false;
-    }
-
-    if (!parsed.tokens) parsed.tokens = {};
-    parsed.tokens.access_token = tokens.accessToken;
-    if (tokens.refreshToken) parsed.tokens.refresh_token = tokens.refreshToken;
-    if (tokens.idToken) parsed.tokens.id_token = tokens.idToken;
-
-    mkdirSync(dirname(path), { recursive: true });
-    const tmp = `${path}.${process.pid}.${Math.random().toString(36).slice(2)}.tmp`;
-    writeFileSync(tmp, JSON.stringify(parsed, null, 2), { mode: 0o600 });
-    renameSync(tmp, path);
-    return true;
-  }
-
   public async fetch(): Promise<QuotaSnapshot> {
     const credPath = this.findCredPath();
     if (!credPath) {
       throw new Error("Codex credentials not found");
     }
 
-    let rawCreds = readFileSync(credPath, "utf-8");
-    let creds: any;
-    try {
-      creds = JSON.parse(rawCreds);
-    } catch (err) {
-      throw new Error(`Failed to parse Codex credentials: ${(err as Error).message}`);
-    }
-
-    let tokens = creds.tokens;
-    if (!tokens || !tokens.access_token) {
-      throw new Error("Codex credentials missing tokens.access_token");
-    }
-
-    let accessToken = tokens.access_token;
-    let refreshToken = tokens.refresh_token;
-    let idToken = tokens.id_token;
-
-    // Check expiration via JWT exp
-    const payload = decodeJwtPayload(accessToken);
-    const nowSec = Math.floor(this.now() / 1000);
-    const isExpired = payload && typeof payload.exp === "number" && payload.exp <= nowSec + 60;
+    const source = fileCredentialSource(credPath);
+    let raw = source.read()!;
+    const parseTokens = (text: string) => {
+      let creds: any;
+      try {
+        creds = JSON.parse(text);
+      } catch (err) {
+        throw new Error(`Failed to parse Codex credentials: ${(err as Error).message}`);
+      }
+      if (!creds?.tokens?.access_token) throw new Error("Codex credentials missing tokens.access_token");
+      return creds.tokens as { access_token: string; refresh_token?: string; id_token?: string };
+    };
+    let tokens = parseTokens(raw);
     let refreshed = false;
 
-    if (isExpired && refreshToken) {
-      const newTokens = await this.refreshToken(refreshToken);
-      const written = this.writeBackCreds(credPath, rawCreds, newTokens);
-      if (written) {
-        accessToken = newTokens.accessToken;
-        if (newTokens.refreshToken) refreshToken = newTokens.refreshToken;
-        if (newTokens.idToken) idToken = newTokens.idToken;
-      } else {
-        rawCreds = readFileSync(credPath, "utf-8");
-        creds = JSON.parse(rawCreds);
-        tokens = creds.tokens;
-        accessToken = tokens.access_token;
-        refreshToken = tokens.refresh_token;
-        idToken = tokens.id_token;
-      }
+    // §2.3: at most one refresh per fetch, written back only when the agent did not rotate the file.
+    const refresh = async () => {
       refreshed = true;
-    }
+      const fresh = await this.refreshToken(tokens.refresh_token!);
+      raw = storeRefreshed(source, raw, (creds) => {
+        creds.tokens = creds.tokens || {};
+        creds.tokens.access_token = fresh.accessToken;
+        if (fresh.refreshToken) creds.tokens.refresh_token = fresh.refreshToken;
+        if (fresh.idToken) creds.tokens.id_token = fresh.idToken;
+      });
+      tokens = parseTokens(raw);
+    };
 
-    let usageRes = await this.callUsage(accessToken);
-    if ((usageRes.status === 401 || usageRes.status === 403) && !refreshed && refreshToken) {
-      const newTokens = await this.refreshToken(refreshToken);
-      const written = this.writeBackCreds(credPath, rawCreds, newTokens);
-      if (written) {
-        accessToken = newTokens.accessToken;
-        if (newTokens.refreshToken) refreshToken = newTokens.refreshToken;
-        if (newTokens.idToken) idToken = newTokens.idToken;
-      } else {
-        rawCreds = readFileSync(credPath, "utf-8");
-        creds = JSON.parse(rawCreds);
-        tokens = creds.tokens;
-        accessToken = tokens.access_token;
-      }
-      usageRes = await this.callUsage(accessToken);
+    // Expiry from the access token's JWT `exp`, a minute early.
+    const exp = decodeJwtPayload(tokens.access_token)?.exp;
+    if (typeof exp === "number" && exp <= Math.floor(this.now() / 1000) + 60 && tokens.refresh_token) await refresh();
+
+    let usageRes = await this.callUsage(tokens.access_token);
+    if ((usageRes.status === 401 || usageRes.status === 403) && !refreshed && tokens.refresh_token) {
+      await refresh();
+      usageRes = await this.callUsage(tokens.access_token);
     }
+    const accessToken = tokens.access_token;
+    const idToken = tokens.id_token;
 
     if (!usageRes.ok) {
       throw new Error(`Codex usage request failed with HTTP ${usageRes.status}`);

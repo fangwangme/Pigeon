@@ -42,7 +42,7 @@ export class QuotaService {
     this.now = options.now ?? (() => Date.now());
   }
 
-  public async getQuota(force = false, clientConfig?: ClientConfig): Promise<{ providers: QuotaProviderState[] }> {
+  public async getQuota(clientConfig?: ClientConfig): Promise<{ providers: QuotaProviderState[] }> {
     const config = clientConfig ?? this.configManager?.getClientConfig();
     const providersConfig = config?.quotaProviders ?? { claude: true, codex: true, antigravity: true };
     const now = this.now();

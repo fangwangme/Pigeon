@@ -1,6 +1,4 @@
 // Issue #13. quota-and-usage.md §3.2. Model ID normalization.
-import { existsSync, readFileSync } from "node:fs";
-import { join } from "node:path";
 
 export function stripDateSuffix(modelId: string): string {
   const m1 = modelId.match(/-(\d{8})$/);
@@ -143,21 +141,12 @@ const KNOWN_CODENAMES: Record<string, string> = {
   "gemini-4-argon-trial": "gemini-4-argon",
 };
 
-let dynamicAliasesLoaded = false;
-const dynamicAliases = new Map<string, string>();
+let modelAliases: Map<string, string> | null = null;
 
-export function loadModelAliases(): Map<string, string> {
-  if (dynamicAliasesLoaded) return dynamicAliases;
-  dynamicAliasesLoaded = true;
-
-  for (const [k, v] of Object.entries(STATIC_MODEL_ALIASES)) {
-    const formatted = formatModelId(v);
-    dynamicAliases.set(k.toLowerCase(), formatted);
-    dynamicAliases.set(`model_placeholder_${k}`.toLowerCase(), formatted);
-    dynamicAliases.set(`model-placeholder-${k}`.toLowerCase(), formatted);
-  }
-
-  return dynamicAliases;
+/** Antigravity's model enums → formatted model ids. `lookupAlias` also matches the `MODEL_PLACEHOLDER_` forms. */
+function modelAliasTable(): Map<string, string> {
+  modelAliases ??= new Map(Object.entries(STATIC_MODEL_ALIASES).map(([k, v]) => [k.toLowerCase(), formatModelId(v)]));
+  return modelAliases;
 }
 
 function lookupAlias(raw: string, table: Map<string, string>): string | undefined {
@@ -176,7 +165,7 @@ export function resolveAntigravityModel(
   modelEnum: string | null | undefined,
   servedModel: string | null | undefined
 ): { rawModelId: string; modelId: string; canonicalModelId: string } {
-  const aliases = loadModelAliases();
+  const aliases = modelAliasTable();
   const rawEnum = modelEnum?.trim() || null;
   const rawServed = servedModel?.trim() || null;
   const rawModelId = rawEnum || rawServed || "unknown";

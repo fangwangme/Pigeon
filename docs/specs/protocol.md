@@ -175,7 +175,7 @@ Fills the model catalog again from every agent's source (`herdr-adapter.md` §7.
 
 ### 4.16 Quota (`quota_get`)
 ```json
-{ "type": "quota_get", "id": "cli_20", "payload": { "force": false } }
+{ "type": "quota_get", "id": "cli_20", "payload": {} }
 ```
 Answers with the quota of every provider (`quota-and-usage.md` §2). Answers from the daemon's 60-second provider cache to protect upstream provider rate limits. The ack carries:
 ```json
@@ -190,7 +190,7 @@ One entry per provider, enabled or not; a disabled provider has `snapshot: null`
 ```json
 { "type": "usage_get", "id": "cli_21", "payload": { "preset": "custom", "from": "2026-10-01", "to": "2026-10-31", "agents": ["claude", "codex", "agy", "opencode", "pi"] } }
 ```
-`preset` is `today`, `7d`, `30d`, `year`, `all` or `custom`; `custom` requires `from` and `to` (`YYYY-MM-DD`), which other presets must not carry. `agents` is a non-empty list of distinct agent kinds and filters every figure in the reply. Anything else is `ERR_INVALID_PAYLOAD` and nothing is scanned. The ack carries:
+`preset` is `today`, `7d`, `30d`, `year`, `all` or `custom`; `custom` requires `from` and `to` (`YYYY-MM-DD`), which other presets must not carry. An optional boolean `force` (the refresh button) scans what changed before answering, also in scheduled mode (`quota-and-usage.md` §3.7). `agents` is a non-empty list of distinct agent kinds and filters every figure in the reply. Anything else is `ERR_INVALID_PAYLOAD` and nothing is scanned. The ack carries:
 - `range` (`from`, `to`), `firstDay` (the first day with usage, or null), `scannedAt`, `pricesAvailable`;
 - `totals` and, when `quota-and-usage.md` §3.5 gives one, `comparison` (`from`, `to`, `totals`); totals are `{ cost, tokens, input, output, cacheRead, cacheWrite, messages, sessions }`;
 - `days`: every day of the range with usage, newest first, each with the totals fields and `date`;

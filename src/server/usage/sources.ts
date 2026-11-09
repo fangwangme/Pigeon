@@ -1,8 +1,14 @@
 // Issue #13. quota-and-usage.md §3.1, §3.2. Agent session data scanners.
-import { existsSync, readdirSync, statSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { Database } from "bun:sqlite";
+import { formatYMD } from "../../shared/usage";
 import { canonical, detectCompany, formatModelId, resolveAntigravityModel } from "./model-id";
+
+/** quota-and-usage.md §3.1: records that could not be parsed, counted over one scan. */
+export interface ScanStats {
+  skipped: number;
+}
 
 export interface RawUsageRecord {
   agent: string;
@@ -22,11 +28,7 @@ export interface RawUsageRecord {
 }
 
 function formatLocalDate(ms: number): string {
-  const dt = new Date(ms);
-  const y = dt.getFullYear();
-  const m = String(dt.getMonth() + 1).padStart(2, "0");
-  const d = String(dt.getDate()).padStart(2, "0");
-  return `${y}-${m}-${d}`;
+  return formatYMD(new Date(ms));
 }
 
 export function findFilesRecursive(dir: string, ext: string | string[]): string[] {
@@ -47,7 +49,7 @@ export function findFilesRecursive(dir: string, ext: string | string[]): string[
 }
 
 // 1. Claude scanner
-export function scanClaudeFile(path: string): RawUsageRecord[] {
+export function scanClaudeFile(path: string, stats: ScanStats = { skipped: 0 }): RawUsageRecord[] {
   const records = new Map<string, RawUsageRecord>();
   let content = "";
   try {
@@ -64,6 +66,7 @@ export function scanClaudeFile(path: string): RawUsageRecord[] {
     try {
       entry = JSON.parse(line);
     } catch {
+      stats.skipped++;
       continue;
     }
     if (entry.type !== "assistant" && entry.entry_type !== "assistant") continue;
@@ -106,7 +109,7 @@ export function scanClaudeFile(path: string): RawUsageRecord[] {
 }
 
 // 2. Codex scanner
-export function scanCodexFile(path: string): RawUsageRecord[] {
+export function scanCodexFile(path: string, stats: ScanStats = { skipped: 0 }): RawUsageRecord[] {
   const records: RawUsageRecord[] = [];
   let content = "";
   try {
@@ -135,6 +138,7 @@ export function scanCodexFile(path: string): RawUsageRecord[] {
     try {
       v = JSON.parse(line);
     } catch {
+      stats.skipped++;
       continue;
     }
 
@@ -435,7 +439,7 @@ export function scanAntigravityCacheDb(path: string): RawUsageRecord[] {
 }
 
 // 5. OpenCode scanner
-export function scanOpenCodeDb(path: string): RawUsageRecord[] {
+export function scanOpenCodeDb(path: string, stats: ScanStats = { skipped: 0 }): RawUsageRecord[] {
   const records: RawUsageRecord[] = [];
   let db: Database | null = null;
   try {
@@ -457,6 +461,7 @@ export function scanOpenCodeDb(path: string): RawUsageRecord[] {
       try {
         d = JSON.parse(r.data);
       } catch {
+        stats.skipped++;
         continue;
       }
       const tokens = d.tokens || d.usage;
@@ -500,7 +505,7 @@ export function scanOpenCodeDb(path: string): RawUsageRecord[] {
 }
 
 // 6. Pi scanner
-export function scanPiFile(path: string): RawUsageRecord[] {
+export function scanPiFile(path: string, stats: ScanStats = { skipped: 0 }): RawUsageRecord[] {
   const records: RawUsageRecord[] = [];
   let content = "";
   try {
@@ -520,6 +525,7 @@ export function scanPiFile(path: string): RawUsageRecord[] {
     try {
       entry = JSON.parse(line);
     } catch {
+      stats.skipped++;
       continue;
     }
 

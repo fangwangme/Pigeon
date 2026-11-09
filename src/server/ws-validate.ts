@@ -117,8 +117,8 @@ export function validateClientMessage(raw: unknown): ValidationResult {
       return err ? fail(id, err) : ok();
     }
     case "quota_get":
-      if (p !== undefined && (!isObj(p) || (p.force !== undefined && typeof p.force !== "boolean"))) {
-        return fail(id, "quota_get payload must be an object with optional boolean force");
+      if (p !== undefined && !isObj(p)) {
+        return fail(id, "quota_get payload must be an object");
       }
       return ok();
     case "usage_get": {
@@ -127,6 +127,7 @@ export function validateClientMessage(raw: unknown): ValidationResult {
       if (typeof p.preset !== "string" || !validPresets.has(p.preset)) {
         return fail(id, "usage_get needs a valid preset ('today', '7d', '30d', 'year', 'all', 'custom')");
       }
+      if (p.force !== undefined && typeof p.force !== "boolean") return fail(id, "usage_get force must be a boolean");
       if (p.preset === "custom") {
         if (!isDateStr(p.from) || !isDateStr(p.to)) {
           return fail(id, "usage_get custom preset requires 'from' and 'to' (YYYY-MM-DD)");

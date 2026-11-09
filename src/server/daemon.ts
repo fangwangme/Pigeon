@@ -1,4 +1,4 @@
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 import { networkInterfaces } from "node:os";
 import { createHash } from "node:crypto";
 import type { Server } from "bun";
@@ -7,7 +7,7 @@ import { PairingManager } from "./pairing";
 import { PushManager, type PushSubscriptionData } from "./push";
 import { WsServer, newConnectionId, SERVER_VERSION, type ClientConnectionData } from "./ws-server";
 import { EMBEDDED_HTML } from "./embedded-html";
-import { ConfigManager } from "./config-manager";
+import { ConfigManager, portScoped } from "./config-manager";
 import { ModelCatalog } from "./model-catalog";
 import { MAX_UPLOAD_BYTES, UploadStore } from "./uploads";
 import { QuotaService } from "./quota/index";
@@ -136,9 +136,9 @@ export class PigeonDaemon {
       publicBaseUrl: resolvePublicBaseUrl({ configured: opts.publicBaseUrl || serverCfg.publicBaseUrl, insecureDev, port }),
       herdrAppSocketPath: opts.herdrAppSocketPath || serverCfg.herdrAppSocketPath,
       herdrCoreSocketPath: opts.herdrCoreSocketPath || serverCfg.herdrCoreSocketPath,
-      adminSocketPath: opts.adminSocketPath || (port !== 4100 ? join(dirname(serverCfg.adminSocketPath), `pigeon-${port}.sock`) : serverCfg.adminSocketPath),
-      devicesFilePath: opts.devicesFilePath || (port !== 4100 ? join(serverCfg.stateDir, `devices-${port}.json`) : join(serverCfg.stateDir, "devices.json")),
-      queueFilePath: opts.queueFilePath || (port !== 4100 ? join(serverCfg.stateDir, `queue-${port}.json`) : join(serverCfg.stateDir, "queue.json")),
+      adminSocketPath: opts.adminSocketPath || portScoped(serverCfg.adminSocketPath, port),
+      devicesFilePath: opts.devicesFilePath || portScoped(join(serverCfg.stateDir, "devices.json"), port),
+      queueFilePath: opts.queueFilePath || portScoped(join(serverCfg.stateDir, "queue.json"), port),
       vapidPath: opts.vapidPath || join(serverCfg.stateDir, "vapid.json"),
       uploadsDir: opts.uploadsDir || join(serverCfg.stateDir, "uploads"),
     };
@@ -164,16 +164,17 @@ export class PigeonDaemon {
       appSocketPath: this.config.herdrAppSocketPath,
       coreSocketPath: this.config.herdrCoreSocketPath,
     });
+    const quotaService = new QuotaService({ configManager: this.configManager });
+    const usageService = new UsageService({ configManager: this.configManager });
     this.pairingManager = new PairingManager({
       publicBaseUrl: this.config.publicBaseUrl,
       insecureDev,
       adminSocketPath: this.config.adminSocketPath,
       devicesFilePath: this.config.devicesFilePath,
+      rebuildUsage: () => usageService.rebuild(),
     });
     this.pushManager = new PushManager(this.config.vapidPath);
     this.uploadStore = new UploadStore(this.config.uploadsDir);
-    const quotaService = new QuotaService({ configManager: this.configManager });
-    const usageService = new UsageService({ configManager: this.configManager });
     this.wsServer = new WsServer({
       buildId: createHash("sha256").update(this.html).digest("hex").slice(0, 12),
       herdrClient: this.herdrClient,

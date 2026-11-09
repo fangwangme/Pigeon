@@ -565,7 +565,7 @@ export class WsServer {
 
       case "config_patch": {
         const client = this.configManager.patchClientConfig(msg.payload.client);
-        this.usageService?.updateConfig(client);
+        this.usageService?.updateConfig();
         this.configVersion++;
         this.sendAck(ws, msg.id, { version: this.configVersion, client });
         this.broadcastConfigUpdated(client, ws);
@@ -573,41 +573,23 @@ export class WsServer {
       }
 
       case "quota_get": {
-        if (!this.quotaService) {
-          this.quotaService = new QuotaService({ configManager: this.configManager });
-        }
-        const force = msg.payload?.force ?? false;
-        const res = await this.quotaService.getQuota(force, this.configManager.getClientConfig());
+        this.quotaService ??= new QuotaService({ configManager: this.configManager });
+        const res = await this.quotaService.getQuota(this.configManager.getClientConfig());
         this.sendAck(ws, msg.id, { providers: res.providers });
         return;
       }
 
-      case "usage_get": {
-        if (!this.usageService) {
-          this.usageService = new UsageService({ configManager: this.configManager });
-        }
-        const res = await this.usageService.getUsage(msg.payload);
-        this.sendAck(ws, msg.id, res as any);
+      case "usage_get":
+        this.sendAck(ws, msg.id, (await this.usage().getUsage(msg.payload)) as any);
         return;
-      }
 
-      case "usage_day": {
-        if (!this.usageService) {
-          this.usageService = new UsageService({ configManager: this.configManager });
-        }
-        const res = await this.usageService.getDay(msg.payload);
-        this.sendAck(ws, msg.id, res as any);
+      case "usage_day":
+        this.sendAck(ws, msg.id, (await this.usage().getDay(msg.payload)) as any);
         return;
-      }
 
-      case "usage_model": {
-        if (!this.usageService) {
-          this.usageService = new UsageService({ configManager: this.configManager });
-        }
-        const res = await this.usageService.getModel(msg.payload);
-        this.sendAck(ws, msg.id, res as any);
+      case "usage_model":
+        this.sendAck(ws, msg.id, (await this.usage().getModel(msg.payload)) as any);
         return;
-      }
     }
   }
 
@@ -660,6 +642,12 @@ export class WsServer {
     const cached = this.herdrClient.getPaneState(paneId);
     if (cached) this.send(ws, { type: "pane_state", payload: cached });
     await this.herdrClient.readAndClassifyPane(paneId);
+  }
+
+  /** The daemon injects its usage service; tests without one get a service on first use. */
+  private usage(): UsageService {
+    this.usageService ??= new UsageService({ configManager: this.configManager });
+    return this.usageService;
   }
 
   /** Skills are per pane: they depend on the agent kind and the project directory. */

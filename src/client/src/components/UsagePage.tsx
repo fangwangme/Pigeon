@@ -1,13 +1,12 @@
-import { createEffect, createMemo, createSignal, For, onCleanup, onMount, Show } from "solid-js";
+import { createEffect, createMemo, createSignal, For, Show } from "solid-js";
 import { navigate, state } from "../state/store";
 import { request } from "../state/ws";
-import { cacheHitPercent, daysBetween, heatmapLayout, type UsagePreset } from "../../../shared/usage";
+import { cacheHitPercent, daysBetween, formatYMD, heatmapLayout, type UsagePreset } from "../../../shared/usage";
 import type {
   UsageDayPayload,
   UsageDaySummary,
   UsageGetPayload,
   UsageModelPayload,
-  UsageModelSummary,
 } from "../../../types/protocol";
 import { Icon } from "./ui";
 import { t, locale } from "../i18n";
@@ -69,8 +68,7 @@ export function fmtNumber(n: number): string {
 }
 
 function todayYMD(): string {
-  const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  return formatYMD(new Date());
 }
 
 export function UsagePage() {
@@ -140,7 +138,7 @@ export function UsagePage() {
   createEffect(() => {
     // Re-fetch when range or activeAgents change
     const p = range();
-    const ag = Array.from(activeAgents()).sort().join(",");
+    activeAgents(); // tracked: a filter change reloads
     const cf = customFrom();
     const ct = customTo();
     if (p !== "custom" || (cf && ct)) {
@@ -301,7 +299,7 @@ export function UsagePage() {
     const endDt = new Date(y2, m2 - 1, d2);
 
     for (let cur = new Date(startDt); cur <= endDt; cur.setDate(cur.getDate() + 1)) {
-      const ymd = `${cur.getFullYear()}-${String(cur.getMonth() + 1).padStart(2, "0")}-${String(cur.getDate()).padStart(2, "0")}`;
+      const ymd = formatYMD(cur);
       const sum = dayMap.get(ymd);
       const val = sum ? (m === "tokens" ? sum.tokens : sum.cost) : 0;
       if (val > 0) {
@@ -315,7 +313,7 @@ export function UsagePage() {
 
     // Current streak from end backwards
     for (let cur = new Date(endDt); cur >= startDt; cur.setDate(cur.getDate() - 1)) {
-      const ymd = `${cur.getFullYear()}-${String(cur.getMonth() + 1).padStart(2, "0")}-${String(cur.getDate()).padStart(2, "0")}`;
+      const ymd = formatYMD(cur);
       const sum = dayMap.get(ymd);
       const val = sum ? (m === "tokens" ? sum.tokens : sum.cost) : 0;
       if (val > 0) currentStreak++;
@@ -340,7 +338,7 @@ export function UsagePage() {
     if (layout === "strip") {
       const cells = [];
       for (let cur = new Date(startDt); cur <= endDt; cur.setDate(cur.getDate() + 1)) {
-        const ymd = `${cur.getFullYear()}-${String(cur.getMonth() + 1).padStart(2, "0")}-${String(cur.getDate()).padStart(2, "0")}`;
+        const ymd = formatYMD(cur);
         const sum = dayMap.get(ymd);
         const val = sum ? (m === "tokens" ? sum.tokens : sum.cost) : 0;
         cells.push({
@@ -368,7 +366,7 @@ export function UsagePage() {
       let currentWeekDays: Date[] = [];
 
       for (let cur = new Date(firstMonday); cur <= lastSunday; cur.setDate(cur.getDate() + 1)) {
-        const ymd = `${cur.getFullYear()}-${String(cur.getMonth() + 1).padStart(2, "0")}-${String(cur.getDate()).padStart(2, "0")}`;
+        const ymd = formatYMD(cur);
         const inRange = cur >= startDt && cur <= endDt;
         const sum = inRange ? dayMap.get(ymd) : undefined;
         const val = sum ? (m === "tokens" ? sum.tokens : sum.cost) : 0;
@@ -414,7 +412,7 @@ export function UsagePage() {
     let currentWeekDays: Date[] = [];
 
     for (let cur = new Date(firstMonday); cur <= lastSunday; cur.setDate(cur.getDate() + 1)) {
-      const ymd = `${cur.getFullYear()}-${String(cur.getMonth() + 1).padStart(2, "0")}-${String(cur.getDate()).padStart(2, "0")}`;
+      const ymd = formatYMD(cur);
       const inRange = cur >= startDt && cur <= endDt;
       const sum = inRange ? dayMap.get(ymd) : undefined;
       const val = sum ? (m === "tokens" ? sum.tokens : sum.cost) : 0;

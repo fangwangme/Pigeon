@@ -1,5 +1,5 @@
 // Issue #13. quota-and-usage.md §3.1–§3.6, protocol.md §4.16–§4.18.
-import { existsSync, statSync, mkdirSync, copyFileSync } from "node:fs";
+import { existsSync, statSync, mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { Database } from "bun:sqlite";
 import type {
@@ -24,12 +24,23 @@ import {
   scanOpenCodeDb,
   scanPiFile,
   type RawUsageRecord,
+  type ScanStats,
 } from "./sources";
 import {
   discoverAntigravityLs,
   syncAntigravityDesktopSessions,
   type AntigravityLsConnection,
 } from "./antigravity-ls";
+
+/** quota-and-usage.md §3.3: cache reads and writes use the model's cache prices, else its input price. */
+function costAt(p: ModelPrice, input: number, output: number, cacheRead: number, cacheWrite: number): number {
+  return (
+    input * p.inputCostPerToken +
+    output * p.outputCostPerToken +
+    cacheRead * (p.cacheReadCostPerToken ?? p.inputCostPerToken) +
+    cacheWrite * (p.cacheWriteCostPerToken ?? p.inputCostPerToken)
+  );
+}
 
 export interface UsageStoreOptions {
   dbPath?: string;
@@ -43,6 +54,7 @@ export class UsageStore {
   private home: string;
   private now: () => number;
   private discoverLs: () => Promise<AntigravityLsConnection | null>;
+  private agyCacheDbPath: string;
 
   constructor(options: UsageStoreOptions = {}) {
     this.home = options.home ?? process.env.HOME ?? "";
@@ -50,6 +62,8 @@ export class UsageStore {
     this.discoverLs = options.discoverLs ?? (() => discoverAntigravityLs(this.home));
     const defaultDataDir = process.env.XDG_DATA_HOME ? join(process.env.XDG_DATA_HOME, "pigeon") : join(this.home, ".local", "share", "pigeon");
     const dbPath = options.dbPath ?? join(defaultDataDir, "usage.db");
+    // quota-and-usage.md §3.1: Pigeon's own Antigravity cache lives next to the usage database.
+    this.agyCacheDbPath = join(dirname(dbPath), "antigravity-cache", "cache.db");
     mkdirSync(dirname(dbPath), { recursive: true });
 
     this.db = new Database(dbPath);
@@ -137,14 +151,10 @@ export class UsageStore {
     ];
 
     // Sync Antigravity Desktop sessions via local Language Server if running
-    const defaultDataDir = process.env.XDG_DATA_HOME ? join(process.env.XDG_DATA_HOME, "pigeon") : join(this.home, ".local", "share", "pigeon");
-    const pigeonAgyCacheDb = join(defaultDataDir, "antigravity-cache", "cache.db");
-    try {
-      const lsConn = await this.discoverLs();
-      if (lsConn) {
-        await syncAntigravityDesktopSessions(lsConn, pigeonAgyCacheDb, this.home);
-      }
-    } catch {}
+    const pigeonAgyCacheDb = this.agyCacheDbPath;
+    // An offline language server is expected and handled inside; anything else fails the scan loudly.
+    const lsConn = await this.discoverLs();
+    if (lsConn) await syncAntigravityDesktopSessions(lsConn, pigeonAgyCacheDb, this.home);
 
     const agyCachePath = existsSync(pigeonAgyCacheDb) ? pigeonAgyCacheDb : null;
 
@@ -209,16 +219,8 @@ export class UsageStore {
     const processRecords = this.db.transaction((records: RawUsageRecord[]) => {
       for (const r of records) {
         const p = resolvePrice(r.date, r.canonicalModelId);
-        let cost = 0;
-        let unpriced = 1;
-        if (p) {
-          unpriced = 0;
-          const inpCost = r.inputTokens * p.inputCostPerToken;
-          const outCost = r.outputTokens * p.outputCostPerToken;
-          const crCost = r.cacheReadTokens * (p.cacheReadCostPerToken ?? p.inputCostPerToken);
-          const cwCost = r.cacheWriteTokens * (p.cacheWriteCostPerToken ?? p.inputCostPerToken);
-          cost = inpCost + outCost + crCost + cwCost;
-        }
+        const cost = p ? costAt(p, r.inputTokens, r.outputTokens, r.cacheReadTokens, r.cacheWriteTokens) : 0;
+        const unpriced = p ? 0 : 1;
 
         insertRecord.run(
           r.agent,
@@ -241,6 +243,7 @@ export class UsageStore {
       }
     });
 
+    const stats: ScanStats = { skipped: 0 };
     for (const item of allFiles) {
       if (!existsSync(item.path)) continue;
       let st: any;
@@ -270,10 +273,10 @@ export class UsageStore {
       let rawRecords: RawUsageRecord[] = [];
       switch (item.agent) {
         case "claude":
-          rawRecords = scanClaudeFile(item.path);
+          rawRecords = scanClaudeFile(item.path, stats);
           break;
         case "codex":
-          rawRecords = scanCodexFile(item.path);
+          rawRecords = scanCodexFile(item.path, stats);
           break;
         case "agy":
           rawRecords = scanAntigravityDb(item.path);
@@ -282,10 +285,10 @@ export class UsageStore {
           rawRecords = scanAntigravityCacheDb(item.path);
           break;
         case "opencode":
-          rawRecords = scanOpenCodeDb(item.path);
+          rawRecords = scanOpenCodeDb(item.path, stats);
           break;
         case "pi":
-          rawRecords = scanPiFile(item.path);
+          rawRecords = scanPiFile(item.path, stats);
           break;
       }
 
@@ -301,6 +304,8 @@ export class UsageStore {
       this.repairAntigravityRecords(pricing);
     }
 
+    // quota-and-usage.md §3.1: unparseable records are skipped and logged once per scan.
+    if (stats.skipped > 0) console.warn(`[Pigeon] usage scan skipped ${stats.skipped} unparseable records`);
     return { scannedFiles, recordsAdded };
   }
 
@@ -332,16 +337,8 @@ export class UsageStore {
         const resolved = resolveAntigravityModel(row.raw_model_id, row.model_id);
         const canon = resolved.canonicalModelId;
         const p = pricing.getPrice(canon);
-        let cost = 0;
-        let unpriced = 1;
-        if (p) {
-          unpriced = 0;
-          const inpCost = row.input_tokens * p.inputCostPerToken;
-          const outCost = row.output_tokens * p.outputCostPerToken;
-          const crCost = row.cache_read_tokens * (p.cacheReadCostPerToken ?? p.inputCostPerToken);
-          const cwCost = row.cache_write_tokens * (p.cacheWriteCostPerToken ?? p.inputCostPerToken);
-          cost = inpCost + outCost + crCost + cwCost;
-        }
+        const cost = p ? costAt(p, row.input_tokens, row.output_tokens, row.cache_read_tokens, row.cache_write_tokens) : 0;
+        const unpriced = p ? 0 : 1;
         update.run(
           resolved.rawModelId,
           resolved.modelId,

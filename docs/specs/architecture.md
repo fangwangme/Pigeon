@@ -90,8 +90,9 @@ Pigeon implements a **Dual-Track Architecture** (detailed in `agent-session-norm
 
 ### 4.6 Local CLI Admin Channel
 Pigeon daemon listens on an isolated local Unix socket:
-- Path: `$XDG_RUNTIME_DIR/pigeon.sock` (mode `0600`, or fallback `~/.local/state/pigeon/admin.sock`).
-- CLI subcommands (`pigeon pair`, `pigeon devices`, `pigeon devices revoke <id>`, `pigeon status`) talk directly to the running daemon over this socket to query pairing tokens and instantly sever revoked connections.
+- Path: `$XDG_RUNTIME_DIR/pigeon.sock` (mode `0600`, or fallback `~/.local/share/pigeon/admin.sock`).
+- CLI subcommands (`pigeon pair`, `pigeon devices`, `pigeon devices revoke <id>`, `pigeon status`, `pigeon rebuild-cache`) talk directly to the running daemon over this socket to query pairing tokens and instantly sever revoked connections. `pigeon rebuild-cache` rebuilds the usage database directly when no daemon is running.
+- **Instances by port**: port 4100 is the production instance. A daemon on any other port is a separate instance: its admin socket, paired devices and prompt queue carry the port (`pigeon-4101.sock`, `devices-4101.json`, `queue-4101.json`), so a test daemon never touches the production one. The admin subcommands reach the daemon of the configured `server.port`, or of `--port <n>`.
 
 ### 4.7 Configuration Management and Bidirectional Persistence
 Pigeon uses a centralized, structured JSON configuration file to support pre-configured environments and seamless multi-device roaming:

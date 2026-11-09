@@ -408,7 +408,7 @@ export type ClientMessage =
   | { type: "skills_get"; id: string }
   | { type: "config_get"; id: string }
   | { type: "config_patch"; id: string; payload: { client: Partial<ClientConfig> } }
-  | { type: "quota_get"; id: string; payload?: { force?: boolean } }
+  | { type: "quota_get"; id: string; payload?: Record<string, never> }
   | { type: "usage_get"; id: string; payload: { preset: string; from?: string; to?: string; agents: string[]; force?: boolean } }
   | { type: "usage_day"; id: string; payload: { date: string; agents: string[] } }
   | { type: "usage_model"; id: string; payload: { model: string; from: string; to: string; agents: string[] } };

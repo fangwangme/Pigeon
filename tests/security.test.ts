@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, setSystemTime, test } from "bun:test";
 import { readFileSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { ConfigManager } from "../src/server/config-manager";
+import { ConfigManager, portScoped } from "../src/server/config-manager";
 import { PigeonDaemon, resolvePublicBaseUrl } from "../src/server/daemon";
 import { PairingManager, generateBase32Token } from "../src/server/pairing";
 import { PushManager } from "../src/server/push";
@@ -120,6 +120,16 @@ describe("admin channel (security-and-pairing.md §5)", () => {
     await p.startAdminSocket();
     expect(statSync(join(dir, "admin.sock")).mode & 0o777).toBe(0o600);
     p.stopAdminSocket();
+  });
+});
+
+describe("instances by port (architecture.md §4.6)", () => {
+  test("port 4100 keeps the plain admin socket, devices and queue files; any other port gets its own", () => {
+    expect(portScoped("/run/u/pigeon.sock", 4100)).toBe("/run/u/pigeon.sock");
+    expect(portScoped("/s/pigeon/devices.json", 4100)).toBe("/s/pigeon/devices.json");
+    expect(portScoped("/run/u/pigeon.sock", 4101)).toBe("/run/u/pigeon-4101.sock");
+    expect(portScoped("/s/pigeon/devices.json", 4101)).toBe("/s/pigeon/devices-4101.json");
+    expect(portScoped("/s/pigeon/queue.json", 4200)).toBe("/s/pigeon/queue-4200.json");
   });
 });
 

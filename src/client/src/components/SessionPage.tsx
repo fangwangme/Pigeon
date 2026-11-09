@@ -9,13 +9,12 @@ import {
   insertIntoComposer,
   ModelSheet,
   PlusSheet,
-  restoreIntoComposer,
   SkillsSheet,
 } from "./Composer";
 import { ConnectionBanner } from "./Home";
 import { openOverlay } from "./overlays";
 import { PromptCard } from "./PromptCard";
-import { DiffView, openDiffs, renderPath, ScreenCard, TodoCapsule, TodoSheet, ToolSheet, Turn } from "./Transcript";
+import { DiffView, renderPath, ScreenCard, TodoCapsule, TodoSheet, ToolSheet, Turn } from "./Transcript";
 import { DiffBadge, findPane, Icon, paneLabel, paneStatus, paneSummary, Sheet, StatusIcon } from "./ui";
 import { t, type MessageId } from "../i18n";
 

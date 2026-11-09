@@ -1,4 +1,4 @@
-import { createEffect, createSignal, For, onCleanup, onMount, Show } from "solid-js";
+import { createSignal, For, onCleanup, onMount, Show } from "solid-js";
 import { navigate, state } from "../state/store";
 import { fetchQuota } from "../state/ws";
 import { quotaLevel, quotaPace } from "../../../shared/quota";
@@ -32,7 +32,7 @@ export function QuotaPage() {
 
   onMount(() => {
     if (!state.quotaSnapshots || state.quotaSnapshots.length === 0) {
-      void fetchQuota(false);
+      void fetchQuota();
     }
     const timer = setInterval(() => setNow(Date.now()), 30000);
     onCleanup(() => clearInterval(timer));
@@ -42,7 +42,7 @@ export function QuotaPage() {
     if (refreshing()) return;
     setRefreshing(true);
     try {
-      await fetchQuota(true);
+      await fetchQuota();
     } finally {
       setRefreshing(false);
     }

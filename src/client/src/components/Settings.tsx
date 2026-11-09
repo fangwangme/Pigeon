@@ -6,6 +6,7 @@ import type { AccentName, DeviceInfo, QuotaProvidersConfig, ThemeMode, UsageGetP
 import { ago, Icon, Logo } from "./ui";
 import { LOCALES, rich, t, type LocalePref, type MessageId } from "../i18n";
 import { fmtCost } from "./UsagePage";
+import { formatYMD } from "../../../shared/usage";
 
 /** §8.1: the newest devices shown before the rest are folded away. */
 const DEVICES_SHOWN = 5;
@@ -55,7 +56,7 @@ export function Settings() {
             .then((res: UsageGetPayload) => {
               if (res && res.totals && res.days) {
                 const now = new Date();
-                const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+                const todayStr = formatYMD(now);
                 const todayCost = res.days.find((d) => d.date === todayStr)?.cost ?? 0;
                 setUsageSummaryText(t("settings.usageSummary", { today: fmtCost(todayCost), week: fmtCost(res.totals.cost) }));
               }

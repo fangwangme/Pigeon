@@ -247,7 +247,7 @@ export function handleServerMessage(msg: ServerMessage): void {
       applySyncedClientConfig(msg.payload.clientConfig);
       setState("recipes", msg.payload.recipes);
       setState("serverVersion", msg.payload.serverVersion);
-      void fetchQuota(false);
+      void fetchQuota();
       return;
 
     case "skills_sync":
@@ -521,9 +521,10 @@ export function sendConfigPatch(patch: Partial<ClientConfig>): void {
   sendMessage({ type: "config_patch", id: nextId(), payload: { client: patch } });
 }
 
-export async function fetchQuota(force = false): Promise<QuotaProviderState[]> {
+/** protocol.md §4.16: always answered from the daemon's 60-second cache. */
+export async function fetchQuota(): Promise<QuotaProviderState[]> {
   try {
-    const res = await request({ type: "quota_get", payload: { force } });
+    const res = await request({ type: "quota_get", payload: {} });
     if (res?.providers) {
       setState("quotaSnapshots", res.providers);
       setState("quotaUpdated", Date.now());

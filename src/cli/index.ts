@@ -1,15 +1,18 @@
 import { connect } from "node:net";
 import { existsSync } from "node:fs";
 import { PigeonDaemon } from "../server/daemon";
-import { ConfigManager } from "../server/config-manager";
+import { ConfigManager, portScoped } from "../server/config-manager";
 import qrcode from "qrcode-terminal";
 
 const ADMIN_TIMEOUT_MS = 5000;
 
+/** The daemon behind the admin socket is not running (no socket, or nothing listening on it). */
+class DaemonNotRunningError extends Error {}
+
 function sendAdminCommand(adminSocketPath: string, method: string, params: Record<string, any> = {}): Promise<any> {
   return new Promise((resolve, reject) => {
     if (!existsSync(adminSocketPath)) {
-      return reject(new Error(`Pigeon daemon is not running (no admin socket at ${adminSocketPath}).`));
+      return reject(new DaemonNotRunningError(`Pigeon daemon is not running (no admin socket at ${adminSocketPath}).`));
     }
     const socket = connect(adminSocketPath, () => {
       socket.write(JSON.stringify({ method, params, id: "cli" }) + "\n");
@@ -29,9 +32,11 @@ function sendAdminCommand(adminSocketPath: string, method: string, params: Recor
       if (res.error) reject(new Error(res.error.message));
       else resolve(res.result);
     });
-    socket.on("error", (err) => {
+    socket.on("error", (err: NodeJS.ErrnoException) => {
       clearTimeout(timer);
-      reject(err);
+      // A socket file left behind by a daemon that exited.
+      if (err.code === "ECONNREFUSED") reject(new DaemonNotRunningError(`Pigeon daemon is not running (nothing listens on ${adminSocketPath}).`));
+      else reject(err);
     });
   });
 }
@@ -52,11 +57,12 @@ Pigeon — Mobile Remote Client for Herdr
 
 Usage:
   pigeon start [--port <n>] [--insecure-dev] [--herdr-app-sock <path>] [--herdr-core-sock <path>] [--public-url <url>] [--admin-sock <path>]
-  pigeon pair [--ephemeral] [--json]
-  pigeon devices [revoke <id>]
-  pigeon status
-  pigeon usage rebuild [--json]
-  pigeon rebuild-cache [--json]
+  pigeon pair [--ephemeral] [--json] [--port <n>]
+  pigeon devices [revoke <id>] [--port <n>]
+  pigeon status [--port <n>]
+  pigeon rebuild-cache [--json] [--port <n>]
+
+The admin commands reach the daemon on the configured port, or on --port.
 `;
 
 function fail(message: string): never {
@@ -68,7 +74,11 @@ async function main() {
   const args = process.argv.slice(2);
   const command = args[0] || "start";
   const configManager = new ConfigManager();
-  const adminSocketPath = configManager.getServerConfig().adminSocketPath;
+  // architecture.md §4.6: the admin commands reach the daemon of the configured port, or of --port.
+  const portIdx = command === "start" ? -1 : args.indexOf("--port");
+  const adminPort = portIdx > 0 ? Number(args[portIdx + 1]) : configManager.getServerConfig().port;
+  if (!Number.isInteger(adminPort) || adminPort <= 0 || adminPort > 65535) fail(`Invalid --port '${args[portIdx + 1]}'`);
+  const adminSocketPath = portScoped(configManager.getServerConfig().adminSocketPath, adminPort);
 
   if (command === "start") {
     let port: number | undefined;
@@ -136,19 +146,16 @@ async function main() {
     }
   } else if (command === "status") {
     console.log("Pigeon status:", await sendAdminCommand(adminSocketPath, "status"));
-  } else if (
-    (command === "usage" && (args[1] === "rebuild" || args.includes("--rebuild-all") || args.includes("rebuild-cache"))) ||
-    command === "rebuild-cache" ||
-    command === "--rebuild-all"
-  ) {
+  } else if (command === "rebuild-cache") {
     console.log("Rebuilding usage database from all sources...");
     let res: any;
     try {
       res = await sendAdminCommand(adminSocketPath, "usage.rebuild");
-    } catch {
-      // Daemon not running or socket unavailable, perform direct rebuild
+    } catch (err) {
+      if (!(err instanceof DaemonNotRunningError)) throw err;
+      // No daemon: rebuild the same database directly.
       const { UsageService } = await import("../server/usage/index");
-      const service = new UsageService();
+      const service = new UsageService({ configManager });
       try {
         res = await service.rebuild();
       } finally {

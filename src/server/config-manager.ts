@@ -29,7 +29,21 @@ export function detectQuotaProviders(home: string, env: NodeJS.ProcessEnv = proc
 }
 
 /** Server settings that do not depend on the environment, written into a fresh config file. */
-const STATIC_SERVER_DEFAULTS = { port: 4100, host: "", insecureDev: false, publicBaseUrl: "" };
+/** The production port; every other port runs an isolated instance (`architecture.md` §4.6). */
+export const DEFAULT_PORT = 4100;
+
+/**
+ * `architecture.md` §4.6: a daemon on a port other than 4100 keeps its own admin socket, devices
+ * and queue files, so a test daemon never touches the production one. `pigeon.sock` → `pigeon-4101.sock`.
+ */
+export function portScoped(path: string, port: number): string {
+  if (port === DEFAULT_PORT) return path;
+  const dot = path.lastIndexOf(".");
+  const slash = path.lastIndexOf("/");
+  return dot > slash ? `${path.slice(0, dot)}-${port}${path.slice(dot)}` : `${path}-${port}`;
+}
+
+const STATIC_SERVER_DEFAULTS = { port: DEFAULT_PORT, host: "", insecureDev: false, publicBaseUrl: "" };
 
 /**
  * Environment-derived defaults. Resolved on every start and never written to disk, so a later
@@ -93,11 +107,14 @@ export class ConfigManager {
   private configPath: string;
   private stored: StoredConfig;
   private config: PigeonConfig;
+  /** The home directory the agents' files are found under (the environment's `HOME`). */
+  public readonly home: string;
 
   constructor(customPath?: string, env: NodeJS.ProcessEnv = process.env) {
     this.configPath = resolveConfigPath(customPath, env);
+    this.home = env.HOME || "";
     this.stored = this.loadOrCreate();
-    const detectedProviders = detectQuotaProviders(env.HOME || "", env);
+    const detectedProviders = detectQuotaProviders(this.home, env);
     const clientDefaults: ClientConfig = {
       ...DEFAULT_CLIENT_CONFIG,
       quotaProviders: detectedProviders,

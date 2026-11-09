@@ -7,7 +7,8 @@ function parseYMD(ymd: string): [number, number, number] {
   return [y, m, d];
 }
 
-function formatYMD(date: Date): string {
+/** A local date as `YYYY-MM-DD` (§3.2: dates are in the computer's time zone). */
+export function formatYMD(date: Date): string {
   const y = date.getFullYear();
   const m = String(date.getMonth() + 1).padStart(2, "0");
   const d = String(date.getDate()).padStart(2, "0");

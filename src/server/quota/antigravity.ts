@@ -1,7 +1,8 @@
 // Issue #13. quota-and-usage.md §2.2, §2.3.
-import { existsSync, readFileSync, writeFileSync, renameSync, mkdirSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { existsSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 import type { QuotaSnapshot, QuotaWindow } from "../../types/protocol";
+import { decodeJwtPayload, fileCredentialSource, storeRefreshed } from "./credentials";
 import { discoverAntigravityLs, isLoopbackAddress } from "../usage/antigravity-ls";
 
 export interface AntigravityQuotaProviderOptions {
@@ -11,18 +12,6 @@ export interface AntigravityQuotaProviderOptions {
 
 const FIVE_HOURS_MS = 5 * 60 * 60 * 1000;
 const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000;
-
-function decodeJwtPayload(token: string): any {
-  try {
-    const parts = token.split(".");
-    if (parts.length < 2) return null;
-    const base64 = parts[1].replace(/-/g, "+").replace(/_/g, "/");
-    const json = Buffer.from(base64, "base64").toString("utf-8");
-    return JSON.parse(json);
-  } catch {
-    return null;
-  }
-}
 
 function cleanGroupLabel(displayName: string): string {
   const trimmed = displayName.trim();
@@ -170,17 +159,14 @@ export class AntigravityQuotaProvider {
   }
 
   private async probeCloudCode(): Promise<QuotaSnapshot | null> {
-    const p = this.tokenPath();
-    if (!existsSync(p)) return null;
-    const raw = readFileSync(p, "utf-8");
-    const data = JSON.parse(raw);
-    const tokenObj = data?.token;
+    const source = fileCredentialSource(this.tokenPath());
+    let raw = source.read();
+    if (raw === null) return null;
+    let tokenObj = JSON.parse(raw)?.token;
     if (!tokenObj?.access_token) return null;
 
-    let accessToken = tokenObj.access_token;
     const expiry = tokenObj.expiry ? Date.parse(tokenObj.expiry) : 0;
     if (expiry && this.now() >= expiry - 5 * 60 * 1000 && tokenObj.refresh_token) {
-      // Refresh token
       const clientId = "1071006060591-tmhssin2h21lcre235vtolojh4g403ep.apps.googleusercontent.com";
       const clientSecret = ["GOCSPX-", "K58FWR486LdLJ1mLB8sXC4z6qDAf"].join("");
       const refreshRes = await fetch("https://oauth2.googleapis.com/token", {
@@ -194,40 +180,20 @@ export class AntigravityQuotaProvider {
         }),
         signal: AbortSignal.timeout(10000),
       });
-      if (refreshRes.ok) {
-        const refreshData = (await refreshRes.json()) as any;
-        accessToken = refreshData.access_token;
-        const nextExpiry = new Date(this.now() + (refreshData.expires_in || 3600) * 1000).toISOString();
-        // Check if disk file was rotated by CLI during refresh
-        let currentDiskRaw = "";
-        try {
-          currentDiskRaw = readFileSync(p, "utf-8");
-        } catch {}
-        if (currentDiskRaw === raw) {
-          const updated = {
-            ...data,
-            token: {
-              ...tokenObj,
-              access_token: accessToken,
-              expiry: nextExpiry,
-              refresh_token: refreshData.refresh_token || tokenObj.refresh_token,
-            },
-          };
-          const tmp = `${p}.${process.pid}.tmp`;
-          writeFileSync(tmp, JSON.stringify(updated, null, 2), { mode: 0o600 });
-          renameSync(tmp, p);
-        } else if (currentDiskRaw) {
-          try {
-            const diskData = JSON.parse(currentDiskRaw);
-            if (diskData?.token?.access_token) {
-              accessToken = diskData.token.access_token;
-            }
-          } catch {}
-        }
-      } else {
-        throw new Error(`Antigravity token refresh rejected with status ${refreshRes.status}`);
-      }
+      if (!refreshRes.ok) throw new Error(`Antigravity token refresh rejected with status ${refreshRes.status}`);
+      const refreshData = (await refreshRes.json()) as any;
+      // §2.3: written back only when the CLI did not rotate the token file meanwhile.
+      raw = storeRefreshed(source, raw, (data) => {
+        data.token = {
+          ...data.token,
+          access_token: refreshData.access_token,
+          expiry: new Date(this.now() + (refreshData.expires_in || 3600) * 1000).toISOString(),
+          refresh_token: refreshData.refresh_token || data.token.refresh_token,
+        };
+      });
+      tokenObj = JSON.parse(raw).token;
     }
+    const accessToken = tokenObj.access_token;
 
     const res = await fetch("https://cloudcode-pa.googleapis.com/v1internal:retrieveUserQuotaSummary", {
       method: "POST",

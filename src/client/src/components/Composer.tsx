@@ -1,7 +1,7 @@
 import { createMemo, createSignal, For, onCleanup, Show, type JSX } from "solid-js";
 import { draftKey, readPref, showToast, state, writePref } from "../state/store";
 import { refreshModels, uploadFile } from "../state/ws";
-import type { AgentRecipeSummary, ModelOption, SkillEntry } from "../../../types/protocol";
+import type { AgentRecipeSummary, SkillEntry } from "../../../types/protocol";
 import { Icon, Sheet } from "./ui";
 import { t, type MessageId } from "../i18n";
 
