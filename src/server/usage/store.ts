@@ -1,5 +1,5 @@
 // Issue #13. quota-and-usage.md §3.1–§3.6, protocol.md §4.16–§4.18.
-import { existsSync, statSync, mkdirSync } from "node:fs";
+import { existsSync, statSync, mkdirSync, copyFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { Database } from "bun:sqlite";
 import type {
@@ -17,6 +17,7 @@ import { canonical, detectCompany, resolveAntigravityModel } from "./model-id";
 import { PricingManager, type ModelPrice } from "./pricing";
 import {
   findFilesRecursive,
+  scanAntigravityCacheDb,
   scanAntigravityDb,
   scanClaudeFile,
   scanCodexFile,
@@ -39,8 +40,8 @@ export class UsageStore {
   constructor(options: UsageStoreOptions = {}) {
     this.home = options.home ?? process.env.HOME ?? "";
     this.now = options.now ?? (() => Date.now());
-    const defaultStateDir = process.env.XDG_STATE_HOME || join(this.home, ".local", "state", "pigeon");
-    const dbPath = options.dbPath ?? join(defaultStateDir, "usage.db");
+    const defaultDataDir = process.env.XDG_DATA_HOME ? join(process.env.XDG_DATA_HOME, "pigeon") : join(this.home, ".local", "share", "pigeon");
+    const dbPath = options.dbPath ?? join(defaultDataDir, "usage.db");
     mkdirSync(dirname(dbPath), { recursive: true });
 
     this.db = new Database(dbPath);
@@ -115,16 +116,33 @@ export class UsageStore {
 
     const codexHome = process.env.CODEX_HOME;
     const codexFiles = [
-      ...(codexHome ? findFilesRecursive(join(codexHome, "sessions"), ".jsonl") : []),
-      ...(codexHome ? findFilesRecursive(join(codexHome, "archived_sessions"), ".jsonl") : []),
-      ...findFilesRecursive(join(this.home, ".codex", "sessions"), ".jsonl"),
-      ...findFilesRecursive(join(this.home, ".codex", "archived_sessions"), ".jsonl"),
+      ...(codexHome ? findFilesRecursive(join(codexHome, "sessions"), [".jsonl", ".zst"]) : []),
+      ...(codexHome ? findFilesRecursive(join(codexHome, "archived_sessions"), [".jsonl", ".zst"]) : []),
+      ...findFilesRecursive(join(this.home, ".codex", "sessions"), [".jsonl", ".zst"]),
+      ...findFilesRecursive(join(this.home, ".codex", "archived_sessions"), [".jsonl", ".zst"]),
     ];
 
     const agyFiles = [
       ...findFilesRecursive(join(this.home, ".gemini", "antigravity-cli", "conversations"), ".db"),
       ...findFilesRecursive(join(this.home, ".gemini", "antigravity", "conversations"), ".db"),
     ];
+
+    const defaultDataDir = process.env.XDG_DATA_HOME ? join(process.env.XDG_DATA_HOME, "pigeon") : join(this.home, ".local", "share", "pigeon");
+    const pigeonAgyCacheDir = join(defaultDataDir, "antigravity-cache");
+    const pigeonAgyCacheDb = join(pigeonAgyCacheDir, "cache.db");
+    const tokenpulseAgyCacheDb = join(this.home, ".local", "share", "tokenpulse", "antigravity-cache", "cache.db");
+    let agyCachePath: string | null = null;
+    if (existsSync(pigeonAgyCacheDb)) {
+      agyCachePath = pigeonAgyCacheDb;
+    } else if (existsSync(tokenpulseAgyCacheDb)) {
+      try {
+        mkdirSync(pigeonAgyCacheDir, { recursive: true });
+        copyFileSync(tokenpulseAgyCacheDb, pigeonAgyCacheDb);
+        agyCachePath = pigeonAgyCacheDb;
+      } catch {
+        agyCachePath = tokenpulseAgyCacheDb;
+      }
+    }
 
     const opencodeDataDir = process.env.XDG_DATA_HOME ? join(process.env.XDG_DATA_HOME, "opencode") : join(this.home, ".local", "share", "opencode");
     const opencodeFiles = findFilesRecursive(opencodeDataDir, ".db").filter((f) => !f.endsWith("-wal") && !f.endsWith("-shm") && !f.endsWith("-journal"));
@@ -135,6 +153,7 @@ export class UsageStore {
       ...claudeFiles.map((path) => ({ path, agent: "claude" })),
       ...codexFiles.map((path) => ({ path, agent: "codex" })),
       ...agyFiles.map((path) => ({ path, agent: "agy" })),
+      ...(agyCachePath ? [{ path: agyCachePath, agent: "agy-cache" }] : []),
       ...opencodeFiles.map((path) => ({ path, agent: "opencode" })),
       ...piFiles.map((path) => ({ path, agent: "pi" })),
     ];
@@ -192,8 +211,8 @@ export class UsageStore {
           unpriced = 0;
           const inpCost = r.inputTokens * p.inputCostPerToken;
           const outCost = r.outputTokens * p.outputCostPerToken;
-          const crCost = r.cacheReadTokens * (p.cacheReadCostPerToken ?? p.inputCostPerToken);
-          const cwCost = r.cacheWriteTokens * (p.cacheWriteCostPerToken ?? p.inputCostPerToken);
+          const crCost = r.cacheReadTokens * (p.cacheReadCostPerToken ?? (p.inputCostPerToken * 0.1));
+          const cwCost = r.cacheWriteTokens * (p.cacheWriteCostPerToken ?? (p.inputCostPerToken * 1.25));
           cost = inpCost + outCost + crCost + cwCost;
         }
 
@@ -243,6 +262,9 @@ export class UsageStore {
           break;
         case "agy":
           rawRecords = scanAntigravityDb(item.path);
+          break;
+        case "agy-cache":
+          rawRecords = scanAntigravityCacheDb(item.path);
           break;
         case "opencode":
           rawRecords = scanOpenCodeDb(item.path);
@@ -301,8 +323,8 @@ export class UsageStore {
           unpriced = 0;
           const inpCost = row.input_tokens * p.inputCostPerToken;
           const outCost = row.output_tokens * p.outputCostPerToken;
-          const crCost = row.cache_read_tokens * (p.cacheReadCostPerToken ?? p.inputCostPerToken);
-          const cwCost = row.cache_write_tokens * (p.cacheWriteCostPerToken ?? p.inputCostPerToken);
+          const crCost = row.cache_read_tokens * (p.cacheReadCostPerToken ?? (p.inputCostPerToken * 0.1));
+          const cwCost = row.cache_write_tokens * (p.cacheWriteCostPerToken ?? (p.inputCostPerToken * 1.25));
           cost = inpCost + outCost + crCost + cwCost;
         }
         update.run(
@@ -320,6 +342,25 @@ export class UsageStore {
     })();
 
     return repaired;
+  }
+
+  public async rebuildAll(pricing: PricingManager): Promise<{ scannedFiles: number; recordsAdded: number }> {
+    this.db.run("DELETE FROM usage_records;");
+    this.db.run("DELETE FROM scan_file_state;");
+    this.db.run("DELETE FROM daily_pricing_snapshots;");
+    this.db.run("VACUUM;");
+    return this.scanIncremental(pricing);
+  }
+
+  public getTotalsSummary(): { totalTokens: number; totalCost: number; recordCount: number } {
+    const row = this.db
+      .query("SELECT COUNT(*) as cnt, COALESCE(SUM(total_tokens), 0) as tokens, COALESCE(SUM(cost), 0) as cost FROM usage_records")
+      .get() as any;
+    return {
+      recordCount: row?.cnt || 0,
+      totalTokens: row?.tokens || 0,
+      totalCost: row?.cost || 0,
+    };
   }
 
   public getUsageReport(

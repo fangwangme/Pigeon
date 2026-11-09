@@ -28,9 +28,8 @@ export class PricingManager {
   private pricesAvailable = false;
 
   constructor(options: PricingManagerOptions = {}) {
-    this.cachePath =
-      options.cachePath ??
-      join(process.env.XDG_STATE_HOME || join(process.env.HOME || "", ".local", "state", "pigeon"), "pricing-cache.json");
+    const defaultDataDir = process.env.XDG_DATA_HOME ? join(process.env.XDG_DATA_HOME, "pigeon") : join(process.env.HOME || "", ".local", "share", "pigeon");
+    this.cachePath = options.cachePath ?? join(defaultDataDir, "pricing-cache.json");
     this.now = options.now ?? (() => Date.now());
   }
 
@@ -48,8 +47,14 @@ export class PricingManager {
       return;
     }
 
-    // Fallback seed cache from tokenpulse if present
+    // Fallback seed cache from pigeon or tokenpulse if present
+    const pigeonPricing = join(dirname(this.cachePath), "pricing.json");
     const seedPath = join(process.env.HOME || "", ".local", "share", "tokenpulse", "pricing.json");
+    if (existsSync(pigeonPricing) && this.loadFromTokenpulseSeed(pigeonPricing)) {
+      this.loaded = true;
+      this.pricesAvailable = true;
+      return;
+    }
     if (existsSync(seedPath) && this.loadFromTokenpulseSeed(seedPath)) {
       this.loaded = true;
       this.pricesAvailable = true;

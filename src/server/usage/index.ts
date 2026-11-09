@@ -33,6 +33,19 @@ export class UsageService {
     return this.scanPromise;
   }
 
+  public async rebuild(): Promise<{ scannedFiles: number; recordsAdded: number; totalTokens: number; totalCost: number; recordCount: number }> {
+    await this.pricing.initialize();
+    const res = await this.store.rebuildAll(this.pricing);
+    const totals = this.store.getTotalsSummary();
+    return {
+      scannedFiles: res.scannedFiles,
+      recordsAdded: res.recordsAdded,
+      recordCount: totals.recordCount,
+      totalTokens: totals.totalTokens,
+      totalCost: totals.totalCost,
+    };
+  }
+
   public async getUsage(req: { preset: string; from?: string; to?: string; agents: string[] }): Promise<UsageGetPayload> {
     await this.scan();
 

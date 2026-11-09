@@ -40,22 +40,24 @@ function resolveRuntimeServerDefaults(
 ): Pick<ServerConfig, "herdrAppSocketPath" | "herdrCoreSocketPath" | "adminSocketPath" | "stateDir"> {
   const home = env.HOME;
   if (!home) throw new Error("HOME is not set; Pigeon cannot locate its state and the Herdr sockets");
-  const stateDir = env.XDG_STATE_HOME ? join(env.XDG_STATE_HOME, "pigeon") : join(home, ".local", "state", "pigeon");
+  const dataDir = env.XDG_DATA_HOME ? join(env.XDG_DATA_HOME, "pigeon") : join(home, ".local", "share", "pigeon");
   return {
     herdrAppSocketPath: join(env.HERDR_APP_HOME || join(home, ".config", "herdr-app"), "herdr-app.sock"),
     // Empty when neither is set; the daemon then refuses to start (herdr-adapter.md §2).
     herdrCoreSocketPath: env.HC_TERMINAL_SOCKET || (env.XDG_RUNTIME_DIR ? join(env.XDG_RUNTIME_DIR, "herdr-core", "default.sock") : ""),
-    adminSocketPath: env.XDG_RUNTIME_DIR ? join(env.XDG_RUNTIME_DIR, "pigeon.sock") : join(stateDir, "admin.sock"),
-    stateDir,
+    adminSocketPath: env.XDG_RUNTIME_DIR ? join(env.XDG_RUNTIME_DIR, "pigeon.sock") : join(dataDir, "admin.sock"),
+    stateDir: dataDir,
   };
 }
 
 function resolveConfigPath(customPath?: string, env: NodeJS.ProcessEnv = process.env): string {
   if (customPath) return customPath;
   if (env.PIGEON_CONFIG_PATH) return env.PIGEON_CONFIG_PATH;
-  if (env.XDG_CONFIG_HOME) return join(env.XDG_CONFIG_HOME, "pigeon", "config.json");
   if (!env.HOME) throw new Error("HOME is not set; cannot resolve the Pigeon config path");
-  return join(env.HOME, ".config", "pigeon", "config.json");
+  const shareConfig = env.XDG_DATA_HOME ? join(env.XDG_DATA_HOME, "pigeon", "config.json") : join(env.HOME, ".local", "share", "pigeon", "config.json");
+  const configHome = env.XDG_CONFIG_HOME ? join(env.XDG_CONFIG_HOME, "pigeon", "config.json") : join(env.HOME, ".config", "pigeon", "config.json");
+  if (!existsSync(shareConfig) && existsSync(configHome)) return configHome;
+  return shareConfig;
 }
 
 function deepMerge<T extends Record<string, any>>(target: T, source: Partial<T>): T {

@@ -29,15 +29,16 @@ function formatLocalDate(ms: number): string {
   return `${y}-${m}-${d}`;
 }
 
-export function findFilesRecursive(dir: string, ext: string): string[] {
+export function findFilesRecursive(dir: string, ext: string | string[]): string[] {
   const result: string[] = [];
   try {
     if (!existsSync(dir)) return result;
+    const exts = Array.isArray(ext) ? ext : [ext];
     for (const entry of readdirSync(dir, { withFileTypes: true })) {
       const full = join(dir, entry.name);
       if (entry.isDirectory()) {
         result.push(...findFilesRecursive(full, ext));
-      } else if (entry.name.endsWith(ext)) {
+      } else if (exts.some((e) => entry.name.endsWith(e))) {
         result.push(full);
       }
     }
@@ -109,7 +110,13 @@ export function scanCodexFile(path: string): RawUsageRecord[] {
   const records: RawUsageRecord[] = [];
   let content = "";
   try {
-    content = readFileSync(path, "utf-8");
+    if (path.endsWith(".zst")) {
+      const proc = Bun.spawnSync(["zstd", "-dc", path]);
+      if (proc.exitCode !== 0) return [];
+      content = proc.stdout.toString();
+    } else {
+      content = readFileSync(path, "utf-8");
+    }
   } catch {
     return [];
   }
@@ -118,7 +125,7 @@ export function scanCodexFile(path: string): RawUsageRecord[] {
   let previousTotals: any = null;
   let inheritsHistory = false;
   let turnStarted = false;
-  let sessionId = path.slice(path.lastIndexOf("/") + 1).replace(/\.jsonl$/, "");
+  let sessionId = path.slice(path.lastIndexOf("/") + 1).replace(/(\.jsonl|\.zst|\.jsonl\.zst)$/, "");
 
   const lines = content.split("\n");
   for (let i = 0; i < lines.length; i++) {
@@ -155,11 +162,13 @@ export function scanCodexFile(path: string): RawUsageRecord[] {
 
     const parseUsage = (u: any) => {
       if (!u) return null;
-      const inp = u.input_tokens || 0;
+      const rawInp = u.input_tokens || 0;
       const out = u.output_tokens || 0;
       const cr = u.cached_input_tokens || u.cache_read_input_tokens || 0;
-      const cw = u.cache_creation_input_tokens || 0;
-      return { inp, out, cr, cw, total: inp + out + cr + cw };
+      const cw = u.cache_creation_input_tokens || u.cache_write_input_tokens || 0;
+      const inp = Math.max(0, rawInp - cr);
+      const total = u.total_tokens || (inp + out + cr + cw);
+      return { inp, out, cr, cw, total };
     };
 
     const lastUsage = parseUsage(info.last_token_usage);
@@ -367,8 +376,8 @@ export function scanAntigravityDb(path: string): RawUsageRecord[] {
   return records;
 }
 
-// 4. OpenCode scanner
-export function scanOpenCodeDb(path: string): RawUsageRecord[] {
+// 4. Antigravity cache scanner (historical sqlite records)
+export function scanAntigravityCacheDb(path: string): RawUsageRecord[] {
   const records: RawUsageRecord[] = [];
   let db: Database | null = null;
   try {
@@ -377,42 +386,39 @@ export function scanOpenCodeDb(path: string): RawUsageRecord[] {
     db.run("PRAGMA busy_timeout = 2000;");
 
     const rows: any[] = db
-      .query("SELECT id, session_id, time_created, data FROM messages WHERE data IS NOT NULL")
+      .query(`
+        SELECT session_id, model_enum, served_model, model_id, timestamp,
+               input_tokens, output_tokens, cache_read_tokens, cache_write_tokens,
+               response_id, step_index, id
+        FROM session_usage
+      `)
       .all();
-    for (const r of rows) {
-      if (!r.data) continue;
-      let d: any;
-      try {
-        d = JSON.parse(r.data);
-      } catch {
-        continue;
-      }
-      if (d.role !== "assistant" && d.type !== "assistant") continue;
-      const tokens = d.tokens || d.usage;
-      if (!tokens) continue;
 
-      const inp = tokens.input || tokens.input_tokens || 0;
-      const out = tokens.output || tokens.output_tokens || 0;
-      const cr = tokens.cache?.read || tokens.cache_read || 0;
-      const cw = tokens.cache?.write || tokens.cache_write || 0;
+    for (const r of rows) {
+      const resolved = resolveAntigravityModel(r.model_enum, r.served_model || r.model_id);
+      const inp = r.input_tokens || 0;
+      const out = r.output_tokens || 0;
+      const cr = r.cache_read_tokens || 0;
+      const cw = r.cache_write_tokens || 0;
       const total = inp + out + cr + cw;
       if (total <= 0) continue;
 
-      const ts = r.time_created ? (r.time_created > 1e11 ? r.time_created : r.time_created * 1000) : Date.now();
+      const ts = r.timestamp ? (r.timestamp > 1e11 ? r.timestamp : r.timestamp * 1000) : Date.now();
       const date = formatLocalDate(ts);
-      const model = d.model || d.model_id || "opencode";
-      const key = String(r.id || `${r.session_id}:${ts}`);
+      const key = r.response_id
+        ? (r.response_id.startsWith(`${r.session_id}:`) ? r.response_id : `${r.session_id}:${r.response_id}`)
+        : (r.id || `${r.session_id}:${r.step_index}:${ts}`);
 
       records.push({
-        agent: "opencode",
-        sessionId: String(r.session_id || "unknown"),
+        agent: "agy",
+        sessionId: String(r.session_id),
         messageKey: key,
         timestampMs: ts,
         date,
-        rawModelId: model,
-        modelId: formatModelId(model),
-        canonicalModelId: canonical(model),
-        company: detectCompany(model, "opencode"),
+        rawModelId: resolved.rawModelId,
+        modelId: resolved.modelId,
+        canonicalModelId: resolved.canonicalModelId,
+        company: detectCompany(resolved.modelId, "agy"),
         inputTokens: inp,
         outputTokens: out,
         cacheReadTokens: cr,
@@ -428,7 +434,72 @@ export function scanOpenCodeDb(path: string): RawUsageRecord[] {
   return records;
 }
 
-// 5. Pi scanner
+// 5. OpenCode scanner
+export function scanOpenCodeDb(path: string): RawUsageRecord[] {
+  const records: RawUsageRecord[] = [];
+  let db: Database | null = null;
+  try {
+    db = new Database(path, { readonly: true });
+    db.run("PRAGMA query_only = ON;");
+    db.run("PRAGMA busy_timeout = 2000;");
+
+    const hasSessionMessage = (db.query("SELECT 1 FROM sqlite_master WHERE type='table' AND name='session_message'").get() as any) !== undefined;
+    const hasMessage = (db.query("SELECT 1 FROM sqlite_master WHERE type='table' AND name='message'").get() as any) !== undefined;
+    const tableName = hasSessionMessage ? "session_message" : (hasMessage ? "message" : null);
+    if (!tableName) return [];
+
+    const rows: any[] = db
+      .query(`SELECT id, session_id, time_created, data FROM ${tableName} WHERE data IS NOT NULL`)
+      .all();
+    for (const r of rows) {
+      if (!r.data) continue;
+      let d: any;
+      try {
+        d = JSON.parse(r.data);
+      } catch {
+        continue;
+      }
+      const tokens = d.tokens || d.usage;
+      if (!tokens) continue;
+
+      const inp = tokens.input || tokens.input_tokens || 0;
+      const out = tokens.output || tokens.output_tokens || 0;
+      const cr = tokens.cache?.read || tokens.cache_read || 0;
+      const cw = tokens.cache?.write || tokens.cache_write || 0;
+      const total = inp + out + cr + cw;
+      if (total <= 0) continue;
+
+      const ts = r.time_created ? (r.time_created > 1e11 ? r.time_created : r.time_created * 1000) : Date.now();
+      const date = formatLocalDate(ts);
+      const rawModel = typeof d.model === "object" && d.model ? (d.model.id || d.model.name || "opencode") : (d.model || d.model_id || "opencode");
+      const key = String(r.id || `${r.session_id}:${ts}`);
+
+      records.push({
+        agent: "opencode",
+        sessionId: String(r.session_id || "unknown"),
+        messageKey: key,
+        timestampMs: ts,
+        date,
+        rawModelId: rawModel,
+        modelId: formatModelId(rawModel),
+        canonicalModelId: canonical(rawModel),
+        company: detectCompany(rawModel, "opencode"),
+        inputTokens: inp,
+        outputTokens: out,
+        cacheReadTokens: cr,
+        cacheWriteTokens: cw,
+        totalTokens: total,
+      });
+    }
+  } catch {
+  } finally {
+    if (db) db.close();
+  }
+
+  return records;
+}
+
+// 6. Pi scanner
 export function scanPiFile(path: string): RawUsageRecord[] {
   const records: RawUsageRecord[] = [];
   let content = "";
@@ -452,29 +523,31 @@ export function scanPiFile(path: string): RawUsageRecord[] {
       continue;
     }
 
-    if (entry.entry_type === "session" || entry.entry_type === "header") {
+    const type = entry.type || entry.entry_type;
+
+    if (type === "session" || type === "header") {
       if (entry.session_id || entry.id) sessionId = String(entry.session_id || entry.id);
-      if (entry.model || entry.model_id) currentModel = String(entry.model || entry.model_id);
+      if (entry.model || entry.model_id || entry.modelId) currentModel = String(entry.model || entry.model_id || entry.modelId);
       continue;
     }
 
-    if (entry.entry_type === "model_change") {
-      if (entry.model || entry.model_id) currentModel = String(entry.model || entry.model_id);
+    if (type === "model_change") {
+      if (entry.model || entry.model_id || entry.modelId) currentModel = String(entry.model || entry.model_id || entry.modelId);
       continue;
     }
 
-    if (entry.entry_type === "message" || entry.entry_type === "assistant") {
+    if (type === "message" || type === "assistant") {
       const msg = entry.message;
       if (!msg || msg.role !== "assistant" || !msg.usage) continue;
       const u = msg.usage;
       const inp = u.input || u.input_tokens || 0;
       const out = u.output || u.output_tokens || 0;
-      const cr = u.cache_read || 0;
-      const cw = u.cache_write || 0;
-      const total = inp + out + cr + cw;
+      const cr = u.cacheRead || u.cache_read || 0;
+      const cw = u.cacheWrite || u.cache_write || 0;
+      const total = u.totalTokens || u.total_tokens || (inp + out + cr + cw);
       if (total <= 0) continue;
 
-      const ts = entry.timestamp ? Date.parse(entry.timestamp) : Date.now();
+      const ts = entry.timestamp ? Date.parse(entry.timestamp) : (msg.timestamp || Date.now());
       const date = formatLocalDate(ts);
       const model = msg.model || currentModel;
       const key = `${sessionId}:${ts}:${i}`;

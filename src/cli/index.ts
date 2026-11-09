@@ -55,6 +55,8 @@ Usage:
   pigeon pair [--ephemeral] [--json]
   pigeon devices [revoke <id>]
   pigeon status
+  pigeon usage rebuild [--json]
+  pigeon rebuild-cache [--json]
 `;
 
 function fail(message: string): never {
@@ -134,6 +136,30 @@ async function main() {
     }
   } else if (command === "status") {
     console.log("Pigeon status:", await sendAdminCommand(adminSocketPath, "status"));
+  } else if (
+    (command === "usage" && (args[1] === "rebuild" || args.includes("--rebuild-all") || args.includes("rebuild-cache"))) ||
+    command === "rebuild-cache" ||
+    command === "--rebuild-all"
+  ) {
+    console.log("Rebuilding usage database from all sources...");
+    let res: any;
+    try {
+      res = await sendAdminCommand(adminSocketPath, "usage.rebuild");
+    } catch {
+      // Daemon not running or socket unavailable, perform direct rebuild
+      const { UsageService } = await import("../server/usage/index");
+      const service = new UsageService();
+      res = await service.rebuild();
+    }
+    if (args.includes("--json")) {
+      console.log(JSON.stringify(res, null, 2));
+    } else {
+      console.log("\nRebuild complete:");
+      console.log(`  Scanned files: ${res.scannedFiles?.toLocaleString() ?? 0}`);
+      console.log(`  Records added: ${res.recordsAdded?.toLocaleString() ?? 0}`);
+      console.log(`  Total tokens:  ${res.totalTokens?.toLocaleString() ?? 0}`);
+      console.log(`  Total cost:    $${Number(res.totalCost || 0).toFixed(2)}`);
+    }
   } else {
     console.log(USAGE);
   }

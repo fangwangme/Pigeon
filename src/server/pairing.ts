@@ -331,13 +331,21 @@ export class PairingManager extends EventEmitter {
     });
   }
 
-  private handleAdminCommand(line: string, socket: Socket) {
+  private async handleAdminCommand(line: string, socket: Socket) {
     try {
       const msg = JSON.parse(line);
       const id = msg.id || "1";
       const method = msg.method;
 
       switch (method) {
+        case "usage.rebuild":
+        case "usage.rebuild-cache": {
+          const { UsageService } = await import("./usage/index");
+          const usageService = new UsageService();
+          const res = await usageService.rebuild();
+          socket.write(JSON.stringify({ id, result: res }) + "\n");
+          break;
+        }
         case "pair.create": {
           const tokenInfo = this.createPairingToken(msg.params?.ephemeral ? { permanent: false } : undefined);
           socket.write(JSON.stringify({ id, result: tokenInfo }) + "\n");
