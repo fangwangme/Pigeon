@@ -1,6 +1,6 @@
 import { createEffect, createSignal, For, on, Show } from "solid-js";
 import { navigate, setLocalePref, setReduceTransparency, setState, showToast, state, systemReducesTransparency } from "../state/store";
-import { initWebSocket, request, sendConfigPatch } from "../state/ws";
+import { initWebSocket, isInAppBrowser, request, sendConfigPatch } from "../state/ws";
 import { ACCENTS, resolveMode } from "../themes";
 import type { AccentName, DeviceInfo, QuotaProvidersConfig, ThemeMode, UsageGetPayload } from "../../../types/protocol";
 import { ago, Icon, Logo } from "./ui";
@@ -170,51 +170,26 @@ export function Settings() {
             <div class="li">
               <div class="tx">{t("settings.quotaDisplay")}</div>
               <div
+                class="seg"
                 style={{
                   display: "grid",
                   "grid-template-columns": "repeat(2, minmax(0, 1fr))",
                   width: "180px",
-                  background: "var(--code)",
-                  border: "1px solid var(--line)",
-                  "border-radius": "9px",
                   padding: "2px",
+                  "border-radius": "9px",
                   flex: "none",
                 }}
               >
                 <button
-                  style={{
-                    height: "30px",
-                    "text-align": "center",
-                    "border-radius": "7px",
-                    border: 0,
-                    font: "inherit",
-                    "font-size": "13px",
-                    "font-weight": state.quotaDisplay !== "used" ? 600 : 500,
-                    "white-space": "nowrap",
-                    background: state.quotaDisplay !== "used" ? "var(--bg)" : "transparent",
-                    color: state.quotaDisplay !== "used" ? "var(--fg)" : "var(--muted)",
-                    "box-shadow": state.quotaDisplay !== "used" ? "0 1px 3px rgba(0,0,0,.15)" : "none",
-                    transition: "background .15s, color .15s",
-                  }}
+                  class={state.quotaDisplay !== "used" ? "on" : ""}
+                  style={{ height: "30px", "font-size": "13px" }}
                   onClick={() => sendConfigPatch({ quotaDisplay: "remaining" })}
                 >
                   {t("settings.remaining")}
                 </button>
                 <button
-                  style={{
-                    height: "30px",
-                    "text-align": "center",
-                    "border-radius": "7px",
-                    border: 0,
-                    font: "inherit",
-                    "font-size": "13px",
-                    "font-weight": state.quotaDisplay === "used" ? 600 : 500,
-                    "white-space": "nowrap",
-                    background: state.quotaDisplay === "used" ? "var(--bg)" : "transparent",
-                    color: state.quotaDisplay === "used" ? "var(--fg)" : "var(--muted)",
-                    "box-shadow": state.quotaDisplay === "used" ? "0 1px 3px rgba(0,0,0,.15)" : "none",
-                    transition: "background .15s, color .15s",
-                  }}
+                  class={state.quotaDisplay === "used" ? "on" : ""}
+                  style={{ height: "30px", "font-size": "13px" }}
                   onClick={() => sendConfigPatch({ quotaDisplay: "used" })}
                 >
                   {t("settings.used")}
@@ -229,56 +204,29 @@ export function Settings() {
               <div class="tx">{t("settings.quotaShowAccount")}</div>
               <span class={`tg${state.quotaShowAccount !== false ? "" : " off"}`} />
             </button>
-            <div class="li" style={{ "justify-content": "space-between", "align-items": "center" }}>
-              <div class="tx" style={{ "max-width": "60%" }}>
-                {t("settings.usageScanMode")}
-                <small>{t("settings.usageScanModeHint")}</small>
-              </div>
+            <div class="li">
+              <div class="tx">{t("settings.usageScanMode")}</div>
               <div
+                class="seg"
                 style={{
-                  display: "inline-flex",
-                  padding: "3px",
-                  background: "var(--line)",
+                  display: "grid",
+                  "grid-template-columns": "repeat(2, minmax(0, 1fr))",
+                  width: "180px",
+                  padding: "2px",
                   "border-radius": "9px",
-                  gap: "2px",
+                  flex: "none",
                 }}
               >
                 <button
-                  style={{
-                    height: "30px",
-                    padding: "0 8px",
-                    "text-align": "center",
-                    "border-radius": "7px",
-                    border: 0,
-                    font: "inherit",
-                    "font-size": "12.5px",
-                    "font-weight": state.usageScanMode !== "realtime" ? 600 : 500,
-                    "white-space": "nowrap",
-                    background: state.usageScanMode !== "realtime" ? "var(--bg)" : "transparent",
-                    color: state.usageScanMode !== "realtime" ? "var(--fg)" : "var(--muted)",
-                    "box-shadow": state.usageScanMode !== "realtime" ? "0 1px 3px rgba(0,0,0,.15)" : "none",
-                    transition: "background .15s, color .15s",
-                  }}
+                  class={state.usageScanMode !== "realtime" ? "on" : ""}
+                  style={{ height: "30px", "font-size": "12.5px" }}
                   onClick={() => sendConfigPatch({ usageScanMode: "scheduled" })}
                 >
                   {t("settings.usageScanScheduled")}
                 </button>
                 <button
-                  style={{
-                    height: "30px",
-                    padding: "0 8px",
-                    "text-align": "center",
-                    "border-radius": "7px",
-                    border: 0,
-                    font: "inherit",
-                    "font-size": "12.5px",
-                    "font-weight": state.usageScanMode === "realtime" ? 600 : 500,
-                    "white-space": "nowrap",
-                    background: state.usageScanMode === "realtime" ? "var(--bg)" : "transparent",
-                    color: state.usageScanMode === "realtime" ? "var(--fg)" : "var(--muted)",
-                    "box-shadow": state.usageScanMode === "realtime" ? "0 1px 3px rgba(0,0,0,.15)" : "none",
-                    transition: "background .15s, color .15s",
-                  }}
+                  class={state.usageScanMode === "realtime" ? "on" : ""}
+                  style={{ height: "30px", "font-size": "12.5px" }}
                   onClick={() => sendConfigPatch({ usageScanMode: "realtime" })}
                 >
                   {t("settings.usageScanRealtime")}
@@ -318,6 +266,7 @@ export function Settings() {
               </div>
             </Show>
           </div>
+          <p class="note">{t("settings.usageScanModeHint")}</p>
 
           <div class="sec">{t("settings.queriedProviders")}</div>
           <div class="card">
@@ -447,6 +396,13 @@ export function Settings() {
 
 /** §8.2: shown alone while this browser holds no valid pairing. */
 export function Pairing() {
+  const [copied, setCopied] = createSignal(false);
+  const copyPairLink = () => {
+    navigator.clipboard.writeText(window.location.href);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
+
   return (
     <div class="page">
       <div class="pair">
@@ -455,6 +411,15 @@ export function Pairing() {
         <p class="note" style={{ "font-size": "15px" }}>
           {t("pair.lead")}
         </p>
+        <Show when={isInAppBrowser()}>
+          <div class="banner warn" style={{ margin: "14px 0", "text-align": "left", width: "100%", "box-sizing": "border-box" }}>
+            <Icon name="alert" />
+            <div>
+              <b>{t("pair.inAppTitle")}</b>
+              <div style={{ "margin-top": "4px", "font-size": "13px" }}>{t("pair.inAppDesc")}</div>
+            </div>
+          </div>
+        </Show>
         <div class="steps">
           <div>
             <span>
@@ -471,6 +436,11 @@ export function Pairing() {
         <button class="btn acc" onClick={() => void initWebSocket()}>
           {t("pair.retry")}
         </button>
+        <Show when={window.location.href.includes("#code=")}>
+          <button class="lnk" style={{ "margin-top": "12px", "font-size": "14px" }} onClick={copyPairLink}>
+            {copied() ? t("common.copied") : t("pair.copyLink")}
+          </button>
+        </Show>
       </div>
     </div>
   );

@@ -141,6 +141,9 @@ export const en = {
   "pair.step2": "Scan the QR code in the terminal with your phone's camera",
   "pair.step3": "Open the link in the browser; once paired you return to the home screen",
   "pair.retry": "I've paired, retry",
+  "pair.inAppTitle": "Please open in system browser",
+  "pair.inAppDesc": "You are currently in an in-app browser. Tap the top-right menu and choose 'Open in browser' to complete pairing.",
+  "pair.copyLink": "Copy pairing link",
 
   "panes.title": "Switch pane",
   "panes.note": "Only changes the pane shown on this phone; focus on the computer stays.",
@@ -375,7 +378,7 @@ export const en = {
   "settings.providerNotLoggedIn": "Not logged in",
   "settings.usageScanMode": "Usage calculation mode",
   "settings.usageScanRealtime": "Realtime",
-  "settings.usageScanScheduled": "Scheduled background",
+  "settings.usageScanScheduled": "Scheduled",
   "settings.usageScanInterval": "Background interval",
-  "settings.usageScanModeHint": "Scheduled mode displays cached usage immediately; Realtime mode calculates fresh token counts on demand",
+  "settings.usageScanModeHint": "Scheduled mode displays cached usage immediately; Realtime mode calculates fresh token counts on demand.",
 } as const;

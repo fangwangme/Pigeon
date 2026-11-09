@@ -51,12 +51,22 @@ function nextId(): string {
   return `cli_${++msgId}`;
 }
 
+export function isInAppBrowser(): boolean {
+  if (typeof navigator === "undefined") return false;
+  const ua = navigator.userAgent || "";
+  return /MicroMessenger|AlipayClient|Weibo|DingTalk|QQ\//i.test(ua);
+}
+
 export async function checkPairingFromUrlHash(): Promise<void> {
   const hash = window.location.hash;
   if (!hash.startsWith("#code=")) return;
   const code = hash.slice("#code=".length).trim();
-  // Purge the token from history before anything else (security-and-pairing.md §2).
-  window.history.replaceState(null, "", "/");
+  // In an in-app browser (e.g. WeChat), do NOT purge hash from URL so that
+  // when user taps "Open in browser" (在浏览器中打开), the scanner forwards the code to Chrome.
+  if (!isInAppBrowser()) {
+    // Purge the token from history in a standard browser (security-and-pairing.md §2).
+    window.history.replaceState(null, "", "/");
+  }
   const ok = await pairWithCode(code);
   if (!ok) setState("paired", false);
 }

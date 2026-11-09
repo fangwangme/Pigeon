@@ -142,6 +142,9 @@ export const zh: Messages = {
   "pair.step2": "用手机相机扫描终端里的二维码",
   "pair.step3": "在浏览器中打开链接，配对完成后会回到首页",
   "pair.retry": "我已配对，重试",
+  "pair.inAppTitle": "请在系统浏览器中打开",
+  "pair.inAppDesc": "当前位于应用内置浏览器（如微信）中。请点击右上角【···】，选择【在浏览器中打开】完成配对并体验完整功能。",
+  "pair.copyLink": "复制当前配对链接",
 
   "panes.title": "切换 pane",
   "panes.note": "只切换手机上看的 pane，电脑上的焦点不变。",
@@ -376,7 +379,7 @@ export const zh: Messages = {
   "settings.providerNotLoggedIn": "未登录",
   "settings.usageScanMode": "用量计算模式",
   "settings.usageScanRealtime": "实时扫描",
-  "settings.usageScanScheduled": "定时后台扫描",
+  "settings.usageScanScheduled": "定时后台",
   "settings.usageScanInterval": "后台扫描间隔",
-  "settings.usageScanModeHint": "定时扫描模式下前端直接显示最新缓存，秒开秒显；实时扫描模式在触发时悬挂等待最新数据计算完成后返回",
+  "settings.usageScanModeHint": "定时后台模式直接展示已缓存的最新数据，秒开秒显；实时扫描模式在触发时悬挂等待最新数据计算完成后返回。",
 };

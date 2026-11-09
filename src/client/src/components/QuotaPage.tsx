@@ -99,40 +99,15 @@ export function QuotaPage() {
         <div style={{ padding: "0 16px calc(30px + env(safe-area-inset-bottom))" }}>
           {/* Segmented switch */}
           <div style={{ "margin-top": "6px" }}>
-            <div
-              style={{
-                display: "grid",
-                "grid-template-columns": "repeat(2, minmax(0, 1fr))",
-                gap: "0",
-                background: "var(--surface)",
-                border: "1px solid var(--line)",
-                "border-radius": "12px",
-                padding: "3px",
-              }}
-            >
-              <span
-                style={{
-                  height: "38px",
-                  "border-radius": "9px",
-                  background: "var(--code)",
-                  display: "grid",
-                  "place-items": "center",
-                  "font-weight": 600,
-                  "font-size": "14.5px",
-                }}
+            <div class="seg" style={{ display: "grid", "grid-template-columns": "repeat(2, minmax(0, 1fr))", padding: "3px" }}>
+              <button
+                class="on"
+                style={{ height: "38px", "font-size": "14.5px" }}
               >
                 {t("quota.tabQuota")}
-              </span>
+              </button>
               <button
-                style={{
-                  height: "38px",
-                  "border-radius": "9px",
-                  display: "grid",
-                  "place-items": "center",
-                  "font-weight": 500,
-                  "font-size": "14.5px",
-                  color: "var(--muted)",
-                }}
+                style={{ height: "38px", "font-size": "14.5px" }}
                 onClick={() => navigate({ name: "usage", from: backTarget() })}
               >
                 {t("quota.tabUsage")}
