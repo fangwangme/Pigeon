@@ -1231,8 +1231,30 @@ export function UsagePage() {
                         <span style={{ color: r.subColor, flex: 1, "min-width": 0, "white-space": "nowrap", overflow: "hidden", "text-overflow": "ellipsis" }}>
                           {r.sub}
                         </span>
-                        <span style={{ color: "var(--fig-tokens)", "white-space": "nowrap" }}>{r.tokens}</span>
-                        <span style={{ color: "var(--fig-cost)", "white-space": "nowrap" }}>{r.cost}</span>
+                        <span
+                          style={{
+                            color: "var(--fig-tokens)",
+                            "white-space": "nowrap",
+                            flex: "none",
+                            width: "76px",
+                            "text-align": "right",
+                            "font-variant-numeric": "tabular-nums",
+                          }}
+                        >
+                          {r.tokens}
+                        </span>
+                        <span
+                          style={{
+                            color: "var(--fig-cost)",
+                            "white-space": "nowrap",
+                            flex: "none",
+                            width: "66px",
+                            "text-align": "right",
+                            "font-variant-numeric": "tabular-nums",
+                          }}
+                        >
+                          {r.cost}
+                        </span>
                       </span>
                       <span
                         style={{
@@ -1485,14 +1507,38 @@ export function UsagePage() {
                             "padding-top": "8px",
                             display: "flex",
                             "align-items": "baseline",
-                            gap: "10px",
+                            gap: "8px",
                             "font-variant-numeric": "tabular-nums",
                           }}
                         >
                           <span style={{ width: "9px", height: "9px", "border-radius": "50%", background: `var(--agent-${ag.agent})`, "align-self": "center" }} />
-                          <span style={{ flex: 1, "font-weight": 600 }}>{AGENT_NAMES[ag.agent] || ag.agent}</span>
-                          <span style={{ "font-size": "13px", color: "var(--fig-tokens)" }}>{fmtTokens(ag.tokens)}</span>
-                          <span style={{ "font-size": "13px", color: "var(--fig-cost)" }}>{fmtCost(ag.cost)}</span>
+                          <span style={{ flex: 1, "min-width": 0, "font-weight": 600, "white-space": "nowrap", overflow: "hidden", "text-overflow": "ellipsis" }}>
+                            {AGENT_NAMES[ag.agent] || ag.agent}
+                          </span>
+                          <span
+                            style={{
+                              "font-size": "13px",
+                              color: "var(--fig-tokens)",
+                              "white-space": "nowrap",
+                              flex: "none",
+                              width: "76px",
+                              "text-align": "right",
+                            }}
+                          >
+                            {fmtTokens(ag.tokens)}
+                          </span>
+                          <span
+                            style={{
+                              "font-size": "13px",
+                              color: "var(--fig-cost)",
+                              "white-space": "nowrap",
+                              flex: "none",
+                              width: "66px",
+                              "text-align": "right",
+                            }}
+                          >
+                            {fmtCost(ag.cost)}
+                          </span>
                         </div>
                       )}
                     </For>
