@@ -349,6 +349,11 @@ export const en = {
   "usage.unpricedNote": "Some models have no pricing data available.",
   "usage.modelUsagePerDay": "Daily usage in this period",
   "usage.byAgent": "By agent",
+  "usage.rangeDays": "{count} days",
+  "usage.sessionCount": "{count} sessions",
+  "usage.agentAndModel": "Agents & models",
+  "usage.zoomOut": "Zoom out",
+  "usage.zoomIn": "Zoom in",
 
   "settings.quotaUsage": "Quota & usage",
   "settings.subscriptionQuota": "Subscription quota",

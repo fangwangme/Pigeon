@@ -10,7 +10,7 @@ import type {
   UsageModelSummary,
 } from "../../../types/protocol";
 import { Icon } from "./ui";
-import { t } from "../i18n";
+import { t, locale } from "../i18n";
 
 const AGENT_KEYS = ["claude", "codex", "agy", "opencode", "pi"] as const;
 
@@ -29,9 +29,29 @@ const COMPANY_COLORS: Record<string, string> = {
   other: "var(--co-other)",
 };
 
-const WEEKDAYS_SHORT = ["周日", "周一", "周二", "周三", "周四", "周五", "周六"];
-const WEEKDAYS_TOP = ["一", "二", "三", "四", "五", "六", "日"];
-const WEEKDAYS_SIDE = ["一", "", "三", "", "五", "", "日"];
+function formatWeekdayShort(day: number): string {
+  const isZh = locale() === "zh";
+  const zh = ["周日", "周一", "周二", "周三", "周四", "周五", "周六"];
+  const en = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+  return isZh ? zh[day] : en[day];
+}
+
+function getWeekdayTop(): string[] {
+  const isZh = locale() === "zh";
+  return isZh ? ["一", "二", "三", "四", "五", "六", "日"] : ["M", "T", "W", "T", "F", "S", "S"];
+}
+
+function getWeekdaySide(): string[] {
+  const isZh = locale() === "zh";
+  return isZh ? ["一", "", "三", "", "五", "", "日"] : ["M", "", "W", "", "F", "", "S"];
+}
+
+function formatMonthName(monthIdx: number): string {
+  const isZh = locale() === "zh";
+  const zh = ["1月", "2月", "3月", "4月", "5月", "6月", "7月", "8月", "9月", "10月", "11月", "12月"];
+  const en = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+  return isZh ? zh[monthIdx] : en[monthIdx];
+}
 
 export function fmtTokens(n: number): string {
   if (n >= 1e9) return (n / 1e9).toFixed(2) + " B";
@@ -169,9 +189,9 @@ export function UsagePage() {
     if (span.len === 1) {
       const [y, m, d] = span.from.split("-").map(Number);
       const dt = new Date(y, m - 1, d);
-      return `${span.from} ${WEEKDAYS_SHORT[dt.getDay()]}`;
+      return `${span.from} ${formatWeekdayShort(dt.getDay())}`;
     }
-    return `${span.from} → ${span.to} · ${span.len} 天`;
+    return `${span.from} → ${span.to} · ${t("usage.rangeDays", { count: span.len.toString() })}`;
   };
 
   // KPI comparison deltas
@@ -227,7 +247,7 @@ export function UsagePage() {
     const comp = rep.comparison;
     const [y, m, d] = comp.from.split("-").map(Number);
     const dt = new Date(y, m - 1, d);
-    const dayName = WEEKDAYS_SHORT[dt.getDay()];
+    const dayName = formatWeekdayShort(dt.getDay());
     const dateStr = `${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
 
     if (rangeSpan().len === 1) {
@@ -318,7 +338,7 @@ export function UsagePage() {
         cells.push({
           date: ymd,
           dayNum: cur.getDate(),
-          weekdayLabel: WEEKDAYS_TOP[(cur.getDay() + 6) % 7],
+          weekdayLabel: getWeekdayTop()[(cur.getDay() + 6) % 7],
           color: getCellColor(val),
           textColor: getCellTextColor(val),
           val,
@@ -346,7 +366,7 @@ export function UsagePage() {
         const val = sum ? (m === "tokens" ? sum.tokens : sum.cost) : 0;
 
         if (cur.getDate() === 1 || !monthLabel) {
-          monthLabel = `${cur.getMonth() + 1}月`;
+          monthLabel = formatMonthName(cur.getMonth());
         }
 
         currentWeekCells.push({
@@ -384,7 +404,7 @@ export function UsagePage() {
       const val = sum ? (m === "tokens" ? sum.tokens : sum.cost) : 0;
 
       if (cur.getDate() === 1 || !monthLabel) {
-        monthLabel = `${cur.getMonth() + 1}月`;
+        monthLabel = formatMonthName(cur.getMonth());
       }
 
       currentWeekCells.push({
@@ -421,14 +441,12 @@ export function UsagePage() {
         const val = m === "tokens" ? d.tokens : d.cost;
         if (val > maxVal) maxVal = val;
       }
-      const totalVal = m === "tokens" ? rep.totals.tokens : rep.totals.cost;
 
       return days.map((d) => {
         const val = m === "tokens" ? d.tokens : d.cost;
         const [y, mth, dayN] = d.date.split("-").map(Number);
         const dt = new Date(y, mth - 1, dayN);
-        const title = `${d.date} ${WEEKDAYS_SHORT[dt.getDay()]}`;
-        const pct = totalVal > 0 ? ((val / totalVal) * 100).toFixed(1) + "%" : "0.0%";
+        const title = `${d.date} ${formatWeekdayShort(dt.getDay())}`;
         const barW = maxVal > 0 ? `${Math.min(100, (val / maxVal) * 100)}%` : "0%";
 
         return {
@@ -436,11 +454,10 @@ export function UsagePage() {
           type: "date" as const,
           title,
           titleColor: "var(--fg)",
-          sub: `${d.sessions} 个会话`,
+          sub: t("usage.sessionCount", { count: d.sessions.toString() }),
           subColor: "var(--muted)",
           tokens: fmtTokens(d.tokens),
           cost: fmtCost(d.cost),
-          share: pct,
           barW,
           barColor: m === "tokens" ? "var(--fig-tokens)" : "var(--fig-cost)",
           onTap: () => openDaySheet(d.date),
@@ -455,12 +472,12 @@ export function UsagePage() {
       const val = m === "tokens" ? mdl.tokens : mdl.cost;
       if (val > maxVal) maxVal = val;
     }
-    const totalVal = m === "tokens" ? rep.totals.tokens : rep.totals.cost;
 
     return models.map((mdl) => {
       const val = m === "tokens" ? mdl.tokens : mdl.cost;
       const agentsStr = mdl.agents.map((ag) => AGENT_NAMES[ag] || ag).join(", ");
-      const share = totalVal > 0 ? ((val / totalVal) * 100).toFixed(1) + "%" : "0.0%";
+      const sessionStr = t("usage.sessionCount", { count: mdl.sessions.toString() });
+      const sub = agentsStr ? `${sessionStr} · ${agentsStr}` : sessionStr;
       const barW = maxVal > 0 ? `${Math.min(100, (val / maxVal) * 100)}%` : "0%";
 
       return {
@@ -468,11 +485,10 @@ export function UsagePage() {
         type: "model" as const,
         title: mdl.model,
         titleColor: COMPANY_COLORS[mdl.company] || "var(--co-other)",
-        sub: agentsStr,
+        sub,
         subColor: "var(--accent)",
         tokens: fmtTokens(mdl.tokens),
         cost: fmtCost(mdl.cost),
-        share,
         barW,
         barColor: COMPANY_COLORS[mdl.company] || "var(--co-other)",
         onTap: () => openModelSheet(mdl.model),
@@ -783,7 +799,7 @@ export function UsagePage() {
                             if (cur === null) setZoomIndex(0);
                             else if (cur > 0) setZoomIndex(cur - 1);
                           }}
-                          aria-label="缩小"
+                          aria-label={t("usage.zoomOut")}
                           style={{
                             width: "32px",
                             height: "30px",
@@ -818,7 +834,7 @@ export function UsagePage() {
                             if (cur === null) setZoomIndex(1);
                             else if (cur < ZOOM_LEVELS.length - 1) setZoomIndex(cur + 1);
                           }}
-                          aria-label="放大"
+                          aria-label={t("usage.zoomIn")}
                           style={{
                             width: "32px",
                             height: "30px",
@@ -885,7 +901,7 @@ export function UsagePage() {
                   <Show when={hm.layout === "week-rows" && hm.weeks}>
                     <div style={{ "margin-top": "12px" }}>
                       <div style={{ display: "flex", gap: "5px", "padding-left": "30px", "font-size": "10.5px", color: "var(--faint)" }}>
-                        <For each={WEEKDAYS_TOP}>
+                        <For each={getWeekdayTop()}>
                           {(w) => <span style={{ flex: 1, "text-align": "center" }}>{w}</span>}
                         </For>
                       </div>
@@ -952,7 +968,7 @@ export function UsagePage() {
                               flex: "none",
                             }}
                           >
-                            <For each={WEEKDAYS_SIDE}>
+                            <For each={getWeekdaySide()}>
                               {(wl) => (
                                 <span style={{ height: `${cellSz()}px`, "line-height": `${cellSz()}px` }}>
                                   {wl}
@@ -1157,9 +1173,6 @@ export function UsagePage() {
                         </span>
                         <span style={{ color: "var(--fig-tokens)", "white-space": "nowrap" }}>{r.tokens}</span>
                         <span style={{ color: "var(--fig-cost)", "white-space": "nowrap" }}>{r.cost}</span>
-                        <span style={{ color: "var(--fg)", "white-space": "nowrap", "min-width": "42px", "text-align": "right" }}>
-                          {r.share}
-                        </span>
                       </span>
                       <span
                         style={{
@@ -1278,7 +1291,7 @@ export function UsagePage() {
 
                     {/* Breakdown by Agent */}
                     <div style={{ "font-size": "12.5px", color: "var(--faint)", "margin-top": "12px" }}>
-                      Agent / 模型
+                      {t("usage.agentAndModel")}
                     </div>
                     <For each={d.agents}>
                       {(ag) => (
@@ -1301,7 +1314,7 @@ export function UsagePage() {
                                   <span style={{ color: "var(--fig-cost)" }}>{fmtCost(m.cost)}</span>
                                 </div>
                                 <div style={{ "font-size": "11.5px", color: "var(--faint)" }}>
-                                  Token {fmtTokens(m.tokens)} · 输入 {fmtTokens(m.input)} · 输出 {fmtTokens(m.output)} · 缓存读 {fmtTokens(m.cacheRead)}
+                                  {t("usage.tokens")} {fmtTokens(m.tokens)} · {t("usage.input")} {fmtTokens(m.input)} · {t("usage.output")} {fmtTokens(m.output)} · {t("usage.cacheRead")} {fmtTokens(m.cacheRead)}
                                 </div>
                               </div>
                             )}

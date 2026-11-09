@@ -62,11 +62,19 @@ export class QuotaService {
 
       const cached = this.cache[key];
       const isFresh = cached.snapshot && now - cached.fetchedAt < 60_000;
-      if (isFresh && !force) {
+      if (isFresh) {
         return {
           provider: key,
           enabled: true,
           snapshot: cached.snapshot,
+          error: cached.error,
+        };
+      }
+      if (cached.error && now - cached.error.at < 60_000 && !cached.snapshot) {
+        return {
+          provider: key,
+          enabled: true,
+          snapshot: null,
           error: cached.error,
         };
       }

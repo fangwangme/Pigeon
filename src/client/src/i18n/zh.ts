@@ -350,6 +350,11 @@ export const zh: Messages = {
   "usage.unpricedNote": "部分模型暂无价格信息。",
   "usage.modelUsagePerDay": "这段时间每天的用量",
   "usage.byAgent": "按 Agent",
+  "usage.rangeDays": "{count} 天",
+  "usage.sessionCount": "{count} 个会话",
+  "usage.agentAndModel": "Agent 与模型",
+  "usage.zoomOut": "缩小",
+  "usage.zoomIn": "放大",
 
   "settings.quotaUsage": "额度与用量",
   "settings.subscriptionQuota": "订阅额度",
