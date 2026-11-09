@@ -43,11 +43,11 @@ Package managers (npm, bun, pnpm, yarn) automatically install only the platform 
 When `pigeon` is invoked via CLI or `npx`/`bunx`:
 1. `bin/pigeon.js` identifies host OS and architecture via `process.platform` and `process.arch`.
 2. It attempts to resolve `@fangwangme/pigeon-${process.platform}-${process.arch}/bin/pigeon` using `require.resolve`.
-3. If resolved, it executes the target binary using synchronous process spawning (`spawnSync`) passing all CLI arguments and inheriting `stdio: "inherit"` to support raw terminal control, QR codes, and real-time ANSI terminal rendering.
+3. If resolved, it executes the target binary using child process spawning (`spawn`) passing all CLI arguments and inheriting `stdio: "inherit"` to support raw terminal control, QR codes, and real-time ANSI terminal rendering.
 4. If resolution fails:
    - On supported platforms: exits with code 1 and outputs actionable instructions to reinstall (e.g. `bun add -g --force @fangwangme/pigeon` or `npm install -g --force @fangwangme/pigeon`).
    - On unsupported platforms: exits with code 1 and informs the user that prebuilt binaries are unavailable for their architecture.
-5. Exit codes and termination signals from the child binary are propagated faithfully to the caller.
+5. Termination signals (`SIGINT`, `SIGTERM`, `SIGHUP`) received by the launcher are actively forwarded to the child process to ensure graceful daemon shutdown and prevent orphaned daemon processes. Exit codes and termination signals from the child binary are propagated faithfully to the caller.
 
 ## 4. Workflows and Automation Semantics
 
@@ -79,7 +79,7 @@ When `pigeon` is invoked via CLI or `npx`/`bunx`:
   - Executes `node npm/scripts/publish-packages.mjs`:
     - Reads package manifests in dependency order.
     - Publishes all platform packages first using `npm publish --access public`.
-    - Polls the NPM registry (`npm view <pkg>@<ver> version`) with bounded backoff until all platform packages are indexed and resolvable.
+    - Polls the NPM registry (`npm view <pkg>@<ver> version`) at fixed intervals (default 10s) with a timeout until all platform packages are indexed and resolvable.
     - Publishes launcher package only after registry verification succeeds, eliminating 404 installation race conditions for optionalDependencies.
     - Operates idempotently: skips versions already present on the registry.
 

@@ -128,6 +128,7 @@ function buildPlatformPackage({ target, version, artifactsDir, outDir }) {
     os: [target.os],
     cpu: [target.cpu],
     files: ["bin"],
+    preferUnplugged: true,
     repository: {
       type: "git",
       url: "git+https://github.com/fangwangme/Pigeon.git",

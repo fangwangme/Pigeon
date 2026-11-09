@@ -7,7 +7,7 @@
 // `optionalDependencies`, and package managers install only the one whose
 // `os`/`cpu` match.
 
-const { spawnSync } = require("node:child_process");
+const { spawn, spawnSync } = require("node:child_process");
 const fs = require("node:fs");
 const path = require("node:path");
 
@@ -84,15 +84,31 @@ try {
   // Best-effort check; do not block execution if package inspection fails.
 }
 
-const result = spawnSync(binary, process.argv.slice(2), { stdio: "inherit" });
+const child = spawn(binary, process.argv.slice(2), { stdio: "inherit" });
 
-if (result.error) {
-  console.error(`pigeon: failed to launch ${binary}: ${result.error.message}`);
+const forwardSignal = (signal) => {
+  if (child.pid) {
+    child.kill(signal);
+  }
+};
+
+process.on("SIGINT", forwardSignal);
+process.on("SIGTERM", forwardSignal);
+process.on("SIGHUP", forwardSignal);
+
+child.on("error", (error) => {
+  console.error(`pigeon: failed to launch ${binary}: ${error.message}`);
   process.exit(1);
-}
+});
 
-if (result.signal) {
-  process.kill(process.pid, result.signal);
-} else {
-  process.exit(result.status ?? 0);
-}
+child.on("exit", (code, signal) => {
+  process.removeListener("SIGINT", forwardSignal);
+  process.removeListener("SIGTERM", forwardSignal);
+  process.removeListener("SIGHUP", forwardSignal);
+
+  if (signal) {
+    process.kill(process.pid, signal);
+  } else {
+    process.exit(code ?? 0);
+  }
+});
