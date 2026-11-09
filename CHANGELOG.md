@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.6] - 2026-11-09
+
+### Added
+- **Subscription quota dashboard**: view Claude, Codex, and Antigravity subscription usage windows, time-based pace, reset times, and reset credits in a mobile-optimized card layout with live dot indicators (#13).
+- **Token usage dashboard**: view multi-agent token consumption and estimated costs with presets (Today, 7D, 30D, This month, Last month, Year, All), custom date picker, heatmap visualizations (day strip, week rows, month calendar), daily breakdowns, and model details (#13).
+- **Settings integration**: customize quota provider visibility, remaining vs used bar direction, and dashboard button visibility (#13).
+
 ## [0.1.5] - 2026-11-09
 
 ### Added
