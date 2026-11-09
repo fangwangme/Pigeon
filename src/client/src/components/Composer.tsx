@@ -468,11 +468,6 @@ export function Composer(props: ComposerProps) {
             </For>
           </div>
         </Show>
-        <Show when={!open() && props.onPlus}>
-          <button class="rb" aria-label={t("plus.title")} onClick={() => props.onPlus!()}>
-            <Icon name="plus" />
-          </button>
-        </Show>
         <textarea
           ref={(el) => {
             ta = el;

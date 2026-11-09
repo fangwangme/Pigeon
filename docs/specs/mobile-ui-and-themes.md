@@ -120,7 +120,7 @@ A prompt without numbered options, or `blocked` with nothing recognized, shows i
 ## 6. Composer and session actions
 
 ### 6.1 Composer
-- Collapsed: a glass capsule with `+`, a text field and send. Focused: expanded multi-line textarea (min-height: 64px) for comfortable scrolling and dragging, attachment thumbnails, the bottom toolbar with compact 33px helper buttons, a widened model capsule (`max-width: calc(100% - 92px)`), and a full-size 44px send button.
+- Collapsed: a clean glass capsule with the text field and send button (the `+` button is hidden when collapsed to maximize horizontal space and avoid visual clutter). Focused: expanded multi-line textarea (min-height: 64px) for comfortable scrolling and dragging, attachment thumbnails, the bottom toolbar pairing the compact `+` helper button directly alongside the model capsule (`max-width: calc(100% - 92px)`), and a full-size 44px send button.
 - **+ sheet**: 相机, 照片, 文件 (the system pickers; files are uploaded at once, `protocol.md` §7), **Skills 与命令** (§6.3), **从历史会话恢复** (§7.2).
 - Sending with attachments passes their upload ids; the daemon writes them into the prompt (`protocol.md` §4.2).
 
