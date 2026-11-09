@@ -430,7 +430,7 @@ export function Composer(props: ComposerProps) {
             textareaEl = el;
             setTimeout(grow, 0);
           }}
-          rows={1}
+          rows={open() ? 2 : 1}
           value={text()}
           placeholder={props.placeholder}
           enterkeyhint={isTouch() ? "enter" : "send"}
@@ -438,8 +438,14 @@ export function Composer(props: ComposerProps) {
           autocomplete="off"
           aria-autocomplete="none"
           data-form-type="other"
-          onFocus={() => setFocused(true)}
-          onBlur={() => setTimeout(() => setFocused(false), 120)}
+          onFocus={() => {
+            setFocused(true);
+            setTimeout(grow, 0);
+          }}
+          onBlur={() => setTimeout(() => {
+            setFocused(false);
+            grow();
+          }, 120)}
           onCompositionStart={() => setComposing(true)}
           onCompositionEnd={(e) => {
             setComposing(false);

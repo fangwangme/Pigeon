@@ -159,15 +159,18 @@ svg.i.sm { width: 16px; height: 16px; }
 .comp textarea { flex: 1; resize: none; border: 0; outline: none; background: none; font-size: 16px; line-height: 1.4; padding: 11px 4px; max-height: 280px; min-width: 0; overflow-y: auto; }
 .comp textarea::placeholder { color: var(--faint); }
 .comp.open { border-radius: 26px; flex-direction: column; align-items: stretch; padding: 10px; }
-.comp.open textarea { padding: 4px 6px 10px; }
+.comp.open textarea { padding: 4px 6px 10px; min-height: 64px; }
 .compbar { display: flex; align-items: center; gap: 8px; }
+.compbar .rb { width: 33px; height: 33px; }
+.compbar .rb svg.i { width: 17px; height: 17px; }
 .rb { width: 44px; height: 44px; border-radius: 50%; display: grid; place-items: center; background: rgba(127,127,127,.16); flex: none; }
 .rb.send { background: var(--accent); color: var(--onaccent); }
 .rb.send:disabled { background: rgba(127,127,127,.16); color: var(--faint); }
 .rb.stop { background: var(--fg); color: var(--bg); }
 .rb.stop svg { fill: currentColor; stroke: none; }
-.mc { height: 44px; border-radius: 22px; background: rgba(127,127,127,.16); display: inline-flex; align-items: center; gap: 6px; padding: 0 14px; font-size: 14px; max-width: 60%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.mc { height: 33px; border-radius: 17px; background: rgba(127,127,127,.16); display: inline-flex; align-items: center; gap: 5px; padding: 0 10px; font-size: 13px; max-width: 55%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .mc em { font-style: normal; color: var(--muted); }
+.mc svg.i { width: 14px; height: 14px; }
 .sp { flex: 1; }
 .thumbs { display: flex; gap: 8px; padding: 0 4px 10px; overflow-x: auto; }
 .thumb { position: relative; flex: none; height: 56px; min-width: 56px; max-width: 140px; border-radius: 14px; background: var(--surface); border: 1px solid var(--line2); display: flex; align-items: center; justify-content: center; padding: 0 10px; font-size: 12px; color: var(--muted); overflow: hidden; }
