@@ -298,7 +298,6 @@ export function handleServerMessage(msg: ServerMessage): void {
         todos: msg.payload.todos || null,
         session: msg.payload.session,
         paneSyncing: false,
-        paneLoaded: true,
       });
       const metaInfo = meta(msg.payload.paneId);
       if (!msg.payload.session?.bound || (metaInfo && metaInfo.sessionId !== msg.payload.session?.sessionId)) {
@@ -313,7 +312,6 @@ export function handleServerMessage(msg: ServerMessage): void {
       if (msg.payload.paneId !== state.activePaneId) return;
       freshDataArrivedPaneId = msg.payload.paneId;
       setState("paneSyncing", false);
-      setState("paneLoaded", true);
       const { sinceTurnIndex, appendTurns, patchLastTurn, sessionStats, sessionTitle, todos, session } = msg.payload;
       let current = [...state.normalizedTurns];
       if (sinceTurnIndex === 0 && !patchLastTurn) {
@@ -493,7 +491,6 @@ export async function selectPane(paneId: string): Promise<void> {
       session: cached.session || null,
       queue: cached.queue || [],
       paneSyncing: true,
-      paneLoaded: true,
     });
     if (cached.sessionId && cached.turns.length > 0) {
       have = {

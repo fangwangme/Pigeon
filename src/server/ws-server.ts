@@ -124,7 +124,7 @@ export class WsServer {
     this.paneStore.on("upstream_status", (status) => this.broadcast({ type: "upstream_status", payload: status }));
     this.paneStore.on("turns_delta", (delta) => {
       this.sendToSubscribers(delta.paneId, { type: "turns_delta", payload: delta });
-      if (delta.appendTurns && delta.appendTurns.length > 0 && delta.appendTurns.some((t: NormalizedTurn) => !!t.userPrompt)) {
+      if (delta.sinceTurnIndex > 0 && delta.appendTurns && delta.appendTurns.length > 0 && delta.appendTurns.some((t: NormalizedTurn) => !!t.userPrompt)) {
         this.clearSendingPrompt(delta.paneId);
       }
     });
@@ -758,7 +758,11 @@ export class WsServer {
     this.sendQueue(paneId);
     try {
       await this.herdrClient.sendPrompt(paneId, entry.send);
-      this.armSendingCleanup(paneId, entry.item.queueId);
+      if (this.paneStore.boundSession(paneId)) {
+        this.armSendingCleanup(paneId, entry.item.queueId);
+      } else {
+        this.clearSendingPrompt(paneId, entry.item.queueId);
+      }
     } catch (err) {
       this.clearSendingPrompt(paneId, entry.item.queueId);
       const code = err instanceof HerdrError ? HERDR_ERROR_MAP[err.code] || ProtocolErrors.ERR_INTERNAL : ProtocolErrors.ERR_INTERNAL;
@@ -817,13 +821,11 @@ export class WsServer {
       if (typeof data === "object" && data !== null) {
         for (const [paneId, items] of Object.entries(data)) {
           if (Array.isArray(items)) {
-            this.queues.set(
-              paneId,
-              (items as Array<{ item: QueuedPrompt; send: string }>).map((entry) => {
-                if (entry?.item) delete entry.item.sending;
-                return entry;
-              })
-            );
+            // protocol.md §4.2: a prompt in sending state was already dispatched; it is not restored on daemon restart
+            const pending = (items as Array<{ item: QueuedPrompt; send: string }>).filter((entry) => !entry?.item?.sending);
+            if (pending.length > 0) {
+              this.queues.set(paneId, pending);
+            }
           }
         }
       }

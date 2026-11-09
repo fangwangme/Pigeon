@@ -147,7 +147,7 @@ describe("pane loading and screen card fallback (mobile-ui-and-themes.md §3.6)"
     expect(state.session?.bound).toBeFalsy();
   });
 
-  test("paneLoaded becomes true when normalized_turns arrives", () => {
+  test("normalized_turns alone leaves paneLoaded false until pane_state arrives", () => {
     selectPane("p_norm");
     expect(state.paneLoaded).toBe(false);
 
@@ -159,6 +159,9 @@ describe("pane loading and screen card fallback (mobile-ui-and-themes.md §3.6)"
         session: { bound: false, agent: "claude", model: { value: null, source: "unknown" }, thinking: { value: null, source: "unknown" } },
       },
     });
+    expect(state.paneLoaded).toBe(false);
+
+    handleServerMessage({ type: "pane_state", payload: paneState("p_norm", 1, "raw screen output") });
     expect(state.paneLoaded).toBe(true);
   });
 });
