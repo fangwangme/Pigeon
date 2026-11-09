@@ -1,0 +1,38 @@
+{
+  "name": "@fangwangme/pigeon",
+  "version": "0.0.0-managed-by-release-workflow",
+  "description": "Mobile-first voice-driven remote control and mirror client for Herdr",
+  "bin": {
+    "pigeon": "bin/pigeon.js"
+  },
+  "files": [
+    "bin"
+  ],
+  "optionalDependencies": {
+    "@fangwangme/pigeon-darwin-arm64": "0.0.0-managed-by-release-workflow",
+    "@fangwangme/pigeon-darwin-x64": "0.0.0-managed-by-release-workflow",
+    "@fangwangme/pigeon-linux-arm64": "0.0.0-managed-by-release-workflow",
+    "@fangwangme/pigeon-linux-x64": "0.0.0-managed-by-release-workflow"
+  },
+  "keywords": [
+    "herdr",
+    "remote-control",
+    "voice",
+    "mobile",
+    "terminal",
+    "ai-agents",
+    "pwa"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/fangwangme/Pigeon.git"
+  },
+  "homepage": "https://github.com/fangwangme/Pigeon#readme",
+  "bugs": {
+    "url": "https://github.com/fangwangme/Pigeon/issues"
+  },
+  "license": "MIT",
+  "engines": {
+    "node": ">=18"
+  }
+}
