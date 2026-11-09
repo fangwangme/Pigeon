@@ -118,12 +118,6 @@ function FilterButton() {
   const dot = () => quotaDot(state.quotaSnapshots);
   return (
     <div class="cap">
-      <button aria-label={t("filter.title")} onClick={() => openOverlay({ kind: "filter" })}>
-        <Icon name="sliders" />
-        <Show when={filterActive()}>
-          <span class="dot" />
-        </Show>
-      </button>
       <Show when={state.quotaButton}>
         <button aria-label={t("quota.title")} onClick={() => navigate({ name: "quota", from: "home" })}>
           <Icon name="gauge" />
@@ -132,6 +126,12 @@ function FilterButton() {
           </Show>
         </button>
       </Show>
+      <button aria-label={t("filter.title")} onClick={() => openOverlay({ kind: "filter" })}>
+        <Icon name="sliders" />
+        <Show when={filterActive()}>
+          <span class="dot" />
+        </Show>
+      </button>
       <button aria-label={t("settings.title")} onClick={() => navigate({ name: "settings" })}>
         <Icon name="gear" />
       </button>

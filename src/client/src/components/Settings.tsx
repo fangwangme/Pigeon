@@ -169,15 +169,52 @@ export function Settings() {
             </button>
             <div class="li">
               <div class="tx">{t("settings.quotaDisplay")}</div>
-              <div class="seg" style={{ margin: 0, padding: "2px" }}>
+              <div
+                style={{
+                  display: "grid",
+                  "grid-template-columns": "repeat(2, minmax(0, 1fr))",
+                  width: "180px",
+                  background: "var(--code)",
+                  border: "1px solid var(--line)",
+                  "border-radius": "9px",
+                  padding: "2px",
+                  flex: "none",
+                }}
+              >
                 <button
-                  class={state.quotaDisplay !== "used" ? "on" : ""}
+                  style={{
+                    height: "30px",
+                    "text-align": "center",
+                    "border-radius": "7px",
+                    border: 0,
+                    font: "inherit",
+                    "font-size": "13px",
+                    "font-weight": state.quotaDisplay !== "used" ? 600 : 500,
+                    "white-space": "nowrap",
+                    background: state.quotaDisplay !== "used" ? "var(--bg)" : "transparent",
+                    color: state.quotaDisplay !== "used" ? "var(--fg)" : "var(--muted)",
+                    "box-shadow": state.quotaDisplay !== "used" ? "0 1px 3px rgba(0,0,0,.15)" : "none",
+                    transition: "background .15s, color .15s",
+                  }}
                   onClick={() => sendConfigPatch({ quotaDisplay: "remaining" })}
                 >
                   {t("settings.remaining")}
                 </button>
                 <button
-                  class={state.quotaDisplay === "used" ? "on" : ""}
+                  style={{
+                    height: "30px",
+                    "text-align": "center",
+                    "border-radius": "7px",
+                    border: 0,
+                    font: "inherit",
+                    "font-size": "13px",
+                    "font-weight": state.quotaDisplay === "used" ? 600 : 500,
+                    "white-space": "nowrap",
+                    background: state.quotaDisplay === "used" ? "var(--bg)" : "transparent",
+                    color: state.quotaDisplay === "used" ? "var(--fg)" : "var(--muted)",
+                    "box-shadow": state.quotaDisplay === "used" ? "0 1px 3px rgba(0,0,0,.15)" : "none",
+                    transition: "background .15s, color .15s",
+                  }}
                   onClick={() => sendConfigPatch({ quotaDisplay: "used" })}
                 >
                   {t("settings.used")}

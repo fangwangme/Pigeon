@@ -1,6 +1,6 @@
 import { createEffect, createSignal, For, onCleanup, onMount, Show } from "solid-js";
 import { navigate, state } from "../state/store";
-import { fetchQuota } from "../state/ws";
+import { fetchQuota, sendConfigPatch } from "../state/ws";
 import { quotaLevel, quotaPace } from "../../../shared/quota";
 import { Icon } from "./ui";
 import { t } from "../i18n";
@@ -143,6 +143,58 @@ export function QuotaPage() {
                 onClick={() => navigate({ name: "usage", from: backTarget() })}
               >
                 {t("quota.tabUsage")}
+              </button>
+            </div>
+          </div>
+
+          {/* Mode switch (Remaining vs Used) */}
+          <div style={{ "margin-top": "10px", display: "flex", "align-items": "center" }}>
+            <div
+              style={{
+                display: "grid",
+                "grid-template-columns": "repeat(2, minmax(0, 1fr))",
+                width: "180px",
+                background: "var(--surface)",
+                border: "1px solid var(--line)",
+                "border-radius": "9px",
+                padding: "2px",
+              }}
+            >
+              <button
+                onClick={() => sendConfigPatch({ quotaDisplay: "remaining" })}
+                style={{
+                  height: "30px",
+                  "text-align": "center",
+                  "border-radius": "7px",
+                  border: 0,
+                  font: "inherit",
+                  "font-size": "13px",
+                  "font-weight": !used() ? 600 : 500,
+                  "white-space": "nowrap",
+                  background: !used() ? "var(--code)" : "transparent",
+                  color: !used() ? "var(--fg)" : "var(--muted)",
+                  transition: "background .15s, color .15s",
+                }}
+              >
+                {t("settings.remaining")}
+              </button>
+              <button
+                onClick={() => sendConfigPatch({ quotaDisplay: "used" })}
+                style={{
+                  height: "30px",
+                  "text-align": "center",
+                  "border-radius": "7px",
+                  border: 0,
+                  font: "inherit",
+                  "font-size": "13px",
+                  "font-weight": used() ? 600 : 500,
+                  "white-space": "nowrap",
+                  background: used() ? "var(--code)" : "transparent",
+                  color: used() ? "var(--fg)" : "var(--muted)",
+                  transition: "background .15s, color .15s",
+                }}
+              >
+                {t("settings.used")}
               </button>
             </div>
           </div>
