@@ -56,6 +56,8 @@ How to set up Pigeon for daily use, manage paired phones, and ship changes to yo
 - `pigeon devices` lists every paired browser, and `pigeon devices revoke <deviceId>` disconnects one right away. You can also view and remove paired phones from **Settings → Devices and pairing** in the app.
 - `pigeon pair` rotates the pairing link and prints a fresh QR code (`--ephemeral` makes a single-use link that expires in 10 minutes). Phones that are already paired stay connected.
 - `pigeon status` shows the active session count and public URL.
+- `pigeon rebuild-cache` rebuilds the token usage database from the agents' files (through the daemon when it runs, directly otherwise).
+- These commands talk to the daemon on the configured port. A daemon started on another port (a test instance, e.g. `--port 4101`) is reached with the same `--port`, such as `pigeon pair --port 4101`.
 - Clean up any test sessions left over from development before using Pigeon day to day.
 
 ## Updating while you use it

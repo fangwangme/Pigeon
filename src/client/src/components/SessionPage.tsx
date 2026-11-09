@@ -2,11 +2,19 @@ import { createEffect, createMemo, createSignal, For, on, onCleanup, onMount, Sh
 import { navigate, openTerminal, setState, showToast, state } from "../state/store";
 import { copyText, request, selectPane, sendKeys, sendPrompt } from "../state/ws";
 import type { FileDiffSummary, QueuedPrompt } from "../../../types/protocol";
-import { Composer, insertIntoComposer, ModelSheet, PlusSheet, restoreIntoComposer, SkillsSheet } from "./Composer";
+import {
+  cancelQueuedPromptEdit,
+  Composer,
+  editQueuedPrompt,
+  insertIntoComposer,
+  ModelSheet,
+  PlusSheet,
+  SkillsSheet,
+} from "./Composer";
 import { ConnectionBanner } from "./Home";
 import { openOverlay } from "./overlays";
 import { PromptCard } from "./PromptCard";
-import { DiffView, openDiffs, ScreenCard, TodoCapsule, TodoSheet, ToolSheet, Turn } from "./Transcript";
+import { DiffView, renderPath, ScreenCard, TodoCapsule, TodoSheet, ToolSheet, Turn } from "./Transcript";
 import { DiffBadge, findPane, Icon, paneLabel, paneStatus, paneSummary, Sheet, StatusIcon } from "./ui";
 import { t, type MessageId } from "../i18n";
 
@@ -95,7 +103,7 @@ function ChangesSheet(props: { onClose: () => void }) {
                   <button class="li" onClick={() => setExpanded(isExp() ? null : path)}>
                     <div class="tx mono" style={{ "font-size": "13.5px", "overflow-wrap": "anywhere" }}>
                       {path.split("/").pop()}
-                      <small>{path}</small>
+                      <small class="path-rev">{renderPath(path)}</small>
                     </div>
                     <DiffBadge add={f.add} del={f.del} />
                     <Icon name={isExp() ? "chevD" : "chevR"} sm class="chev" />
@@ -157,11 +165,9 @@ function PaneSheet(props: { onClose: () => void }) {
 
 type Panel = "menu" | "changes" | "panes" | "plus" | "skills" | "model" | null;
 
-/** mobile-ui-and-themes.md §3.5: take a queued prompt out of the queue and back into the composer. */
+/** mobile-ui-and-themes.md §3.5: edit a queued prompt in-place on the server without changing queue position. */
 function editQueued(q: QueuedPrompt): void {
-  request({ type: "queue_cancel", payload: { targetPaneId: state.activePaneId!, queueId: q.queueId } })
-    .then(() => restoreIntoComposer(q.text, q.attachments))
-    .catch((e) => showToast(e.code === "ERR_NOT_FOUND" ? t("session.alreadySent") : e.message || t("session.undoFailed")));
+  editQueuedPrompt(q.queueId, q.text, q.attachments);
 }
 
 export function SessionPage() {
@@ -301,7 +307,17 @@ export function SessionPage() {
                 <>
                   <For each={state.cards}>{(c) => <ScreenCard card={c} />}</For>
                   <Show when={state.cards.length === 0}>
-                    <div class="newempty">{state.connected ? t("session.loading") : t("common.offline")}</div>
+                    <Show
+                      when={state.paneLoaded}
+                      fallback={<div class="newempty">{state.connected ? t("session.loading") : t("common.offline")}</div>}
+                    >
+                      <div class="newempty">
+                        <div style={{ "margin-bottom": "8px" }}>{t("session.noStructuredSession")}</div>
+                        <button class="btn primary" onClick={() => openTerminal()}>
+                          {t("session.openTerminal")}
+                        </button>
+                      </div>
+                    </Show>
                   </Show>
                 </>
               }
@@ -326,17 +342,22 @@ export function SessionPage() {
                 <>
                   <div class="ub q">{q.text || t("session.attachments", { count: q.attachments.length })}</div>
                   <div class="ubm">
-                    {t("session.queued")}
-                    <Show when={composerVisible()}>
-                      <button onClick={() => editQueued(q)}>{t("session.edit")}</button>
+                    {q.sending ? t("common.sending") : t("session.queued")}
+                    <Show when={!q.sending}>
+                      <Show when={composerVisible()}>
+                        <button onClick={() => editQueued(q)}>{t("session.edit")}</button>
+                      </Show>
+                      <button
+                        onClick={() => {
+                          cancelQueuedPromptEdit(q.queueId);
+                          request({ type: "queue_cancel", payload: { targetPaneId: state.activePaneId!, queueId: q.queueId } }).catch((e) =>
+                            showToast(e.message || t("session.undoFailed"))
+                          );
+                        }}
+                      >
+                        {t("session.undo")}
+                      </button>
                     </Show>
-                    <button
-                      onClick={() =>
-                        request({ type: "queue_cancel", payload: { targetPaneId: state.activePaneId!, queueId: q.queueId } }).catch((e) => showToast(e.message || t("session.undoFailed")))
-                      }
-                    >
-                      {t("session.undo")}
-                    </button>
                   </div>
                 </>
               )}
@@ -363,7 +384,15 @@ export function SessionPage() {
             <Composer
               draftId={paneId}
               placeholder={isTerminal() ? t("composer.placeholderCommand") : working() ? t("composer.placeholderQueued") : t("composer.placeholderReply")}
-              onSend={(text, ids) => sendPrompt(text, ids)}
+              onSend={(text, ids, queueId) => {
+                if (queueId) {
+                  return request({
+                    type: "queue_update",
+                    payload: { targetPaneId: state.activePaneId!, queueId, text, attachments: ids },
+                  });
+                }
+                return sendPrompt(text, ids);
+              }}
               working={working()}
               onStop={stop}
               onPlus={isTerminal() ? undefined : () => setPanel("plus")}

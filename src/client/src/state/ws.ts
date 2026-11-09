@@ -1,6 +1,6 @@
-import { state, setState, applySyncedClientConfig, openTerminal, setUnread, showToast } from "./store";
+import { state, setState, applySyncedClientConfig, openTerminal, setUnread, showToast, writePref } from "./store";
 import { load, save, remove, clearAll, sweep, meta, migrateLocalStorageCache, type PaneCacheEntry } from "./pane-cache";
-import type { ClientMessage, ServerMessage, SnapshotPayload, PaneStatePayload, ClientConfig, AgentStatus, HaveInfo } from "../../../types/protocol";
+import type { ClientMessage, ServerMessage, SnapshotPayload, PaneStatePayload, ClientConfig, AgentStatus, HaveInfo, QuotaProviderState } from "../../../types/protocol";
 import { hashTurn } from "../../../types/protocol";
 import { t } from "../i18n";
 
@@ -29,6 +29,9 @@ function toPlain<T>(obj: T): T {
   return JSON.parse(JSON.stringify(obj));
 }
 
+let saveDebounceTimer: ReturnType<typeof setTimeout> | null = null;
+let pendingSavePaneId: string | null = null;
+
 function saveActivePaneSnapshot(paneId: string): void {
   if (state.session?.bound && state.session.sessionId && state.normalizedTurns.length) {
     void save(paneId, {
@@ -38,8 +41,30 @@ function saveActivePaneSnapshot(paneId: string): void {
       sessionTitle: state.sessionTitle,
       todos: state.todos ? toPlain(state.todos) : null,
       session: state.session ? toPlain(state.session) : null,
+      queue: toPlain(state.queue),
     });
   }
+}
+
+export function debouncedSaveActivePaneSnapshot(paneId: string, delayMs = 300): void {
+  pendingSavePaneId = paneId;
+  if (saveDebounceTimer) clearTimeout(saveDebounceTimer);
+  saveDebounceTimer = setTimeout(() => {
+    saveDebounceTimer = null;
+    const target = pendingSavePaneId;
+    pendingSavePaneId = null;
+    if (target) saveActivePaneSnapshot(target);
+  }, delayMs);
+}
+
+export function flushActivePaneSnapshot(): void {
+  if (saveDebounceTimer) {
+    clearTimeout(saveDebounceTimer);
+    saveDebounceTimer = null;
+  }
+  const target = pendingSavePaneId || state.activePaneId;
+  pendingSavePaneId = null;
+  if (target) saveActivePaneSnapshot(target);
 }
 
 function scheduleReconnect(): void {
@@ -51,12 +76,22 @@ function nextId(): string {
   return `cli_${++msgId}`;
 }
 
+export function isInAppBrowser(): boolean {
+  if (typeof navigator === "undefined") return false;
+  const ua = navigator.userAgent || "";
+  return /MicroMessenger|AlipayClient|Weibo|DingTalk|QQ\//i.test(ua);
+}
+
 export async function checkPairingFromUrlHash(): Promise<void> {
   const hash = window.location.hash;
   if (!hash.startsWith("#code=")) return;
   const code = hash.slice("#code=".length).trim();
-  // Purge the token from history before anything else (security-and-pairing.md §2).
-  window.history.replaceState(null, "", "/");
+  // In an in-app browser (e.g. WeChat), do NOT purge hash from URL so that
+  // when user taps "Open in browser" (在浏览器中打开), the scanner forwards the code to Chrome.
+  if (!isInAppBrowser()) {
+    // Purge the token from history in a standard browser (security-and-pairing.md §2).
+    window.history.replaceState(null, "", "/");
+  }
   const ok = await pairWithCode(code);
   if (!ok) setState("paired", false);
 }
@@ -177,7 +212,7 @@ function applyPaneState(p: PaneStatePayload): void {
   });
   if (prevStatus === "working" && p.agentStatus !== "working") {
     if (state.activePaneId) {
-      saveActivePaneSnapshot(state.activePaneId);
+      flushActivePaneSnapshot();
     }
   }
 }
@@ -212,6 +247,7 @@ export function handleServerMessage(msg: ServerMessage): void {
       applySyncedClientConfig(msg.payload.clientConfig);
       setState("recipes", msg.payload.recipes);
       setState("serverVersion", msg.payload.serverVersion);
+      void fetchQuota();
       return;
 
     case "skills_sync":
@@ -249,6 +285,7 @@ export function handleServerMessage(msg: ServerMessage): void {
 
     case "pane_state":
       applyPaneState(msg.payload);
+      if (msg.payload.paneId === state.activePaneId) setState("paneLoaded", true);
       return;
 
     case "normalized_turns": {
@@ -266,14 +303,7 @@ export function handleServerMessage(msg: ServerMessage): void {
       if (!msg.payload.session?.bound || (metaInfo && metaInfo.sessionId !== msg.payload.session?.sessionId)) {
         void remove(msg.payload.paneId);
       } else if (msg.payload.session?.sessionId && msg.payload.turns?.length) {
-        void save(msg.payload.paneId, {
-          sessionId: msg.payload.session.sessionId,
-          turns: msg.payload.turns,
-          sessionStats: msg.payload.sessionStats || null,
-          sessionTitle: msg.payload.sessionTitle || null,
-          todos: msg.payload.todos || null,
-          session: msg.payload.session,
-        });
+        saveActivePaneSnapshot(msg.payload.paneId);
       }
       return;
     }
@@ -295,6 +325,7 @@ export function handleServerMessage(msg: ServerMessage): void {
       if (sessionTitle) setState("sessionTitle", sessionTitle);
       if (todos) setState("todos", todos);
       if (session) setState("session", session);
+      debouncedSaveActivePaneSnapshot(msg.payload.paneId);
       return;
     }
 
@@ -408,9 +439,10 @@ export function respondInteraction(interactionId: string, optionId: string, fing
 
 /** The one navigation entry point into a pane: workspace and tab follow from it. */
 export async function selectPane(paneId: string): Promise<void> {
+  writePref("pigeon_active_pane", paneId);
   const previousPaneId = state.activePaneId;
   if (previousPaneId && previousPaneId !== paneId) {
-    saveActivePaneSnapshot(previousPaneId);
+    flushActivePaneSnapshot();
   }
 
   freshDataArrivedPaneId = null;
@@ -429,6 +461,7 @@ export async function selectPane(paneId: string): Promise<void> {
     skills: [],
     terminalOpen: false,
     paneSyncing: false,
+    paneLoaded: false,
   });
 
   for (const w of state.workspaces) {
@@ -456,6 +489,7 @@ export async function selectPane(paneId: string): Promise<void> {
       sessionTitle: cached.sessionTitle || null,
       todos: cached.todos || null,
       session: cached.session || null,
+      queue: cached.queue || [],
       paneSyncing: true,
     });
     if (cached.sessionId && cached.turns.length > 0) {
@@ -467,22 +501,39 @@ export async function selectPane(paneId: string): Promise<void> {
     }
   }
 
-  const selectViewId = nextId();
-  pendingSelectViewId = selectViewId;
-  sendMessage({
-    type: "select_view",
-    id: selectViewId,
-    payload: {
-      paneId,
-      ...(have ? { have } : {}),
-    },
-  });
+  if (socket && socket.readyState === WebSocket.OPEN) {
+    const selectViewId = nextId();
+    pendingSelectViewId = selectViewId;
+    sendMessage({
+      type: "select_view",
+      id: selectViewId,
+      payload: {
+        paneId,
+        ...(have ? { have } : {}),
+      },
+    });
+  }
   reportPresence();
 }
 
 export function sendConfigPatch(patch: Partial<ClientConfig>): void {
   applySyncedClientConfig(patch);
   sendMessage({ type: "config_patch", id: nextId(), payload: { client: patch } });
+}
+
+/** protocol.md §4.16: always answered from the daemon's 60-second cache. */
+export async function fetchQuota(): Promise<QuotaProviderState[]> {
+  try {
+    const res = await request({ type: "quota_get", payload: {} });
+    if (res?.providers) {
+      setState("quotaSnapshots", res.providers);
+      setState("quotaUpdated", Date.now());
+      return res.providers;
+    }
+  } catch (err) {
+    console.error("[Pigeon] fetchQuota error", err);
+  }
+  return state.quotaSnapshots;
 }
 
 /** protocol.md §7: uploads go over HTTP before the prompt names them. */
@@ -523,7 +574,7 @@ void sweep();
 if (typeof document !== "undefined") {
   document.addEventListener("visibilitychange", () => {
     if (document.visibilityState === "hidden" && state.activePaneId) {
-      saveActivePaneSnapshot(state.activePaneId);
+      flushActivePaneSnapshot();
     }
     if (document.visibilityState === "visible") {
       const stale = Date.now() - lastPongTime > 30000;
@@ -541,7 +592,7 @@ if (typeof document !== "undefined") {
 if (typeof window !== "undefined") {
   window.addEventListener("pagehide", () => {
     if (state.activePaneId) {
-      saveActivePaneSnapshot(state.activePaneId);
+      flushActivePaneSnapshot();
     }
   });
 }

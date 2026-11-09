@@ -96,6 +96,14 @@ export function validateClientMessage(raw: unknown): ValidationResult {
     case "queue_cancel":
       if (!isObj(p) || !isStr(p.targetPaneId) || !isStr(p.queueId, 64)) return fail(id, "queue_cancel needs targetPaneId and queueId");
       return ok();
+    case "queue_update":
+      if (!isObj(p) || !isStr(p.targetPaneId) || !isStr(p.queueId, 64) || typeof p.text !== "string") {
+        return fail(id, "queue_update needs targetPaneId, queueId and text");
+      }
+      if (p.attachments !== undefined && (!Array.isArray(p.attachments) || !p.attachments.every((a: unknown) => isStr(a, 64)))) {
+        return fail(id, "queue_update attachments must be string[]");
+      }
+      return ok();
     case "models_refresh":
       if (!isObj(p)) return fail(id, "models_refresh needs a payload object");
       return ok();
@@ -108,14 +116,79 @@ export function validateClientMessage(raw: unknown): ValidationResult {
       const err = validateClientConfigPatch(p.client);
       return err ? fail(id, err) : ok();
     }
+    case "quota_get":
+      if (p !== undefined && !isObj(p)) {
+        return fail(id, "quota_get payload must be an object");
+      }
+      return ok();
+    case "usage_get": {
+      if (!isObj(p)) return fail(id, "usage_get needs a payload object");
+      const validPresets = new Set(["today", "7d", "30d", "year", "all", "custom"]);
+      if (typeof p.preset !== "string" || !validPresets.has(p.preset)) {
+        return fail(id, "usage_get needs a valid preset ('today', '7d', '30d', 'year', 'all', 'custom')");
+      }
+      if (p.force !== undefined && typeof p.force !== "boolean") return fail(id, "usage_get force must be a boolean");
+      if (p.preset === "custom") {
+        if (!isDateStr(p.from) || !isDateStr(p.to)) {
+          return fail(id, "usage_get custom preset requires 'from' and 'to' (YYYY-MM-DD)");
+        }
+      } else {
+        if (p.from !== undefined || p.to !== undefined) {
+          return fail(id, "usage_get fixed preset must not carry 'from' or 'to'");
+        }
+      }
+      if (!isValidAgentList(p.agents)) {
+        return fail(id, "usage_get needs a non-empty list of distinct valid agents");
+      }
+      return ok();
+    }
+    case "usage_day":
+      if (!isObj(p) || !isDateStr(p.date) || !isValidAgentList(p.agents)) {
+        return fail(id, "usage_day needs date (YYYY-MM-DD) and non-empty distinct valid agents");
+      }
+      return ok();
+    case "usage_model":
+      if (!isObj(p) || !isStr(p.model) || !isDateStr(p.from) || !isDateStr(p.to) || !isValidAgentList(p.agents)) {
+        return fail(id, "usage_model needs model, from, to (YYYY-MM-DD) and non-empty distinct valid agents");
+      }
+      return ok();
     default:
       return fail(id, `Unsupported message type '${type}'`);
   }
 }
 
+const VALID_PROVIDERS = new Set(["claude", "codex", "antigravity"]);
+const VALID_AGENT_KINDS = new Set(["claude", "codex", "agy", "opencode", "pi"]);
+
+function isDateStr(v: unknown): v is string {
+  return typeof v === "string" && /^\d{4}-\d{2}-\d{2}$/.test(v);
+}
+
+function isValidAgentList(v: unknown): v is string[] {
+  if (!Array.isArray(v) || v.length === 0) return false;
+  const set = new Set<string>();
+  for (const item of v) {
+    if (typeof item !== "string" || !VALID_AGENT_KINDS.has(item)) return false;
+    if (set.has(item)) return false;
+    set.add(item);
+  }
+  return true;
+}
+
 const CONFIG_CHECKS: Record<keyof ClientConfig, (v: unknown) => boolean> = {
   themeMode: (v) => v === "system" || v === "light" || v === "dark",
   accent: (v) => typeof v === "string" && (ACCENT_NAMES as readonly string[]).includes(v),
+  quotaDisplay: (v) => v === "remaining" || v === "used",
+  quotaButton: (v) => typeof v === "boolean",
+  quotaShowAccount: (v) => typeof v === "boolean",
+  usageScanMode: (v) => v === "realtime" || v === "scheduled",
+  usageScanInterval: (v) => v === "1m" || v === "2m" || v === "5m" || v === "10m" || v === "15m",
+  quotaProviders: (v) => {
+    if (!isObj(v)) return false;
+    const keys = Object.keys(v);
+    if (keys.length === 0) return true;
+    return keys.every((k) => VALID_PROVIDERS.has(k) && typeof (v as any)[k] === "boolean");
+  },
 };
 
 /** Returns an error message, or null when every key is known and well-typed. */

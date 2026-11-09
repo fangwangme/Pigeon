@@ -1,4 +1,4 @@
-const CACHE_NAME = "pigeon-cache-v1";
+const CACHE_NAME = "pigeon-cache-v2";
 
 // A new version waits until the page asks it to take over, so an update never reloads the app
 // while the user is typing; the page shows an "update available" prompt instead.

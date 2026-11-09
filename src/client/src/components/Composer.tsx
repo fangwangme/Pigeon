@@ -1,7 +1,7 @@
 import { createMemo, createSignal, For, onCleanup, Show, type JSX } from "solid-js";
 import { draftKey, readPref, showToast, state, writePref } from "../state/store";
 import { refreshModels, uploadFile } from "../state/ws";
-import type { AgentRecipeSummary, ModelOption, SkillEntry } from "../../../types/protocol";
+import type { AgentRecipeSummary, SkillEntry } from "../../../types/protocol";
 import { Icon, Sheet } from "./ui";
 import { t, type MessageId } from "../i18n";
 
@@ -103,14 +103,30 @@ export function ModelSheet(props: {
 }) {
   const [query, setQuery] = createSignal("");
   const [refreshing, setRefreshing] = createSignal(false);
+  const [selectedModel, setSelectedModel] = createSignal<string | null>(props.model);
+  const [selectedThinking, setSelectedThinking] = createSignal<string | null>(props.thinking);
+
   const models = () => props.recipe?.models ?? [];
   // mobile-ui-and-themes.md §6.4: the whole list, filtered by id and label.
   const shown = () => {
     const q = query().trim().toLowerCase();
     return q ? models().filter((m) => m.id.toLowerCase().includes(q) || m.label.toLowerCase().includes(q)) : models();
   };
-  const current = () => models().find((m) => m.id === props.model);
+  const current = () => models().find((m) => m.id === selectedModel());
   const levels = () => current()?.thinkingLevels ?? [];
+
+  const handleConfirm = () => {
+    const mId = selectedModel();
+    const th = selectedThinking();
+    if (mId !== props.model || th !== props.thinking) {
+      props.onPick({
+        ...(mId !== props.model ? { modelId: mId ?? undefined } : {}),
+        ...(th !== props.thinking ? { thinking: th ?? undefined } : {}),
+      });
+    }
+    props.onClose();
+  };
+
   const refresh = () => {
     setRefreshing(true);
     refreshModels()
@@ -118,7 +134,22 @@ export function ModelSheet(props: {
       .finally(() => setRefreshing(false));
   };
   return (
-    <Sheet title={t("model.title")} sub={props.recipe?.label} onClose={props.onClose}>
+    <Sheet
+      title={t("model.title")}
+      sub={props.recipe?.label}
+      onClose={props.onClose}
+      right={
+        <button
+          class="cbtn"
+          style={{ color: "var(--accent)" }}
+          aria-label={t("common.confirm")}
+          title={t("common.confirm")}
+          onClick={handleConfirm}
+        >
+          <Icon name="check" />
+        </button>
+      }
+    >
       <div class="fl">
         <span>{t("model.model")}</span>
         <Show when={props.modelSource}>
@@ -146,14 +177,21 @@ export function ModelSheet(props: {
           <For each={shown()}>
             {(m) => (
               <button
-                class={`li${!props.canSwitchModel && m.id !== props.model ? " off" : ""}`}
-                onClick={() => props.canSwitchModel && m.id !== props.model && props.onPick({ modelId: m.id })}
+                class={`li${!props.canSwitchModel ? " off" : ""}`}
+                onClick={() => {
+                  if (!props.canSwitchModel) return;
+                  setSelectedModel(m.id);
+                  const lvls = m.thinkingLevels ?? [];
+                  if (selectedThinking() && !lvls.includes(selectedThinking()!)) {
+                    setSelectedThinking(lvls[0] ?? null);
+                  }
+                }}
               >
                 <div class="tx">
                   {m.label}
                   <small class="mono">{m.id}</small>
                 </div>
-                <Show when={m.id === props.model}>
+                <Show when={m.id === selectedModel()}>
                   <span class="ck">
                     <Icon name="check" />
                   </span>
@@ -173,7 +211,11 @@ export function ModelSheet(props: {
         <div class="seg">
           <For each={levels()}>
             {(l) => (
-              <button class={l === props.thinking ? "on" : ""} disabled={!props.canSwitchThinking} onClick={() => props.canSwitchThinking && l !== props.thinking && props.onPick({ thinking: l })}>
+              <button
+                class={l === selectedThinking() ? "on" : ""}
+                disabled={!props.canSwitchThinking}
+                onClick={() => props.canSwitchThinking && setSelectedThinking(l)}
+              >
                 {l}
               </button>
             )}
@@ -199,8 +241,8 @@ const isTouch = () => typeof window !== "undefined" && !!window.matchMedia?.("(p
 export interface ComposerProps {
   draftId: string | null;
   placeholder: string;
-  /** Resolves when sent; a rejection keeps the draft (§1.2). */
-  onSend: (text: string, attachmentIds: string[]) => Promise<unknown>;
+  /** Resolves when sent; a rejection keeps the draft (§1.2). queueId is present when updating an in-place queued prompt. */
+  onSend: (text: string, attachmentIds: string[], queueId?: string) => Promise<unknown>;
   working?: boolean;
   onStop?: () => void;
   allowAttachments?: boolean;
@@ -221,13 +263,25 @@ export function restoreIntoComposer(text: string, uploadIds: string[]): void {
   restoreHook?.(text, uploadIds);
 }
 
+let editQueueHook: ((queueId: string, text: string, uploadIds: string[]) => void) | null = null;
+/** Modifies a queued prompt in-place on the server without changing queue position. */
+export function editQueuedPrompt(queueId: string, text: string, uploadIds: string[]): void {
+  editQueueHook?.(queueId, text, uploadIds);
+}
+
+let cancelEditQueueHook: ((queueId?: string) => void) | null = null;
+export function cancelQueuedPromptEdit(queueId?: string): void {
+  cancelEditQueueHook?.(queueId);
+}
+
 export function Composer(props: ComposerProps) {
   const [text, setText] = createSignal(readPref(draftKey(props.draftId)) ?? "");
   const [focused, setFocused] = createSignal(false);
   const [composing, setComposing] = createSignal(false);
   const [caret, setCaret] = createSignal(0);
   const [atts, setAtts] = createSignal<Attachment[]>([]);
-  const [sending, setSending] = createSignal(false);
+  const [sending, setSending] = createSignal<boolean>(false);
+  const [editingQueueId, setEditingQueueId] = createSignal<string | null>(null);
   let keySeq = 0;
   let ta: HTMLTextAreaElement | undefined;
 
@@ -306,8 +360,35 @@ export function Composer(props: ComposerProps) {
     }, 20);
   };
   restoreHook = restore;
+
+  const startEditQueue = (queueId: string, s: string, uploadIds: string[]) => {
+    setEditingQueueId(queueId);
+    save(s);
+    setAtts(uploadIds.map((id) => ({ key: ++keySeq, name: t("composer.attachment"), id })));
+    setTimeout(() => {
+      if (!ta) return;
+      ta.focus();
+      ta.setSelectionRange(s.length, s.length);
+      setCaret(s.length);
+      grow();
+    }, 20);
+  };
+  editQueueHook = startEditQueue;
+
+  const cancelEdit = (qId?: string) => {
+    if (qId && editingQueueId() !== qId) return;
+    setEditingQueueId(null);
+    save("");
+    for (const a of atts()) if (a.preview) URL.revokeObjectURL(a.preview);
+    setAtts([]);
+    setTimeout(grow, 0);
+  };
+  cancelEditQueueHook = cancelEdit;
+
   onCleanup(() => {
     if (restoreHook === restore) restoreHook = null;
+    if (editQueueHook === startEditQueue) editQueueHook = null;
+    if (cancelEditQueueHook === cancelEdit) cancelEditQueueHook = null;
   });
 
   const uploading = () => atts().some((a) => !a.id);
@@ -315,10 +396,12 @@ export function Composer(props: ComposerProps) {
   const send = () => {
     if (!canSend()) return;
     const ids = atts().map((a) => a.id!);
+    const qId = editingQueueId();
     setSending(true);
     props
-      .onSend(text().trim(), ids)
+      .onSend(text().trim(), ids, qId ?? undefined)
       .then(() => {
+        setEditingQueueId(null);
         save("");
         for (const a of atts()) if (a.preview) URL.revokeObjectURL(a.preview);
         setAtts([]);
@@ -328,7 +411,7 @@ export function Composer(props: ComposerProps) {
       .finally(() => setSending(false));
   };
 
-  const open = () => focused() || atts().length > 0 || text().includes("\n");
+  const open = () => focused() || atts().length > 0 || text().includes("\n") || !!editingQueueId();
   const showStop = () => props.working && !text().trim() && atts().length === 0;
 
   return (
@@ -351,6 +434,14 @@ export function Composer(props: ComposerProps) {
         </div>
       </Show>
       <div class={`comp${open() ? " open" : ""}`}>
+        <Show when={editingQueueId()}>
+          <div class="qedit-bar">
+            <span>{t("session.editingQueued")}</span>
+            <button type="button" onClick={() => cancelEdit()}>
+              {t("session.cancelEdit")}
+            </button>
+          </div>
+        </Show>
         <Show when={atts().length}>
           <div class="thumbs">
             <For each={atts()}>
@@ -377,18 +468,13 @@ export function Composer(props: ComposerProps) {
             </For>
           </div>
         </Show>
-        <Show when={!open() && props.onPlus}>
-          <button class="rb" aria-label={t("plus.title")} onClick={() => props.onPlus!()}>
-            <Icon name="plus" />
-          </button>
-        </Show>
         <textarea
           ref={(el) => {
             ta = el;
             textareaEl = el;
             setTimeout(grow, 0);
           }}
-          rows={1}
+          rows={open() ? 2 : 1}
           value={text()}
           placeholder={props.placeholder}
           enterkeyhint={isTouch() ? "enter" : "send"}
@@ -396,8 +482,14 @@ export function Composer(props: ComposerProps) {
           autocomplete="off"
           aria-autocomplete="none"
           data-form-type="other"
-          onFocus={() => setFocused(true)}
-          onBlur={() => setTimeout(() => setFocused(false), 120)}
+          onFocus={() => {
+            setFocused(true);
+            setTimeout(grow, 0);
+          }}
+          onBlur={() => setTimeout(() => {
+            setFocused(false);
+            grow();
+          }, 120)}
           onCompositionStart={() => setComposing(true)}
           onCompositionEnd={(e) => {
             setComposing(false);

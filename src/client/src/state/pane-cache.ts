@@ -1,4 +1,4 @@
-import type { NormalizedTurn, SessionStats, TodoItem, SessionInfo, HaveInfo } from "../../../types/protocol";
+import type { NormalizedTurn, SessionStats, TodoItem, SessionInfo, HaveInfo, QueuedPrompt } from "../../../types/protocol";
 import { hashTurn } from "../../../types/protocol";
 
 export const PANE_CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
@@ -14,6 +14,7 @@ export interface PaneCacheEntry {
   sessionTitle?: string | null;
   todos?: TodoItem[] | null;
   session?: SessionInfo | null;
+  queue?: QueuedPrompt[];
 }
 
 export const DB_NAME = "pigeon";
@@ -130,6 +131,7 @@ export async function save(
     sessionTitle?: string | null;
     todos?: TodoItem[] | null;
     session?: SessionInfo | null;
+    queue?: QueuedPrompt[];
   }
 ): Promise<void> {
   if (!entry.sessionId) return;
@@ -147,6 +149,7 @@ export async function save(
     sessionTitle: entry.sessionTitle,
     todos: entry.todos,
     session: entry.session,
+    queue: entry.queue,
   };
 
   await new Promise<void>((resolve, reject) => {

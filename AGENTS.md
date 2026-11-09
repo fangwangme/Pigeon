@@ -7,6 +7,13 @@
 - Shared specs live under `docs/specs/`
 - Agent notes, plans, archives, and project status live under `.agents/`
 
+## Ports and Service Environments
+
+- **Formal / Production (正式版)**: Port `4100`. Uses `$XDG_RUNTIME_DIR/pigeon.sock` and `devices.json`.
+- **Test / Development (测试版)**: Port `4101` (`bun run dev:server` or `bun ./src/cli/index.ts start --insecure-dev --port 4101`).
+- **Client Dev Server (Vite 前端调试)**: Port `5173` (`bun run dev`), proxies `/api` and `/ws` to the test daemon on `4101`.
+- Any non-4100 port automatically isolates the admin socket to `pigeon-<port>.sock` and device pairing to `devices-<port>.json`. Never run test/dev daemons on port 4100 to avoid conflicting with the production service.
+
 ## Development Workflow
 
 1. Before starting feature work, read `AGENTS.md`, `.agents/PROJECT_STATUS.md`, `.agents/LESSONS.md`, and the relevant `docs/specs/`.

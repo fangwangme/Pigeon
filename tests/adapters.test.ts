@@ -317,6 +317,88 @@ describe("structured session adapters (agent-session-normalization.md §2)", () 
       const { model } = adapter.getTurns("s_model", false);
       expect(model).toBe("Gemini 3.8 Flash (Medium)");
     });
+
+    test("Extracts diffs and computes session stats for edit_file and write_file", () => {
+      const brain = join(testDir, "brain_diffs");
+      const logs = join(brain, "s_diffs", ".system_generated", "logs");
+      mkdirSync(logs, { recursive: true });
+      const logFile = join(logs, "transcript.jsonl");
+
+      const line0 = JSON.stringify({
+        step_index: 0,
+        type: "USER_INPUT",
+        content: "<USER_REQUEST>update code</USER_REQUEST>",
+        created_at: new Date(1000).toISOString(),
+      });
+      // edit_file with quoted args as generated in transcript.jsonl
+      const line1 = JSON.stringify({
+        step_index: 1,
+        type: "PLANNER_RESPONSE",
+        tool_calls: [
+          {
+            name: "edit_file",
+            args: {
+              Path: '"/workspace/src/foo.ts"',
+              Target: '"const a = 1;\\nconst b = 2;"',
+              Replacement: '"const a = 1;\\nconst b = 3;\\nconst c = 4;"',
+            },
+          },
+          {
+            name: "write_file",
+            args: {
+              Path: '"/workspace/src/bar.ts"',
+              Content: '"line1\\nline2\\n"',
+              Overwrite: '"true"',
+            },
+          },
+          {
+            name: "write_file",
+            args: {
+              Path: '"/workspace/src/new.ts"',
+              Content: '"hello world\\n"',
+            },
+          },
+        ],
+        created_at: new Date(2000).toISOString(),
+      });
+
+      writeFileSync(logFile, `${line0}\n${line1}\n`, "utf-8");
+      const adapter = new AgyAdapter({ baseBrainDir: brain });
+      const { turns, stats } = adapter.getTurns("s_diffs", false);
+
+      expect(turns).toHaveLength(1);
+      const calls = turns[0].toolCalls!;
+      expect(calls).toHaveLength(3);
+
+      // 1. edit_file
+      expect(calls[0].verb).toBe("edit");
+      expect(calls[0].target).toBe("/workspace/src/foo.ts");
+      expect(calls[0].diff).toBeDefined();
+      expect(calls[0].diff?.status).toBe("modified");
+      expect(calls[0].diff?.additions).toBe(2);
+      expect(calls[0].diff?.deletions).toBe(1);
+
+      // 2. write_file with overwrite -> edit
+      expect(calls[1].verb).toBe("edit");
+      expect(calls[1].target).toBe("/workspace/src/bar.ts");
+      expect(calls[1].diff).toBeDefined();
+      expect(calls[1].diff?.status).toBe("modified");
+      expect(calls[1].diff?.additions).toBe(3);
+
+      // 3. write_file new file -> create
+      expect(calls[2].verb).toBe("create");
+      expect(calls[2].target).toBe("/workspace/src/new.ts");
+      expect(calls[2].diff).toBeDefined();
+      expect(calls[2].diff?.status).toBe("created");
+      expect(calls[2].diff?.additions).toBe(2);
+
+      // Cumulative stats
+      expect(stats).toBeDefined();
+      expect(stats?.filesModified).toBe(3);
+      expect(stats?.additions).toBe(7);
+      expect(stats?.deletions).toBe(1);
+      expect(stats?.diffs).toHaveLength(3);
+    });
   });
 
   describe("Antigravity full re-read", () => {

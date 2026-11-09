@@ -1,4 +1,5 @@
 import { randomBytes } from "node:crypto";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import type { ServerWebSocket } from "bun";
 import { HerdrError, type HerdrClient } from "./herdr-client";
 import type { DeviceSession, PairingManager } from "./pairing";
@@ -21,12 +22,16 @@ import {
   type QueuedPrompt,
   type HaveInfo,
   type TurnsDeltaPayload,
+  type NormalizedTurn,
   hashTurn,
 } from "../types/protocol";
 
 const PROTOCOL_VERSION = "1.0.0";
-export const SERVER_VERSION = "0.1.5";
+export const SERVER_VERSION = "0.1.6";
 const PUSH_DEDUPE_MS = 60_000;
+
+import { QuotaService } from "./quota/index";
+import { UsageService } from "./usage/index";
 
 export interface WsServerOptions {
   /** Identifies the client bundle being served (protocol.md §3.2). */
@@ -42,6 +47,9 @@ export interface WsServerOptions {
   pairingManager?: PairingManager;
   /** Every agent's model list (`herdr-adapter.md` §7.1); without it only the static lists are known. */
   modelCatalog?: ModelCatalog;
+  quotaService?: QuotaService;
+  usageService?: UsageService;
+  queueFilePath?: string;
 }
 
 export interface ClientConnectionData {
@@ -84,13 +92,20 @@ export class WsServer {
   private answeringPanes = new Set<string>();
   private uploadStore?: UploadStore;
   private pairingManager?: PairingManager;
+  private quotaService?: QuotaService;
+  private usageService?: UsageService;
   // protocol.md §4.2: prompts waiting for the pane's turn to end, oldest first.
   /** `item` is what the phone sees (its own text and upload ids, so **编辑** can restore them); `send` is the composed prompt. */
+  private queueFilePath?: string;
   private queues = new Map<string, Array<{ item: QueuedPrompt; send: string }>>();
   private flushing = new Set<string>();
+  private sawWorkingAfterSend = new Map<string, boolean>();
+  private sendingTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
   constructor(options: WsServerOptions) {
     this.buildId = options.buildId;
+    this.queueFilePath = options.queueFilePath;
+    this.loadQueues();
     this.herdrClient = options.herdrClient;
     this.pushManager = options.pushManager;
     this.modelCatalog = options.modelCatalog ?? new ModelCatalog();
@@ -100,13 +115,20 @@ export class WsServer {
     this.skillScanner = options.skillScanner || new SkillScanner();
     this.uploadStore = options.uploadStore;
     this.pairingManager = options.pairingManager;
+    this.quotaService = options.quotaService;
+    this.usageService = options.usageService;
     // security-and-pairing.md §5: a revoked device (from the phone or `pigeon devices revoke`) is cut off at once.
     this.pairingManager?.on("device_revoked", (deviceId: string) => this.closeDevice(deviceId));
 
     this.herdrClient.on("connected", () => this.paneStore.setHerdrStatus(true));
     this.herdrClient.on("disconnected", () => this.paneStore.setHerdrStatus(false));
     this.paneStore.on("upstream_status", (status) => this.broadcast({ type: "upstream_status", payload: status }));
-    this.paneStore.on("turns_delta", (delta) => this.sendToSubscribers(delta.paneId, { type: "turns_delta", payload: delta }));
+    this.paneStore.on("turns_delta", (delta) => {
+      this.sendToSubscribers(delta.paneId, { type: "turns_delta", payload: delta });
+      if (delta.sinceTurnIndex > 0 && delta.appendTurns && delta.appendTurns.length > 0 && delta.appendTurns.some((t: NormalizedTurn) => !!t.userPrompt)) {
+        this.clearSendingPrompt(delta.paneId);
+      }
+    });
     this.paneStore.on("session_changed", (paneId: string) => {
       this.sendToSubscribers(paneId, { type: "normalized_turns", payload: this.paneStore.getPayload(paneId, this.herdrClient.getPaneAgentKind(paneId)) });
     });
@@ -123,7 +145,20 @@ export class WsServer {
       for (const paneId of this.paneStore.trackedPaneIds()) {
         if (!this.herdrClient.hasPane(paneId)) this.paneStore.closePane(paneId);
       }
-      for (const paneId of Array.from(this.queues.keys())) if (!this.herdrClient.hasPane(paneId)) this.queues.delete(paneId);
+      for (const paneId of Array.from(this.queues.keys())) {
+        if (!this.herdrClient.hasPane(paneId)) {
+          this.queues.delete(paneId);
+          this.flushing.delete(paneId);
+          this.sawWorkingAfterSend.delete(paneId);
+          for (const [key, timer] of Array.from(this.sendingTimers.entries())) {
+            if (key.startsWith(`${paneId}:`)) {
+              clearTimeout(timer);
+              this.sendingTimers.delete(key);
+            }
+          }
+        }
+      }
+      this.saveQueues();
       this.rebindSessions();
       this.broadcast({ type: "snapshot_update", payload: snapshot });
     });
@@ -136,6 +171,9 @@ export class WsServer {
     this.herdrClient.on("pane_status_changed", ({ paneId, status }: { paneId: string; status: string }) => {
       const previous = this.lastStatus.get(paneId);
       this.lastStatus.set(paneId, status);
+      if (status === "working") {
+        this.sawWorkingAfterSend.set(paneId, true);
+      }
       if (status === "idle" || status === "done") void this.flushQueue(paneId);
       // herdr-adapter.md §4: finishing while a phone visibly watches it is finishing seen.
       if (status === "done" && this.pushManager.shouldSuppressPush(paneId)) this.herdrClient.markSeen(paneId);
@@ -337,13 +375,42 @@ export class WsServer {
         const { targetPaneId, queueId } = msg.payload;
         const queue = this.queues.get(targetPaneId) ?? [];
         const idx = queue.findIndex((q) => q.item.queueId === queueId);
-        if (idx === -1) {
+        if (idx === -1 || queue[idx].item.sending) {
           this.sendError(ws, msg.id, ProtocolErrors.ERR_NOT_FOUND, "That prompt is no longer queued.");
           return;
         }
         queue.splice(idx, 1);
+        this.saveQueues();
         this.sendQueue(targetPaneId);
         this.sendAck(ws, msg.id, { queueId });
+        return;
+      }
+
+      case "queue_update": {
+        const { targetPaneId, queueId, text, attachments } = msg.payload;
+        if (!this.requireKnownPane(ws, msg.id, targetPaneId)) return;
+        const queue = this.queues.get(targetPaneId) ?? [];
+        const entry = queue.find((q) => q.item.queueId === queueId);
+        if (!entry || entry.item.sending) {
+          this.sendError(ws, msg.id, ProtocolErrors.ERR_NOT_FOUND, "That prompt is no longer queued.");
+          return;
+        }
+        const paths: string[] = [];
+        for (const id of attachments ?? []) {
+          const info = this.uploadStore?.get(id);
+          if (!info) {
+            this.sendError(ws, msg.id, ProtocolErrors.ERR_INVALID_PAYLOAD, `Unknown upload '${id}'`);
+            return;
+          }
+          paths.push(info.path);
+        }
+        const full = this.composePrompt(targetPaneId, text, paths);
+        entry.item.text = text;
+        entry.item.attachments = attachments ?? [];
+        entry.send = full;
+        this.saveQueues();
+        this.sendQueue(targetPaneId);
+        this.sendAck(ws, msg.id, { queueId, updated: true });
         return;
       }
 
@@ -498,11 +565,31 @@ export class WsServer {
 
       case "config_patch": {
         const client = this.configManager.patchClientConfig(msg.payload.client);
+        this.usageService?.updateConfig();
         this.configVersion++;
         this.sendAck(ws, msg.id, { version: this.configVersion, client });
         this.broadcastConfigUpdated(client, ws);
         return;
       }
+
+      case "quota_get": {
+        this.quotaService ??= new QuotaService({ configManager: this.configManager });
+        const res = await this.quotaService.getQuota(this.configManager.getClientConfig());
+        this.sendAck(ws, msg.id, { providers: res.providers });
+        return;
+      }
+
+      case "usage_get":
+        this.sendAck(ws, msg.id, (await this.usage().getUsage(msg.payload)) as any);
+        return;
+
+      case "usage_day":
+        this.sendAck(ws, msg.id, (await this.usage().getDay(msg.payload)) as any);
+        return;
+
+      case "usage_model":
+        this.sendAck(ws, msg.id, (await this.usage().getModel(msg.payload)) as any);
+        return;
     }
   }
 
@@ -555,6 +642,12 @@ export class WsServer {
     const cached = this.herdrClient.getPaneState(paneId);
     if (cached) this.send(ws, { type: "pane_state", payload: cached });
     await this.herdrClient.readAndClassifyPane(paneId);
+  }
+
+  /** The daemon injects its usage service; tests without one get a service on first use. */
+  private usage(): UsageService {
+    this.usageService ??= new UsageService({ configManager: this.configManager });
+    return this.usageService;
   }
 
   /** Skills are per pane: they depend on the agent kind and the project directory. */
@@ -637,6 +730,7 @@ export class WsServer {
       const item: QueuedPrompt = { queueId: `q_${randomBytes(6).toString("hex")}`, ...shown, createdAt: Date.now() };
       queue.push({ item, send });
       this.queues.set(paneId, queue);
+      this.saveQueues();
       this.sendQueue(paneId);
       if (replyTo) this.sendAck(ws, replyTo, { queued: true, queueId: item.queueId });
       return;
@@ -649,25 +743,106 @@ export class WsServer {
   private async flushQueue(paneId: string): Promise<void> {
     const queue = this.queues.get(paneId);
     if (!queue?.length || this.flushing.has(paneId)) return;
-    const { item, send } = queue.shift()!;
+    const entry = queue[0];
+    if (entry.item.sending) return;
+    entry.item.sending = true;
     this.flushing.add(paneId);
+    this.sawWorkingAfterSend.set(paneId, false);
+    this.saveQueues();
     this.sendQueue(paneId);
     try {
-      await this.herdrClient.sendPrompt(paneId, send);
+      await this.herdrClient.sendPrompt(paneId, entry.send);
+      if (this.paneStore.boundSession(paneId)) {
+        this.armSendingCleanup(paneId, entry.item.queueId);
+      } else {
+        this.clearSendingPrompt(paneId, entry.item.queueId);
+      }
     } catch (err) {
+      this.clearSendingPrompt(paneId, entry.item.queueId);
       const code = err instanceof HerdrError ? HERDR_ERROR_MAP[err.code] || ProtocolErrors.ERR_INTERNAL : ProtocolErrors.ERR_INTERNAL;
       if (!(err instanceof HerdrError)) console.error(`[pigeon] sending queued prompt to ${paneId} failed:`, err);
       this.sendToSubscribers(paneId, {
         type: "error",
-        error: { code, message: err instanceof Error ? err.message : String(err), details: { queueId: item.queueId, paneId } },
+        error: { code, message: err instanceof Error ? err.message : String(err), details: { queueId: entry.item.queueId, paneId } },
       });
-    } finally {
+    }
+  }
+
+  private armSendingCleanup(paneId: string, queueId: string): void {
+    const key = `${paneId}:${queueId}`;
+    if (this.sendingTimers.has(key)) clearTimeout(this.sendingTimers.get(key)!);
+    const timer = setTimeout(() => {
+      this.sendingTimers.delete(key);
+      this.clearSendingPrompt(paneId, queueId);
+    }, 30000);
+    this.sendingTimers.set(key, timer);
+  }
+
+  private clearSendingPrompt(paneId: string, queueId?: string): void {
+    const queue = this.queues.get(paneId);
+    if (!queue) {
       this.flushing.delete(paneId);
+      this.sawWorkingAfterSend.delete(paneId);
+      return;
+    }
+    const idx = queueId ? queue.findIndex((q) => q.item.queueId === queueId) : queue.findIndex((q) => q.item.sending);
+    if (idx !== -1) {
+      const foundQueueId = queue[idx].item.queueId;
+      const key = `${paneId}:${foundQueueId}`;
+      if (this.sendingTimers.has(key)) {
+        clearTimeout(this.sendingTimers.get(key)!);
+        this.sendingTimers.delete(key);
+      }
+      queue.splice(idx, 1);
+      this.saveQueues();
+      this.sendQueue(paneId);
+    }
+    this.flushing.delete(paneId);
+    if (this.sawWorkingAfterSend.get(paneId)) {
+      this.sawWorkingAfterSend.delete(paneId);
+      const status = this.herdrClient.getPaneHerdrStatus(paneId);
+      if (status === "idle" || status === "done") {
+        void this.flushQueue(paneId);
+      }
     }
   }
 
   private sendQueue(paneId: string): void {
     this.sendToSubscribers(paneId, { type: "prompt_queue", payload: { paneId, items: (this.queues.get(paneId) ?? []).map((q) => q.item) } });
+  }
+
+  private loadQueues(): void {
+    if (!this.queueFilePath || !existsSync(this.queueFilePath)) return;
+    try {
+      const raw = readFileSync(this.queueFilePath, "utf8");
+      const data = JSON.parse(raw);
+      if (typeof data === "object" && data !== null) {
+        for (const [paneId, items] of Object.entries(data)) {
+          if (Array.isArray(items)) {
+            // protocol.md §4.2: a prompt in sending state was already dispatched; it is not restored on daemon restart
+            const pending = (items as Array<{ item: QueuedPrompt; send: string }>).filter((entry) => !entry?.item?.sending);
+            if (pending.length > 0) {
+              this.queues.set(paneId, pending);
+            }
+          }
+        }
+      }
+    } catch (e) {
+      console.error("[Pigeon] failed to load queues from disk:", e);
+    }
+  }
+
+  private saveQueues(): void {
+    if (!this.queueFilePath) return;
+    try {
+      const obj: Record<string, Array<{ item: QueuedPrompt; send: string }>> = {};
+      for (const [paneId, list] of this.queues.entries()) {
+        if (list.length > 0) obj[paneId] = list;
+      }
+      writeFileSync(this.queueFilePath, JSON.stringify(obj, null, 2), "utf8");
+    } catch (e) {
+      console.error("[Pigeon] failed to save queues to disk:", e);
+    }
   }
 
   private requireKnownPane(ws: Ws, replyTo: string, paneId: string): boolean {
@@ -709,6 +884,9 @@ export class WsServer {
   }
 
   public destroy(): void {
+    for (const timer of this.sendingTimers.values()) clearTimeout(timer);
+    this.sendingTimers.clear();
+    this.usageService?.destroy();
     this.paneStore.destroy();
   }
 }

@@ -5,6 +5,7 @@ import type { PaneSummary, TabSummary, WorkspaceSummary } from "../../../types/p
 import { openOverlay } from "./overlays";
 import { agentLabel, Icon, Logo, paneStatus, paneSummary, primaryPane, StatusIcon, tabStatus, type RowStatus } from "./ui";
 import { t, type MessageId } from "../i18n";
+import { quotaDot } from "../../../shared/quota";
 
 function passes(status: RowStatus, agent: string | null | undefined, f: FilterState): boolean {
   if (status === "terminal" && !f.showTerminals) return false;
@@ -114,8 +115,17 @@ function agentPanes(): Array<{ ws: WorkspaceSummary; tab: TabSummary; pane: Pane
 }
 
 function FilterButton() {
+  const dot = () => quotaDot(state.quotaSnapshots);
   return (
     <div class="cap">
+      <Show when={state.quotaButton}>
+        <button aria-label={t("quota.title")} onClick={() => navigate({ name: "quota", from: "home" })}>
+          <Icon name="gauge" />
+          <Show when={dot()}>
+            <span class={`dot ${dot() === "danger" ? "red" : "amber"}`} />
+          </Show>
+        </button>
+      </Show>
       <button aria-label={t("filter.title")} onClick={() => openOverlay({ kind: "filter" })}>
         <Icon name="sliders" />
         <Show when={filterActive()}>
@@ -267,6 +277,14 @@ export function AgentsPage() {
           <div class="t">{t("agents.title")}</div>
         </div>
         <div class="cap">
+          <Show when={state.quotaButton}>
+            <button aria-label={t("quota.title")} onClick={() => navigate({ name: "quota", from: "agents" })}>
+              <Icon name="gauge" />
+              <Show when={quotaDot(state.quotaSnapshots)}>
+                <span class={`dot ${quotaDot(state.quotaSnapshots) === "danger" ? "red" : "amber"}`} />
+              </Show>
+            </button>
+          </Show>
           <button aria-label={t("filter.title")} onClick={() => openOverlay({ kind: "filter" })}>
             <Icon name="sliders" />
             <Show when={filterActive()}>

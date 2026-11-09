@@ -1,10 +1,12 @@
 import { createEffect, createSignal, For, on, Show } from "solid-js";
 import { navigate, setLocalePref, setReduceTransparency, setState, showToast, state, systemReducesTransparency } from "../state/store";
-import { initWebSocket, request, sendConfigPatch } from "../state/ws";
+import { initWebSocket, isInAppBrowser, request, sendConfigPatch } from "../state/ws";
 import { ACCENTS, resolveMode } from "../themes";
-import type { AccentName, DeviceInfo, ThemeMode } from "../../../types/protocol";
+import type { AccentName, DeviceInfo, QuotaProvidersConfig, ThemeMode, UsageGetPayload } from "../../../types/protocol";
 import { ago, Icon, Logo } from "./ui";
 import { LOCALES, rich, t, type LocalePref, type MessageId } from "../i18n";
+import { fmtCost } from "./UsagePage";
+import { formatYMD } from "../../../shared/usage";
 
 /** §8.1: the newest devices shown before the rest are folded away. */
 const DEVICES_SHOWN = 5;
@@ -40,6 +42,47 @@ export function Settings() {
       .then((ack) => setDevices(ack.devices ?? []))
       .catch(() => setDevices(null));
   createEffect(on(() => state.connected, (c) => c && void load()));
+
+  const [usageSummaryText, setUsageSummaryText] = createSignal<string>("—");
+  createEffect(
+    on(
+      () => state.connected,
+      (c) => {
+        if (c) {
+          void request({
+            type: "usage_get",
+            payload: { preset: "7d", agents: ["claude", "codex", "agy", "opencode", "pi"] },
+          })
+            .then((res: UsageGetPayload) => {
+              if (res && res.totals && res.days) {
+                const now = new Date();
+                const todayStr = formatYMD(now);
+                const todayCost = res.days.find((d) => d.date === todayStr)?.cost ?? 0;
+                setUsageSummaryText(t("settings.usageSummary", { today: fmtCost(todayCost), week: fmtCost(res.totals.cost) }));
+              }
+            })
+            .catch(() => {});
+        }
+      }
+    )
+  );
+
+  const quotaSummaryText = () => {
+    const items: string[] = [];
+    const used = state.quotaDisplay === "used";
+    for (const pKey of ["claude", "codex", "antigravity"] as const) {
+      if (state.quotaProviders[pKey] === false) continue;
+      const snap = state.quotaSnapshots.find((s) => s.provider === pKey)?.snapshot;
+      if (!snap || !snap.windows.length) continue;
+      const w = snap.windows[0];
+      const name = pKey === "claude" ? "Claude 5h" : pKey === "codex" ? "Codex" : "Antigravity";
+      const pct = Math.round(used ? w.usedPercent : Math.max(0, 100 - w.usedPercent));
+      const remOrUsed = used ? t("settings.quotaUsedSummary", { pct: pct.toString() }) : t("settings.quotaRemSummary", { pct: pct.toString() });
+      items.push(`${name} ${remOrUsed}`);
+    }
+    return items.length ? items.join(" · ") : "—";
+  };
+
   const revoke = (d: DeviceInfo) =>
     request({ type: "device_revoke", payload: { deviceId: d.deviceId } })
       .then(() => {
@@ -105,6 +148,164 @@ export function Settings() {
             </For>
           </div>
           <p class="note">{t("settings.languageNote")}</p>
+
+          <div class="sec">{t("settings.quotaUsage")}</div>
+          <div class="card">
+            <button class="li" onClick={() => navigate({ name: "quota", from: "settings" })}>
+              <span style={{ width: "32px", height: "32px", "border-radius": "9px", background: "var(--accentbg)", color: "var(--accent)", display: "grid", "place-items": "center", flex: "none" }}>
+                <Icon name="gauge" sm />
+              </span>
+              <div class="tx">
+                {t("settings.subscriptionQuota")}
+                <small>{quotaSummaryText()}</small>
+              </div>
+              <Icon name="chevR" sm />
+            </button>
+            <button class="li" onClick={() => navigate({ name: "usage", from: "settings" })}>
+              <span style={{ width: "32px", height: "32px", "border-radius": "9px", background: "var(--accentbg)", color: "var(--accent)", display: "grid", "place-items": "center", flex: "none" }}>
+                <Icon name="barChart" sm />
+              </span>
+              <div class="tx">
+                {t("settings.tokenUsage")}
+                <small>{usageSummaryText()}</small>
+              </div>
+              <Icon name="chevR" sm />
+            </button>
+            <div class="li">
+              <div class="tx">{t("settings.quotaDisplay")}</div>
+              <div
+                class="seg"
+                style={{
+                  display: "grid",
+                  "grid-template-columns": "repeat(2, minmax(0, 1fr))",
+                  width: "180px",
+                  padding: "2px",
+                  "border-radius": "9px",
+                  flex: "none",
+                }}
+              >
+                <button
+                  class={state.quotaDisplay !== "used" ? "on" : ""}
+                  style={{ height: "30px", "font-size": "13px" }}
+                  onClick={() => sendConfigPatch({ quotaDisplay: "remaining" })}
+                >
+                  {t("settings.remaining")}
+                </button>
+                <button
+                  class={state.quotaDisplay === "used" ? "on" : ""}
+                  style={{ height: "30px", "font-size": "13px" }}
+                  onClick={() => sendConfigPatch({ quotaDisplay: "used" })}
+                >
+                  {t("settings.used")}
+                </button>
+              </div>
+            </div>
+            <button class="li" onClick={() => sendConfigPatch({ quotaButton: !state.quotaButton })}>
+              <div class="tx">{t("settings.showQuotaButton")}</div>
+              <span class={`tg${state.quotaButton ? "" : " off"}`} />
+            </button>
+            <button class="li" onClick={() => sendConfigPatch({ quotaShowAccount: state.quotaShowAccount === false })}>
+              <div class="tx">{t("settings.quotaShowAccount")}</div>
+              <span class={`tg${state.quotaShowAccount !== false ? "" : " off"}`} />
+            </button>
+            <div class="li">
+              <div class="tx">{t("settings.usageScanMode")}</div>
+              <div
+                class="seg"
+                style={{
+                  display: "grid",
+                  "grid-template-columns": "repeat(2, minmax(0, 1fr))",
+                  width: "180px",
+                  padding: "2px",
+                  "border-radius": "9px",
+                  flex: "none",
+                }}
+              >
+                <button
+                  class={state.usageScanMode !== "realtime" ? "on" : ""}
+                  style={{ height: "30px", "font-size": "12.5px" }}
+                  onClick={() => sendConfigPatch({ usageScanMode: "scheduled" })}
+                >
+                  {t("settings.usageScanScheduled")}
+                </button>
+                <button
+                  class={state.usageScanMode === "realtime" ? "on" : ""}
+                  style={{ height: "30px", "font-size": "12.5px" }}
+                  onClick={() => sendConfigPatch({ usageScanMode: "realtime" })}
+                >
+                  {t("settings.usageScanRealtime")}
+                </button>
+              </div>
+            </div>
+
+            <Show when={state.usageScanMode !== "realtime"}>
+              <div class="li" style={{ "justify-content": "space-between", "align-items": "center" }}>
+                <div class="tx">{t("settings.usageScanInterval")}</div>
+                <div style={{ display: "inline-flex", gap: "6px" }}>
+                  <For each={["1m", "2m", "5m", "10m", "15m"] as const}>
+                    {(interval) => {
+                      const isSel = () => (state.usageScanInterval || "5m") === interval;
+                      return (
+                        <button
+                          style={{
+                            height: "28px",
+                            padding: "0 8px",
+                            "border-radius": "6px",
+                            border: "1px solid var(--line)",
+                            font: "inherit",
+                            "font-size": "12px",
+                            "font-weight": isSel() ? 650 : 500,
+                            background: isSel() ? "var(--accentbg)" : "var(--surface)",
+                            color: isSel() ? "var(--accent)" : "var(--fg)",
+                            transition: "all .15s",
+                          }}
+                          onClick={() => sendConfigPatch({ usageScanInterval: interval })}
+                        >
+                          {interval}
+                        </button>
+                      );
+                    }}
+                  </For>
+                </div>
+              </div>
+            </Show>
+          </div>
+          <p class="note">{t("settings.usageScanModeHint")}</p>
+
+          <div class="sec">{t("settings.queriedProviders")}</div>
+          <div class="card">
+            <For each={["claude", "codex", "antigravity"] as const}>
+              {(pKey) => {
+                const isOn = () => state.quotaProviders[pKey] !== false;
+                const snap = () => state.quotaSnapshots.find((s) => s.provider === pKey);
+                const sub = () => {
+                  if (!isOn()) return t("settings.providerDisabled");
+                  const s = snap();
+                  if (s?.snapshot?.plan) return t("settings.providerPlan", { plan: s.snapshot.plan });
+                  if (s?.snapshot) return t("settings.providerActive");
+                  return t("settings.providerActive");
+                };
+                const toggle = () => {
+                  const updated: QuotaProvidersConfig = {
+                    claude: state.quotaProviders.claude !== false,
+                    codex: state.quotaProviders.codex !== false,
+                    antigravity: state.quotaProviders.antigravity !== false,
+                    [pKey]: !isOn(),
+                  };
+                  sendConfigPatch({ quotaProviders: updated });
+                };
+                return (
+                  <button class="li" onClick={toggle}>
+                    <div class="tx">
+                      {pKey === "claude" ? "Claude Code" : pKey === "codex" ? "Codex" : "Antigravity"}
+                      <small>{sub()}</small>
+                    </div>
+                    <span class={`tg${isOn() ? "" : " off"}`} />
+                  </button>
+                );
+              }}
+            </For>
+          </div>
 
           <div class="sec">{t("settings.notifications")}</div>
           <div class="card">
@@ -199,6 +400,13 @@ export function Settings() {
 
 /** §8.2: shown alone while this browser holds no valid pairing. */
 export function Pairing() {
+  const [copied, setCopied] = createSignal(false);
+  const copyPairLink = () => {
+    navigator.clipboard.writeText(window.location.href);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
+
   return (
     <div class="page">
       <div class="pair">
@@ -207,6 +415,15 @@ export function Pairing() {
         <p class="note" style={{ "font-size": "15px" }}>
           {t("pair.lead")}
         </p>
+        <Show when={isInAppBrowser()}>
+          <div class="banner warn" style={{ margin: "14px 0", "text-align": "left", width: "100%", "box-sizing": "border-box" }}>
+            <Icon name="alert" />
+            <div>
+              <b>{t("pair.inAppTitle")}</b>
+              <div style={{ "margin-top": "4px", "font-size": "13px" }}>{t("pair.inAppDesc")}</div>
+            </div>
+          </div>
+        </Show>
         <div class="steps">
           <div>
             <span>
@@ -223,6 +440,11 @@ export function Pairing() {
         <button class="btn acc" onClick={() => void initWebSocket()}>
           {t("pair.retry")}
         </button>
+        <Show when={window.location.href.includes("#code=")}>
+          <button class="lnk" style={{ "margin-top": "12px", "font-size": "14px" }} onClick={copyPairLink}>
+            {copied() ? t("common.copied") : t("pair.copyLink")}
+          </button>
+        </Show>
       </div>
     </div>
   );

@@ -37,6 +37,8 @@ svg.i.sm { width: 16px; height: 16px; }
 .cap { height: 44px; border-radius: 22px; display: flex; align-items: center; padding: 0 2px; flex: none; position: relative; }
 .cap button { width: 42px; height: 42px; display: grid; place-items: center; position: relative; }
 .cap .dot, .cbtn .dot { position: absolute; top: 9px; right: 9px; width: 8px; height: 8px; border-radius: 50%; background: var(--accent); }
+.cap .dot.amber { background: var(--warn); }
+.cap .dot.red { background: var(--danger); }
 
 /* ---------- status ---------- */
 .si { width: 22px; height: 22px; display: grid; place-items: center; flex: none; color: var(--faint); }
@@ -154,18 +156,25 @@ svg.i.sm { width: 16px; height: 16px; }
 .dockrow { display: flex; justify-content: space-between; align-items: flex-end; gap: 8px; pointer-events: none; }
 .dockrow > * { pointer-events: auto; }
 .comp { position: relative; min-height: 58px; border-radius: 29px; display: flex; align-items: flex-end; gap: 6px; padding: 6px; }
-.comp textarea { flex: 1; resize: none; border: 0; outline: none; background: none; font-size: 16px; line-height: 1.4; padding: 11px 4px; max-height: 280px; min-width: 0; overflow-y: auto; }
+.comp textarea { flex: 1; resize: none; border: 0; outline: none; background: none; font-size: 16px; line-height: 1.4; padding: 11px 6px 11px 14px; max-height: 280px; min-width: 0; overflow-y: auto; }
 .comp textarea::placeholder { color: var(--faint); }
 .comp.open { border-radius: 26px; flex-direction: column; align-items: stretch; padding: 10px; }
-.comp.open textarea { padding: 4px 6px 10px; }
+.comp.open textarea { padding: 4px 6px 10px; min-height: 64px; }
 .compbar { display: flex; align-items: center; gap: 8px; }
+.compbar .rb { width: 33px; height: 33px; }
+.compbar .rb svg.i { width: 17px; height: 17px; }
+.compbar .rb.send, .compbar .rb.stop { width: 44px; height: 44px; }
+.compbar .rb.send svg.i, .compbar .rb.stop svg.i { width: 20px; height: 20px; }
 .rb { width: 44px; height: 44px; border-radius: 50%; display: grid; place-items: center; background: rgba(127,127,127,.16); flex: none; }
 .rb.send { background: var(--accent); color: var(--onaccent); }
 .rb.send:disabled { background: rgba(127,127,127,.16); color: var(--faint); }
 .rb.stop { background: var(--fg); color: var(--bg); }
 .rb.stop svg { fill: currentColor; stroke: none; }
-.mc { height: 44px; border-radius: 22px; background: rgba(127,127,127,.16); display: inline-flex; align-items: center; gap: 6px; padding: 0 14px; font-size: 14px; max-width: 60%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.mc { height: 33px; border-radius: 17px; background: rgba(127,127,127,.16); display: inline-flex; align-items: center; gap: 5px; padding: 0 10px; font-size: 13px; max-width: calc(100% - 92px); min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .mc em { font-style: normal; color: var(--muted); }
+.mc svg.i { width: 14px; height: 14px; }
+.qedit-bar { display: flex; align-items: center; justify-content: space-between; padding: 2px 8px 6px; font-size: 12.5px; color: var(--accent); font-weight: 500; }
+.qedit-bar button { color: var(--muted); font-size: 12px; background: none; border: 0; cursor: pointer; text-decoration: underline; }
 .sp { flex: 1; }
 .thumbs { display: flex; gap: 8px; padding: 0 4px 10px; overflow-x: auto; }
 .thumb { position: relative; flex: none; height: 56px; min-width: 56px; max-width: 140px; border-radius: 14px; background: var(--surface); border: 1px solid var(--line2); display: flex; align-items: center; justify-content: center; padding: 0 10px; font-size: 12px; color: var(--muted); overflow: hidden; }
@@ -199,6 +208,7 @@ svg.i.sm { width: 16px; height: 16px; }
 .tli .tx { flex: 1; min-width: 0; }
 .tli .v { font-size: 15.5px; }
 .tli .o { font-size: 14px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.path-rev { direction: rtl; text-align: left; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .fl { display: flex; justify-content: space-between; align-items: center; font-size: 13.5px; font-weight: 600; color: var(--muted); margin: 14px 2px 8px; }
 .fl button { color: var(--accent); min-height: 32px; display: inline-flex; align-items: center; gap: 4px; font-weight: 600; }
 .fbox { background: var(--code); border: 1px solid var(--line); border-radius: 14px; padding: 10px 12px; font-size: 13px; line-height: 1.55; white-space: pre-wrap; word-break: break-all; }
@@ -227,9 +237,13 @@ svg.i.sm { width: 16px; height: 16px; }
 .tile3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
 .tile3 button, .tile3 label { background: var(--surface); border: 1px solid var(--line); border-radius: 20px; height: 96px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; font-size: 15px; cursor: pointer; }
 .tile3 svg.i { width: 24px; height: 24px; }
-.seg { display: flex; background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 3px; flex: none; }
-.seg button { flex: 1; text-align: center; padding: 8px 0; border-radius: 9px; font-size: 13.5px; font-weight: 600; color: var(--muted); min-height: 36px; }
-.seg .on { background: var(--bg); color: var(--fg); box-shadow: 0 1px 3px rgba(0,0,0,.2); }
+.seg { display: flex; background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 3px; flex: none; box-sizing: border-box; }
+.seg button { flex: 1; text-align: center; padding: 8px 0; border-radius: 9px; font-size: 13.5px; font-weight: 500; color: var(--muted); min-height: 36px; background: transparent; border: none; transition: background .15s, color .15s, box-shadow .15s; cursor: pointer; }
+.seg .on, .seg button.on { background: var(--elev); color: var(--fg); font-weight: 650; box-shadow: 0 1px 4px rgba(0,0,0,.25), 0 0 0 1px var(--line2); }
+:root[data-theme="dark"] .seg { background: #151518; border-color: rgba(255, 255, 255, 0.08); }
+:root[data-theme="dark"] .seg .on, :root[data-theme="dark"] .seg button.on { background: #2b2b31; color: #FFFFFF; box-shadow: 0 2px 6px rgba(0, 0, 0, 0.45), 0 0 0 1px rgba(255, 255, 255, 0.14); }
+:root[data-theme="light"] .seg { background: #EAEAEB; border-color: rgba(0, 0, 0, 0.06); }
+:root[data-theme="light"] .seg .on, :root[data-theme="light"] .seg button.on { background: #FFFFFF; color: #111113; box-shadow: 0 2px 5px rgba(0, 0, 0, 0.08), 0 0 0 1px rgba(0, 0, 0, 0.04); }
 .sec { font-size: 12.5px; font-weight: 650; color: var(--faint); margin: 14px 4px 6px; letter-spacing: .02em; }
 .sk { display: flex; align-items: baseline; gap: 8px; padding: 10px 4px; border-bottom: 1px solid var(--line); width: 100%; text-align: left; min-height: 44px; }
 .sk .nm { font-size: 14px; color: var(--accent); flex: none; max-width: 55%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }

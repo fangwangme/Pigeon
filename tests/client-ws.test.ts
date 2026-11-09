@@ -30,15 +30,22 @@ describe("reconnecting (protocol.md §2.2)", () => {
   test("a pairing check that cannot reach the daemon is retried 3 seconds later", async () => {
     const original = globalThis.fetch;
     let checks = 0;
-    globalThis.fetch = (async () => {
-      checks++;
-      if (checks === 1) throw new TypeError("Failed to fetch"); // daemon restarting
-      return Response.json({ authenticated: false }); // not paired: ends the loop without a socket
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.href : (input as Request)?.url ?? "";
+      if (url.includes("/api/auth/status")) {
+        checks++;
+        if (checks === 1) throw new TypeError("Failed to fetch"); // daemon restarting
+        return Response.json({ authenticated: false }); // not paired: ends the loop without a socket
+      }
+      return original(input, init);
     }) as unknown as typeof fetch;
     try {
       await initWebSocket();
       expect(checks).toBe(1);
-      await Bun.sleep(3200);
+      const start = Date.now();
+      while (checks < 2 && Date.now() - start < 4500) {
+        await Bun.sleep(100);
+      }
       expect(checks).toBe(2);
       expect(state.paired).toBe(false);
     } finally {
@@ -124,5 +131,37 @@ describe("unread marks (mobile-ui-and-themes.md §2.1, issue #3)", () => {
     setUnread("gone", true);
     handleServerMessage({ type: "snapshot_update", payload: { workspaces: [], workingAgents: [] } } as any);
     expect("gone" in state.unread).toBe(false);
+  });
+});
+
+describe("pane loading and screen card fallback (mobile-ui-and-themes.md §3.6)", () => {
+  test("paneLoaded is false on selectPane and becomes true when pane_state arrives", () => {
+    selectPane("p_load");
+    expect(state.paneLoaded).toBe(false);
+    expect(state.cards).toHaveLength(0);
+
+    // Initial pane_state arrives with no cards (unbound session, empty cards)
+    handleServerMessage({ type: "pane_state", payload: paneState("p_load", 1, "raw screen output") });
+    expect(state.paneLoaded).toBe(true);
+    expect(state.cards).toHaveLength(0);
+    expect(state.session?.bound).toBeFalsy();
+  });
+
+  test("normalized_turns alone leaves paneLoaded false until pane_state arrives", () => {
+    selectPane("p_norm");
+    expect(state.paneLoaded).toBe(false);
+
+    handleServerMessage({
+      type: "normalized_turns",
+      payload: {
+        paneId: "p_norm",
+        turns: [],
+        session: { bound: false, agent: "claude", model: { value: null, source: "unknown" }, thinking: { value: null, source: "unknown" } },
+      },
+    });
+    expect(state.paneLoaded).toBe(false);
+
+    handleServerMessage({ type: "pane_state", payload: paneState("p_norm", 1, "raw screen output") });
+    expect(state.paneLoaded).toBe(true);
   });
 });

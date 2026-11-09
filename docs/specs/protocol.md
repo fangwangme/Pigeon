@@ -85,7 +85,7 @@ Every command except `ping` and `presence_update` carries a string `id`. Success
 ```
 - `text` may be empty only when `attachments` is not. `attachments` holds at most 10 upload ids from §7. An id the daemon does not know is `ERR_INVALID_PAYLOAD`, and nothing is sent.
 - **Attachments**: the daemon appends one line per attachment after a blank line: the file's absolute path, prefixed with the recipe's file-mention prefix (`@` for claude, opencode, pi and agy; none for codex and a plain terminal).
-- **Queue**: when the pane's Herdr status is `working`, or the pane already has queued prompts, the prompt is queued instead of sent (user decision, 2026-11-06). The ack carries `{ "queued": true, "queueId": "q_…" }`, and every viewer of the pane gets `prompt_queue` (§5.8). When the pane's status next becomes `idle` or `done`, the daemon sends the oldest queued prompt; the next one waits for the next `idle` or `done`. A queued prompt that fails to send is dropped from the queue and reported to the viewers as `error` with that prompt's `queueId` in `details`. The queue lives in daemon memory: a daemon restart drops it, and closing the pane drops its queue.
+- **Queue**: when the pane's Herdr status is `working`, or the pane already has queued prompts, the prompt is queued instead of sent (user decision, 2026-11-06). The ack carries `{ "queued": true, "queueId": "q_…" }`, and every viewer of the pane gets `prompt_queue` (§5.8). When the pane's status next becomes `idle` or `done`, the daemon sends the oldest queued prompt, marking it `sending: true` in `prompt_queue`. The prompt remains in `prompt_queue` in the `sending` state until a new user turn appears in this pane's transcript, or sending fails, or a safety timeout (30 seconds) expires. When the pane has no bound session, the prompt is cleared from the queue immediately after send. While in `sending` state, client edits and cancels respond with `ERR_NOT_FOUND`. A queued prompt that fails to send is dropped from the queue and reported to the viewers as `error` with that prompt's `queueId` in `details`. The prompt queue is persisted to disk on each change (`queue.json` or `queue-<port>.json`) and restored on daemon restart; a prompt in `sending` state is not restored; closing the pane drops its queue.
 - **Immediate send**: otherwise the server calls Herdr Core's `terminal.send`, which pastes the text and presses Enter, for agents and plain shells alike, and acks `{ "queued": false }`. Herdr's `blocked` surfaces as `ERR_AGENT_BLOCKED`, `unavailable` as `ERR_AGENT_NOT_READY`, and a timed-out request as `ERR_TIMEOUT` (`herdr-adapter.md` §6).
 - Agent slash commands (`/compact`, a skill's invocation) are ordinary prompt text.
 
@@ -159,13 +159,54 @@ The ack carries `{ "sessions": [ { "id", "title", "updatedAt" } ] }`: the agent'
 ```json
 { "type": "queue_cancel", "id": "cli_17", "payload": { "targetPaneId": "w1:p2", "queueId": "q_1a2b3c" } }
 ```
-Removes the prompt from the pane's queue and sends `prompt_queue` to the viewers. A `queueId` that is no longer queued (it was already sent, or the queue was dropped) is `ERR_NOT_FOUND`.
+Removes the prompt from the pane's queue and sends `prompt_queue` to the viewers. A `queueId` that is no longer queued or is currently in `sending` state is `ERR_NOT_FOUND`.
 
-### 4.14 Refresh Model Lists (`models_refresh`)
+### 4.14 Update a Queued Prompt (`queue_update`)
 ```json
-{ "type": "models_refresh", "id": "cli_18", "payload": {} }
+{ "type": "queue_update", "id": "cli_18", "payload": { "targetPaneId": "w1:p2", "queueId": "q_1a2b3c", "text": "updated prompt", "attachments": ["up_0000000000000001"] } }
+```
+Updates the text and attachments of an existing queued prompt in-place, preserving its exact queue index and order. Rebroadcasts `prompt_queue` to the viewers. A `queueId` that is no longer queued or is currently in `sending` state responds with `ERR_NOT_FOUND`.
+
+### 4.15 Refresh Model Lists (`models_refresh`)
+```json
+{ "type": "models_refresh", "id": "cli_19", "payload": {} }
 ```
 Fills the model catalog again from every agent's source (`herdr-adapter.md` §7.1). The ack comes once the fill has finished and carries `{ "recipes": { … } }` in the shape of §5.7; every connected client also gets `recipes_sync` (§5.9) when a list changed.
+
+### 4.16 Quota (`quota_get`)
+```json
+{ "type": "quota_get", "id": "cli_20", "payload": {} }
+```
+Answers with the quota of every provider (`quota-and-usage.md` §2). Answers from the daemon's 60-second provider cache to protect upstream provider rate limits. The ack carries:
+```json
+{ "providers": [ { "provider": "claude", "enabled": true,
+    "snapshot": { "provider": "claude", "plan": "pro", "account": "you@example.com", "fetchedAt": 1794218000000, "credits": [],
+      "windows": [ { "id": "five_hour", "label": "5h", "usedPercent": 52, "periodMs": 18000000, "resetsAt": 1794228620000 } ] },
+    "error": null } ] }
+```
+One entry per provider, enabled or not; a disabled provider has `snapshot: null` and is not fetched. A provider that failed has `error: { "message", "at" }` and keeps its previous `snapshot` (or null when it never had one). Provider failures never turn into a command error.
+
+### 4.17 Usage Report (`usage_get`)
+```json
+{ "type": "usage_get", "id": "cli_21", "payload": { "preset": "custom", "from": "2026-10-01", "to": "2026-10-31", "agents": ["claude", "codex", "agy", "opencode", "pi"] } }
+```
+`preset` is `today`, `7d`, `30d`, `year`, `all` or `custom`; `custom` requires `from` and `to` (`YYYY-MM-DD`), which other presets must not carry. An optional boolean `force` (the refresh button) scans what changed before answering, also in scheduled mode (`quota-and-usage.md` §3.7). `agents` is a non-empty list of distinct agent kinds and filters every figure in the reply. Anything else is `ERR_INVALID_PAYLOAD` and nothing is scanned. The ack carries:
+- `range` (`from`, `to`), `firstDay` (the first day with usage, or null), `scannedAt`, `pricesAvailable`;
+- `totals` and, when `quota-and-usage.md` §3.5 gives one, `comparison` (`from`, `to`, `totals`); totals are `{ cost, tokens, input, output, cacheRead, cacheWrite, messages, sessions }`;
+- `days`: every day of the range with usage, newest first, each with the totals fields and `date`;
+- `models`: every model with usage in the range, each with the totals fields, `model`, `company`, `agents` (kinds), `lastUsed` and `unpriced`.
+
+### 4.18 Day Detail (`usage_day`)
+```json
+{ "type": "usage_day", "id": "cli_22", "payload": { "date": "2026-11-06", "agents": ["claude", "codex"] } }
+```
+The ack carries `date`, `totals`, and `agents`: per agent its totals and `models` (each model's totals), sorted by cost.
+
+### 4.19 Model Detail (`usage_model`)
+```json
+{ "type": "usage_model", "id": "cli_23", "payload": { "model": "gpt-5-6-sol", "from": "2026-10-11", "to": "2026-11-09", "agents": ["codex"] } }
+```
+The ack carries `model`, `company`, `totals`, `lastUsed`, `agents` (per agent: kind and totals) and `perDay` (every day of the range in order, with `date`, `tokens` and `cost`, zero on days without use). An unknown model is answered with zero totals, not an error.
 
 ## 5. Server Events (`server -> client`)
 
@@ -294,9 +335,9 @@ Each recipe summary also carries `resumable` (the recipe can resume a session), 
 
 ### 5.8 Queue (`prompt_queue`)
 ```json
-{ "type": "prompt_queue", "payload": { "paneId": "w1:p2", "items": [ { "queueId": "q_1a2b3c", "text": "also run lint", "attachments": [], "createdAt": 1729650000000 } ] } }
+{ "type": "prompt_queue", "payload": { "paneId": "w1:p2", "items": [ { "queueId": "q_1a2b3c", "text": "also run lint", "attachments": [], "createdAt": 1729650000000, "sending": false } ] } }
 ```
-The pane's whole queue, oldest first. Sent on pane selection (§3.3) and to the pane's viewers whenever its queue changes. An item's `text` and `attachments` are what the phone sent (its own text and upload ids), so a withdrawn prompt can go back into the composer (`mobile-ui-and-themes.md` §3.5); the prompt that reaches the agent is composed from them as in §4.2.
+The pane's whole queue, oldest first. Sent on pane selection (§3.3) and to the pane's viewers whenever its queue changes. An item's `text` and `attachments` are what the phone sent (its own text and upload ids), so a withdrawn prompt can go back into the composer (`mobile-ui-and-themes.md` §3.5); the prompt that reaches the agent is composed from them as in §4.2. `sending: true` indicates that the prompt has been dispatched to the terminal and is awaiting detection as a user turn in the agent session.
 
 ### 5.9 Recipes (`recipes_sync`)
 ```json
@@ -324,9 +365,9 @@ The client part of `config.json` (appearance) is shared by all paired devices.
 { "type": "config_patch", "id": "cli_21", "payload": { "client": { "accent": "green" } } }
 ```
 *Server Behavior*:
-1. The patch is validated against a whitelist of keys and value types: `themeMode` (`system`, `light`, `dark`) and `accent` (`blue`, `purple`, `green`, `orange`, `pink`). Any unknown key or bad value rejects the whole patch with `ERR_INVALID_PAYLOAD`, and nothing is saved.
+1. The patch is validated against a whitelist of keys and value types: `themeMode` (`system`, `light`, `dark`), `accent` (`blue`, `purple`, `green`, `orange`, `pink`), `quotaProviders` (an object with any of `claude`, `codex`, `antigravity`, each a boolean), `quotaDisplay` (`remaining`, `used`), `quotaButton` (boolean), `quotaShowAccount` (boolean), `usageScanMode` (`scheduled`, `realtime`) and `usageScanInterval` (`1m`, `2m`, `5m`, `10m`, `15m`). Any unknown key or bad value rejects the whole patch with `ERR_INVALID_PAYLOAD`, and nothing is saved.
 2. The patch is deep-merged and written to `config.json` before the reply. A write error is reported as `ERR_INTERNAL`.
-3. Defaults are `themeMode: "system"` and `accent: "blue"`. The config version is bumped. The sender gets `ack` with `{ "version", "client" }`.
+3. Defaults are `themeMode: "system"`, `accent: "blue"`, `quotaDisplay: "remaining"`, `quotaButton: true`, `quotaShowAccount: true`, `usageScanMode: "scheduled"` and `usageScanInterval: "5m"`; `quotaProviders` defaults to the providers logged in on this computer (`quota-and-usage.md` §2.5). The config version is bumped. The sender gets `ack` with `{ "version", "client" }`.
 4. Every other client gets `{ "type": "config_updated", "payload": { "version", "client" } }`. Clients ignore a `config_sync` or `config_updated` whose version is older than one they have already applied.
 
 ## 7. Uploads (`POST /api/uploads`)

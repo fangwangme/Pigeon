@@ -183,5 +183,49 @@ describe("client pane cache (mobile-ui-and-themes.md §3.1)", () => {
       expect(await load("p_sec1")).toBeNull();
       expect(await load("p_sec2")).toBeNull();
     });
+
+    test("turns_delta updates IndexedDB pane cache after debounce (mobile-ui-and-themes.md §3.1)", async () => {
+      setState("activePaneId", "p_delta");
+      setState("session", {
+        bound: true,
+        sessionId: "s_delta",
+        agent: "claude",
+        model: { value: "opus", source: "log" },
+        thinking: { value: null, source: "unknown" },
+      });
+      setState("normalizedTurns", [dummyTurn]);
+      setState("queue", [{ queueId: "q1", text: "queued prompt", attachments: [], createdAt: 123 }]);
+
+      const turn2: NormalizedTurn = { turnId: "t2", turnNumber: 2, timestamp: 2000, userPrompt: { text: "turn 2" } };
+
+      handleServerMessage({
+        type: "turns_delta",
+        payload: {
+          paneId: "p_delta",
+          seqWatermark: 2,
+          sinceTurnIndex: 1,
+          appendTurns: [turn2],
+        },
+      });
+
+      // Before debounce fires
+      expect(await load("p_delta")).toBeNull();
+
+      // Wait for debounce (300ms) to fire
+      await Bun.sleep(350);
+
+      const cached = await load("p_delta");
+      expect(cached).not.toBeNull();
+      expect(cached?.sessionId).toBe("s_delta");
+      expect(cached?.turns).toHaveLength(2);
+      expect(cached?.turns[1].turnId).toBe("t2");
+      expect(cached?.queue).toEqual([{ queueId: "q1", text: "queued prompt", attachments: [], createdAt: 123 }]);
+    });
+
+    test("selectPane when socket is not open does not set lastError to ERR_OFFLINE", async () => {
+      setState("lastError", null);
+      await selectPane("p_offline_test");
+      expect(state.lastError).toBeNull();
+    });
   });
 });

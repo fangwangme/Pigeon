@@ -53,6 +53,15 @@ function callObject(c: NormalizedToolCall): string {
   return c.target || "";
 }
 
+export function isPathCall(c: NormalizedToolCall): boolean {
+  return c.verb !== "run" && !!c.target;
+}
+
+export function renderPath(path: string): string {
+  if (!path) return "";
+  return `\u200E${path}\u200E`;
+}
+
 function totals(calls: NormalizedToolCall[]): { add: number; del: number } {
   let add = 0;
   let del = 0;
@@ -252,7 +261,9 @@ export function ToolSheet() {
                         <div class="v" style={{ color: c.status === "failed" ? "var(--danger)" : undefined }}>
                           {verbLabel(c)}
                         </div>
-                        <div class="o mono">{callObject(c)}</div>
+                        <div class={`o mono${isPathCall(c) ? " path-rev" : ""}`}>
+                          {isPathCall(c) ? renderPath(callObject(c)) : callObject(c)}
+                        </div>
                       </div>
                       <DiffBadge add={c.diff?.additions ?? 0} del={c.diff?.deletions ?? 0} />
                     </button>
@@ -360,7 +371,17 @@ function ToolLine(props: { calls: NormalizedToolCall[] }) {
       <Show when={!running()} fallback={<span class="spin" />}>
         <Icon name={single() ? VERB_ICON[single()!.verb] : "layers"} sm />
       </Show>
-      <span class="lab">{label()}</span>
+      <Show
+        when={single() && isPathCall(single()!)}
+        fallback={<span class="lab">{label()}</span>}
+      >
+        <span class="lab" style={{ display: "inline-flex", "align-items": "center", "min-width": 0, "max-width": "100%" }}>
+          <span style={{ "flex-shrink": 0, "margin-right": "4px" }}>{verbLabel(single()!)}</span>
+          <span class="path-rev mono" style={{ "min-width": 0 }}>
+            {renderPath(callObject(single()!))}
+          </span>
+        </span>
+      </Show>
       <DiffBadge add={tot().add} del={tot().del} />
       <Icon name="chevR" sm class="chev" />
     </button>
@@ -481,7 +502,12 @@ export function ScreenCard(props: { card: Card }) {
       return (
         <button class="tool" onClick={() => openDiffs(c.filePath, [{ filePath: c.filePath, status: "modified", additions: c.additions, deletions: c.deletions, patch: c.diff }])}>
           <Icon name="pencil" sm />
-          <span class="lab">{t("transcript.editFile", { path: c.filePath })}</span>
+          <span class="lab" style={{ display: "inline-flex", "align-items": "center", "min-width": 0, "max-width": "100%" }}>
+            <span style={{ "flex-shrink": 0, "margin-right": "4px" }}>{t("verb.edit")}</span>
+            <span class="path-rev mono" style={{ "min-width": 0 }}>
+              {renderPath(c.filePath)}
+            </span>
+          </span>
           <DiffBadge add={c.additions} del={c.deletions} />
           <Icon name="chevR" sm class="chev" />
         </button>

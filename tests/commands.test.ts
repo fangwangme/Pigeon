@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { AgentAdapterManager } from "../src/server/agent-adapters/index";
 import { ConfigManager } from "../src/server/config-manager";
@@ -12,7 +12,7 @@ import { WsServer } from "../src/server/ws-server";
 import { FakeHerdr, fakeWs, tempDir, topologyOf, type FakePane } from "./helpers/fixtures";
 
 // protocol.md §4.2 (queue, attachments), §4.5 (first message, resume), §4.9 (model), §4.11 (rename),
-// §4.12 (devices), §4.13 (queue cancel), §5.3 (snapshot fields), §5.8 (prompt_queue).
+// §4.12 (devices), §4.13 (queue cancel), §4.14 (queue update), §5.3 (snapshot fields), §5.8 (prompt_queue).
 let dir: string;
 let herdr: FakeHerdr;
 let client: HerdrClient;
@@ -46,6 +46,7 @@ beforeEach(async () => {
     agentAdapters: new AgentAdapterManager({ home: dir }),
     uploadStore: uploads,
     pairingManager: pairing,
+    queueFilePath: join(dir, "queue.json"),
   });
 });
 
@@ -82,14 +83,68 @@ describe("prompt queue (protocol.md §4.2, §4.13, §5.8)", () => {
     expect(herdr.callsOf("terminal.send")).toHaveLength(0);
     expect(c.ofType("prompt_queue").at(-1).payload.items.map((i: any) => i.text)).toEqual(["also run lint"]);
 
+    server.paneStore.registerPaneSession("p1", "claude", "ses_test");
     herdr.emitEvent("status", "p1", { status: { state: "idle", app: "claude-code" } });
     await until(() => herdr.callsOf("terminal.send").length === 1);
     expect(herdr.callsOf("terminal.send")[0].params).toEqual({ terminal: "p1", text: "also run lint" });
+    expect(c.ofType("prompt_queue").at(-1).payload.items[0]).toMatchObject({ text: "also run lint", sending: true });
+
+    server.paneStore.emit("turns_delta", {
+      paneId: "p1",
+      seqWatermark: 1,
+      sinceTurnIndex: 1,
+      appendTurns: [{ turnId: "t1", turnNumber: 1, timestamp: Date.now(), userPrompt: { text: "also run lint" } }],
+    });
     await until(() => c.ofType("prompt_queue").at(-1).payload.items.length === 0);
+  });
+
+  test("an unbound pane clears sending prompt immediately after send without waiting for transcript", async () => {
+    await client.connect();
+    // p1 has no session registered in paneStore (unbound)
+    const c = await viewer("p1");
+    await send(c.ws, { type: "agent_prompt", id: "a1", payload: { targetPaneId: "p1", text: "unbound prompt" } });
+    herdr.emitEvent("status", "p1", { status: { state: "idle", app: "claude-code" } });
+    await until(() => herdr.callsOf("terminal.send").length === 1);
+    expect(herdr.callsOf("terminal.send")[0].params).toEqual({ terminal: "p1", text: "unbound prompt" });
+    // Immediately cleared because pane is unbound
+    await until(() => c.ofType("prompt_queue").at(-1).payload.items.length === 0);
+  });
+
+  test("a sending prompt on a bound pane is cleared when turns_delta has userPrompt, and next prompt flushes", async () => {
+    await client.connect();
+    server.paneStore.registerPaneSession("p1", "claude", "ses_main");
+    const c = await viewer("p1");
+    await send(c.ws, { type: "agent_prompt", id: "a1", payload: { targetPaneId: "p1", text: "first prompt" } });
+    await send(c.ws, { type: "agent_prompt", id: "a2", payload: { targetPaneId: "p1", text: "second prompt" } });
+
+    herdr.emitEvent("status", "p1", { status: { state: "idle", app: "claude-code" } });
+    await until(() => herdr.callsOf("terminal.send").length === 1);
+    expect(herdr.callsOf("terminal.send")[0].params.text).toBe("first prompt");
+    expect(c.ofType("prompt_queue").at(-1).payload.items[0]).toMatchObject({ text: "first prompt", sending: true });
+
+    // Emit turns_delta with a new user turn
+    server.paneStore.emit("turns_delta", {
+      paneId: "p1",
+      seqWatermark: 1,
+      sinceTurnIndex: 1,
+      appendTurns: [{ turnId: "t1", turnNumber: 1, timestamp: Date.now(), userPrompt: { text: "first prompt" } }],
+    });
+
+    // First prompt is gone, second prompt is still waiting
+    await until(() => c.ofType("prompt_queue").at(-1).payload.items.length === 1);
+    expect(c.ofType("prompt_queue").at(-1).payload.items[0]).toMatchObject({ text: "second prompt" });
+    expect(c.ofType("prompt_queue").at(-1).payload.items[0].sending).toBeFalsy();
+
+    // Agent finishes and becomes idle; second prompt becomes sending
+    herdr.emitEvent("status", "p1", { status: { state: "idle", app: "claude-code" } });
+    await until(() => herdr.callsOf("terminal.send").length === 2);
+    expect(herdr.callsOf("terminal.send")[1].params.text).toBe("second prompt");
+    expect(c.ofType("prompt_queue").at(-1).payload.items[0]).toMatchObject({ text: "second prompt", sending: true });
   });
 
   test("queued prompts go out one per idle, oldest first", async () => {
     await client.connect();
+    server.paneStore.registerPaneSession("p1", "claude", "ses_order");
     const c = await viewer("p1");
     await send(c.ws, { type: "agent_prompt", id: "a1", payload: { targetPaneId: "p1", text: "one" } });
     await send(c.ws, { type: "agent_prompt", id: "a2", payload: { targetPaneId: "p1", text: "two" } });
@@ -97,10 +152,107 @@ describe("prompt queue (protocol.md §4.2, §4.13, §5.8)", () => {
     await until(() => herdr.callsOf("terminal.send").length === 1);
     await Bun.sleep(50);
     expect(herdr.callsOf("terminal.send").map((x) => x.params.text)).toEqual(["one"]);
+
+    server.paneStore.emit("turns_delta", {
+      paneId: "p1",
+      seqWatermark: 1,
+      sinceTurnIndex: 1,
+      appendTurns: [{ turnId: "t1", turnNumber: 1, timestamp: Date.now(), userPrompt: { text: "one" } }],
+    });
+    await until(() => c.ofType("prompt_queue").at(-1).payload.items.length === 1);
+    expect(herdr.callsOf("terminal.send").length).toBe(1);
+    expect(c.ofType("prompt_queue").at(-1).payload.items[0]).toMatchObject({ text: "two" });
+    expect(c.ofType("prompt_queue").at(-1).payload.items[0].sending).toBeFalsy();
+
     herdr.emitEvent("status", "p1", { status: { state: "working", app: "claude-code" } });
     herdr.emitEvent("status", "p1", { status: { state: "idle", app: "claude-code" } });
     await until(() => herdr.callsOf("terminal.send").length === 2);
     expect(herdr.callsOf("terminal.send")[1].params.text).toBe("two");
+  });
+
+  test("queued prompts on unbound pane wait for next idle after working", async () => {
+    await client.connect();
+    // Do NOT register session -> unbound pane
+    const c = await viewer("p1");
+    await send(c.ws, { type: "agent_prompt", id: "u1", payload: { targetPaneId: "p1", text: "first unbound" } });
+    await send(c.ws, { type: "agent_prompt", id: "u2", payload: { targetPaneId: "p1", text: "second unbound" } });
+    herdr.emitEvent("status", "p1", { status: { state: "idle" } });
+    await until(() => herdr.callsOf("terminal.send").length === 1);
+    await Bun.sleep(50);
+    expect(herdr.callsOf("terminal.send").map((x) => x.params.text)).toEqual(["first unbound"]);
+
+    // For unbound pane, prompt 1 cleared immediately after send, but prompt 2 waits for next idle
+    await until(() => c.ofType("prompt_queue").at(-1).payload.items.length === 1);
+    expect(herdr.callsOf("terminal.send").length).toBe(1);
+    expect(c.ofType("prompt_queue").at(-1).payload.items[0]).toMatchObject({ text: "second unbound" });
+    expect(c.ofType("prompt_queue").at(-1).payload.items[0].sending).toBeFalsy();
+
+    herdr.emitEvent("status", "p1", { status: { state: "working" } });
+    herdr.emitEvent("status", "p1", { status: { state: "idle" } });
+    await until(() => herdr.callsOf("terminal.send").length === 2);
+    expect(herdr.callsOf("terminal.send")[1].params.text).toBe("second unbound");
+  });
+
+  test("the agent finished during sending, then clearSendingPrompt flushes the next prompt", async () => {
+    await client.connect();
+    server.paneStore.registerPaneSession("p1", "claude", "ses_fast");
+    const c = await viewer("p1");
+    await send(c.ws, { type: "agent_prompt", id: "f1", payload: { targetPaneId: "p1", text: "fast one" } });
+    await send(c.ws, { type: "agent_prompt", id: "f2", payload: { targetPaneId: "p1", text: "fast two" } });
+    herdr.emitEvent("status", "p1", { status: { state: "idle", app: "claude-code" } });
+    await until(() => herdr.callsOf("terminal.send").length === 1);
+    expect(herdr.callsOf("terminal.send")[0].params.text).toBe("fast one");
+
+    // Agent quickly starts and finishes while entry is still marked sending
+    herdr.emitEvent("status", "p1", { status: { state: "working", app: "claude-code" } });
+    herdr.emitEvent("status", "p1", { status: { state: "idle", app: "claude-code" } });
+
+    // Turns delta arrives after the agent already became idle; clearSendingPrompt should flush next prompt
+    server.paneStore.emit("turns_delta", {
+      paneId: "p1",
+      seqWatermark: 1,
+      sinceTurnIndex: 1,
+      appendTurns: [{ turnId: "t1", turnNumber: 1, timestamp: Date.now(), userPrompt: { text: "fast one" } }],
+    });
+
+    await until(() => herdr.callsOf("terminal.send").length === 2);
+    expect(herdr.callsOf("terminal.send")[1].params.text).toBe("fast two");
+  });
+
+  test("a prompt in sending state returns ERR_NOT_FOUND on queue_cancel and queue_update", async () => {
+    await client.connect();
+    server.paneStore.registerPaneSession("p1", "claude", "ses_guard");
+    const c = await viewer("p1");
+    await send(c.ws, { type: "agent_prompt", id: "a1", payload: { targetPaneId: "p1", text: "cannot cancel" } });
+    const queueId = lastAck(c).queueId;
+
+    herdr.emitEvent("status", "p1", { status: { state: "idle", app: "claude-code" } });
+    await until(() => herdr.callsOf("terminal.send").length === 1);
+    expect(c.ofType("prompt_queue").at(-1).payload.items[0]).toMatchObject({ queueId, sending: true });
+
+    // Cancel on sending item responds with ERR_NOT_FOUND
+    await send(c.ws, { type: "queue_cancel", id: "qc1", payload: { targetPaneId: "p1", queueId } });
+    expect(lastError(c)).toBe("ERR_NOT_FOUND");
+
+    // Update on sending item responds with ERR_NOT_FOUND
+    await send(c.ws, { type: "queue_update", id: "qu1", payload: { targetPaneId: "p1", queueId, text: "edited" } });
+    expect(lastError(c)).toBe("ERR_NOT_FOUND");
+  });
+
+  test("a sending prompt is removed after timeout when no user turn appears", async () => {
+    await client.connect();
+    server.paneStore.registerPaneSession("p1", "claude", "ses_timeout");
+    const c = await viewer("p1");
+    await send(c.ws, { type: "agent_prompt", id: "a1", payload: { targetPaneId: "p1", text: "times out" } });
+    const queueId = lastAck(c).queueId;
+
+    herdr.emitEvent("status", "p1", { status: { state: "idle", app: "claude-code" } });
+    await until(() => herdr.callsOf("terminal.send").length === 1);
+    expect(c.ofType("prompt_queue").at(-1).payload.items[0]).toMatchObject({ queueId, sending: true });
+
+    // Trigger clearSendingPrompt directly as simulation of timeout
+    (server as any).clearSendingPrompt("p1", queueId);
+    await until(() => c.ofType("prompt_queue").at(-1).payload.items.length === 0);
   });
 
   test("a prompt to an idle agent is sent at once", async () => {
@@ -132,6 +284,81 @@ describe("prompt queue (protocol.md §4.2, §4.13, §5.8)", () => {
     expect(c.ofType("prompt_queue").at(-1).payload.items).toEqual([]);
     await send(c.ws, { type: "queue_cancel", id: "q2", payload: { targetPaneId: "p1", queueId } });
     expect(lastError(c)).toBe("ERR_NOT_FOUND");
+  });
+
+  test("a queued prompt can be updated in-place, preserving queue order and index", async () => {
+    const c = await viewer("p1");
+    await send(c.ws, { type: "agent_prompt", id: "a1", payload: { targetPaneId: "p1", text: "one" } });
+    const q1 = lastAck(c).queueId;
+    await send(c.ws, { type: "agent_prompt", id: "a2", payload: { targetPaneId: "p1", text: "two" } });
+    const q2 = lastAck(c).queueId;
+    await send(c.ws, { type: "agent_prompt", id: "a3", payload: { targetPaneId: "p1", text: "three" } });
+    const q3 = lastAck(c).queueId;
+
+    expect(c.ofType("prompt_queue").at(-1).payload.items.map((i: any) => i.text)).toEqual(["one", "two", "three"]);
+
+    // Update the middle prompt #2
+    await send(c.ws, { type: "queue_update", id: "u1", payload: { targetPaneId: "p1", queueId: q2, text: "two edited" } });
+    expect(lastAck(c)).toMatchObject({ status: "ok", updated: true });
+    expect(c.ofType("prompt_queue").at(-1).payload.items.map((i: any) => i.text)).toEqual(["one", "two edited", "three"]);
+    expect(c.ofType("prompt_queue").at(-1).payload.items[1].queueId).toBe(q2);
+
+    // Updating a nonexistent queueId is ERR_NOT_FOUND
+    await send(c.ws, { type: "queue_update", id: "u2", payload: { targetPaneId: "p1", queueId: "no-such-id", text: "x" } });
+    expect(lastError(c)).toBe("ERR_NOT_FOUND");
+  });
+
+  test("queued prompts are persisted to disk and reloaded on server restart", async () => {
+    const queueFile = join(dir, "queue.json");
+    const c1 = await viewer("p1");
+    await send(c1.ws, { type: "agent_prompt", id: "a1", payload: { targetPaneId: "p1", text: "persistent prompt" } });
+    expect(lastAck(c1)).toMatchObject({ queued: true });
+    expect(existsSync(queueFile)).toBe(true);
+
+    const newServer = new WsServer({
+      buildId: "b",
+      herdrClient: client,
+      pushManager: new PushManager(join(dir, "vapid.json")),
+      configManager: new ConfigManager(join(dir, "config.json"), { HOME: dir }),
+      skillScanner: new SkillScanner(dir),
+      uploadStore: uploads,
+      pairingManager: pairing,
+      queueFilePath: queueFile,
+    });
+    const clientQueue = (newServer as any).queues.get("p1");
+    expect(clientQueue).toHaveLength(1);
+    expect(clientQueue[0].item.text).toBe("persistent prompt");
+    newServer.destroy();
+  });
+
+  test("a prompt in sending state is not restored on daemon restart and never sent twice", async () => {
+    await client.connect();
+    server.paneStore.registerPaneSession("p1", "claude", "ses_b1");
+    const c1 = await viewer("p1");
+    await send(c1.ws, { type: "agent_prompt", id: "a1", payload: { targetPaneId: "p1", text: "dispatched" } });
+    await send(c1.ws, { type: "agent_prompt", id: "a2", payload: { targetPaneId: "p1", text: "waiting" } });
+
+    // Send first prompt, enters sending state
+    herdr.emitEvent("status", "p1", { status: { state: "idle", app: "claude-code" } });
+    await until(() => herdr.callsOf("terminal.send").length === 1);
+    expect(c1.ofType("prompt_queue").at(-1).payload.items[0]).toMatchObject({ text: "dispatched", sending: true });
+
+    // Restart server using the saved queue file
+    const newServer = new WsServer({
+      buildId: "b",
+      herdrClient: client,
+      pushManager: new PushManager(join(dir, "vapid2.json")),
+      configManager: new ConfigManager(join(dir, "config2.json"), { HOME: dir }),
+      skillScanner: new SkillScanner(dir),
+      uploadStore: uploads,
+      pairingManager: pairing,
+      queueFilePath: (server as any).queueFilePath,
+    });
+    const restoredQueue = (newServer as any).queues.get("p1");
+    // "dispatched" (sending: true) is NOT restored; only "waiting" remains
+    expect(restoredQueue).toHaveLength(1);
+    expect(restoredQueue[0].item.text).toBe("waiting");
+    newServer.destroy();
   });
 });
 

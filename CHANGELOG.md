@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.6] - 2026-11-09
+
+### Added
+- **Subscription quota dashboard**: view Claude, Codex, and Antigravity subscription usage windows, time-based pace, reset times, and reset credits in a mobile-optimized card layout with live dot indicators (#13).
+- **Token usage dashboard**: view multi-agent token consumption and estimated costs with presets (Today, 7D, 30D, Year, All, Custom), responsive heatmap visualizations (strip, week-rows, week-columns with zoom and scroll), daily breakdowns, and model details (#13).
+- **Settings integration**: customize quota provider visibility, remaining vs used bar direction, and dashboard button visibility (#13).
+- **CLI**: `pigeon rebuild-cache` rebuilds the usage database; the admin commands take `--port` to reach a daemon on another port, which keeps its own admin socket, paired devices and prompt queue (#13).
+
+### Changed
+- **Prompt queue**: survives a daemon restart, can be edited in place, and keeps a sent prompt as "sending" until it reaches the transcript (#13).
+- **Conversation page**: the cached transcript stays current across reloads, and a pane without a structured session no longer stays on "Reading this pane…" (#13).
+
 ## [0.1.5] - 2026-11-09
 
 ### Added

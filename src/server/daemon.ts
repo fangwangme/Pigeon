@@ -7,9 +7,11 @@ import { PairingManager } from "./pairing";
 import { PushManager, type PushSubscriptionData } from "./push";
 import { WsServer, newConnectionId, SERVER_VERSION, type ClientConnectionData } from "./ws-server";
 import { EMBEDDED_HTML } from "./embedded-html";
-import { ConfigManager } from "./config-manager";
+import { ConfigManager, portScoped } from "./config-manager";
 import { ModelCatalog } from "./model-catalog";
 import { MAX_UPLOAD_BYTES, UploadStore } from "./uploads";
+import { QuotaService } from "./quota/index";
+import { UsageService } from "./usage/index";
 import { PWA_MANIFEST, PWA_SW_SCRIPT, PWA_ICON_SVG, PWA_ICON_192_BASE64, PWA_ICON_512_BASE64 } from "./pwa-assets";
 
 export interface DaemonConfig {
@@ -22,6 +24,7 @@ export interface DaemonConfig {
   /** Overrides for tests; production derives these from the config's state directory. */
   adminSocketPath?: string;
   devicesFilePath?: string;
+  queueFilePath?: string;
   vapidPath?: string;
   uploadsDir?: string;
   embeddedHtml?: string;
@@ -36,6 +39,7 @@ export interface ResolvedDaemonConfig {
   herdrCoreSocketPath: string;
   adminSocketPath: string;
   devicesFilePath: string;
+  queueFilePath: string;
   vapidPath: string;
   uploadsDir: string;
 }
@@ -132,8 +136,9 @@ export class PigeonDaemon {
       publicBaseUrl: resolvePublicBaseUrl({ configured: opts.publicBaseUrl || serverCfg.publicBaseUrl, insecureDev, port }),
       herdrAppSocketPath: opts.herdrAppSocketPath || serverCfg.herdrAppSocketPath,
       herdrCoreSocketPath: opts.herdrCoreSocketPath || serverCfg.herdrCoreSocketPath,
-      adminSocketPath: opts.adminSocketPath || serverCfg.adminSocketPath,
-      devicesFilePath: opts.devicesFilePath || join(serverCfg.stateDir, "devices.json"),
+      adminSocketPath: opts.adminSocketPath || portScoped(serverCfg.adminSocketPath, port),
+      devicesFilePath: opts.devicesFilePath || portScoped(join(serverCfg.stateDir, "devices.json"), port),
+      queueFilePath: opts.queueFilePath || portScoped(join(serverCfg.stateDir, "queue.json"), port),
       vapidPath: opts.vapidPath || join(serverCfg.stateDir, "vapid.json"),
       uploadsDir: opts.uploadsDir || join(serverCfg.stateDir, "uploads"),
     };
@@ -159,11 +164,14 @@ export class PigeonDaemon {
       appSocketPath: this.config.herdrAppSocketPath,
       coreSocketPath: this.config.herdrCoreSocketPath,
     });
+    const quotaService = new QuotaService({ configManager: this.configManager });
+    const usageService = new UsageService({ configManager: this.configManager });
     this.pairingManager = new PairingManager({
       publicBaseUrl: this.config.publicBaseUrl,
       insecureDev,
       adminSocketPath: this.config.adminSocketPath,
       devicesFilePath: this.config.devicesFilePath,
+      rebuildUsage: () => usageService.rebuild(),
     });
     this.pushManager = new PushManager(this.config.vapidPath);
     this.uploadStore = new UploadStore(this.config.uploadsDir);
@@ -175,6 +183,9 @@ export class PigeonDaemon {
       uploadStore: this.uploadStore,
       pairingManager: this.pairingManager,
       modelCatalog: new ModelCatalog(),
+      queueFilePath: this.config.queueFilePath,
+      quotaService,
+      usageService,
     });
   }
 

@@ -8,6 +8,8 @@ import type {
   InteractionCardData,
   NormalizedTurn,
   QueuedPrompt,
+  QuotaProvidersConfig,
+  QuotaProviderState,
   SessionInfo,
   SessionStats,
   SkillEntry,
@@ -25,7 +27,9 @@ export type Route =
   | { name: "agents" }
   | { name: "session"; from: "home" | "agents" }
   | { name: "new"; workspaceId: string | null; mode: "new" | "resume" }
-  | { name: "settings" };
+  | { name: "settings" }
+  | { name: "quota"; from?: "home" | "agents" | "settings" }
+  | { name: "usage"; from?: "home" | "agents" | "settings"; initialPreset?: "today" | "7d" | "30d" | "year" | "all" | "custom" };
 
 /** mobile-ui-and-themes.md §2.3: stored in this browser only. */
 export interface FilterState {
@@ -59,6 +63,7 @@ export interface AppState {
   todos: TodoItem[] | null;
   session: SessionInfo | null;
   paneSyncing: boolean;
+  paneLoaded: boolean;
   queue: QueuedPrompt[];
   skills: SkillEntry[];
   recipes: Record<string, AgentRecipeSummary>;
@@ -74,6 +79,14 @@ export interface AppState {
   collapsed: Record<string, boolean>;
   unread: Record<string, boolean>;
   canInstallPWA: boolean;
+  quotaDisplay: "remaining" | "used";
+  quotaButton: boolean;
+  quotaShowAccount: boolean;
+  usageScanMode: "realtime" | "scheduled";
+  usageScanInterval: "1m" | "2m" | "5m" | "10m" | "15m";
+  quotaProviders: QuotaProvidersConfig;
+  quotaSnapshots: QuotaProviderState[];
+  quotaUpdated: number | null;
 }
 
 /** localStorage can throw (private mode, blocked site data); preferences then fall back to defaults. */
@@ -106,6 +119,8 @@ function readJson<T>(key: string, fallback: T): T {
 
 const storedRt = readPref("pigeon_reduce_transparency");
 const storedLocale = readPref("pigeon_locale");
+const storedActivePane = readPref("pigeon_active_pane");
+const storedRoute = readJson<Route>("pigeon_route", { name: "home" });
 
 const [state, setState] = createStore<AppState>({
   connected: false,
@@ -117,7 +132,7 @@ const [state, setState] = createStore<AppState>({
   herdrConnected: true,
   workspaces: [],
   activeTabId: null,
-  activePaneId: null,
+  activePaneId: storedRoute.name === "session" ? storedActivePane : null,
   agentStatus: "idle",
   cards: [],
   pendingInteraction: null,
@@ -128,6 +143,7 @@ const [state, setState] = createStore<AppState>({
   todos: null,
   session: null,
   paneSyncing: false,
+  paneLoaded: false,
   queue: [],
   skills: [],
   recipes: {},
@@ -135,12 +151,20 @@ const [state, setState] = createStore<AppState>({
   accent: (readPref("pigeon_accent") as AccentName | null) || "blue",
   reduceTransparency: storedRt === null ? null : storedRt === "1",
   localePref: storedLocale && storedLocale in LOCALES ? (storedLocale as LocalePref) : "system",
-  route: { name: "home" },
+  route: storedRoute,
   terminalOpen: false,
   filter: readJson<FilterState>("pigeon_filter", EMPTY_FILTER),
   collapsed: readJson<Record<string, boolean>>("pigeon_collapsed", {}),
   unread: readJson<Record<string, boolean>>("pigeon_unread", {}),
   canInstallPWA: false,
+  quotaDisplay: "remaining",
+  quotaButton: true,
+  quotaShowAccount: true,
+  usageScanMode: "scheduled",
+  usageScanInterval: "5m",
+  quotaProviders: { claude: true, codex: true, antigravity: true },
+  quotaSnapshots: [],
+  quotaUpdated: null,
 });
 
 export { state, setState };
@@ -164,6 +188,12 @@ export function applySyncedClientConfig(config: Partial<ClientConfig> | undefine
   if (!config) return;
   if (config.themeMode) setState("themeMode", config.themeMode);
   if (config.accent) setState("accent", config.accent);
+  if (config.quotaDisplay !== undefined) setState("quotaDisplay", config.quotaDisplay);
+  if (config.quotaButton !== undefined) setState("quotaButton", config.quotaButton);
+  if (config.quotaShowAccount !== undefined) setState("quotaShowAccount", config.quotaShowAccount);
+  if (config.usageScanMode !== undefined) setState("usageScanMode", config.usageScanMode);
+  if (config.usageScanInterval !== undefined) setState("usageScanInterval", config.usageScanInterval);
+  if (config.quotaProviders !== undefined) setState("quotaProviders", config.quotaProviders);
   writePref("pigeon_mode", state.themeMode);
   writePref("pigeon_accent", state.accent);
   applyTheme(state.themeMode, state.accent);
@@ -201,6 +231,10 @@ export function setUnread(paneId: string, value: boolean): void {
 
 export function navigate(route: Route): void {
   setState("route", route);
+  writePref("pigeon_route", JSON.stringify(route));
+  if (route.name === "home") {
+    writePref("pigeon_active_pane", null);
+  }
 }
 
 export function showToast(message: string): void {

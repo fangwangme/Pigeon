@@ -90,18 +90,19 @@ Pigeon implements a **Dual-Track Architecture** (detailed in `agent-session-norm
 
 ### 4.6 Local CLI Admin Channel
 Pigeon daemon listens on an isolated local Unix socket:
-- Path: `$XDG_RUNTIME_DIR/pigeon.sock` (mode `0600`, or fallback `~/.local/state/pigeon/admin.sock`).
-- CLI subcommands (`pigeon pair`, `pigeon devices`, `pigeon devices revoke <id>`, `pigeon status`) talk directly to the running daemon over this socket to query pairing tokens and instantly sever revoked connections.
+- Path: `$XDG_RUNTIME_DIR/pigeon.sock` (mode `0600`, or fallback `~/.local/share/pigeon/admin.sock`).
+- CLI subcommands (`pigeon pair`, `pigeon devices`, `pigeon devices revoke <id>`, `pigeon status`, `pigeon rebuild-cache`) talk directly to the running daemon over this socket to query pairing tokens and instantly sever revoked connections. `pigeon rebuild-cache` rebuilds the usage database directly when no daemon is running.
+- **Instances by port**: port 4100 is the production instance. A daemon on any other port is a separate instance: its admin socket, paired devices and prompt queue carry the port (`pigeon-4101.sock`, `devices-4101.json`, `queue-4101.json`), so a test daemon never touches the production one. The admin subcommands reach the daemon of the configured `server.port`, or of `--port <n>`.
 
 ### 4.7 Configuration Management and Bidirectional Persistence
 Pigeon uses a centralized, structured JSON configuration file to support pre-configured environments and seamless multi-device roaming:
 1. **Standard Storage Path**:
-   - Location: `$XDG_CONFIG_HOME/pigeon/config.json` (defaults to `~/.config/pigeon/config.json`).
+   - Location: `$XDG_DATA_HOME/pigeon/config.json` (defaults to `~/.local/share/pigeon/config.json`), falling back to `$XDG_CONFIG_HOME/pigeon/config.json`.
    - If the configuration file does not exist upon daemon startup, Pigeon automatically generates a default `config.json` with standard presets.
    - A file that is not valid JSON, or not a JSON object, stops startup with an error naming the file. It is never overwritten with defaults, so hand edits are not lost.
 2. **Configuration Namespaces**:
    - `server`: Daemon-level settings (`port`, `host`, `insecureDev`, `publicBaseUrl`). CLI flags override them at runtime without changing the file. The Herdr App and Herdr Core socket paths (`herdrAppSocketPath`, `herdrCoreSocketPath`), the admin socket path and the state directory are derived from the environment (`HERDR_APP_HOME`, `HC_TERMINAL_SOCKET`, `XDG_RUNTIME_DIR`, `XDG_STATE_HOME`, `HOME`) at every start, and a fresh config does not contain them. A value set by hand in `server` still wins.
-   - `client`: Appearance shared by all paired phones (`themeMode`, `accent`). Per-browser conveniences (filters, collapsed groups, unread marks, drafts, reduced transparency) stay in that browser's `localStorage`.
+   - `client`: Settings shared by all paired phones: appearance (`themeMode`, `accent`) and the quota settings (`quotaProviders`, `quotaDisplay`, `quotaButton`, `quotaShowAccount`; `quota-and-usage.md` §2.5, `mobile-ui-and-themes.md` §11.4). An absent `quotaProviders` is computed at every start from the providers logged in on this computer and is not written until the user changes it. Per-browser conveniences (filters, collapsed groups, unread marks, drafts, reduced transparency) stay in that browser's `localStorage`.
 3. **Partial Patch & Deep-Merge Persistence**:
    - Mobile clients synchronize settings via `config_patch` messages carrying only the modified delta (e.g. `{ "client": { "accent": "green" } }`).
    - The daemon validates the patch (`protocol.md` §6.3), deep-merges it, and writes the file atomically before replying. A write failure is reported to the client.
@@ -124,4 +125,5 @@ Pigeon uses a centralized, structured JSON configuration file to support pre-con
   ```
   `script-src 'unsafe-inline'` is required by the single-file bundle, whose script is inline. Markdown sanitizing is what keeps agent output from becoming script.
 - **Errors**: Errors the specs list as expected (Herdr offline, stale prompt, invalid frame) are reported through their documented codes. Anything else fails loudly: it is logged with a stack trace and answered with `ERR_INTERNAL`, never swallowed.
+- **External APIs and Agent Files (Untrusted)**: Quota endpoints, price lists, the Antigravity language server, `agy -p /usage` output, and the agents' credential and session files are validated before use. Their expected failures are reported per provider or per source (`quota-and-usage.md` §2.6, §3.1, §3.3), never as `ERR_INTERNAL`. Credential handling is `security-and-pairing.md` §6.
 - **Herdr Socket (Trusted Internal)**: Communication with the local Herdr daemon is considered internal and trusted, but Pigeon parses all Herdr responses defensively, ignoring unknown fields to ensure forward compatibility.

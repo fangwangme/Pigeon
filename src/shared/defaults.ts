@@ -5,6 +5,11 @@ import type { ClientConfig } from "../types/protocol";
 export const DEFAULT_CLIENT_CONFIG: ClientConfig = {
   themeMode: "system",
   accent: "blue",
+  quotaDisplay: "remaining",
+  quotaButton: true,
+  quotaShowAccount: true,
+  usageScanMode: "scheduled",
+  usageScanInterval: "5m",
 };
 
 export const ACCENT_NAMES = ["blue", "purple", "green", "orange", "pink"] as const;

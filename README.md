@@ -50,39 +50,50 @@ A small daemon runs alongside Herdr on your computer and serves the app over you
   </picture>
   &nbsp;
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="docs/images/new-dark.png">
-    <img src="docs/images/new-light.png" width="260" alt="Start a new session with your chosen agent, model, and effort">
+    <source media="(prefers-color-scheme: dark)" srcset="docs/images/quota-dark.png">
+    <img src="docs/images/quota-light.png" width="260" alt="Track rate-limit windows, pace, and reset times across providers">
   </picture>
   &nbsp;
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="docs/images/resume-dark.png">
-    <img src="docs/images/resume-light.png" width="260" alt="Pick up past sessions where you left off from agent-assigned titles">
+    <source media="(prefers-color-scheme: dark)" srcset="docs/images/usage-dark.png">
+    <img src="docs/images/usage-light.png" width="260" alt="Inspect token usage, estimated costs, and daily activity trends">
   </picture>
 </p>
 
 ## Installation
 
-Install Pigeon on the computer where Herdr runs:
+Install Pigeon globally with **npm**:
 
 ```bash
 npm install -g @fangwangme/pigeon
-# or
+```
+
+Or with **bun**:
+
+```bash
 bun add -g @fangwangme/pigeon
 ```
 
-Or run it without installing:
+Or run it directly without installing:
 
 ```bash
 npx @fangwangme/pigeon
-# or
+```
+
+```bash
 bunx @fangwangme/pigeon
 ```
 
-Then expose it to your tailnet and start it:
+Then expose it to your tailnet:
 
 ```bash
-tailscale serve --bg 4100   # serves local port 4100 over HTTPS in your tailnet
-pigeon start                # starts the daemon and prints a pairing QR code
+tailscale serve --bg 4100
+```
+
+And start the daemon (prints a pairing QR code):
+
+```bash
+pigeon start
 ```
 
 Scan the QR code with Chrome on your phone, then open the browser menu and choose **Add to Home screen** to install the app.
@@ -134,19 +145,36 @@ The full design and contracts live in [`docs/specs/`](docs/specs/).
 
 While the daemon is running, you can manage pairing and devices from another terminal (or from **Settings** in the app):
 
-```bash
-pigeon pair                   # rotate the pairing link and print a new QR code
-pigeon pair --ephemeral       # print a single-use link that expires in 10 minutes
-pigeon devices                # list paired browsers
-pigeon devices revoke <id>    # revoke a paired browser immediately
-pigeon status                 # show active session count and public URL
-```
+- Rotate the pairing link and print a new QR code:
+  ```bash
+  pigeon pair
+  ```
+- Print a single-use link that expires in 10 minutes:
+  ```bash
+  pigeon pair --ephemeral
+  ```
+- List paired browsers:
+  ```bash
+  pigeon devices
+  ```
+- Revoke a paired browser immediately:
+  ```bash
+  pigeon devices revoke <id>
+  ```
+- Show active session count and public URL:
+  ```bash
+  pigeon status
+  ```
+- Rebuild the token usage and cost cache from scratch:
+  ```bash
+  pigeon rebuild-cache
+  ```
 
 ## Build from source
 
 ```bash
 bun install
-bun run build                 # builds the single binary at dist/pigeon
+bun run build
 tailscale serve --bg 4100
 ./dist/pigeon start
 ```

@@ -43,6 +43,8 @@ export interface PairingOptions {
   insecureDev?: boolean;
   adminSocketPath: string;
   devicesFilePath: string;
+  /** `pigeon rebuild-cache` (`quota-and-usage.md` §3.7): rebuilds the daemon's own usage database. */
+  rebuildUsage?: () => Promise<unknown>;
 }
 
 export interface PairingTokenOptions {
@@ -73,6 +75,7 @@ export class PairingManager extends EventEmitter {
   private insecureDev: boolean;
   private adminSocketPath: string;
   private devicesFilePath: string;
+  private rebuildUsage?: () => Promise<unknown>;
   private adminServer: NetServer | null = null;
 
   constructor(options: PairingOptions) {
@@ -81,6 +84,7 @@ export class PairingManager extends EventEmitter {
     this.insecureDev = !!options.insecureDev;
     this.adminSocketPath = options.adminSocketPath;
     this.devicesFilePath = options.devicesFilePath;
+    this.rebuildUsage = options.rebuildUsage;
 
     this.loadDevices();
   }
@@ -331,13 +335,19 @@ export class PairingManager extends EventEmitter {
     });
   }
 
-  private handleAdminCommand(line: string, socket: Socket) {
+  private async handleAdminCommand(line: string, socket: Socket) {
     try {
       const msg = JSON.parse(line);
       const id = msg.id || "1";
       const method = msg.method;
 
       switch (method) {
+        case "usage.rebuild": {
+          if (!this.rebuildUsage) throw new Error("This daemon keeps no usage database");
+          const res = await this.rebuildUsage();
+          socket.write(JSON.stringify({ id, result: res }) + "\n");
+          break;
+        }
         case "pair.create": {
           const tokenInfo = this.createPairingToken(msg.params?.ephemeral ? { permanent: false } : undefined);
           socket.write(JSON.stringify({ id, result: tokenInfo }) + "\n");

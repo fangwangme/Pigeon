@@ -1,14 +1,16 @@
 import { render } from "solid-js/web";
 import { createEffect, createSignal, Match, on, onMount, Show, Switch } from "solid-js";
 import "./styles.css";
-import { setState, state, systemReducesTransparency } from "./state/store";
+import { navigate, setState, state, systemReducesTransparency } from "./state/store";
 import { applyTheme } from "./themes";
-import { checkPairingFromUrlHash, initWebSocket, reportPresence } from "./state/ws";
+import { checkPairingFromUrlHash, initWebSocket, reportPresence, selectPane } from "./state/ws";
 import { AgentsPage, Home } from "./components/Home";
 import { NewSession } from "./components/NewSession";
 import { Overlays } from "./components/overlays";
 import { SessionPage } from "./components/SessionPage";
 import { Pairing, Settings } from "./components/Settings";
+import { QuotaPage } from "./components/QuotaPage";
+import { UsagePage } from "./components/UsagePage";
 import { t } from "./i18n";
 
 applyTheme(state.themeMode, state.accent);
@@ -73,6 +75,7 @@ function Toast() {
 function App() {
   const [systemReduce, setSystemReduce] = createSignal(systemReducesTransparency());
   onMount(async () => {
+    (window as any).__pigeon = { state, setState, navigate, applyTheme };
     window.matchMedia("(prefers-color-scheme: light)").addEventListener("change", () => applyTheme(state.themeMode, state.accent));
     window.matchMedia("(prefers-reduced-transparency: reduce)").addEventListener?.("change", (e) => setSystemReduce(e.matches));
     window.addEventListener("beforeinstallprompt", (e) => {
@@ -81,6 +84,9 @@ function App() {
       setState("canInstallPWA", true);
     });
     await checkPairingFromUrlHash();
+    if (state.activePaneId) {
+      await selectPane(state.activePaneId);
+    }
     await initWebSocket();
     registerServiceWorker();
   });
@@ -107,6 +113,12 @@ function App() {
         </Match>
         <Match when={state.route.name === "settings"}>
           <Settings />
+        </Match>
+        <Match when={state.route.name === "quota"}>
+          <QuotaPage />
+        </Match>
+        <Match when={state.route.name === "usage"}>
+          <UsagePage />
         </Match>
       </Switch>
       <Overlays />

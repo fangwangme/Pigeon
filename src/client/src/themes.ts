@@ -32,6 +32,32 @@ export interface Palette {
   lgShadow: string;
   lgSpec: string;
   scrim: string;
+  agentClaude: string;
+  agentCodex: string;
+  agentAgy: string;
+  agentOpencode: string;
+  agentPi: string;
+  coAnthropic: string;
+  coOpenai: string;
+  coGoogle: string;
+  coOther: string;
+  figTokens: string;
+  figCost: string;
+  figInput: string;
+  figOutput: string;
+  figCache: string;
+  figHit: string;
+  heatEmpty: string;
+  heatTokens1: string;
+  heatTokens2: string;
+  heatTokens3: string;
+  heatTokens4: string;
+  heatTokens5: string;
+  heatCost1: string;
+  heatCost2: string;
+  heatCost3: string;
+  heatCost4: string;
+  heatCost5: string;
 }
 
 export const PALETTES: Record<"light" | "dark", Palette> = {
@@ -63,6 +89,32 @@ export const PALETTES: Record<"light" | "dark", Palette> = {
     lgShadow: "0 10px 30px rgba(0,0,0,.38)",
     lgSpec: "rgba(255,255,255,.16)",
     scrim: "rgba(0,0,0,.42)",
+    agentClaude: "#FB923C",
+    agentCodex: "#34D399",
+    agentAgy: "#60A5FA",
+    agentOpencode: "#818CF8",
+    agentPi: "#F472B6",
+    coAnthropic: "#FB923C",
+    coOpenai: "#34D399",
+    coGoogle: "#60A5FA",
+    coOther: "#A855F7",
+    figTokens: "#34D399",
+    figCost: "#FACC15",
+    figInput: "#60A5FA",
+    figOutput: "#A78BFA",
+    figCache: "#FB923C",
+    figHit: "#5FC7B2",
+    heatEmpty: "#2a2a2e",
+    heatTokens1: "#B8ECFF",
+    heatTokens2: "#80E0FF",
+    heatTokens3: "#20BEFF",
+    heatTokens4: "#0094D1",
+    heatTokens5: "#005C86",
+    heatCost1: "#9BE9A8",
+    heatCost2: "#40C463",
+    heatCost3: "#30A14E",
+    heatCost4: "#216E39",
+    heatCost5: "#0E4429",
   },
   light: {
     bg: "#F8F8F6",
@@ -92,6 +144,32 @@ export const PALETTES: Record<"light" | "dark", Palette> = {
     lgShadow: "0 10px 30px rgba(0,0,0,.13)",
     lgSpec: "rgba(255,255,255,.55)",
     scrim: "rgba(0,0,0,.28)",
+    agentClaude: "#C2410C",
+    agentCodex: "#047857",
+    agentAgy: "#2563EB",
+    agentOpencode: "#4F46E5",
+    agentPi: "#DB2777",
+    coAnthropic: "#C2410C",
+    coOpenai: "#047857",
+    coGoogle: "#2563EB",
+    coOther: "#9333EA",
+    figTokens: "#047857",
+    figCost: "#A16207",
+    figInput: "#2563EB",
+    figOutput: "#7C3AED",
+    figCache: "#C2410C",
+    figHit: "#0F7F6C",
+    heatEmpty: "#EBEBE8",
+    heatTokens1: "#B8ECFF",
+    heatTokens2: "#80E0FF",
+    heatTokens3: "#20BEFF",
+    heatTokens4: "#0094D1",
+    heatTokens5: "#005C86",
+    heatCost1: "#9BE9A8",
+    heatCost2: "#40C463",
+    heatCost3: "#30A14E",
+    heatCost4: "#216E39",
+    heatCost5: "#0E4429",
   },
 };
 
@@ -131,6 +209,32 @@ const KEBAB: Record<keyof Palette, string> = {
   lgShadow: "lg-shadow",
   lgSpec: "lg-spec",
   scrim: "scrim",
+  agentClaude: "agent-claude",
+  agentCodex: "agent-codex",
+  agentAgy: "agent-agy",
+  agentOpencode: "agent-opencode",
+  agentPi: "agent-pi",
+  coAnthropic: "co-anthropic",
+  coOpenai: "co-openai",
+  coGoogle: "co-google",
+  coOther: "co-other",
+  figTokens: "fig-tokens",
+  figCost: "fig-cost",
+  figInput: "fig-input",
+  figOutput: "fig-output",
+  figCache: "fig-cache",
+  figHit: "fig-hit",
+  heatEmpty: "heat-empty",
+  heatTokens1: "heat-tokens-1",
+  heatTokens2: "heat-tokens-2",
+  heatTokens3: "heat-tokens-3",
+  heatTokens4: "heat-tokens-4",
+  heatTokens5: "heat-tokens-5",
+  heatCost1: "heat-cost-1",
+  heatCost2: "heat-cost-2",
+  heatCost3: "heat-cost-3",
+  heatCost4: "heat-cost-4",
+  heatCost5: "heat-cost-5",
 };
 
 export function resolveMode(mode: ThemeMode): "light" | "dark" {
