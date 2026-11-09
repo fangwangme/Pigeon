@@ -13,7 +13,7 @@ import type {
   UsageTotals,
 } from "../../types/protocol";
 import { comparisonRange, daysBetween, addDays, type UsagePreset } from "../../shared/usage";
-import { canonical, detectCompany } from "./model-id";
+import { canonical, detectCompany, resolveAntigravityModel } from "./model-id";
 import { PricingManager, type ModelPrice } from "./pricing";
 import {
   findFilesRecursive,
@@ -57,6 +57,7 @@ export class UsageStore {
         message_key TEXT NOT NULL,
         timestamp_ms INTEGER NOT NULL,
         date TEXT NOT NULL,
+        raw_model_id TEXT,
         model_id TEXT NOT NULL,
         canonical_model_id TEXT NOT NULL,
         company TEXT NOT NULL,
@@ -89,6 +90,13 @@ export class UsageStore {
         PRIMARY KEY (date, model_id)
       );
     `);
+
+    try {
+      const cols = (this.db.query("PRAGMA table_info('usage_records')").all() as any[]).map((c) => c.name);
+      if (!cols.includes("raw_model_id")) {
+        this.db.run("ALTER TABLE usage_records ADD COLUMN raw_model_id TEXT;");
+      }
+    } catch {}
   }
 
   public close(): void {
@@ -135,10 +143,10 @@ export class UsageStore {
     const setFileState = this.db.prepare("INSERT OR REPLACE INTO scan_file_state (path, mtime_ms, size_bytes) VALUES (?, ?, ?)");
     const insertRecord = this.db.prepare(`
       INSERT OR REPLACE INTO usage_records (
-        agent, session_id, message_key, timestamp_ms, date, model_id, canonical_model_id,
+        agent, session_id, message_key, timestamp_ms, date, raw_model_id, model_id, canonical_model_id,
         company, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens,
         total_tokens, cost, unpriced
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
 
     const getSnapshot = this.db.prepare("SELECT input_cost, output_cost, cache_read_cost, cache_write_cost FROM daily_pricing_snapshots WHERE date = ? AND model_id = ?");
@@ -195,6 +203,7 @@ export class UsageStore {
           r.messageKey,
           r.timestampMs,
           r.date,
+          r.rawModelId ?? r.modelId,
           r.modelId,
           r.canonicalModelId,
           r.company,
@@ -251,7 +260,66 @@ export class UsageStore {
       setFileState.run(item.path, Math.floor(st.mtimeMs), st.size);
     }
 
+    if (pricing.arePricesAvailable()) {
+      this.repairAntigravityRecords(pricing);
+    }
+
     return { scannedFiles, recordsAdded };
+  }
+
+  public repairAntigravityRecords(pricing: PricingManager): number {
+    const unpricedRows: any[] = this.db.query(`
+      SELECT agent, message_key, date, raw_model_id, model_id, canonical_model_id,
+             input_tokens, output_tokens, cache_read_tokens, cache_write_tokens
+      FROM usage_records
+      WHERE agent = 'agy' AND (
+        unpriced = 1 OR
+        canonical_model_id LIKE '%-n' OR
+        canonical_model_id LIKE '%-a' OR
+        canonical_model_id = 'gemini-default' OR
+        canonical_model_id LIKE '%-trial'
+      )
+    `).all();
+
+    if (unpricedRows.length === 0) return 0;
+
+    let repaired = 0;
+    const update = this.db.prepare(`
+      UPDATE usage_records
+      SET raw_model_id = ?, model_id = ?, canonical_model_id = ?, company = ?, cost = ?, unpriced = ?
+      WHERE agent = ? AND message_key = ?
+    `);
+
+    this.db.transaction(() => {
+      for (const row of unpricedRows) {
+        const resolved = resolveAntigravityModel(row.raw_model_id, row.model_id);
+        const canon = resolved.canonicalModelId;
+        const p = pricing.getPrice(canon);
+        let cost = 0;
+        let unpriced = 1;
+        if (p) {
+          unpriced = 0;
+          const inpCost = row.input_tokens * p.inputCostPerToken;
+          const outCost = row.output_tokens * p.outputCostPerToken;
+          const crCost = row.cache_read_tokens * (p.cacheReadCostPerToken ?? p.inputCostPerToken);
+          const cwCost = row.cache_write_tokens * (p.cacheWriteCostPerToken ?? p.inputCostPerToken);
+          cost = inpCost + outCost + crCost + cwCost;
+        }
+        update.run(
+          resolved.rawModelId,
+          resolved.modelId,
+          canon,
+          detectCompany(canon, "agy"),
+          cost,
+          unpriced,
+          row.agent,
+          row.message_key
+        );
+        repaired++;
+      }
+    })();
+
+    return repaired;
   }
 
   public getUsageReport(

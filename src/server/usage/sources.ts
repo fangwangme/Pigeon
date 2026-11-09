@@ -2,7 +2,7 @@
 import { existsSync, readdirSync, statSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { Database } from "bun:sqlite";
-import { canonical, detectCompany } from "./model-id";
+import { canonical, detectCompany, formatModelId, resolveAntigravityModel } from "./model-id";
 
 export interface RawUsageRecord {
   agent: string;
@@ -10,6 +10,7 @@ export interface RawUsageRecord {
   messageKey: string;
   timestampMs: number;
   date: string; // YYYY-MM-DD
+  rawModelId?: string;
   modelId: string;
   canonicalModelId: string;
   company: "anthropic" | "openai" | "google" | "other";
@@ -88,7 +89,8 @@ export function scanClaudeFile(path: string): RawUsageRecord[] {
       messageKey: key,
       timestampMs: ts,
       date,
-      modelId: rawModel,
+      rawModelId: rawModel,
+      modelId: formatModelId(rawModel),
       canonicalModelId: canon,
       company: detectCompany(rawModel, "claude"),
       inputTokens: input,
@@ -202,7 +204,8 @@ export function scanCodexFile(path: string): RawUsageRecord[] {
         messageKey: key,
         timestampMs: ts,
         date,
-        modelId: currentModel,
+        rawModelId: currentModel,
+        modelId: formatModelId(currentModel),
         canonicalModelId: canonical(currentModel),
         company: detectCompany(currentModel, "codex"),
         inputTokens: usage.inp,
@@ -312,7 +315,22 @@ export function scanAntigravityDb(path: string): RawUsageRecord[] {
       const respId = respIdFld && respIdFld.data ? Buffer.from(respIdFld.data).toString("utf-8") : undefined;
 
       const servedModelFld = payloadSub.find((x) => x.fieldNum === 19);
-      const servedModel = servedModelFld && servedModelFld.data ? Buffer.from(servedModelFld.data).toString("utf-8") : "gemini-pro";
+      const servedModel = servedModelFld && servedModelFld.data ? Buffer.from(servedModelFld.data).toString("utf-8") : undefined;
+
+      let modelEnum: string | undefined;
+      const f20s = payloadSub.filter((x) => x.fieldNum === 20);
+      for (const f of f20s) {
+        if (!f.data) continue;
+        const pair = parseProto(f.data);
+        const k = pair.find((x) => x.fieldNum === 1);
+        const v = pair.find((x) => x.fieldNum === 2);
+        if (k?.data && Buffer.from(k.data).toString("utf-8") === "model_enum") {
+          modelEnum = v?.data ? Buffer.from(v.data).toString("utf-8") : undefined;
+          break;
+        }
+      }
+
+      const resolved = resolveAntigravityModel(modelEnum, servedModel);
 
       const out = respOut !== undefined ? respOut : totOut;
       const total = inp + out + cr;
@@ -323,7 +341,6 @@ export function scanAntigravityDb(path: string): RawUsageRecord[] {
 
       const date = formatLocalDate(ts);
       const key = respId ? `${sessionId}:${respId}` : `${sessionId}:${r.idx}:${uuid || ts}`;
-      const canon = canonical(servedModel);
 
       records.push({
         agent: "agy",
@@ -331,9 +348,10 @@ export function scanAntigravityDb(path: string): RawUsageRecord[] {
         messageKey: key,
         timestampMs: ts,
         date,
-        modelId: servedModel,
-        canonicalModelId: canon,
-        company: detectCompany(servedModel, "agy"),
+        rawModelId: resolved.rawModelId,
+        modelId: resolved.modelId,
+        canonicalModelId: resolved.canonicalModelId,
+        company: detectCompany(resolved.modelId, "agy"),
         inputTokens: inp,
         outputTokens: out,
         cacheReadTokens: cr,
@@ -391,7 +409,8 @@ export function scanOpenCodeDb(path: string): RawUsageRecord[] {
         messageKey: key,
         timestampMs: ts,
         date,
-        modelId: model,
+        rawModelId: model,
+        modelId: formatModelId(model),
         canonicalModelId: canonical(model),
         company: detectCompany(model, "opencode"),
         inputTokens: inp,
@@ -466,7 +485,8 @@ export function scanPiFile(path: string): RawUsageRecord[] {
         messageKey: key,
         timestampMs: ts,
         date,
-        modelId: model,
+        rawModelId: model,
+        modelId: formatModelId(model),
         canonicalModelId: canonical(model),
         company: detectCompany(model, "pi"),
         inputTokens: inp,

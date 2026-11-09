@@ -59,7 +59,6 @@ export function UsagePage() {
   );
   const [metric, setMetric] = createSignal<"tokens" | "cost">("tokens");
   const [group, setGroup] = createSignal<"date" | "model">("date");
-  const [modelSort, setModelSort] = createSignal<"usage" | "hit">("usage");
   const [activeAgents, setActiveAgents] = createSignal<Set<string>>(new Set(AGENT_KEYS));
   const [rowsLimit, setRowsLimit] = createSignal(10);
 
@@ -415,8 +414,8 @@ export function UsagePage() {
     const m = metric();
 
     if (!isModel) {
-      // Date rows (newest first)
-      const days = [...rep.days].reverse();
+      // Date rows (newest first, descending)
+      const days = [...rep.days].sort((a, b) => b.date.localeCompare(a.date));
       let maxVal = 0;
       for (const d of days) {
         const val = m === "tokens" ? d.tokens : d.cost;
@@ -449,34 +448,20 @@ export function UsagePage() {
       });
     }
 
-    // Model rows
-    const getHit = (mdl: UsageModelSummary) => cacheHitPercent(mdl.cacheRead, mdl.tokens);
-    let models = [...rep.models];
-    if (modelSort() === "hit") {
-      models.sort((a, b) => getHit(b) - getHit(a));
-    } else {
-      models.sort((a, b) => (m === "tokens" ? b.tokens - a.tokens : b.cost - a.cost));
-    }
-
+    // Model rows: sorted strictly by tokens descending
+    let models = [...rep.models].sort((a, b) => b.tokens - a.tokens);
     let maxVal = 0;
     for (const mdl of models) {
-      const val = modelSort() === "hit" ? getHit(mdl) : m === "tokens" ? mdl.tokens : mdl.cost;
+      const val = m === "tokens" ? mdl.tokens : mdl.cost;
       if (val > maxVal) maxVal = val;
     }
     const totalVal = m === "tokens" ? rep.totals.tokens : rep.totals.cost;
 
     return models.map((mdl) => {
       const val = m === "tokens" ? mdl.tokens : mdl.cost;
-      const hit = getHit(mdl);
       const agentsStr = mdl.agents.map((ag) => AGENT_NAMES[ag] || ag).join(", ");
-      const share =
-        modelSort() === "hit"
-          ? `命中 ${hit.toFixed(1)}%`
-          : totalVal > 0
-          ? ((val / totalVal) * 100).toFixed(1) + "%"
-          : "0.0%";
-      const barMetricVal = modelSort() === "hit" ? hit : val;
-      const barW = maxVal > 0 ? `${Math.min(100, (barMetricVal / maxVal) * 100)}%` : "0%";
+      const share = totalVal > 0 ? ((val / totalVal) * 100).toFixed(1) + "%" : "0.0%";
+      const barW = maxVal > 0 ? `${Math.min(100, (val / maxVal) * 100)}%` : "0%";
 
       return {
         id: mdl.model,
@@ -1115,53 +1100,6 @@ export function UsagePage() {
               </Show>
             </div>
 
-            {/* Model sort toggle */}
-            <Show when={isSingleDay() || group() === "model"}>
-              <div style={{ display: "flex", "align-items": "center", gap: "8px", padding: "8px 14px 0", "font-size": "12.5px", color: "var(--faint)" }}>
-                <span>{t("usage.sortBy")}</span>
-                <div
-                  style={{
-                    display: "flex",
-                    background: "var(--bg)",
-                    border: "1px solid var(--line)",
-                    "border-radius": "8px",
-                    padding: "2px",
-                  }}
-                >
-                  <button
-                    onClick={() => setModelSort("usage")}
-                    style={{
-                      height: "28px",
-                      padding: "0 10px",
-                      "border-radius": "6px",
-                      border: 0,
-                      font: "inherit",
-                      "font-size": "12.5px",
-                      background: modelSort() === "usage" ? "var(--code)" : "none",
-                      color: modelSort() === "usage" ? "var(--fg)" : "var(--muted)",
-                    }}
-                  >
-                    {metric() === "tokens" ? t("usage.byTokens") : t("usage.byCost")}
-                  </button>
-                  <button
-                    onClick={() => setModelSort("hit")}
-                    style={{
-                      height: "28px",
-                      padding: "0 10px",
-                      "border-radius": "6px",
-                      border: 0,
-                      font: "inherit",
-                      "font-size": "12.5px",
-                      background: modelSort() === "hit" ? "var(--code)" : "none",
-                      color: modelSort() === "hit" ? "var(--fg)" : "var(--muted)",
-                    }}
-                  >
-                    {t("usage.cacheHit")}
-                  </button>
-                </div>
-              </div>
-            </Show>
-
             {/* Empty state */}
             <Show when={tableRows().length === 0}>
               <div
@@ -1303,10 +1241,11 @@ export function UsagePage() {
                 {selectedDay()}
               </span>
               <button
+                class="cbtn"
+                aria-label={t("common.close")}
                 onClick={() => setSheet("none")}
-                style={{ height: "36px", padding: "0 12px", border: 0, background: "none", color: "var(--accent)", font: "inherit", "font-weight": 600 }}
               >
-                {t("usage.done")}
+                <Icon name="x" />
               </button>
             </div>
 
@@ -1418,10 +1357,11 @@ export function UsagePage() {
                 </div>
               </div>
               <button
+                class="cbtn"
+                aria-label={t("common.close")}
                 onClick={() => setSheet("none")}
-                style={{ height: "36px", padding: "0 12px", border: 0, background: "none", color: "var(--accent)", font: "inherit", "font-weight": 600 }}
               >
-                {t("usage.done")}
+                <Icon name="x" />
               </button>
             </div>
 
@@ -1536,9 +1476,16 @@ export function UsagePage() {
             }}
           >
             <div style={{ width: "40px", height: "5px", "border-radius": "3px", background: "var(--line2)", margin: "0 auto 10px" }} />
-            <div style={{ "font-weight": 650, "font-size": "17px" }}>{t("usage.customTitle")}</div>
-            <div style={{ "font-size": "12.5px", color: "var(--faint)", "margin-top": "2px" }}>
-              {t("usage.customHint", { from: usageReport()?.firstDay || "2026-01-01" })}
+            <div style={{ display: "flex", "align-items": "center" }}>
+              <div style={{ flex: 1 }}>
+                <div style={{ "font-weight": 650, "font-size": "17px" }}>{t("usage.customTitle")}</div>
+                <div style={{ "font-size": "12.5px", color: "var(--faint)", "margin-top": "2px" }}>
+                  {t("usage.customHint", { from: usageReport()?.firstDay || "2026-01-01" })}
+                </div>
+              </div>
+              <button class="cbtn" aria-label={t("common.close")} onClick={() => setSheet("none")}>
+                <Icon name="x" />
+              </button>
             </div>
             <div style={{ display: "grid", "grid-template-columns": "repeat(2, minmax(0, 1fr))", gap: "10px", "margin-top": "14px" }}>
               <label style={{ display: "flex", "flex-direction": "column", gap: "4px", "font-size": "12.5px", color: "var(--muted)" }}>
@@ -1635,6 +1582,9 @@ export function UsagePage() {
               >
                 {t("usage.selectAll")}
               </button>
+              <button class="cbtn" aria-label={t("common.close")} onClick={() => setSheet("none")}>
+                <Icon name="x" />
+              </button>
             </div>
             <div style={{ "font-size": "12.5px", color: "var(--faint)", "margin-bottom": "6px" }}>
               {t("usage.filterHint")}
@@ -1708,7 +1658,7 @@ export function UsagePage() {
                 "font-weight": 650,
               }}
             >
-              {t("usage.done")}
+              {t("common.close")}
             </button>
           </div>
         </div>

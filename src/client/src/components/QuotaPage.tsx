@@ -312,7 +312,11 @@ export function QuotaPage() {
                             const lvl = () => quotaLevel(u());
                             const pResult = () => quotaPace(w, now());
 
-                            const tag = () => (w.family ? `${w.label} · ${w.family}` : w.label);
+                            const tag = () => {
+                              if (!w.family) return w.label;
+                              if (w.label.toLowerCase().includes(w.family.toLowerCase())) return w.label;
+                              return `${w.label} · ${w.family}`;
+                            };
 
                             const resetText = () => {
                               if (u() <= 0) return t("quota.notStarted");
