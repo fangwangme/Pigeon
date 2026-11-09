@@ -731,25 +731,29 @@ export function UsagePage() {
                   >
                     {k.value}
                   </div>
-                  <div
-                    style={{
-                      "font-size": "11.5px",
-                      color: k.delta.color,
-                      "font-variant-numeric": "tabular-nums",
-                      "white-space": "nowrap",
-                    }}
-                  >
-                    {k.delta.text}
-                  </div>
+                  <Show when={!isSingleDay()}>
+                    <div
+                      style={{
+                        "font-size": "11.5px",
+                        color: k.delta.color,
+                        "font-variant-numeric": "tabular-nums",
+                        "white-space": "nowrap",
+                      }}
+                    >
+                      {k.delta.text}
+                    </div>
+                  </Show>
                 </div>
               )}
             </For>
           </div>
 
-          {/* Comparison line */}
-          <div style={{ padding: "6px 4px 0", "font-size": "11.5px", color: "var(--faint)" }}>
-            {comparisonNote()}
-          </div>
+          {/* Comparison line (only when multi-day period) */}
+          <Show when={!isSingleDay()}>
+            <div style={{ padding: "6px 4px 0", "font-size": "11.5px", color: "var(--faint)" }}>
+              {comparisonNote()}
+            </div>
+          </Show>
 
           {/* Heatmap Card (if period > 1 day) */}
           <Show when={!isSingleDay() && heatmapData()}>
@@ -1493,29 +1497,31 @@ export function UsagePage() {
                       )}
                     </For>
 
-                    {/* Sparkline */}
-                    <div style={{ "font-size": "12.5px", color: "var(--faint)", "margin-top": "12px" }}>
-                      {t("usage.modelUsagePerDay")}
-                    </div>
-                    <div style={{ display: "flex", "align-items": "flex-end", gap: "2px", height: "44px", "margin-top": "6px" }}>
-                      <For each={mdl.perDay}>
-                        {(d) => {
-                          const v = metric() === "tokens" ? d.tokens : d.cost;
-                          const h = maxDaily > 0 ? `${Math.max(2, (v / maxDaily) * 44)}px` : "2px";
-                          return (
-                            <span
-                              style={{
-                                flex: 1,
-                                "min-width": 0,
-                                height: h,
-                                "border-radius": "2px 2px 0 0",
-                                background: col,
-                              }}
-                            />
-                          );
-                        }}
-                      </For>
-                    </div>
+                    {/* Sparkline (multi-day period only) */}
+                    <Show when={!isSingleDay() && mdl.perDay.length > 1}>
+                      <div style={{ "font-size": "12.5px", color: "var(--faint)", "margin-top": "12px" }}>
+                        {t("usage.modelUsagePerDay")}
+                      </div>
+                      <div style={{ display: "flex", "align-items": "flex-end", gap: "2px", height: "44px", "margin-top": "6px" }}>
+                        <For each={mdl.perDay}>
+                          {(d) => {
+                            const v = metric() === "tokens" ? d.tokens : d.cost;
+                            const h = maxDaily > 0 ? `${Math.max(2, (v / maxDaily) * 44)}px` : "2px";
+                            return (
+                              <span
+                                style={{
+                                  flex: 1,
+                                  "min-width": 0,
+                                  height: h,
+                                  "border-radius": "2px 2px 0 0",
+                                  background: col,
+                                }}
+                              />
+                            );
+                          }}
+                        </For>
+                      </div>
+                    </Show>
                   </div>
                 );
               })()}
