@@ -1,4 +1,4 @@
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { networkInterfaces } from "node:os";
 import { createHash } from "node:crypto";
 import type { Server } from "bun";
@@ -132,8 +132,8 @@ export class PigeonDaemon {
       publicBaseUrl: resolvePublicBaseUrl({ configured: opts.publicBaseUrl || serverCfg.publicBaseUrl, insecureDev, port }),
       herdrAppSocketPath: opts.herdrAppSocketPath || serverCfg.herdrAppSocketPath,
       herdrCoreSocketPath: opts.herdrCoreSocketPath || serverCfg.herdrCoreSocketPath,
-      adminSocketPath: opts.adminSocketPath || serverCfg.adminSocketPath,
-      devicesFilePath: opts.devicesFilePath || join(serverCfg.stateDir, "devices.json"),
+      adminSocketPath: opts.adminSocketPath || (port !== 4100 ? join(dirname(serverCfg.adminSocketPath), `pigeon-${port}.sock`) : serverCfg.adminSocketPath),
+      devicesFilePath: opts.devicesFilePath || (port !== 4100 ? join(serverCfg.stateDir, `devices-${port}.json`) : join(serverCfg.stateDir, "devices.json")),
       vapidPath: opts.vapidPath || join(serverCfg.stateDir, "vapid.json"),
       uploadsDir: opts.uploadsDir || join(serverCfg.stateDir, "uploads"),
     };
