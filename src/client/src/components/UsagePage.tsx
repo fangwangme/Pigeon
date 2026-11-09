@@ -365,17 +365,13 @@ export function UsagePage() {
 
       const weeks = [];
       let currentWeekCells = [];
-      let monthLabel = "";
+      let currentWeekDays: Date[] = [];
 
       for (let cur = new Date(firstMonday); cur <= lastSunday; cur.setDate(cur.getDate() + 1)) {
         const ymd = `${cur.getFullYear()}-${String(cur.getMonth() + 1).padStart(2, "0")}-${String(cur.getDate()).padStart(2, "0")}`;
         const inRange = cur >= startDt && cur <= endDt;
         const sum = inRange ? dayMap.get(ymd) : undefined;
         const val = sum ? (m === "tokens" ? sum.tokens : sum.cost) : 0;
-
-        if (cur.getDate() === 1 || !monthLabel) {
-          monthLabel = formatMonthName(cur.getMonth());
-        }
 
         currentWeekCells.push({
           date: ymd,
@@ -385,11 +381,23 @@ export function UsagePage() {
           textColor: getCellTextColor(val),
           val,
         });
+        currentWeekDays.push(new Date(cur));
 
         if (currentWeekCells.length === 7) {
+          let monthLabel = "";
+          for (const d of currentWeekDays) {
+            if (d.getDate() === 1) {
+              monthLabel = formatMonthName(d.getMonth());
+              break;
+            }
+          }
+          if (!monthLabel && weeks.length === 0) {
+            const ref = currentWeekDays.find((d) => d >= startDt && d <= endDt) ?? currentWeekDays[0];
+            monthLabel = formatMonthName(ref.getMonth());
+          }
           weeks.push({ month: monthLabel, cells: currentWeekCells });
           currentWeekCells = [];
-          monthLabel = "";
+          currentWeekDays = [];
         }
       }
       return { layout, weeks, activeDays, currentStreak, longestStreak, vmax };
@@ -403,17 +411,13 @@ export function UsagePage() {
 
     const weeks = [];
     let currentWeekCells = [];
-    let monthLabel = "";
+    let currentWeekDays: Date[] = [];
 
     for (let cur = new Date(firstMonday); cur <= lastSunday; cur.setDate(cur.getDate() + 1)) {
       const ymd = `${cur.getFullYear()}-${String(cur.getMonth() + 1).padStart(2, "0")}-${String(cur.getDate()).padStart(2, "0")}`;
       const inRange = cur >= startDt && cur <= endDt;
       const sum = inRange ? dayMap.get(ymd) : undefined;
       const val = sum ? (m === "tokens" ? sum.tokens : sum.cost) : 0;
-
-      if (cur.getDate() === 1 || !monthLabel) {
-        monthLabel = formatMonthName(cur.getMonth());
-      }
 
       currentWeekCells.push({
         date: ymd,
@@ -423,11 +427,23 @@ export function UsagePage() {
         textColor: getCellTextColor(val),
         val,
       });
+      currentWeekDays.push(new Date(cur));
 
       if (currentWeekCells.length === 7) {
+        let monthLabel = "";
+        for (const d of currentWeekDays) {
+          if (d.getDate() === 1) {
+            monthLabel = formatMonthName(d.getMonth());
+            break;
+          }
+        }
+        if (!monthLabel && weeks.length === 0) {
+          const ref = currentWeekDays.find((d) => d >= startDt && d <= endDt) ?? currentWeekDays[0];
+          monthLabel = formatMonthName(ref.getMonth());
+        }
         weeks.push({ month: monthLabel, cells: currentWeekCells });
         currentWeekCells = [];
-        monthLabel = "";
+        currentWeekDays = [];
       }
     }
 
