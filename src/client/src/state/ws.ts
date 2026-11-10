@@ -596,7 +596,7 @@ export function reportPresence(): void {
   socket.send(
     JSON.stringify({
       type: "presence_update",
-      isVisible: document.visibilityState === "visible",
+      isVisible: typeof document === "undefined" || document.visibilityState === "visible",
       viewingPaneId: state.route.name === "session" ? state.activePaneId : null,
     } satisfies ClientMessage)
   );

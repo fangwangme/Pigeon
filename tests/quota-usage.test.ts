@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { ConfigManager } from "../src/server/config-manager";
 import { HerdrClient } from "../src/server/herdr-client";
@@ -415,6 +415,11 @@ describe("quota config and usage request validation (quota-and-usage.md §2.5, p
     expect(diskClient.quotaUsageEnabled).toBe(false);
     expect(diskClient.quotaDisplay).toBe("used");
 
+    // Check usage.db before rejected commands
+    const stateDir = server.configManager.getServerConfig().stateDir;
+    const dbPath = join(stateDir, "usage.db");
+    const dbBefore = existsSync(dbPath) ? readFileSync(dbPath) : null;
+
     // 4. When quotaUsageEnabled is false, quota_get, usage_get, usage_day, usage_model are all rejected with ERR_FEATURE_DISABLED
     const qWs = fakeWs();
     await send(qWs.ws, { type: "quota_get", id: "q1", payload: {} });
@@ -431,6 +436,10 @@ describe("quota config and usage request validation (quota-and-usage.md §2.5, p
     const umWs = fakeWs();
     await send(umWs.ws, { type: "usage_model", id: "um1", payload: { model: "claude-3-opus", from: "2026-11-01", to: "2026-11-10", agents: ["claude"] } });
     expect(lastError(umWs.sent)).toBe(ProtocolErrors.ERR_FEATURE_DISABLED);
+
+    // Assert usage.db is completely untouched by rejected commands while switch is off
+    const dbAfter = existsSync(dbPath) ? readFileSync(dbPath) : null;
+    expect(dbAfter).toEqual(dbBefore);
 
     // 5. Re-enabling the switch restores command access and preserves previous quotaDisplay
     const reenableWs = fakeWs();

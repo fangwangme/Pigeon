@@ -28,9 +28,7 @@ function formatTime(ts: number): string {
 
 export function QuotaPage() {
   const [refreshing, setRefreshing] = createSignal(false);
-  const [initialLoading, setInitialLoading] = createSignal(
-    !state.quotaUpdated && (!state.quotaSnapshots || state.quotaSnapshots.length === 0)
-  );
+  const [initialLoading, setInitialLoading] = createSignal(false);
   const [now, setNow] = createSignal(Date.now());
 
   onMount(() => {

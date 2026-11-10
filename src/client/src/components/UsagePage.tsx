@@ -87,6 +87,7 @@ export function UsagePage() {
 
   const [usageReport, setUsageReport] = createSignal<UsageGetPayload | null>(null);
   const [loading, setLoading] = createSignal(false);
+  const isLoading = () => !state.configReady || loading();
 
   // Sheets
   const [sheet, setSheet] = createSignal<"none" | "day" | "model" | "custom" | "filter">("none");
@@ -553,7 +554,7 @@ export function UsagePage() {
         <div class="ht">
           <div class="t">{t("quota.title")}</div>
           <div class="s">
-            {loading()
+            {isLoading()
               ? (usageReport() ? t("quota.refreshing") : t("usage.loading"))
               : usageReport()?.scannedAt
               ? t("quota.scannedTo", {
@@ -568,7 +569,7 @@ export function UsagePage() {
               display: "inline-flex",
               "align-items": "center",
               "justify-content": "center",
-              animation: loading() ? "spin .8s linear infinite" : "none",
+              animation: isLoading() ? "spin .8s linear infinite" : "none",
             }}
           >
             <Icon name="refresh" />
@@ -800,7 +801,7 @@ export function UsagePage() {
           </Show>
 
           {/* Heatmap Card Skeleton when loading */}
-          <Show when={!isSingleDay() && loading() && !usageReport()}>
+          <Show when={!isSingleDay() && isLoading() && !usageReport()}>
             <div
               style={{
                 "margin-top": "12px",
@@ -1258,7 +1259,7 @@ export function UsagePage() {
             </div>
 
             {/* Skeleton Rows when loading */}
-            <Show when={loading() && !usageReport()}>
+            <Show when={isLoading() && !usageReport()}>
               <div style={{ "margin-top": "6px" }}>
                 <For each={[1, 2, 3]}>
                   {() => (
@@ -1288,7 +1289,7 @@ export function UsagePage() {
             </Show>
 
             {/* Empty state (only when loading finished and no rows) */}
-            <Show when={!loading() && tableRows().length === 0}>
+            <Show when={!isLoading() && tableRows().length === 0}>
               <div
                 style={{
                   "border-top": "1px solid var(--line)",
