@@ -286,6 +286,7 @@ export const en = {
   "quota.title": "Quota & usage",
   "quota.tabQuota": "Quota",
   "quota.tabUsage": "Usage",
+  "quota.loading": "Querying quota…",
   "quota.refreshing": "Refreshing…",
   "quota.refreshedAt": "Refreshed {time}",
   "quota.scannedTo": "Scanned to {time}",
@@ -309,6 +310,7 @@ export const en = {
   "quota.errorPrefix": "Refresh failed: {error}. Previous data is shown below.",
 
   "usage.today": "Today",
+  "usage.loading": "Loading usage…",
   "usage.7d": "7 days",
   "usage.30d": "30 days",
   "usage.year": "This year",

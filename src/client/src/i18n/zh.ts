@@ -287,6 +287,7 @@ export const zh: Messages = {
   "quota.title": "额度与用量",
   "quota.tabQuota": "额度",
   "quota.tabUsage": "用量",
+  "quota.loading": "正在查询额度…",
   "quota.refreshing": "正在刷新…",
   "quota.refreshedAt": "刷新于 {time}",
   "quota.scannedTo": "已扫描到 {time}",
@@ -310,6 +311,7 @@ export const zh: Messages = {
   "quota.errorPrefix": "刷新失败：{error}。下面仍显示上一次的数据。",
 
   "usage.today": "今天",
+  "usage.loading": "正在统计用量…",
   "usage.7d": "7 天",
   "usage.30d": "30 天",
   "usage.year": "今年",

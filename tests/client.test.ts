@@ -135,4 +135,20 @@ describe("mobile layout enhancements (mobile-ui-and-themes.md §1.2, §2.1)", ()
     const indexSrc = readFileSync(join(rootDir, "src", "client", "src", "index.tsx"), "utf-8");
     expect(indexSrc).toContain("quotaFeatureOn");
   });
+
+  test("Quota and Usage pages render skeleton templates and loading animations before data arrives", () => {
+    const css = readFileSync(join(rootDir, "src", "client", "src", "styles.css"), "utf-8");
+    expect(css).toContain(".skel");
+    expect(css).toContain("skel-pulse");
+
+    const quotaSrc = readFileSync(join(rootDir, "src", "client", "src", "components", "QuotaPage.tsx"), "utf-8");
+    expect(quotaSrc).toContain("showSkeleton");
+    expect(quotaSrc).toContain("quota.loading");
+    expect(quotaSrc).toMatch(/Show when=\{!showSkeleton\(\) && !hasAnyData\(\)\}/);
+
+    const usageSrc = readFileSync(join(rootDir, "src", "client", "src", "components", "UsagePage.tsx"), "utf-8");
+    expect(usageSrc).toContain("usage.loading");
+    expect(usageSrc).toMatch(/Show when=\{loading\(\) && !usageReport\(\)\}/);
+    expect(usageSrc).toMatch(/Show when=\{!loading\(\) && tableRows\(\)\.length === 0\}/);
+  });
 });
