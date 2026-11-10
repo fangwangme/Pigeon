@@ -7,6 +7,10 @@ import { PushManager } from "../src/server/push";
 import { ClaudeQuotaProvider } from "../src/server/quota/claude";
 import { SkillScanner } from "../src/server/skill-scanner";
 import { validateClientMessage } from "../src/server/ws-validate";
+import { PricingManager } from "../src/server/usage/pricing";
+import { scanAntigravityDb, scanOpenCodeDb } from "../src/server/usage/sources";
+import { UsageService } from "../src/server/usage/index";
+import { UsageStore } from "../src/server/usage/store";
 import { WsServer } from "../src/server/ws-server";
 import { quotaLevel, quotaPace } from "../src/shared/quota";
 import { cacheHitPercent, comparisonRange, heatmapLayout, resolveRange } from "../src/shared/usage";
@@ -284,6 +288,109 @@ describe("quota config and usage request validation (quota-and-usage.md §2.5, p
       const c = fakeWs();
       await send(c.ws, { type: "usage_get", id: "u1", payload });
       expect(lastError(c.sent)).toBe(ProtocolErrors.ERR_INVALID_PAYLOAD);
+    }
+  });
+
+  test("scanner throws on corrupted SQLite database so store skips fingerprint (quota-and-usage.md §3.1)", () => {
+    const d = tempDir("usage-corrupt");
+    const corruptDb = join(d, "corrupt.db");
+    writeFileSync(corruptDb, "NOT A VALID SQLITE DATABASE FILE HEADER");
+    expect(() => scanAntigravityDb(corruptDb)).toThrow();
+    expect(() => scanOpenCodeDb(corruptDb)).toThrow();
+  });
+
+  test("UsageStore.scanIncremental skips updating scan_file_state on corrupted SQLite database (quota-and-usage.md §3.1)", async () => {
+    const d = tempDir("usage-store-corrupt");
+    const fakeHome = join(d, "home");
+    const origData = process.env.XDG_DATA_HOME;
+    const origCodex = process.env.CODEX_HOME;
+    process.env.XDG_DATA_HOME = join(fakeHome, "share");
+    process.env.CODEX_HOME = join(fakeHome, "codex");
+
+    try {
+      const agyConvs = join(fakeHome, ".gemini", "antigravity-cli", "conversations");
+      mkdirSync(agyConvs, { recursive: true });
+      const corruptDb = join(agyConvs, "corrupt.db");
+      writeFileSync(corruptDb, "NOT A VALID SQLITE DATABASE FILE HEADER");
+
+      const pricing = new PricingManager({ cachePath: join(d, "pricing.json"), fetch: (() => Promise.reject()) as any });
+      const store = new UsageStore({ dbPath: join(d, "usage.db"), home: fakeHome, discoverLs: async () => null });
+      await store.scanIncremental(pricing);
+
+      const state = (store as any).db.query("SELECT * FROM scan_file_state WHERE path = ?").get(corruptDb);
+      expect(state).toBeNull();
+      store.close();
+    } finally {
+      process.env.XDG_DATA_HOME = origData;
+      process.env.CODEX_HOME = origCodex;
+    }
+  });
+
+  test("UsageService with autoScan: false does not start timer, and rebuild() serializes with scan()", async () => {
+    const d = tempDir("usage-service");
+    const fakeHome = join(d, "home");
+    const origData = process.env.XDG_DATA_HOME;
+    const origCodex = process.env.CODEX_HOME;
+    process.env.XDG_DATA_HOME = join(fakeHome, "share");
+    process.env.CODEX_HOME = join(fakeHome, "codex");
+
+    try {
+      const store = new UsageStore({ dbPath: join(d, "usage.db"), home: fakeHome, discoverLs: async () => null });
+      const service = new UsageService({
+        store,
+        pricing: new PricingManager({ cachePath: join(d, "pricing.json"), fetch: (() => Promise.reject()) as any }),
+        autoScan: false,
+      });
+
+      expect((service as any).backgroundTimer).toBeNull();
+
+      // Hook into rebuildAll to hold execution via deferred promise
+      let rebuildStarted = false;
+      let rebuildFinished = false;
+      let resolveRebuild: () => void = () => {};
+      const deferred = new Promise<void>((r) => {
+        resolveRebuild = r;
+      });
+
+      const origRebuildAll = store.rebuildAll.bind(store);
+      store.rebuildAll = async (pricing) => {
+        rebuildStarted = true;
+        await deferred;
+        const res = await origRebuildAll(pricing);
+        rebuildFinished = true;
+        return res;
+      };
+
+      const rebuildPromise = service.rebuild();
+      while (!rebuildStarted) {
+        await new Promise((r) => setTimeout(r, 2));
+      }
+
+      // Concurrently invoke scan() while rebuildAll is held
+      let scanFinished = false;
+      const scanPromise = service.scan().then((res) => {
+        scanFinished = true;
+        return res;
+      });
+
+      // Verify that scan() has NOT finished while rebuild() is in progress
+      await new Promise((r) => setTimeout(r, 15));
+      expect(rebuildFinished).toBe(false);
+      expect(scanFinished).toBe(false);
+
+      // Now allow rebuild to complete
+      resolveRebuild();
+
+      const [rebuildRes, scanRes] = await Promise.all([rebuildPromise, scanPromise]);
+      expect(rebuildFinished).toBe(true);
+      expect(scanFinished).toBe(true);
+      expect(rebuildRes.scannedFiles).toBeGreaterThanOrEqual(0);
+      expect(scanRes.scannedFiles).toBeGreaterThanOrEqual(0);
+
+      service.destroy();
+    } finally {
+      process.env.XDG_DATA_HOME = origData;
+      process.env.CODEX_HOME = origCodex;
     }
   });
 });

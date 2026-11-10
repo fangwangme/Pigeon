@@ -4,12 +4,17 @@ import { PigeonDaemon } from "../server/daemon";
 import { ConfigManager, portScoped } from "../server/config-manager";
 import qrcode from "qrcode-terminal";
 
-const ADMIN_TIMEOUT_MS = 5000;
+export const ADMIN_TIMEOUT_MS = 5000;
 
 /** The daemon behind the admin socket is not running (no socket, or nothing listening on it). */
-class DaemonNotRunningError extends Error {}
+export class DaemonNotRunningError extends Error {}
 
-function sendAdminCommand(adminSocketPath: string, method: string, params: Record<string, any> = {}): Promise<any> {
+export function sendAdminCommand(
+  adminSocketPath: string,
+  method: string,
+  params: Record<string, any> = {},
+  timeoutMs: number = ADMIN_TIMEOUT_MS
+): Promise<any> {
   return new Promise((resolve, reject) => {
     if (!existsSync(adminSocketPath)) {
       return reject(new DaemonNotRunningError(`Pigeon daemon is not running (no admin socket at ${adminSocketPath}).`));
@@ -19,8 +24,8 @@ function sendAdminCommand(adminSocketPath: string, method: string, params: Recor
     });
     const timer = setTimeout(() => {
       socket.destroy();
-      reject(new Error(`Pigeon daemon did not answer '${method}' within ${ADMIN_TIMEOUT_MS / 1000}s.`));
-    }, ADMIN_TIMEOUT_MS);
+      reject(new Error(`Pigeon daemon did not answer '${method}' within ${timeoutMs / 1000}s.`));
+    }, timeoutMs);
 
     let buffer = "";
     socket.on("data", (chunk) => {
@@ -150,12 +155,12 @@ async function main() {
     console.log("Rebuilding usage database from all sources...");
     let res: any;
     try {
-      res = await sendAdminCommand(adminSocketPath, "usage.rebuild");
+      res = await sendAdminCommand(adminSocketPath, "usage.rebuild", {}, 120_000);
     } catch (err) {
       if (!(err instanceof DaemonNotRunningError)) throw err;
       // No daemon: rebuild the same database directly.
       const { UsageService } = await import("../server/usage/index");
-      const service = new UsageService({ configManager });
+      const service = new UsageService({ configManager, autoScan: false });
       try {
         res = await service.rebuild();
       } finally {

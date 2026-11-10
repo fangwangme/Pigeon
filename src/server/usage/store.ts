@@ -271,25 +271,30 @@ export class UsageStore {
 
       scannedFiles++;
       let rawRecords: RawUsageRecord[] = [];
-      switch (item.agent) {
-        case "claude":
-          rawRecords = scanClaudeFile(item.path, stats);
-          break;
-        case "codex":
-          rawRecords = scanCodexFile(item.path, stats);
-          break;
-        case "agy":
-          rawRecords = scanAntigravityDb(item.path);
-          break;
-        case "agy-cache":
-          rawRecords = scanAntigravityCacheDb(item.path);
-          break;
-        case "opencode":
-          rawRecords = scanOpenCodeDb(item.path, stats);
-          break;
-        case "pi":
-          rawRecords = scanPiFile(item.path, stats);
-          break;
+      try {
+        switch (item.agent) {
+          case "claude":
+            rawRecords = scanClaudeFile(item.path, stats);
+            break;
+          case "codex":
+            rawRecords = scanCodexFile(item.path, stats);
+            break;
+          case "agy":
+            rawRecords = scanAntigravityDb(item.path);
+            break;
+          case "agy-cache":
+            rawRecords = scanAntigravityCacheDb(item.path);
+            break;
+          case "opencode":
+            rawRecords = scanOpenCodeDb(item.path, stats);
+            break;
+          case "pi":
+            rawRecords = scanPiFile(item.path, stats);
+            break;
+        }
+      } catch (err) {
+        console.warn(`[Pigeon] Failed to scan ${item.path}:`, err);
+        continue;
       }
 
       if (rawRecords.length > 0) {

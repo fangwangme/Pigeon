@@ -86,7 +86,7 @@ The daemon reads each agent's local session data. It only reads; it never change
 | OpenCode | its SQLite databases (`opencode.db`, and the `-next`/`-dev`/`-beta` variants) under its data directory, opened read-only. |
 | Pi | `~/.pi/agent/sessions/**/*.jsonl`. |
 
-A missing source means that agent has no usage; it is not an error. A record that cannot be parsed is skipped and counted in the scan's `skipped` total, which the daemon logs once per scan.
+A missing source means that agent has no usage; it is not an error. A record that cannot be parsed is skipped and counted in the scan's `skipped` total, which the daemon logs once per scan. A source database that cannot be opened or read (e.g. locked or corrupted) logs a warning and does not update `scan_file_state`, so subsequent scans retry it.
 
 ### 3.2 Record model
 
@@ -103,7 +103,7 @@ Cost is an estimate at public API prices; subscription users are not billed this
 - Prices come from models.dev, then LiteLLM's price list, then OpenRouter's model list, for the first source that knows the model; they are cached on disk for a day.
 - Each day's cost uses that day's price snapshot once one has been recorded, so an old day's cost does not move when prices change.
 - Cache reads and writes use the model's cache prices when it has them, else its input price.
-- A model no source knows is **unpriced**: its tokens count, its cost is 0, and the reply marks it. When no source can be reached and no cache exists, every model is unpriced and the reply says prices are unavailable; tokens are still reported.
+- A model no source knows is **unpriced**: its tokens count, its cost is 0, and the reply marks it. When network sources cannot be reached, previously cached prices on disk (even if older than 24 hours) serve as an offline fallback; when no cache exists, every model is unpriced and the reply says prices are unavailable. A failed price initialization does not permanently mark pricing loaded; subsequent background scans continue to retry.
 
 ### 3.4 Ranges
 

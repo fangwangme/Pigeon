@@ -1,6 +1,8 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { createServer } from "node:net";
+import { sendAdminCommand } from "../src/cli/index";
 import { AgentAdapterManager } from "../src/server/agent-adapters/index";
 import { ConfigManager } from "../src/server/config-manager";
 import { HerdrClient } from "../src/server/herdr-client";
@@ -142,6 +144,27 @@ describe("prompt queue (protocol.md §4.2, §4.13, §5.8)", () => {
     expect(c.ofType("prompt_queue").at(-1).payload.items[0]).toMatchObject({ text: "second prompt", sending: true });
   });
 
+  test("the first prompt of a fresh session (turnIndex 0) clears sending state on turns_delta", async () => {
+    await client.connect();
+    server.paneStore.registerPaneSession("p1", "claude", "ses_fresh_0");
+    const c = await viewer("p1");
+    await send(c.ws, { type: "agent_prompt", id: "a1", payload: { targetPaneId: "p1", text: "fresh turn 0" } });
+    herdr.emitEvent("status", "p1", { status: { state: "idle", app: "claude-code" } });
+    await until(() => herdr.callsOf("terminal.send").length === 1);
+    expect(c.ofType("prompt_queue").at(-1).payload.items[0]).toMatchObject({ text: "fresh turn 0", sending: true });
+
+    // When the first turn arrives, sinceTurnIndex is 0
+    server.paneStore.emit("turns_delta", {
+      paneId: "p1",
+      seqWatermark: 1,
+      sinceTurnIndex: 0,
+      appendTurns: [{ turnId: "t0", turnNumber: 0, timestamp: Date.now(), userPrompt: { text: "fresh turn 0" } }],
+    });
+
+    // The sending prompt should be cleared
+    await until(() => c.ofType("prompt_queue").at(-1).payload.items.length === 0);
+  });
+
   test("queued prompts go out one per idle, oldest first", async () => {
     await client.connect();
     server.paneStore.registerPaneSession("p1", "claude", "ses_order");
@@ -191,6 +214,25 @@ describe("prompt queue (protocol.md §4.2, §4.13, §5.8)", () => {
     herdr.emitEvent("status", "p1", { status: { state: "idle" } });
     await until(() => herdr.callsOf("terminal.send").length === 2);
     expect(herdr.callsOf("terminal.send")[1].params.text).toBe("second unbound");
+  });
+
+  test("subsequent snapshot_updated events do not dispatch next queued prompt before working state (review B1)", async () => {
+    await client.connect();
+    server.paneStore.registerPaneSession("p1", "claude", "ses_multi");
+    const c = await viewer("p1");
+    await send(c.ws, { type: "agent_prompt", id: "a1", payload: { targetPaneId: "p1", text: "first prompt" } });
+    await send(c.ws, { type: "agent_prompt", id: "a2", payload: { targetPaneId: "p1", text: "second prompt" } });
+
+    herdr.emitEvent("status", "p1", { status: { state: "idle", app: "claude-code" } });
+    await until(() => herdr.callsOf("terminal.send").length === 1);
+    expect(herdr.callsOf("terminal.send")[0].params.text).toBe("first prompt");
+
+    client.applySnapshot(topologyOf(PANES.map((p) => ({ ...p, cwd: dir, ...(p.paneId === "p1" ? { state: "idle" } : {}) })), { folder: "/start" }));
+    client.applySnapshot(topologyOf(PANES.map((p) => ({ ...p, cwd: dir, ...(p.paneId === "p1" ? { state: "idle" } : {}) })), { folder: "/start" }));
+    await Bun.sleep(50);
+
+    expect(herdr.callsOf("terminal.send").length).toBe(1);
+    expect(c.ofType("prompt_queue").at(-1).payload.items).toHaveLength(2);
   });
 
   test("the agent finished during sending, then clearSendingPrompt flushes the next prompt", async () => {
@@ -328,6 +370,35 @@ describe("prompt queue (protocol.md §4.2, §4.13, §5.8)", () => {
     const clientQueue = (newServer as any).queues.get("p1");
     expect(clientQueue).toHaveLength(1);
     expect(clientQueue[0].item.text).toBe("persistent prompt");
+    newServer.destroy();
+  });
+
+  test("restored queue on an already idle pane is dispatched on initial snapshot", async () => {
+    const queueFile = join(dir, "queue_idle.json");
+    writeFileSync(
+      queueFile,
+      JSON.stringify({
+        p1: [{ item: { queueId: "q_init", text: "dispatched on snapshot", createdAt: Date.now() }, send: "dispatched on snapshot" }],
+      })
+    );
+
+    const callsBefore = herdr.callsOf("terminal.send").length;
+    const newServer = new WsServer({
+      buildId: "b",
+      herdrClient: client,
+      pushManager: new PushManager(join(dir, "vapid_snap.json")),
+      configManager: new ConfigManager(join(dir, "config.json"), { HOME: dir }),
+      skillScanner: new SkillScanner(dir),
+      uploadStore: uploads,
+      pairingManager: pairing,
+      queueFilePath: queueFile,
+    });
+
+    // p1 is already idle in herdrClient
+    client.applySnapshot(topologyOf(PANES.map((p) => ({ ...p, cwd: dir, ...(p.paneId === "p1" ? { state: "idle" } : {}) })), { folder: "/start" }));
+
+    await until(() => herdr.callsOf("terminal.send").length > callsBefore);
+    expect(herdr.callsOf("terminal.send").at(-1)!.params.text).toBe("dispatched on snapshot");
     newServer.destroy();
   });
 
@@ -574,5 +645,48 @@ describe("seen panes (herdr-adapter.md §4, protocol.md §5.3, issue #3)", () =>
     await until(() => statusOf(other, "p2") === "working");
     setStatus("p2", "done");
     await until(() => statusOf(other, "p2") === "done");
+  });
+
+  test("sendAdminCommand respects timeoutMs parameter and times out if daemon takes longer", async () => {
+    const sockPath = join(dir, "admin-timeout-test.sock");
+    let replyTimer: any;
+    const srv = createServer((sock) => {
+      sock.on("error", () => {});
+      // Intentionally delay replying beyond timeoutMs
+      replyTimer = setTimeout(() => {
+        try {
+          sock.write(JSON.stringify({ result: { ok: true } }) + "\n");
+        } catch {}
+      }, 80);
+    });
+    await new Promise<void>((r) => srv.listen(sockPath, r));
+    try {
+      await expect(sendAdminCommand(sockPath, "usage.rebuild", {}, 20)).rejects.toThrow("within 0.02s");
+    } finally {
+      clearTimeout(replyTimer);
+      srv.close();
+    }
+  });
+
+  test("sendAdminCommand succeeds when extended timeoutMs is provided (architecture.md §4.6)", async () => {
+    const sockPath = join(dir, "admin-extended-timeout.sock");
+    let replyTimer: any;
+    const srv = createServer((sock) => {
+      sock.on("error", () => {});
+      // Takes 30ms to reply
+      replyTimer = setTimeout(() => {
+        try {
+          sock.write(JSON.stringify({ result: { scannedFiles: 12, recordsAdded: 34 } }) + "\n");
+        } catch {}
+      }, 30);
+    });
+    await new Promise<void>((r) => srv.listen(sockPath, r));
+    try {
+      const res = await sendAdminCommand(sockPath, "usage.rebuild", {}, 500);
+      expect(res).toEqual({ scannedFiles: 12, recordsAdded: 34 });
+    } finally {
+      clearTimeout(replyTimer);
+      srv.close();
+    }
   });
 });
