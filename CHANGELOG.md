@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.8] - 2026-11-10
+
+### Added
+- **Quota & Usage master switch**: toggle both Subscription Quota and Token Usage Dashboard features with one click via `client.quotaUsageEnabled` (#17).
+- **Entry masking**: hides header gauge buttons (Home & All Agents) and Settings sub-options, and redirects quota/usage routes to Home when disabled (#17).
+- **Resource preservation**: retains existing configuration settings and aggregated `usage.db` records when disabled; immediately scans on re-enabling (#17).
+- **Query gating**: stops background scanning timers and external provider queries, cleanly rejecting client requests with `ERR_FEATURE_DISABLED` when disabled (#17).
+
 ## [0.1.7] - 2026-11-10
 
 ### Fixed
