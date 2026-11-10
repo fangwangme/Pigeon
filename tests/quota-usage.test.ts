@@ -7,6 +7,8 @@ import { PushManager } from "../src/server/push";
 import { ClaudeQuotaProvider } from "../src/server/quota/claude";
 import { SkillScanner } from "../src/server/skill-scanner";
 import { validateClientMessage } from "../src/server/ws-validate";
+import { PricingManager } from "../src/server/usage/pricing";
+import { scanAntigravityDb, scanOpenCodeDb } from "../src/server/usage/sources";
 import { WsServer } from "../src/server/ws-server";
 import { quotaLevel, quotaPace } from "../src/shared/quota";
 import { cacheHitPercent, comparisonRange, heatmapLayout, resolveRange } from "../src/shared/usage";
@@ -285,5 +287,13 @@ describe("quota config and usage request validation (quota-and-usage.md §2.5, p
       await send(c.ws, { type: "usage_get", id: "u1", payload });
       expect(lastError(c.sent)).toBe(ProtocolErrors.ERR_INVALID_PAYLOAD);
     }
+  });
+
+  test("scanner throws on corrupted SQLite database so store skips fingerprint (quota-and-usage.md §3.1)", () => {
+    const d = tempDir("usage-corrupt");
+    const corruptDb = join(d, "corrupt.db");
+    writeFileSync(corruptDb, "NOT A VALID SQLITE DATABASE FILE HEADER");
+    expect(() => scanAntigravityDb(corruptDb)).toThrow();
+    expect(() => scanOpenCodeDb(corruptDb)).toThrow();
   });
 });

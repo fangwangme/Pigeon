@@ -253,6 +253,38 @@ describe("structured session adapters (agent-session-normalization.md §2)", () 
       expect(turn.assistantResponse?.markdown).toBe("所有模块已就绪并测试通过。");
     });
 
+    test("cleanArgValue does not strip outer quotes from non-JSON arguments", () => {
+      const adapter = new AgyAdapter({ baseBrainDir: agyBrainDir });
+      const sId = "agy_test_quotes";
+      const logs = join(agyBrainDir, sId, ".system_generated", "logs");
+      mkdirSync(logs, { recursive: true });
+      const logFile = join(logs, "transcript.jsonl");
+
+      writeFileSync(
+        logFile,
+        JSON.stringify({
+          step_index: 0,
+          type: "USER_INPUT",
+          content: "test",
+          created_at: new Date(1000).toISOString(),
+        }) + "\n" +
+        JSON.stringify({
+          step_index: 1,
+          type: "PLANNER_RESPONSE",
+          tool_calls: [
+            {
+              name: "run_command",
+              args: { CommandLine: '"a" + "b"' },
+            },
+          ],
+          created_at: new Date(2000).toISOString(),
+        }) + "\n"
+      );
+
+      const { turns } = adapter.getTurns(sId, true);
+      expect(turns[0].toolCalls![0].target).toBe('"a" + "b"');
+    });
+
     test("Reads full line from transcript_full.jsonl when truncated_fields is present (§2.2)", () => {
       const brain = join(testDir, "brain_trunc");
       const logs = join(brain, "s_trunc", ".system_generated", "logs");

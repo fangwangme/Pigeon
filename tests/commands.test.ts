@@ -142,6 +142,27 @@ describe("prompt queue (protocol.md §4.2, §4.13, §5.8)", () => {
     expect(c.ofType("prompt_queue").at(-1).payload.items[0]).toMatchObject({ text: "second prompt", sending: true });
   });
 
+  test("the first prompt of a fresh session (turnIndex 0) clears sending state on turns_delta", async () => {
+    await client.connect();
+    server.paneStore.registerPaneSession("p1", "claude", "ses_fresh_0");
+    const c = await viewer("p1");
+    await send(c.ws, { type: "agent_prompt", id: "a1", payload: { targetPaneId: "p1", text: "fresh turn 0" } });
+    herdr.emitEvent("status", "p1", { status: { state: "idle", app: "claude-code" } });
+    await until(() => herdr.callsOf("terminal.send").length === 1);
+    expect(c.ofType("prompt_queue").at(-1).payload.items[0]).toMatchObject({ text: "fresh turn 0", sending: true });
+
+    // When the first turn arrives, sinceTurnIndex is 0
+    server.paneStore.emit("turns_delta", {
+      paneId: "p1",
+      seqWatermark: 1,
+      sinceTurnIndex: 0,
+      appendTurns: [{ turnId: "t0", turnNumber: 0, timestamp: Date.now(), userPrompt: { text: "fresh turn 0" } }],
+    });
+
+    // The sending prompt should be cleared
+    await until(() => c.ofType("prompt_queue").at(-1).payload.items.length === 0);
+  });
+
   test("queued prompts go out one per idle, oldest first", async () => {
     await client.connect();
     server.paneStore.registerPaneSession("p1", "claude", "ses_order");
@@ -328,6 +349,35 @@ describe("prompt queue (protocol.md §4.2, §4.13, §5.8)", () => {
     const clientQueue = (newServer as any).queues.get("p1");
     expect(clientQueue).toHaveLength(1);
     expect(clientQueue[0].item.text).toBe("persistent prompt");
+    newServer.destroy();
+  });
+
+  test("restored queue on an already idle pane is dispatched on initial snapshot", async () => {
+    const queueFile = join(dir, "queue_idle.json");
+    writeFileSync(
+      queueFile,
+      JSON.stringify({
+        p1: [{ item: { queueId: "q_init", text: "dispatched on snapshot", createdAt: Date.now() }, send: "dispatched on snapshot" }],
+      })
+    );
+
+    const callsBefore = herdr.callsOf("terminal.send").length;
+    const newServer = new WsServer({
+      buildId: "b",
+      herdrClient: client,
+      pushManager: new PushManager(join(dir, "vapid_snap.json")),
+      configManager: new ConfigManager(join(dir, "config.json"), { HOME: dir }),
+      skillScanner: new SkillScanner(dir),
+      uploadStore: uploads,
+      pairingManager: pairing,
+      queueFilePath: queueFile,
+    });
+
+    // p1 is already idle in herdrClient
+    client.applySnapshot(topologyOf(PANES.map((p) => ({ ...p, cwd: dir, ...(p.paneId === "p1" ? { state: "idle" } : {}) })), { folder: "/start" }));
+
+    await until(() => herdr.callsOf("terminal.send").length > callsBefore);
+    expect(herdr.callsOf("terminal.send").at(-1)!.params.text).toBe("dispatched on snapshot");
     newServer.destroy();
   });
 

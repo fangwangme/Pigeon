@@ -70,7 +70,7 @@ Both checks run on the WebSocket upgrade and on `POST /api/uploads`, before the 
   - `pigeon pair` communicates with this socket to request a new QR code token.
   - `pigeon devices revoke <id>` dispatches a revocation command over this socket, instructing the running daemon to drop the target's session and sever its active WebSocket connection immediately.
 - **Disk Storage**:
-  - Device registry is saved to `<stateDir>/devices.json` (`$XDG_STATE_HOME/pigeon` or `~/.local/state/pigeon`) with permissions `0600`, written atomically.
+  - Device registry is saved to `<stateDir>/devices.json` (`$XDG_DATA_HOME/pigeon` or `~/.local/share/pigeon`) with permissions `0600`, written atomically.
   - Session tokens are stored solely as SHA-256 hashes.
   - **Expiry**: a device whose `lastUsedAt` is more than 30 days old is removed, at startup and when its token is next presented; that token then authenticates nothing (user decision, 2026-11-07). `lastUsedAt` is written to the registry at most once an hour per device, so expiry holds across restarts without a write per request.
   - A registry that cannot be parsed stops startup with an error naming the file. It is never silently replaced, because that would unpair every device.
