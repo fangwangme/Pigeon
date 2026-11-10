@@ -1,7 +1,7 @@
 import { render } from "solid-js/web";
 import { createEffect, createSignal, Match, on, onMount, Show, Switch } from "solid-js";
 import "./styles.css";
-import { navigate, setState, state, systemReducesTransparency } from "./state/store";
+import { navigate, quotaFeatureOn, setState, state, systemReducesTransparency } from "./state/store";
 import { applyTheme } from "./themes";
 import { checkPairingFromUrlHash, initWebSocket, reportPresence, selectPane } from "./state/ws";
 import { AgentsPage, Home } from "./components/Home";
@@ -91,6 +91,13 @@ function App() {
     registerServiceWorker();
   });
   createEffect(on(() => state.route.name, () => reportPresence(), { defer: true }));
+  createEffect(() => {
+    if (state.configReady && state.quotaUsageEnabled === false) {
+      if (state.route.name === "quota" || state.route.name === "usage") {
+        navigate({ name: "home" });
+      }
+    }
+  });
   const solid = () => state.reduceTransparency ?? systemReduce();
 
   return (
@@ -114,10 +121,10 @@ function App() {
         <Match when={state.route.name === "settings"}>
           <Settings />
         </Match>
-        <Match when={state.route.name === "quota"}>
+        <Match when={quotaFeatureOn() && state.route.name === "quota"}>
           <QuotaPage />
         </Match>
-        <Match when={state.route.name === "usage"}>
+        <Match when={quotaFeatureOn() && state.route.name === "usage"}>
           <UsagePage />
         </Match>
       </Switch>

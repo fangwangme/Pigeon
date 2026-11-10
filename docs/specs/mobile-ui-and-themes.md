@@ -209,7 +209,7 @@ Without a valid pairing only the pairing guide shows: scan the QR code from `pig
 Behavior and numbers come from `quota-and-usage.md`; this section is the presentation. The approved mockups are kept with issue #13's notes. Both pages share a header (back, the title **额度与用量** with the last refresh time, a refresh button) and a segmented **额度 | 用量** switch below it.
 
 ### 11.1 Quota button
-- A gauge icon in the home capsule (left of settings) and in the All Agents capsule (left of filter); both open §11.2. **列表页显示额度按钮** hides both.
+- A gauge icon in the home capsule (left of settings) and in the All Agents capsule (left of filter); both open §11.2. The button shows when both `client.quotaUsageEnabled` and `client.quotaButton` are on (`architecture.md` §4.7); when either is off the button is hidden on both pages.
 - A dot on the button: amber when any enabled provider's last snapshot has a window at level warn, red when one is exhausted (`quota-and-usage.md` §2.4); none otherwise.
 
 ### 11.2 Quota page
@@ -219,9 +219,11 @@ Behavior and numbers come from `quota-and-usage.md`; this section is the present
 - Colors (`quota-and-usage.md` §2.4): the bar uses the provider's agent color at level normal, `--warn` at warn, `--danger` when exhausted; the primary figure is `--fg` at normal and the level color otherwise. Pace text: **节奏正常**, **超出 N% · 约 <eta> 后用完**, **低于节奏 N%**, muted, except **超出**, which is `--warn`. A window with no pace shows no marker.
 - Reset credits, when a provider reports them, are listed under its windows with their expiry.
 - A provider error shows as a red line naming the provider and the cause, above its card; the card keeps the previous snapshot. No enabled provider with data: an empty state with a link to **管理查询的服务** (§11.4).
+- Loading state: while querying initial quota, the page renders pulsing skeleton cards for enabled providers with a loading spinner and message, hiding the empty state until loading finishes. The header subtitle reflects the server's actual fetch timestamp.
 - Under the cards: **管理查询的服务**, and one line explaining the colors.
 
 ### 11.3 Usage page
+- Loading state: while querying initial usage report, the page renders skeleton figure cards, a skeleton heatmap placeholder, and skeleton list rows with a loading spinner and message, hiding the empty state until loading finishes. The header subtitle reflects the server's actual scan completion timestamp (`scannedAt`).
 - **Range chips** at the top: **今天** (default) / **7 天** / **30 天** / **今年** / **全部** / **自定义**. **自定义** opens a bottom sheet with start and end date inputs bounded by the first day with usage and today, and **应用**; once applied, its chip shows `MM-DD ~ MM-DD`. Under the chips: the range in text, and the agent filter button (**全部 Agent** or `n/5`), which opens a sheet of the five agents with **全选**; at least one stays on, and the filter applies to the whole page.
 - **按 Token | 按花费**: one page-wide switch; it decides the heatmap's scale, the list's order and the share column.
 - **Figure cards**: 花费, Token, 会话, each with the change against the comparison (`quota-and-usage.md` §3.5), and one line naming what is compared (e.g. **与上周一（11-02）截至 17:33 比较**). Increase is `--danger`, decrease `--addfg`.
@@ -233,6 +235,7 @@ Behavior and numbers come from `quota-and-usage.md`; this section is the present
 - Under the list: costs are estimates at public API prices, which subscriptions are not billed by; unpriced models and unavailable prices are named (`quota-and-usage.md` §3.3).
 
 ### 11.4 Settings group
+- The **额度与用量** card begins with the master toggle **启用额度与用量查询** (`client.quotaUsageEnabled`, default `true`). When off, all following items in the card and the **查询额度的服务** card are hidden. If the client route is on quota or usage when the toggle turns off (including broadcasts from other phones or route restored on reload), it redirects immediately to home.
 - **订阅额度** (summary: one short item per enabled provider following **额度显示**, e.g. **Claude 5h 剩 48%**) and **Token 用量** (summary: **今日 $x · 近 7 天 $y**).
 - **额度显示**: 剩余 / 已用 (`client.quotaDisplay`).
 - **列表页显示额度按钮** (`client.quotaButton`).

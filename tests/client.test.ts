@@ -4,6 +4,8 @@ import { join } from "node:path";
 import { PALETTES } from "../src/client/src/themes";
 import { renderMarkdown } from "../src/client/src/utils/markdown";
 import { matchScreenOption } from "../src/client/src/prompt-match";
+import { state, setState } from "../src/client/src/state/store";
+import { applyClientConfigWithTransitions, sendConfigPatch, handleServerMessage, initWebSocket } from "../src/client/src/state/ws";
 
 const rootDir = join(import.meta.dir, "..");
 
@@ -118,5 +120,146 @@ describe("mobile layout enhancements (mobile-ui-and-themes.md §1.2, §2.1)", ()
     expect(css).toMatch(/\.comp textarea\s*\{[^}]*overflow-y:\s*auto/);
     const composerSrc = readFileSync(join(rootDir, "src", "client", "src", "components", "Composer.tsx"), "utf-8");
     expect(composerSrc).toContain("Math.min(ta.scrollHeight, 280)");
+  });
+
+  test("master switch quotaUsageEnabled gates gauge buttons on Home and All Agents (mobile-ui-and-themes.md §11.1, §11.4)", () => {
+    const homeSrc = readFileSync(join(rootDir, "src", "client", "src", "components", "Home.tsx"), "utf-8");
+    // Verify both header gauge buttons check quotaButtonShown or quotaUsageEnabled
+    const matches = [...homeSrc.matchAll(/<Show when=\{([^}]+)\}>\s*<button aria-label=\{t\("quota\.title"\)\}/g)];
+    expect(matches.length).toBe(2);
+    for (const m of matches) {
+      expect(m[1]).toMatch(/quotaButtonShown|quotaUsageEnabled/);
+    }
+
+    const settingsSrc = readFileSync(join(rootDir, "src", "client", "src", "components", "Settings.tsx"), "utf-8");
+    expect(settingsSrc).toContain("quotaUsageEnabled");
+
+    const indexSrc = readFileSync(join(rootDir, "src", "client", "src", "index.tsx"), "utf-8");
+    expect(indexSrc).toContain("quotaFeatureOn");
+  });
+
+  test("Quota and Usage pages render skeleton templates and loading animations before data arrives", () => {
+    const css = readFileSync(join(rootDir, "src", "client", "src", "styles.css"), "utf-8");
+    expect(css).toContain(".skel");
+    expect(css).toContain("skel-pulse");
+
+    const quotaSrc = readFileSync(join(rootDir, "src", "client", "src", "components", "QuotaPage.tsx"), "utf-8");
+    expect(quotaSrc).toContain("showSkeleton");
+    expect(quotaSrc).toContain("quota.loading");
+    expect(quotaSrc).toMatch(/Show when=\{!showSkeleton\(\) && !hasAnyData\(\)\}/);
+
+    const usageSrc = readFileSync(join(rootDir, "src", "client", "src", "components", "UsagePage.tsx"), "utf-8");
+    expect(usageSrc).toContain("usage.loading");
+    expect(usageSrc).toMatch(/Show when=\{isLoading\(\) && !usageReport\(\)\}/);
+    expect(usageSrc).toMatch(/Show when=\{!isLoading\(\) && tableRows\(\)\.length === 0\}/);
+
+    const wsSrc = readFileSync(join(rootDir, "src", "client", "src", "state", "ws.ts"), "utf-8");
+    expect(wsSrc).toMatch(/res\.fetchedAt/);
+  });
+
+  test("client state transitions clear snapshots on toggle-off and restore on toggle-on (quota-and-usage.md §1.1)", () => {
+    // Setup state as enabled with mock snapshots and updated timestamp
+    setState("quotaUsageEnabled", true);
+    setState("quotaSnapshots", [{ provider: "claude" as const, enabled: true, snapshot: null, error: null }]);
+    setState("quotaUpdated", 1700000000000);
+
+    // 1. applyClientConfigWithTransitions toggling off clears snapshots and updated timestamp
+    applyClientConfigWithTransitions({ quotaUsageEnabled: false });
+    expect(state.quotaUsageEnabled).toBe(false);
+    expect(state.quotaSnapshots).toEqual([]);
+    expect(state.quotaUpdated).toBeNull();
+
+    // 2. sendConfigPatch on initiating phone also clears snapshots immediately on toggle-off
+    setState("quotaUsageEnabled", true);
+    setState("quotaSnapshots", [{ provider: "codex" as const, enabled: true, snapshot: null, error: null }]);
+    setState("quotaUpdated", 1700000010000);
+
+    // Calling sendConfigPatch with quotaUsageEnabled: false
+    void sendConfigPatch({ quotaUsageEnabled: false });
+    expect(state.quotaUsageEnabled).toBe(false);
+    expect(state.quotaSnapshots).toEqual([]);
+    expect(state.quotaUpdated).toBeNull();
+  });
+
+  test("sendConfigPatch turn-on waits for server ack then fetches quota on initiating phone (quota-and-usage.md §1.1)", async () => {
+    const sentFrames: any[] = [];
+    let fakeWsInstance: any = null;
+    const origWs = globalThis.WebSocket;
+    const origFetch = globalThis.fetch;
+    const origWindow = globalThis.window;
+
+    try {
+      globalThis.window = {
+        location: { protocol: "http:", host: "localhost", hash: "" },
+      } as any;
+
+      globalThis.fetch = (async () => ({
+        ok: true,
+        json: async () => ({ authenticated: true }),
+      })) as any;
+
+      class FakeClientWs {
+        static OPEN = 1;
+        readyState = 1;
+        _onopen: any = null;
+        onmessage: any = null;
+        onclose: any = null;
+        constructor() {
+          fakeWsInstance = this;
+        }
+        set onopen(fn: any) {
+          this._onopen = fn;
+          queueMicrotask(() => fn?.());
+        }
+        get onopen() {
+          return this._onopen;
+        }
+        send(data: string) {
+          sentFrames.push(JSON.parse(data));
+        }
+        close() {
+          this.readyState = 3;
+          this.onclose?.({ code: 4409 });
+        }
+      }
+      globalThis.WebSocket = FakeClientWs as any;
+
+      await initWebSocket();
+      await new Promise((r) => setTimeout(r, 10));
+      expect(state.connected).toBe(true);
+
+      // Start in disabled state with empty snapshots
+      setState("quotaUsageEnabled", false);
+      setState("quotaSnapshots", []);
+      sentFrames.length = 0;
+
+      // 1. Turning on sends config_patch
+      const patchPromise = sendConfigPatch({ quotaUsageEnabled: true });
+      const patchFrame = sentFrames.find((f) => f.type === "config_patch");
+      expect(patchFrame).toBeDefined();
+      expect(patchFrame.payload.client.quotaUsageEnabled).toBe(true);
+
+      // 2. Before server ack arrives, quota_get MUST NOT be sent yet
+      expect(sentFrames.some((f) => f.type === "quota_get")).toBe(false);
+
+      // 3. Server sends ack
+      handleServerMessage({
+        type: "ack",
+        replyTo: patchFrame.id,
+        payload: { status: "ok", version: 42 },
+      });
+
+      await patchPromise;
+
+      // 4. After server ack, quota_get is sent to fetch fresh quota!
+      expect(sentFrames.some((f) => f.type === "quota_get")).toBe(true);
+    } finally {
+      if (fakeWsInstance) {
+        fakeWsInstance.close();
+      }
+      globalThis.WebSocket = origWs;
+      globalThis.fetch = origFetch;
+      globalThis.window = origWindow;
+    }
   });
 });

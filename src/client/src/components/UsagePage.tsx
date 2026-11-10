@@ -87,6 +87,7 @@ export function UsagePage() {
 
   const [usageReport, setUsageReport] = createSignal<UsageGetPayload | null>(null);
   const [loading, setLoading] = createSignal(false);
+  const isLoading = () => !state.configReady || loading();
 
   // Sheets
   const [sheet, setSheet] = createSignal<"none" | "day" | "model" | "custom" | "filter">("none");
@@ -136,6 +137,7 @@ export function UsagePage() {
   };
 
   createEffect(() => {
+    if (!state.configReady) return;
     // Re-fetch when range or activeAgents change
     const p = range();
     activeAgents(); // tracked: a filter change reloads
@@ -552,8 +554,8 @@ export function UsagePage() {
         <div class="ht">
           <div class="t">{t("quota.title")}</div>
           <div class="s">
-            {loading()
-              ? t("quota.refreshing")
+            {isLoading()
+              ? (usageReport() ? t("quota.refreshing") : t("usage.loading"))
               : usageReport()?.scannedAt
               ? t("quota.scannedTo", {
                   time: new Date(usageReport()!.scannedAt).toTimeString().slice(0, 5),
@@ -567,7 +569,7 @@ export function UsagePage() {
               display: "inline-flex",
               "align-items": "center",
               "justify-content": "center",
-              animation: loading() ? "spin .8s linear infinite" : "none",
+              animation: isLoading() ? "spin .8s linear infinite" : "none",
             }}
           >
             <Icon name="refresh" />
@@ -721,51 +723,117 @@ export function UsagePage() {
           </div>
 
           {/* KPI Figure Cards */}
-          <div style={{ "margin-top": "10px", display: "grid", "grid-template-columns": "repeat(3, minmax(0, 1fr))", gap: "8px" }}>
-            <For each={kpis()}>
-              {(k) => (
-                <div
-                  style={{
-                    background: "var(--surface)",
-                    border: "1px solid var(--line)",
-                    "border-radius": "14px",
-                    padding: "10px 12px",
-                  }}
-                >
-                  <div style={{ "font-size": "12px", color: "var(--muted)" }}>{k.label}</div>
-                  <div
-                    style={{
-                      "font-size": "18px",
-                      "font-weight": 750,
-                      "letter-spacing": "-.02em",
-                      color: k.color,
-                      "font-variant-numeric": "tabular-nums",
-                      "white-space": "nowrap",
-                    }}
-                  >
-                    {k.value}
-                  </div>
-                  <Show when={!isSingleDay()}>
+          <Show
+            when={usageReport()}
+            fallback={
+              <div style={{ "margin-top": "10px", display: "grid", "grid-template-columns": "repeat(3, minmax(0, 1fr))", gap: "8px" }}>
+                <For each={[t("usage.cost"), t("usage.tokens"), t("usage.sessions")]}>
+                  {(label) => (
                     <div
                       style={{
-                        "font-size": "11.5px",
-                        color: k.delta.color,
+                        background: "var(--surface)",
+                        border: "1px solid var(--line)",
+                        "border-radius": "14px",
+                        padding: "10px 12px",
+                        display: "flex",
+                        "flex-direction": "column",
+                        gap: "6px",
+                      }}
+                    >
+                      <div style={{ "font-size": "12px", color: "var(--muted)" }}>{label}</div>
+                      <div class="skel" style={{ width: "70%", height: "20px", margin: "2px 0" }} />
+                      <Show when={!isSingleDay()}>
+                        <div class="skel" style={{ width: "45%", height: "12px" }} />
+                      </Show>
+                    </div>
+                  )}
+                </For>
+              </div>
+            }
+          >
+            <div style={{ "margin-top": "10px", display: "grid", "grid-template-columns": "repeat(3, minmax(0, 1fr))", gap: "8px" }}>
+              <For each={kpis()}>
+                {(k) => (
+                  <div
+                    style={{
+                      background: "var(--surface)",
+                      border: "1px solid var(--line)",
+                      "border-radius": "14px",
+                      padding: "10px 12px",
+                    }}
+                  >
+                    <div style={{ "font-size": "12px", color: "var(--muted)" }}>{k.label}</div>
+                    <div
+                      style={{
+                        "font-size": "18px",
+                        "font-weight": 750,
+                        "letter-spacing": "-.02em",
+                        color: k.color,
                         "font-variant-numeric": "tabular-nums",
                         "white-space": "nowrap",
                       }}
                     >
-                      {k.delta.text}
+                      {k.value}
                     </div>
-                  </Show>
-                </div>
-              )}
-            </For>
-          </div>
+                    <Show when={!isSingleDay()}>
+                      <div
+                        style={{
+                          "font-size": "11.5px",
+                          color: k.delta.color,
+                          "font-variant-numeric": "tabular-nums",
+                          "white-space": "nowrap",
+                        }}
+                      >
+                        {k.delta.text}
+                      </div>
+                    </Show>
+                  </div>
+                )}
+              </For>
+            </div>
+          </Show>
 
-          {/* Comparison line (only when multi-day period) */}
-          <Show when={!isSingleDay()}>
+          {/* Comparison line (only when multi-day period and data loaded) */}
+          <Show when={!isSingleDay() && usageReport()}>
             <div style={{ padding: "6px 4px 0", "font-size": "11.5px", color: "var(--faint)" }}>
               {comparisonNote()}
+            </div>
+          </Show>
+
+          {/* Heatmap Card Skeleton when loading */}
+          <Show when={!isSingleDay() && isLoading() && !usageReport()}>
+            <div
+              style={{
+                "margin-top": "12px",
+                background: "var(--surface)",
+                border: "1px solid var(--line)",
+                "border-radius": "18px",
+                padding: "16px 14px",
+                display: "flex",
+                "flex-direction": "column",
+                gap: "14px",
+              }}
+            >
+              <div style={{ display: "flex", "align-items": "center", gap: "8px" }}>
+                <div class="skel" style={{ width: "110px", height: "16px" }} />
+                <div style={{ flex: 1 }} />
+                <div class="skel" style={{ width: "90px", height: "14px" }} />
+              </div>
+              <div
+                style={{
+                  height: "90px",
+                  display: "flex",
+                  "flex-direction": "column",
+                  "align-items": "center",
+                  "justify-content": "center",
+                  gap: "10px",
+                  color: "var(--muted)",
+                  "font-size": "13px",
+                }}
+              >
+                <div class="spin" style={{ width: "18px", height: "18px", "border-width": "2px" }} />
+                <span>{t("usage.loading")}</span>
+              </div>
             </div>
           </Show>
 
@@ -1190,8 +1258,38 @@ export function UsagePage() {
               </Show>
             </div>
 
-            {/* Empty state */}
-            <Show when={tableRows().length === 0}>
+            {/* Skeleton Rows when loading */}
+            <Show when={isLoading() && !usageReport()}>
+              <div style={{ "margin-top": "6px" }}>
+                <For each={[1, 2, 3]}>
+                  {() => (
+                    <div
+                      style={{
+                        display: "flex",
+                        "align-items": "center",
+                        gap: "10px",
+                        width: "100%",
+                        "min-height": "58px",
+                        padding: "10px 14px",
+                        "border-top": "1px solid var(--line)",
+                      }}
+                    >
+                      <div style={{ flex: 1, display: "flex", "flex-direction": "column", gap: "6px" }}>
+                        <div class="skel" style={{ width: "42%", height: "14px" }} />
+                        <div class="skel" style={{ width: "68%", height: "11px" }} />
+                      </div>
+                      <div style={{ display: "flex", "flex-direction": "column", "align-items": "flex-end", gap: "6px" }}>
+                        <div class="skel" style={{ width: "56px", height: "14px" }} />
+                        <div class="skel" style={{ width: "40px", height: "11px" }} />
+                      </div>
+                    </div>
+                  )}
+                </For>
+              </div>
+            </Show>
+
+            {/* Empty state (only when loading finished and no rows) */}
+            <Show when={!isLoading() && tableRows().length === 0}>
               <div
                 style={{
                   "border-top": "1px solid var(--line)",
@@ -1207,7 +1305,8 @@ export function UsagePage() {
             </Show>
 
             {/* Rows */}
-            <div style={{ "margin-top": "6px" }}>
+            <Show when={usageReport()}>
+              <div style={{ "margin-top": "6px" }}>
               <For each={visibleRows()}>
                 {(r) => (
                   <button
@@ -1310,6 +1409,7 @@ export function UsagePage() {
                 </button>
               </div>
             </Show>
+          </Show>
           </div>
 
           {/* Bottom notes if unpriced */}

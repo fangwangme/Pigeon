@@ -178,6 +178,7 @@ function isValidAgentList(v: unknown): v is string[] {
 const CONFIG_CHECKS: Record<keyof ClientConfig, (v: unknown) => boolean> = {
   themeMode: (v) => v === "system" || v === "light" || v === "dark",
   accent: (v) => typeof v === "string" && (ACCENT_NAMES as readonly string[]).includes(v),
+  quotaUsageEnabled: (v) => typeof v === "boolean",
   quotaDisplay: (v) => v === "remaining" || v === "used",
   quotaButton: (v) => typeof v === "boolean",
   quotaShowAccount: (v) => typeof v === "boolean",

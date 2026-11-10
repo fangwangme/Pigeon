@@ -180,6 +180,7 @@ export async function initWebSocket(): Promise<void> {
     if (socket !== ws) return;
     socket = null;
     setState("connected", false);
+    setState("configReady", false);
     if (pingInterval) clearInterval(pingInterval);
     pingInterval = null;
     for (const p of pending.values()) p.reject({ code: "ERR_OFFLINE", message: t("error.disconnected") });
@@ -245,9 +246,12 @@ export function handleServerMessage(msg: ServerMessage): void {
       paneRevisions.clear();
       configVersion = 0;
       applySyncedClientConfig(msg.payload.clientConfig);
+      setState("configReady", true);
       setState("recipes", msg.payload.recipes);
       setState("serverVersion", msg.payload.serverVersion);
-      void fetchQuota();
+      if (state.quotaUsageEnabled !== false) {
+        void fetchQuota();
+      }
       return;
 
     case "skills_sync":
@@ -264,11 +268,12 @@ export function handleServerMessage(msg: ServerMessage): void {
       return;
 
     case "config_sync":
-    case "config_updated":
+    case "config_updated": {
       if (msg.payload.version < configVersion) return; // an older broadcast arriving late
       configVersion = msg.payload.version;
-      applySyncedClientConfig(msg.payload.client);
+      applyClientConfigWithTransitions(msg.payload.client);
       return;
+    }
 
     case "snapshot_update":
       trackUnread(msg.payload);
@@ -516,22 +521,59 @@ export async function selectPane(paneId: string): Promise<void> {
   reportPresence();
 }
 
-export function sendConfigPatch(patch: Partial<ClientConfig>): void {
+/** Applies client config and triggers quota transitions when quotaUsageEnabled changes (quota-and-usage.md §1.1). */
+export function applyClientConfigWithTransitions(patch: Partial<ClientConfig> | undefined): void {
+  if (!patch) return;
+  const prevEnabled = state.quotaUsageEnabled;
   applySyncedClientConfig(patch);
-  sendMessage({ type: "config_patch", id: nextId(), payload: { client: patch } });
+  if (prevEnabled === false && state.quotaUsageEnabled) {
+    void fetchQuota();
+  } else if (prevEnabled === true && !state.quotaUsageEnabled) {
+    setState("quotaSnapshots", []);
+    setState("quotaUpdated", null);
+  }
+}
+
+export async function sendConfigPatch(patch: Partial<ClientConfig>): Promise<void> {
+  const prevEnabled = state.quotaUsageEnabled;
+  applySyncedClientConfig(patch);
+  if (prevEnabled === true && state.quotaUsageEnabled === false) {
+    setState("quotaSnapshots", []);
+    setState("quotaUpdated", null);
+  }
+  try {
+    const res = await request({ type: "config_patch", payload: { client: patch } });
+    if (res && typeof res.version === "number") {
+      configVersion = Math.max(configVersion, res.version);
+    }
+    if (prevEnabled === false && state.quotaUsageEnabled === true) {
+      void fetchQuota();
+    }
+  } catch (err) {
+    console.error("[Pigeon] sendConfigPatch error", err);
+  }
 }
 
 /** protocol.md §4.16: always answered from the daemon's 60-second cache. */
 export async function fetchQuota(): Promise<QuotaProviderState[]> {
+  if (state.quotaUsageEnabled === false) {
+    return [];
+  }
+  setState("quotaLoading", true);
   try {
     const res = await request({ type: "quota_get", payload: {} });
     if (res?.providers) {
       setState("quotaSnapshots", res.providers);
-      setState("quotaUpdated", Date.now());
+      const serverFetchedAt =
+        res.fetchedAt ||
+        Math.max(0, ...res.providers.map((p: any) => p.snapshot?.fetchedAt ?? p.error?.at ?? 0));
+      setState("quotaUpdated", serverFetchedAt > 0 ? serverFetchedAt : Date.now());
       return res.providers;
     }
   } catch (err) {
     console.error("[Pigeon] fetchQuota error", err);
+  } finally {
+    setState("quotaLoading", false);
   }
   return state.quotaSnapshots;
 }
@@ -554,7 +596,7 @@ export function reportPresence(): void {
   socket.send(
     JSON.stringify({
       type: "presence_update",
-      isVisible: document.visibilityState === "visible",
+      isVisible: typeof document === "undefined" || document.visibilityState === "visible",
       viewingPaneId: state.route.name === "session" ? state.activePaneId : null,
     } satisfies ClientMessage)
   );

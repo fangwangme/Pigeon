@@ -46,9 +46,9 @@ export function Settings() {
   const [usageSummaryText, setUsageSummaryText] = createSignal<string>("—");
   createEffect(
     on(
-      () => state.connected,
-      (c) => {
-        if (c) {
+      () => state.connected && state.configReady && state.quotaUsageEnabled !== false,
+      (on) => {
+        if (on) {
           void request({
             type: "usage_get",
             payload: { preset: "7d", agents: ["claude", "codex", "agy", "opencode", "pi"] },
@@ -151,161 +151,172 @@ export function Settings() {
 
           <div class="sec">{t("settings.quotaUsage")}</div>
           <div class="card">
-            <button class="li" onClick={() => navigate({ name: "quota", from: "settings" })}>
-              <span style={{ width: "32px", height: "32px", "border-radius": "9px", background: "var(--accentbg)", color: "var(--accent)", display: "grid", "place-items": "center", flex: "none" }}>
-                <Icon name="gauge" sm />
-              </span>
-              <div class="tx">
-                {t("settings.subscriptionQuota")}
-                <small>{quotaSummaryText()}</small>
-              </div>
-              <Icon name="chevR" sm />
+            <button class="li" onClick={() => sendConfigPatch({ quotaUsageEnabled: state.quotaUsageEnabled === false })}>
+              <div class="tx">{t("settings.quotaUsageEnabled")}</div>
+              <span class={`tg${state.quotaUsageEnabled !== false ? "" : " off"}`} />
             </button>
-            <button class="li" onClick={() => navigate({ name: "usage", from: "settings" })}>
-              <span style={{ width: "32px", height: "32px", "border-radius": "9px", background: "var(--accentbg)", color: "var(--accent)", display: "grid", "place-items": "center", flex: "none" }}>
-                <Icon name="barChart" sm />
-              </span>
-              <div class="tx">
-                {t("settings.tokenUsage")}
-                <small>{usageSummaryText()}</small>
-              </div>
-              <Icon name="chevR" sm />
-            </button>
-            <div class="li">
-              <div class="tx">{t("settings.quotaDisplay")}</div>
-              <div
-                class="seg"
-                style={{
-                  display: "grid",
-                  "grid-template-columns": "repeat(2, minmax(0, 1fr))",
-                  width: "180px",
-                  padding: "2px",
-                  "border-radius": "9px",
-                  flex: "none",
-                }}
-              >
-                <button
-                  class={state.quotaDisplay !== "used" ? "on" : ""}
-                  style={{ height: "30px", "font-size": "13px" }}
-                  onClick={() => sendConfigPatch({ quotaDisplay: "remaining" })}
+            <Show when={state.quotaUsageEnabled !== false}>
+              <button class="li" onClick={() => navigate({ name: "quota", from: "settings" })}>
+                <span style={{ width: "32px", height: "32px", "border-radius": "9px", background: "var(--accentbg)", color: "var(--accent)", display: "grid", "place-items": "center", flex: "none" }}>
+                  <Icon name="gauge" sm />
+                </span>
+                <div class="tx">
+                  {t("settings.subscriptionQuota")}
+                  <small>{quotaSummaryText()}</small>
+                </div>
+                <Icon name="chevR" sm />
+              </button>
+              <button class="li" onClick={() => navigate({ name: "usage", from: "settings" })}>
+                <span style={{ width: "32px", height: "32px", "border-radius": "9px", background: "var(--accentbg)", color: "var(--accent)", display: "grid", "place-items": "center", flex: "none" }}>
+                  <Icon name="barChart" sm />
+                </span>
+                <div class="tx">
+                  {t("settings.tokenUsage")}
+                  <small>{usageSummaryText()}</small>
+                </div>
+                <Icon name="chevR" sm />
+              </button>
+              <div class="li">
+                <div class="tx">{t("settings.quotaDisplay")}</div>
+                <div
+                  class="seg"
+                  style={{
+                    display: "grid",
+                    "grid-template-columns": "repeat(2, minmax(0, 1fr))",
+                    width: "180px",
+                    padding: "2px",
+                    "border-radius": "9px",
+                    flex: "none",
+                  }}
                 >
-                  {t("settings.remaining")}
-                </button>
-                <button
-                  class={state.quotaDisplay === "used" ? "on" : ""}
-                  style={{ height: "30px", "font-size": "13px" }}
-                  onClick={() => sendConfigPatch({ quotaDisplay: "used" })}
-                >
-                  {t("settings.used")}
-                </button>
-              </div>
-            </div>
-            <button class="li" onClick={() => sendConfigPatch({ quotaButton: !state.quotaButton })}>
-              <div class="tx">{t("settings.showQuotaButton")}</div>
-              <span class={`tg${state.quotaButton ? "" : " off"}`} />
-            </button>
-            <button class="li" onClick={() => sendConfigPatch({ quotaShowAccount: state.quotaShowAccount === false })}>
-              <div class="tx">{t("settings.quotaShowAccount")}</div>
-              <span class={`tg${state.quotaShowAccount !== false ? "" : " off"}`} />
-            </button>
-            <div class="li">
-              <div class="tx">{t("settings.usageScanMode")}</div>
-              <div
-                class="seg"
-                style={{
-                  display: "grid",
-                  "grid-template-columns": "repeat(2, minmax(0, 1fr))",
-                  width: "180px",
-                  padding: "2px",
-                  "border-radius": "9px",
-                  flex: "none",
-                }}
-              >
-                <button
-                  class={state.usageScanMode !== "realtime" ? "on" : ""}
-                  style={{ height: "30px", "font-size": "12.5px" }}
-                  onClick={() => sendConfigPatch({ usageScanMode: "scheduled" })}
-                >
-                  {t("settings.usageScanScheduled")}
-                </button>
-                <button
-                  class={state.usageScanMode === "realtime" ? "on" : ""}
-                  style={{ height: "30px", "font-size": "12.5px" }}
-                  onClick={() => sendConfigPatch({ usageScanMode: "realtime" })}
-                >
-                  {t("settings.usageScanRealtime")}
-                </button>
-              </div>
-            </div>
-
-            <Show when={state.usageScanMode !== "realtime"}>
-              <div class="li" style={{ "justify-content": "space-between", "align-items": "center" }}>
-                <div class="tx">{t("settings.usageScanInterval")}</div>
-                <div style={{ display: "inline-flex", gap: "6px" }}>
-                  <For each={["1m", "2m", "5m", "10m", "15m"] as const}>
-                    {(interval) => {
-                      const isSel = () => (state.usageScanInterval || "5m") === interval;
-                      return (
-                        <button
-                          style={{
-                            height: "28px",
-                            padding: "0 8px",
-                            "border-radius": "6px",
-                            border: "1px solid var(--line)",
-                            font: "inherit",
-                            "font-size": "12px",
-                            "font-weight": isSel() ? 650 : 500,
-                            background: isSel() ? "var(--accentbg)" : "var(--surface)",
-                            color: isSel() ? "var(--accent)" : "var(--fg)",
-                            transition: "all .15s",
-                          }}
-                          onClick={() => sendConfigPatch({ usageScanInterval: interval })}
-                        >
-                          {interval}
-                        </button>
-                      );
-                    }}
-                  </For>
+                  <button
+                    class={state.quotaDisplay !== "used" ? "on" : ""}
+                    style={{ height: "30px", "font-size": "13px" }}
+                    onClick={() => sendConfigPatch({ quotaDisplay: "remaining" })}
+                  >
+                    {t("settings.remaining")}
+                  </button>
+                  <button
+                    class={state.quotaDisplay === "used" ? "on" : ""}
+                    style={{ height: "30px", "font-size": "13px" }}
+                    onClick={() => sendConfigPatch({ quotaDisplay: "used" })}
+                  >
+                    {t("settings.used")}
+                  </button>
                 </div>
               </div>
+              <button class="li" onClick={() => sendConfigPatch({ quotaButton: !state.quotaButton })}>
+                <div class="tx">{t("settings.showQuotaButton")}</div>
+                <span class={`tg${state.quotaButton ? "" : " off"}`} />
+              </button>
+              <button class="li" onClick={() => sendConfigPatch({ quotaShowAccount: state.quotaShowAccount === false })}>
+                <div class="tx">{t("settings.quotaShowAccount")}</div>
+                <span class={`tg${state.quotaShowAccount !== false ? "" : " off"}`} />
+              </button>
+              <div class="li">
+                <div class="tx">{t("settings.usageScanMode")}</div>
+                <div
+                  class="seg"
+                  style={{
+                    display: "grid",
+                    "grid-template-columns": "repeat(2, minmax(0, 1fr))",
+                    width: "180px",
+                    padding: "2px",
+                    "border-radius": "9px",
+                    flex: "none",
+                  }}
+                >
+                  <button
+                    class={state.usageScanMode !== "realtime" ? "on" : ""}
+                    style={{ height: "30px", "font-size": "12.5px" }}
+                    onClick={() => sendConfigPatch({ usageScanMode: "scheduled" })}
+                  >
+                    {t("settings.usageScanScheduled")}
+                  </button>
+                  <button
+                    class={state.usageScanMode === "realtime" ? "on" : ""}
+                    style={{ height: "30px", "font-size": "12.5px" }}
+                    onClick={() => sendConfigPatch({ usageScanMode: "realtime" })}
+                  >
+                    {t("settings.usageScanRealtime")}
+                  </button>
+                </div>
+              </div>
+
+              <Show when={state.usageScanMode !== "realtime"}>
+                <div class="li" style={{ "justify-content": "space-between", "align-items": "center" }}>
+                  <div class="tx">{t("settings.usageScanInterval")}</div>
+                  <div style={{ display: "inline-flex", gap: "6px" }}>
+                    <For each={["1m", "2m", "5m", "10m", "15m"] as const}>
+                      {(interval) => {
+                        const isSel = () => (state.usageScanInterval || "5m") === interval;
+                        return (
+                          <button
+                            style={{
+                              height: "28px",
+                              padding: "0 8px",
+                              "border-radius": "6px",
+                              border: "1px solid var(--line)",
+                              font: "inherit",
+                              "font-size": "12px",
+                              "font-weight": isSel() ? 650 : 500,
+                              background: isSel() ? "var(--accentbg)" : "var(--surface)",
+                              color: isSel() ? "var(--accent)" : "var(--fg)",
+                              transition: "all .15s",
+                            }}
+                            onClick={() => sendConfigPatch({ usageScanInterval: interval })}
+                          >
+                            {interval}
+                          </button>
+                        );
+                      }}
+                    </For>
+                  </div>
+                </div>
+              </Show>
             </Show>
           </div>
-          <p class="note">{t("settings.usageScanModeHint")}</p>
+          <Show when={state.quotaUsageEnabled !== false}>
+            <p class="note">{t("settings.usageScanModeHint")}</p>
 
-          <div class="sec">{t("settings.queriedProviders")}</div>
-          <div class="card">
-            <For each={["claude", "codex", "antigravity"] as const}>
-              {(pKey) => {
-                const isOn = () => state.quotaProviders[pKey] !== false;
-                const snap = () => state.quotaSnapshots.find((s) => s.provider === pKey);
-                const sub = () => {
-                  if (!isOn()) return t("settings.providerDisabled");
-                  const s = snap();
-                  if (s?.snapshot?.plan) return t("settings.providerPlan", { plan: s.snapshot.plan });
-                  if (s?.snapshot) return t("settings.providerActive");
-                  return t("settings.providerActive");
-                };
-                const toggle = () => {
-                  const updated: QuotaProvidersConfig = {
-                    claude: state.quotaProviders.claude !== false,
-                    codex: state.quotaProviders.codex !== false,
-                    antigravity: state.quotaProviders.antigravity !== false,
-                    [pKey]: !isOn(),
+            <div class="sec">{t("settings.queriedProviders")}</div>
+            <div class="card">
+              <For each={["claude", "codex", "antigravity"] as const}>
+                {(pKey) => {
+                  const isOn = () => state.quotaProviders[pKey] !== false;
+                  const snap = () => state.quotaSnapshots.find((s) => s.provider === pKey);
+                  const sub = () => {
+                    if (!isOn()) return t("settings.providerDisabled");
+                    const s = snap();
+                    if (s?.snapshot?.plan) return t("settings.providerPlan", { plan: s.snapshot.plan });
+                    if (s?.snapshot) return t("settings.providerActive");
+                    return t("settings.providerActive");
                   };
-                  sendConfigPatch({ quotaProviders: updated });
-                };
-                return (
-                  <button class="li" onClick={toggle}>
-                    <div class="tx">
-                      {pKey === "claude" ? "Claude Code" : pKey === "codex" ? "Codex" : "Antigravity"}
-                      <small>{sub()}</small>
-                    </div>
-                    <span class={`tg${isOn() ? "" : " off"}`} />
-                  </button>
-                );
-              }}
-            </For>
-          </div>
+                  const toggle = () => {
+                    const updated: QuotaProvidersConfig = {
+                      claude: state.quotaProviders.claude !== false,
+                      codex: state.quotaProviders.codex !== false,
+                      antigravity: state.quotaProviders.antigravity !== false,
+                      [pKey]: !isOn(),
+                    };
+                    sendConfigPatch({ quotaProviders: updated });
+                  };
+                  return (
+                    <button class="li" onClick={toggle}>
+                      <div class="tx">
+                        {pKey === "claude" ? "Claude Code" : pKey === "codex" ? "Codex" : "Antigravity"}
+                        <small>{sub()}</small>
+                      </div>
+                      <span class={`tg${isOn() ? "" : " off"}`} />
+                    </button>
+                  );
+                }}
+              </For>
+            </div>
+          </Show>
+          <Show when={state.quotaUsageEnabled === false}>
+            <p class="note">{t("settings.quotaUsageDisabledHint")}</p>
+          </Show>
 
           <div class="sec">{t("settings.notifications")}</div>
           <div class="card">

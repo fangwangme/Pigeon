@@ -287,6 +287,7 @@ export const zh: Messages = {
   "quota.title": "额度与用量",
   "quota.tabQuota": "额度",
   "quota.tabUsage": "用量",
+  "quota.loading": "正在查询额度…",
   "quota.refreshing": "正在刷新…",
   "quota.refreshedAt": "刷新于 {time}",
   "quota.scannedTo": "已扫描到 {time}",
@@ -310,6 +311,7 @@ export const zh: Messages = {
   "quota.errorPrefix": "刷新失败：{error}。下面仍显示上一次的数据。",
 
   "usage.today": "今天",
+  "usage.loading": "正在统计用量…",
   "usage.7d": "7 天",
   "usage.30d": "30 天",
   "usage.year": "今年",
@@ -368,6 +370,8 @@ export const zh: Messages = {
   "usage.levelEmpty": "0（无用量）",
 
   "settings.quotaUsage": "额度与用量",
+  "settings.quotaUsageEnabled": "启用额度与用量查询",
+  "settings.quotaUsageDisabledHint": "已停用额度与用量功能，后台已停止扫描与外部请求。",
   "settings.subscriptionQuota": "订阅额度",
   "settings.tokenUsage": "Token 用量",
   "settings.usageSummary": "今日 {today} · 近 7 天 {week}",

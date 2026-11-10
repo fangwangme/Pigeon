@@ -55,6 +55,7 @@ export class UsageStore {
   private now: () => number;
   private discoverLs: () => Promise<AntigravityLsConnection | null>;
   private agyCacheDbPath: string;
+  private lastScannedAt = 0;
 
   constructor(options: UsageStoreOptions = {}) {
     this.home = options.home ?? process.env.HOME ?? "";
@@ -71,6 +72,7 @@ export class UsageStore {
     this.db.run("PRAGMA journal_mode = WAL;");
     this.db.run("PRAGMA synchronous = NORMAL;");
     this.initSchema();
+    this.lastScannedAt = this.getLastScannedAt();
   }
 
   private initSchema(): void {
@@ -113,6 +115,11 @@ export class UsageStore {
         cache_write_cost REAL,
         PRIMARY KEY (date, model_id)
       );
+
+      CREATE TABLE IF NOT EXISTS usage_meta (
+        key TEXT PRIMARY KEY,
+        val TEXT NOT NULL
+      );
     `);
 
     try {
@@ -121,6 +128,30 @@ export class UsageStore {
         this.db.run("ALTER TABLE usage_records ADD COLUMN raw_model_id TEXT;");
       }
     } catch {}
+  }
+
+  public getLastScannedAt(): number {
+    if (this.lastScannedAt > 0) return this.lastScannedAt;
+    try {
+      const row: any = this.db.query("SELECT val FROM usage_meta WHERE key = 'last_scanned_at'").get();
+      if (row?.val) {
+        this.lastScannedAt = Number(row.val);
+        return this.lastScannedAt;
+      }
+    } catch {}
+    return 0;
+  }
+
+  public setLastScannedAt(ts: number): void {
+    this.lastScannedAt = ts;
+    try {
+      this.db.run(
+        "INSERT INTO usage_meta (key, val) VALUES ('last_scanned_at', ?) ON CONFLICT(key) DO UPDATE SET val = excluded.val",
+        [ts.toString()]
+      );
+    } catch (err) {
+      console.error("[Pigeon] failed to persist last_scanned_at:", err);
+    }
   }
 
   public close(): void {
@@ -311,6 +342,7 @@ export class UsageStore {
 
     // quota-and-usage.md §3.1: unparseable records are skipped and logged once per scan.
     if (stats.skipped > 0) console.warn(`[Pigeon] usage scan skipped ${stats.skipped} unparseable records`);
+    this.setLastScannedAt(this.now());
     return { scannedFiles, recordsAdded };
   }
 
@@ -591,7 +623,7 @@ export class UsageStore {
     return {
       range: resolvedRange,
       firstDay,
-      scannedAt: this.now(),
+      scannedAt: this.getLastScannedAt() || this.now(),
       pricesAvailable,
       totals,
       comparison,

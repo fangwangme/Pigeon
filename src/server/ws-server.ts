@@ -27,7 +27,7 @@ import {
 } from "../types/protocol";
 
 const PROTOCOL_VERSION = "1.0.0";
-export const SERVER_VERSION = "0.1.7";
+export const SERVER_VERSION = "0.1.8";
 const PUSH_DEDUPE_MS = 60_000;
 
 import { QuotaService } from "./quota/index";
@@ -586,21 +586,37 @@ export class WsServer {
       }
 
       case "quota_get": {
+        if (this.configManager.getClientConfig().quotaUsageEnabled === false) {
+          this.sendError(ws, msg.id, ProtocolErrors.ERR_FEATURE_DISABLED, "Quota and usage are disabled in settings");
+          return;
+        }
         this.quotaService ??= new QuotaService({ configManager: this.configManager });
         const res = await this.quotaService.getQuota(this.configManager.getClientConfig());
-        this.sendAck(ws, msg.id, { providers: res.providers });
+        this.sendAck(ws, msg.id, { providers: res.providers, fetchedAt: res.fetchedAt });
         return;
       }
 
       case "usage_get":
+        if (this.configManager.getClientConfig().quotaUsageEnabled === false) {
+          this.sendError(ws, msg.id, ProtocolErrors.ERR_FEATURE_DISABLED, "Quota and usage are disabled in settings");
+          return;
+        }
         this.sendAck(ws, msg.id, (await this.usage().getUsage(msg.payload)) as any);
         return;
 
       case "usage_day":
+        if (this.configManager.getClientConfig().quotaUsageEnabled === false) {
+          this.sendError(ws, msg.id, ProtocolErrors.ERR_FEATURE_DISABLED, "Quota and usage are disabled in settings");
+          return;
+        }
         this.sendAck(ws, msg.id, (await this.usage().getDay(msg.payload)) as any);
         return;
 
       case "usage_model":
+        if (this.configManager.getClientConfig().quotaUsageEnabled === false) {
+          this.sendError(ws, msg.id, ProtocolErrors.ERR_FEATURE_DISABLED, "Quota and usage are disabled in settings");
+          return;
+        }
         this.sendAck(ws, msg.id, (await this.usage().getModel(msg.payload)) as any);
         return;
     }

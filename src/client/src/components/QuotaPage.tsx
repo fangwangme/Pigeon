@@ -28,11 +28,15 @@ function formatTime(ts: number): string {
 
 export function QuotaPage() {
   const [refreshing, setRefreshing] = createSignal(false);
+  const [initialLoading, setInitialLoading] = createSignal(false);
   const [now, setNow] = createSignal(Date.now());
 
   onMount(() => {
-    if (!state.quotaSnapshots || state.quotaSnapshots.length === 0) {
-      void fetchQuota();
+    if (state.configReady && (!state.quotaSnapshots || state.quotaSnapshots.length === 0)) {
+      setInitialLoading(true);
+      void fetchQuota().finally(() => {
+        setInitialLoading(false);
+      });
     }
     const timer = setInterval(() => setNow(Date.now()), 30000);
     onCleanup(() => clearInterval(timer));
@@ -48,9 +52,19 @@ export function QuotaPage() {
     }
   };
 
+  const isLoading = () => !state.configReady || state.quotaLoading || initialLoading() || refreshing();
+
   const backTarget = () => (state.route.name === "quota" ? (state.route.from ?? "home") : "home");
 
   const used = () => state.quotaDisplay === "used";
+
+  const enabledProviderKeys = () => {
+    const list: (typeof ORDERED_PROVIDERS)[number][] = [];
+    for (const key of ORDERED_PROVIDERS) {
+      if (state.quotaProviders[key] !== false) list.push(key);
+    }
+    return list.length > 0 ? list : (ORDERED_PROVIDERS as readonly (typeof ORDERED_PROVIDERS)[number][]);
+  };
 
   const enabledProviders = () => {
     const list: typeof state.quotaSnapshots = [];
@@ -63,6 +77,7 @@ export function QuotaPage() {
   };
 
   const hasAnyData = () => enabledProviders().some((p) => p.snapshot && p.snapshot.windows && p.snapshot.windows.length > 0);
+  const showSkeleton = () => isLoading() && !hasAnyData();
 
   return (
     <div class="page">
@@ -74,8 +89,8 @@ export function QuotaPage() {
         <div class="ht">
           <div class="t">{t("quota.title")}</div>
           <div class="s">
-            {refreshing()
-              ? t("quota.refreshing")
+            {isLoading()
+              ? (refreshing() ? t("quota.refreshing") : t("quota.loading"))
               : state.quotaUpdated
               ? t("quota.refreshedAt", { time: formatTime(state.quotaUpdated) })
               : ""}
@@ -87,7 +102,7 @@ export function QuotaPage() {
               display: "inline-flex",
               "align-items": "center",
               "justify-content": "center",
-              animation: refreshing() ? "spin .8s linear infinite" : "none",
+              animation: isLoading() ? "spin .8s linear infinite" : "none",
             }}
           >
             <Icon name="refresh" />
@@ -115,8 +130,71 @@ export function QuotaPage() {
             </div>
           </div>
 
-          {/* Empty state */}
-          <Show when={!hasAnyData()}>
+          {/* Skeleton Template when loading without data */}
+          <Show when={showSkeleton()}>
+            <div
+              style={{
+                display: "flex",
+                "align-items": "center",
+                "justify-content": "center",
+                gap: "8px",
+                padding: "16px 0 6px",
+                color: "var(--muted)",
+                "font-size": "13px",
+              }}
+            >
+              <div class="spin" style={{ width: "14px", height: "14px", "border-width": "2px" }} />
+              <span>{t("quota.loading")}</span>
+            </div>
+            <div style={{ "margin-top": "6px", display: "flex", "flex-direction": "column", gap: "12px" }}>
+              <For each={enabledProviderKeys()}>
+                {(key) => (
+                  <div
+                    style={{
+                      background: "var(--surface)",
+                      border: "1px solid var(--line)",
+                      "border-radius": "18px",
+                      padding: "16px 16px 14px",
+                      display: "flex",
+                      "flex-direction": "column",
+                      gap: "14px",
+                    }}
+                  >
+                    <div style={{ display: "flex", "align-items": "center", gap: "8px" }}>
+                      <div class="skel" style={{ width: "8px", height: "8px", "border-radius": "50%", flex: "none" }} />
+                      <span
+                        style={{
+                          "font-weight": 700,
+                          "font-size": "15px",
+                          "letter-spacing": ".02em",
+                          color: "var(--muted)",
+                          opacity: 0.7,
+                        }}
+                      >
+                        {PROVIDER_NAMES[key] || key.toUpperCase()}
+                      </span>
+                      <div style={{ flex: 1 }} />
+                      <div class="skel" style={{ width: "64px", height: "14px", "border-radius": "10px" }} />
+                    </div>
+                    <div style={{ display: "flex", "flex-direction": "column", gap: "10px" }}>
+                      <div style={{ display: "flex", "justify-content": "space-between", "align-items": "center" }}>
+                        <div class="skel" style={{ width: "95px", height: "14px" }} />
+                        <div class="skel" style={{ width: "55px", height: "14px" }} />
+                      </div>
+                      <div class="skel" style={{ width: "100%", height: "8px", "border-radius": "4px" }} />
+                      <div style={{ display: "flex", "justify-content": "space-between", "align-items": "center" }}>
+                        <div class="skel" style={{ width: "75px", height: "12px" }} />
+                        <div class="skel" style={{ width: "85px", height: "12px" }} />
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </For>
+            </div>
+          </Show>
+
+          {/* Empty state (only when loading finished and still no data) */}
+          <Show when={!showSkeleton() && !hasAnyData()}>
             <div
               style={{
                 margin: "14px 0 0",
@@ -142,7 +220,8 @@ export function QuotaPage() {
           </Show>
 
           {/* Provider cards */}
-          <div style={{ "margin-top": "10px", display: "flex", "flex-direction": "column", gap: "12px" }}>
+          <Show when={!showSkeleton()}>
+            <div style={{ "margin-top": "10px", display: "flex", "flex-direction": "column", gap: "12px" }}>
             <For each={enabledProviders()}>
               {(p) => {
                 const providerDotColor = () => {
@@ -382,30 +461,33 @@ export function QuotaPage() {
               }}
             </For>
           </div>
+          </Show>
 
-          {/* Manage queried providers button */}
-          <div style={{ "margin-top": "14px" }}>
-            <button
-              onClick={() => navigate({ name: "settings" })}
-              style={{
-                display: "flex",
-                "align-items": "center",
-                "justify-content": "center",
-                gap: "6px",
-                width: "100%",
-                "min-height": "44px",
-                "border-radius": "12px",
-                border: "1px solid var(--line2)",
-                color: "var(--accent)",
-                "font-size": "14px",
-                "font-weight": 550,
-                background: "none",
-              }}
-            >
-              <Icon name="sliders" sm />
-              {t("quota.manageProviders")}
-            </button>
-          </div>
+          {/* Manage queried providers button (only when data is loaded) */}
+          <Show when={!showSkeleton() && hasAnyData()}>
+            <div style={{ "margin-top": "14px" }}>
+              <button
+                onClick={() => navigate({ name: "settings" })}
+                style={{
+                  display: "flex",
+                  "align-items": "center",
+                  "justify-content": "center",
+                  gap: "6px",
+                  width: "100%",
+                  "min-height": "44px",
+                  "border-radius": "12px",
+                  border: "1px solid var(--line2)",
+                  color: "var(--accent)",
+                  "font-size": "14px",
+                  "font-weight": 550,
+                  background: "none",
+                }}
+              >
+                <Icon name="sliders" sm />
+                {t("quota.manageProviders")}
+              </button>
+            </div>
+          </Show>
         </div>
       </div>
     </div>

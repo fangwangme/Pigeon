@@ -42,7 +42,7 @@ export class QuotaService {
     this.now = options.now ?? (() => Date.now());
   }
 
-  public async getQuota(clientConfig?: ClientConfig): Promise<{ providers: QuotaProviderState[] }> {
+  public async getQuota(clientConfig?: ClientConfig): Promise<{ providers: QuotaProviderState[]; fetchedAt: number }> {
     const config = clientConfig ?? this.configManager?.getClientConfig();
     const providersConfig = config?.quotaProviders ?? { claude: true, codex: true, antigravity: true };
     const now = this.now();
@@ -113,7 +113,11 @@ export class QuotaService {
     });
 
     const results = await Promise.all(tasks);
-    return { providers: results };
+    const validFetchedTimes = results
+      .map((r) => r.snapshot?.fetchedAt ?? r.error?.at)
+      .filter((t): t is number => typeof t === "number" && t > 0);
+    const fetchedAt = validFetchedTimes.length > 0 ? Math.max(...validFetchedTimes) : now;
+    return { providers: results, fetchedAt };
   }
 
   private fetchProvider(key: "claude" | "codex" | "antigravity"): Promise<QuotaSnapshot> {
