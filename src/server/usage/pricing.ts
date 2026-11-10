@@ -15,6 +15,7 @@ export interface PricingManagerOptions {
   cachePath?: string;
   now?: () => number;
   fetch?: (input: any, init?: any) => Promise<Response>;
+  retryIntervalMs?: number;
 }
 
 const MODELSDEV_URL = "https://models.dev/api.json";
@@ -28,12 +29,15 @@ export class PricingManager {
   private catalog = new Map<string, ModelPrice>();
   private loaded = false;
   private pricesAvailable = false;
+  private nextRetryAt = 0;
+  private retryIntervalMs: number;
 
   constructor(options: PricingManagerOptions = {}) {
     const defaultDataDir = process.env.XDG_DATA_HOME ? join(process.env.XDG_DATA_HOME, "pigeon") : join(process.env.HOME || "", ".local", "share", "pigeon");
     this.cachePath = options.cachePath ?? join(defaultDataDir, "pricing-cache.json");
     this.now = options.now ?? (() => Date.now());
     this.fetchFn = options.fetch ?? globalThis.fetch.bind(globalThis);
+    this.retryIntervalMs = options.retryIntervalMs ?? 10 * 60 * 1000;
   }
 
   public arePricesAvailable(): boolean {
@@ -42,6 +46,7 @@ export class PricingManager {
 
   public async initialize(): Promise<void> {
     if (this.loaded) return;
+    if (this.now() < this.nextRetryAt) return;
 
     // 1. Try disk cache
     const cacheResult = this.loadFromCache(this.cachePath);
@@ -68,11 +73,13 @@ export class PricingManager {
     if (networkOk) {
       this.pricesAvailable = this.catalog.size > 0;
       this.loaded = true;
+      this.nextRetryAt = 0;
     } else {
       // Network failed: if we loaded stale or seed cache, use it as offline fallback
       this.pricesAvailable = this.catalog.size > 0;
-      // Do not mark loaded = true permanently so future scans retry
+      // Do not mark loaded = true permanently so future scans retry, but throttle retries to avoid hanging scans
       this.loaded = false;
+      this.nextRetryAt = this.now() + this.retryIntervalMs;
     }
   }
 

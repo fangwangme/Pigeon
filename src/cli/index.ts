@@ -4,12 +4,12 @@ import { PigeonDaemon } from "../server/daemon";
 import { ConfigManager, portScoped } from "../server/config-manager";
 import qrcode from "qrcode-terminal";
 
-const ADMIN_TIMEOUT_MS = 5000;
+export const ADMIN_TIMEOUT_MS = 5000;
 
 /** The daemon behind the admin socket is not running (no socket, or nothing listening on it). */
-class DaemonNotRunningError extends Error {}
+export class DaemonNotRunningError extends Error {}
 
-function sendAdminCommand(
+export function sendAdminCommand(
   adminSocketPath: string,
   method: string,
   params: Record<string, any> = {},

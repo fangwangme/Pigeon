@@ -1,6 +1,8 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { createServer } from "node:net";
+import { sendAdminCommand } from "../src/cli/index";
 import { AgentAdapterManager } from "../src/server/agent-adapters/index";
 import { ConfigManager } from "../src/server/config-manager";
 import { HerdrClient } from "../src/server/herdr-client";
@@ -643,5 +645,48 @@ describe("seen panes (herdr-adapter.md §4, protocol.md §5.3, issue #3)", () =>
     await until(() => statusOf(other, "p2") === "working");
     setStatus("p2", "done");
     await until(() => statusOf(other, "p2") === "done");
+  });
+
+  test("sendAdminCommand respects timeoutMs parameter and times out if daemon takes longer", async () => {
+    const sockPath = join(dir, "admin-timeout-test.sock");
+    let replyTimer: any;
+    const srv = createServer((sock) => {
+      sock.on("error", () => {});
+      // Intentionally delay replying beyond timeoutMs
+      replyTimer = setTimeout(() => {
+        try {
+          sock.write(JSON.stringify({ result: { ok: true } }) + "\n");
+        } catch {}
+      }, 80);
+    });
+    await new Promise<void>((r) => srv.listen(sockPath, r));
+    try {
+      await expect(sendAdminCommand(sockPath, "usage.rebuild", {}, 20)).rejects.toThrow("within 0.02s");
+    } finally {
+      clearTimeout(replyTimer);
+      srv.close();
+    }
+  });
+
+  test("sendAdminCommand succeeds when extended timeoutMs is provided (architecture.md §4.6)", async () => {
+    const sockPath = join(dir, "admin-extended-timeout.sock");
+    let replyTimer: any;
+    const srv = createServer((sock) => {
+      sock.on("error", () => {});
+      // Takes 30ms to reply
+      replyTimer = setTimeout(() => {
+        try {
+          sock.write(JSON.stringify({ result: { scannedFiles: 12, recordsAdded: 34 } }) + "\n");
+        } catch {}
+      }, 30);
+    });
+    await new Promise<void>((r) => srv.listen(sockPath, r));
+    try {
+      const res = await sendAdminCommand(sockPath, "usage.rebuild", {}, 500);
+      expect(res).toEqual({ scannedFiles: 12, recordsAdded: 34 });
+    } finally {
+      clearTimeout(replyTimer);
+      srv.close();
+    }
   });
 });

@@ -335,16 +335,55 @@ describe("quota config and usage request validation (quota-and-usage.md §2.5, p
     process.env.CODEX_HOME = join(fakeHome, "codex");
 
     try {
+      const store = new UsageStore({ dbPath: join(d, "usage.db"), home: fakeHome, discoverLs: async () => null });
       const service = new UsageService({
-        store: new UsageStore({ dbPath: join(d, "usage.db"), home: fakeHome, discoverLs: async () => null }),
+        store,
         pricing: new PricingManager({ cachePath: join(d, "pricing.json"), fetch: (() => Promise.reject()) as any }),
         autoScan: false,
       });
 
       expect((service as any).backgroundTimer).toBeNull();
 
-      // Call rebuild() and scan() concurrently
-      const [rebuildRes, scanRes] = await Promise.all([service.rebuild(), service.scan()]);
+      // Hook into rebuildAll to hold execution via deferred promise
+      let rebuildStarted = false;
+      let rebuildFinished = false;
+      let resolveRebuild: () => void = () => {};
+      const deferred = new Promise<void>((r) => {
+        resolveRebuild = r;
+      });
+
+      const origRebuildAll = store.rebuildAll.bind(store);
+      store.rebuildAll = async (pricing) => {
+        rebuildStarted = true;
+        await deferred;
+        const res = await origRebuildAll(pricing);
+        rebuildFinished = true;
+        return res;
+      };
+
+      const rebuildPromise = service.rebuild();
+      while (!rebuildStarted) {
+        await new Promise((r) => setTimeout(r, 2));
+      }
+
+      // Concurrently invoke scan() while rebuildAll is held
+      let scanFinished = false;
+      const scanPromise = service.scan().then((res) => {
+        scanFinished = true;
+        return res;
+      });
+
+      // Verify that scan() has NOT finished while rebuild() is in progress
+      await new Promise((r) => setTimeout(r, 15));
+      expect(rebuildFinished).toBe(false);
+      expect(scanFinished).toBe(false);
+
+      // Now allow rebuild to complete
+      resolveRebuild();
+
+      const [rebuildRes, scanRes] = await Promise.all([rebuildPromise, scanPromise]);
+      expect(rebuildFinished).toBe(true);
+      expect(scanFinished).toBe(true);
       expect(rebuildRes.scannedFiles).toBeGreaterThanOrEqual(0);
       expect(scanRes.scannedFiles).toBeGreaterThanOrEqual(0);
 

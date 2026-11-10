@@ -50,20 +50,41 @@ describe("PricingManager fallback and retry (quota-and-usage.md §3.3)", () => {
       } as any);
     };
 
-    try {
-      const pm = new PricingManager({ cachePath, fetch: mockFetch as any });
-      await pm.initialize();
-      expect(pm.arePricesAvailable()).toBe(false);
+    let fakeNow = 1_000_000;
+    const pm = new PricingManager({ cachePath, fetch: mockFetch as any, now: () => fakeNow });
+    await pm.initialize();
+    expect(pm.arePricesAvailable()).toBe(false);
 
-      // Now network recovers
-      shouldFail = false;
+    // Now network recovers and retry cooldown passes
+    shouldFail = false;
+    fakeNow += 11 * 60 * 1000;
 
-      // Second initialize should retry network fetch
-      await pm.initialize();
-      expect(pm.arePricesAvailable()).toBe(true);
-      expect(networkAttempts).toBeGreaterThanOrEqual(2);
-    } finally {
-      rmSync(testDir, { recursive: true, force: true });
-    }
+    // Second initialize should retry network fetch
+    await pm.initialize();
+    expect(pm.arePricesAvailable()).toBe(true);
+    expect(networkAttempts).toBeGreaterThanOrEqual(2);
+  });
+
+  test("throttles network retry on failure so foreground scans do not stall repeatedly", async () => {
+    const cachePath = join(testDir, "throttled-pricing.json");
+    let networkAttempts = 0;
+    const mockFetch = () => {
+      networkAttempts++;
+      return Promise.reject(new Error("network timeout"));
+    };
+
+    let fakeNow = 1_000_000;
+    const pm = new PricingManager({ cachePath, fetch: mockFetch as any, now: () => fakeNow });
+    await pm.initialize();
+    expect(networkAttempts).toBe(3); // attempted 3 sources once
+
+    // Call initialize again immediately: should be throttled by nextRetryAt
+    await pm.initialize();
+    expect(networkAttempts).toBe(3); // did not retry within cooldown
+
+    // After retry interval:
+    fakeNow += 10 * 60 * 1000 + 1;
+    await pm.initialize();
+    expect(networkAttempts).toBe(6); // retried after cooldown
   });
 });
