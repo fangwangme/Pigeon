@@ -34,7 +34,7 @@ export function QuotaPage() {
   const [now, setNow] = createSignal(Date.now());
 
   onMount(() => {
-    if (!state.quotaSnapshots || state.quotaSnapshots.length === 0) {
+    if (state.configReady && (!state.quotaSnapshots || state.quotaSnapshots.length === 0)) {
       setInitialLoading(true);
       void fetchQuota().finally(() => {
         setInitialLoading(false);
@@ -54,7 +54,7 @@ export function QuotaPage() {
     }
   };
 
-  const isLoading = () => initialLoading() || refreshing();
+  const isLoading = () => !state.configReady || state.quotaLoading || initialLoading() || refreshing();
 
   const backTarget = () => (state.route.name === "quota" ? (state.route.from ?? "home") : "home");
 

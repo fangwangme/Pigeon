@@ -80,6 +80,7 @@ export interface AppState {
   unread: Record<string, boolean>;
   canInstallPWA: boolean;
   configReady: boolean;
+  quotaLoading: boolean;
   quotaUsageEnabled: boolean;
   quotaDisplay: "remaining" | "used";
   quotaButton: boolean;
@@ -160,6 +161,7 @@ const [state, setState] = createStore<AppState>({
   unread: readJson<Record<string, boolean>>("pigeon_unread", {}),
   canInstallPWA: false,
   configReady: false,
+  quotaLoading: false,
   quotaUsageEnabled: readPref("pigeon_quota_usage_enabled") !== "0",
   quotaDisplay: "remaining",
   quotaButton: true,

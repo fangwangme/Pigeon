@@ -444,6 +444,60 @@ describe("quota config and usage request validation (quota-and-usage.md §2.5, p
     expect(lastError(qWs2.sent)).toBeUndefined();
   });
 
+  test("UsageService background timer and transition scan respects quotaUsageEnabled (quota-and-usage.md §1.1)", async () => {
+    const d = tempDir("usage-service-toggle");
+    const fakeHome = join(d, "home");
+    mkdirSync(fakeHome, { recursive: true });
+
+    let scanCount = 0;
+    const mockStore = {
+      close: () => {},
+      scanIncremental: async () => {
+        scanCount++;
+        return { scannedFiles: 0, recordsAdded: 0 };
+      },
+    } as unknown as UsageStore;
+
+    // 1. Initialized with quotaUsageEnabled: false
+    const cfgPath = join(d, "config.json");
+    const cfgMgr = new ConfigManager(cfgPath, { HOME: fakeHome });
+    cfgMgr.patchClientConfig({ quotaUsageEnabled: false });
+
+    const service = new UsageService({
+      configManager: cfgMgr,
+      store: mockStore,
+      autoScan: true,
+    });
+
+    // When quotaUsageEnabled is false, autoScan / startBackgroundTimer does not scan and sets no timer
+    expect(scanCount).toBe(0);
+    expect((service as any).backgroundTimer).toBeNull();
+
+    // Calling startBackgroundTimer explicitly also early-exits
+    service.startBackgroundTimer();
+    expect(scanCount).toBe(0);
+    expect((service as any).backgroundTimer).toBeNull();
+
+    // 2. Toggling quotaUsageEnabled to true via updateConfig triggers exactly one scan and arms the timer
+    cfgMgr.patchClientConfig({ quotaUsageEnabled: true });
+    service.updateConfig();
+    expect((service as any).backgroundTimer).not.toBeNull();
+    // Wait for the async scan to settle
+    await (service as any).scanPromise;
+    expect(scanCount).toBe(1);
+
+    // Calling updateConfig again while already enabled does not trigger extra scan
+    service.updateConfig();
+    expect(scanCount).toBe(1);
+
+    // 3. Toggling off disarms timer and stops background scans
+    cfgMgr.patchClientConfig({ quotaUsageEnabled: false });
+    service.updateConfig();
+    expect((service as any).backgroundTimer).toBeNull();
+
+    service.destroy();
+  });
+
   test("server accurately tracks and returns actual scan and fetch timestamps for usage and quota", async () => {
     const d = tempDir("actual-timestamps");
     const fakeHome = join(d, "home");

@@ -136,6 +136,7 @@ export function UsagePage() {
   };
 
   createEffect(() => {
+    if (!state.configReady) return;
     // Re-fetch when range or activeAgents change
     const p = range();
     activeAgents(); // tracked: a filter change reloads

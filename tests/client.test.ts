@@ -4,6 +4,8 @@ import { join } from "node:path";
 import { PALETTES } from "../src/client/src/themes";
 import { renderMarkdown } from "../src/client/src/utils/markdown";
 import { matchScreenOption } from "../src/client/src/prompt-match";
+import { state, setState } from "../src/client/src/state/store";
+import { applyClientConfigWithTransitions, sendConfigPatch } from "../src/client/src/state/ws";
 
 const rootDir = join(import.meta.dir, "..");
 
@@ -153,5 +155,29 @@ describe("mobile layout enhancements (mobile-ui-and-themes.md §1.2, §2.1)", ()
 
     const wsSrc = readFileSync(join(rootDir, "src", "client", "src", "state", "ws.ts"), "utf-8");
     expect(wsSrc).toMatch(/res\.fetchedAt/);
+  });
+
+  test("client state transitions clear snapshots on toggle-off and restore on toggle-on (quota-and-usage.md §1.1)", () => {
+    // Setup state as enabled with mock snapshots and updated timestamp
+    setState("quotaUsageEnabled", true);
+    setState("quotaSnapshots", [{ provider: "claude" as const, enabled: true, snapshot: null, error: null }]);
+    setState("quotaUpdated", 1700000000000);
+
+    // 1. applyClientConfigWithTransitions toggling off clears snapshots and updated timestamp
+    applyClientConfigWithTransitions({ quotaUsageEnabled: false });
+    expect(state.quotaUsageEnabled).toBe(false);
+    expect(state.quotaSnapshots).toEqual([]);
+    expect(state.quotaUpdated).toBeNull();
+
+    // 2. sendConfigPatch on initiating phone also clears snapshots immediately on toggle-off
+    setState("quotaUsageEnabled", true);
+    setState("quotaSnapshots", [{ provider: "codex" as const, enabled: true, snapshot: null, error: null }]);
+    setState("quotaUpdated", 1700000010000);
+
+    // Calling sendConfigPatch with quotaUsageEnabled: false
+    void sendConfigPatch({ quotaUsageEnabled: false });
+    expect(state.quotaUsageEnabled).toBe(false);
+    expect(state.quotaSnapshots).toEqual([]);
+    expect(state.quotaUpdated).toBeNull();
   });
 });
