@@ -363,3 +363,81 @@ describe("incremental resume with have (protocol.md §3.1, §3.3, §4.4)", () =>
     expect(full[0].payload.turns).toHaveLength(3);
   });
 });
+
+// Issue #19 acceptance: protocol.md §3.3 (resume anchor), §4.20 and §5.6 (light turns, details),
+// §4.2 and §8 (ERR_UPSTREAM_OFFLINE), §4.5 (recipe lookup); herdr-adapter.md §3.2 (event shapes).
+describe("pane data, Herdr faults and recipe lookup (issue #19)", () => {
+  const plain = (n: number, text: string): NormalizedTurn => ({ turnId: `t${n}`, turnNumber: n, timestamp: n * 1000, userPrompt: { text } });
+  const until = async (cond: () => boolean, ms = 2000) => {
+    const end = Date.now() + ms;
+    while (!cond()) {
+      if (Date.now() > end) throw new Error("timed out");
+      await Bun.sleep(10);
+    }
+  };
+
+  test("resume anchors on the second-to-last turn (P1)", async () => {
+    const third: NormalizedTurn = { ...plain(3, "step 3"), assistantResponse: { markdown: "still writing, now done" } };
+    (server.paneStore as any).paneStates.set("p1", { paneId: "p1", agent: "claude", sessionId: "ses_1", turns: [plain(1, "a"), plain(2, "b"), third], seqWatermark: 3 });
+    const c = fakeWs();
+    server.handleOpen(c.ws);
+    // The phone holds three turns; its third is stale because the agent kept writing it.
+    await send(c.ws, { type: "select_view", id: "s1", payload: { paneId: "p1", have: { sessionId: "ses_1", turnCount: 3, anchorHash: hashTurn(plain(2, "b")) } } });
+    const boot = c.ofType("pane_bootstrap").at(-1)?.payload;
+    expect(boot?.turns).toBeNull();
+    expect(boot?.resume).toMatchObject({ paneId: "p1", sinceTurnIndex: 2, appendTurns: [third] });
+  });
+
+  test("turns travel light and detail_get returns the full tool call (§5.6, §4.20)", async () => {
+    const run = { id: "c1", name: "Bash", verb: "run", target: "bun test", input: { command: "bun test" }, output: "x".repeat(5000), status: "completed" };
+    const diff = { filePath: "src/a.ts", status: "modified", additions: 1, deletions: 1, patch: "@@ -1 +1 @@\n-a\n+b\n" };
+    const edit = { id: "c2", name: "Edit", verb: "edit", target: "src/a.ts", input: { file_path: "src/a.ts" }, status: "completed", diff };
+    const turn = { ...plain(1, "go"), items: [{ kind: "tool", call: run }, { kind: "tool", call: edit }], toolCalls: [run, edit] };
+    const stats = { filesModified: 1, additions: 1, deletions: 1, diffs: [diff] };
+    (server.paneStore as any).paneStates.set("p1", { paneId: "p1", agent: "claude", sessionId: "ses_1", turns: [turn], seqWatermark: 1, stats });
+    const c = fakeWs();
+    server.handleOpen(c.ws);
+    await send(c.ws, { type: "select_view", id: "s1", payload: { paneId: "p1" } });
+    const sent = c.ofType("pane_bootstrap").at(-1)?.payload.turns;
+    const light = sent?.turns[0];
+    expect(light?.toolCalls).toBeUndefined();
+    expect(light?.items[0].call).toMatchObject({ id: "c1", verb: "run", target: "bun test", status: "completed" });
+    expect(light?.items[0].call.input).toBeUndefined();
+    expect(light?.items[0].call.output).toBeUndefined();
+    expect(light?.items[1].call.diff).toMatchObject({ filePath: "src/a.ts", additions: 1, deletions: 1 });
+    expect(light?.items[1].call.diff.patch).toBeUndefined();
+    expect(sent?.sessionStats).toMatchObject({ filesModified: 1, files: [{ filePath: "src/a.ts", additions: 1, deletions: 1 }] });
+    expect(sent?.sessionStats.diffs).toBeUndefined();
+
+    await send(c.ws, { type: "detail_get", id: "d1", payload: { paneId: "p1", kind: "tool", turnId: "t1", callId: "c1" } });
+    expect(c.ofType("ack").at(-1)?.payload.call?.output).toBe("x".repeat(5000));
+  });
+
+  test("a write command while Herdr is offline is ERR_UPSTREAM_OFFLINE (D13)", async () => {
+    await herdr.close();
+    const c = fakeWs();
+    await send(c.ws, { type: "agent_prompt", id: "o1", payload: { targetPaneId: "p1", text: "hi" } });
+    expect(lastError(c.sent)).toBe("ERR_UPSTREAM_OFFLINE");
+  });
+
+  test("a status event of unknown shape is logged and reconciled by a snapshot (B17)", async () => {
+    herdr.serve([{ paneId: "p1", app: "claude-code" }, { paneId: "p2", app: "codex" }]);
+    await client.connect();
+    await until(() => herdr.callsOf("ls").length > 0);
+    await Bun.sleep(100); // let the snapshots of the connect settle
+    const snapshotsBefore = herdr.callsOf("ls").length;
+    herdr.emitEvent("status", "p1", undefined as any); // no `data` at all
+    await until(() => herdr.callsOf("ls").length > snapshotsBefore);
+    // The daemon is still processing events.
+    herdr.serve([{ paneId: "p1", app: "claude-code", state: "working" }, { paneId: "p2", app: "codex" }]);
+    herdr.emitEvent("status", "p1", { status: { state: "working", app: "claude-code" } });
+    await until(() => client.getPaneHerdrStatus("p1") === "working");
+  });
+
+  test("an inherited object key is not a recipe (B16)", async () => {
+    const c = fakeWs();
+    await send(c.ws, { type: "create_tab_and_agent", id: "k1", payload: { workspaceId: "w1", agentKind: "constructor" } });
+    expect(lastError(c.sent)).toBe(ProtocolErrors.ERR_INVALID_PAYLOAD);
+    expect(herdr.callsOf("tab.new")).toHaveLength(0);
+  });
+});

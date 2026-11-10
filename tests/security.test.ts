@@ -1,8 +1,8 @@
 import { afterAll, beforeAll, describe, expect, setSystemTime, test } from "bun:test";
 import { readFileSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { ConfigManager, portScoped } from "../src/server/config-manager";
-import { PigeonDaemon, resolvePublicBaseUrl } from "../src/server/daemon";
+import { ConfigManager, resolveInstancePaths } from "../src/server/config-manager";
+import { PigeonDaemon, resolveAccess } from "../src/server/daemon";
 import { PairingManager, generateBase32Token } from "../src/server/pairing";
 import { PushManager } from "../src/server/push";
 import { tempDir } from "./helpers/fixtures";
@@ -124,12 +124,36 @@ describe("admin channel (security-and-pairing.md §5)", () => {
 });
 
 describe("instances by port (architecture.md §4.6)", () => {
-  test("port 4100 keeps the plain admin socket, devices and queue files; any other port gets its own", () => {
-    expect(portScoped("/run/u/pigeon.sock", 4100)).toBe("/run/u/pigeon.sock");
-    expect(portScoped("/s/pigeon/devices.json", 4100)).toBe("/s/pigeon/devices.json");
-    expect(portScoped("/run/u/pigeon.sock", 4101)).toBe("/run/u/pigeon-4101.sock");
-    expect(portScoped("/s/pigeon/devices.json", 4101)).toBe("/s/pigeon/devices-4101.json");
-    expect(portScoped("/s/pigeon/queue.json", 4200)).toBe("/s/pigeon/queue-4200.json");
+  const env = { HOME: "/h", XDG_DATA_HOME: "/d", XDG_RUNTIME_DIR: "/run/u" };
+
+  test("production keeps pigeon/ and pigeon.sock", () => {
+    expect(resolveInstancePaths({ env, port: 4100, productionPort: 4100 })).toMatchObject({
+      stateDir: "/d/pigeon",
+      configPath: "/d/pigeon/config.json",
+      adminSocketPath: "/run/u/pigeon.sock",
+      devicesPath: "/d/pigeon/devices.json",
+      queuePath: "/d/pigeon/queue.json",
+      usageDbPath: "/d/pigeon/usage.db",
+    });
+  });
+
+  test("another port gets its own state directory but shares the usage data", () => {
+    expect(resolveInstancePaths({ env, port: 4101, productionPort: 4100 })).toMatchObject({
+      stateDir: "/d/pigeon-4101",
+      configPath: "/d/pigeon-4101/config.json",
+      adminSocketPath: "/run/u/pigeon-4101.sock",
+      devicesPath: "/d/pigeon-4101/devices.json",
+      queuePath: "/d/pigeon-4101/queue.json",
+      vapidPath: "/d/pigeon-4101/vapid.json",
+      pushSubscriptionsPath: "/d/pigeon-4101/push-subscriptions.json",
+      uploadsDir: "/d/pigeon-4101/uploads",
+      usageDbPath: "/d/pigeon/usage.db",
+      pricingCachePath: "/d/pigeon/pricing-cache.json",
+    });
+  });
+
+  test("production on a port the user moved it to is still production", () => {
+    expect(resolveInstancePaths({ env, port: 4200, productionPort: 4200 }).stateDir).toBe("/d/pigeon");
   });
 });
 
@@ -186,16 +210,36 @@ describe("push keys and presence (push.md §3, §4)", () => {
 });
 
 describe("reachable address (architecture.md §4.2)", () => {
-  test("Tailscale's name is used when no URL is configured", () => {
-    expect(resolvePublicBaseUrl({ insecureDev: false, port: 4100 }, () => "box.tail.ts.net")).toBe("https://box.tail.ts.net");
+  const none = { tailscaleServeDns: () => null as string | null, tailscaleIp: () => null as string | null, lanIp: () => null as string | null };
+  const access = (probes: Partial<typeof none>, opts: { configured?: string; insecureDev?: boolean } = {}) =>
+    resolveAccess({ insecureDev: false, port: 4100, ...opts }, { ...none, ...probes });
+
+  test("Tailscale Serve is secure and listens on loopback only", () => {
+    expect(access({ tailscaleServeDns: () => "box.tail.ts.net", tailscaleIp: () => "100.64.0.7", lanIp: () => "10.0.0.5" })).toMatchObject({
+      publicBaseUrl: "https://box.tail.ts.net",
+      secure: true,
+      bindHost: "127.0.0.1",
+    });
   });
 
-  test("without Tailscale or a configured URL, startup fails with guidance", () => {
-    expect(() => resolvePublicBaseUrl({ insecureDev: false, port: 4100 }, () => null)).toThrow(/--public-url/);
+  test("without Serve, the Tailscale IP is used over plain HTTP on every interface", () => {
+    expect(access({ tailscaleIp: () => "100.64.0.7", lanIp: () => "10.0.0.5" })).toMatchObject({ publicBaseUrl: "http://100.64.0.7:4100", secure: false, bindHost: "" });
+  });
+
+  test("without Tailscale, the LAN address is used", () => {
+    expect(access({ lanIp: () => "10.0.0.5" })).toMatchObject({ publicBaseUrl: "http://10.0.0.5:4100", secure: false, bindHost: "" });
+  });
+
+  test("with no address at all, localhost is used", () => {
+    expect(access({})).toMatchObject({ publicBaseUrl: "http://localhost:4100", secure: false });
+  });
+
+  test("--insecure-dev skips Tailscale and uses the LAN", () => {
+    expect(access({ tailscaleServeDns: () => "box.tail.ts.net", tailscaleIp: () => "100.64.0.7", lanIp: () => "10.0.0.5" }, { insecureDev: true }).publicBaseUrl).toBe("http://10.0.0.5:4100");
   });
 
   test("a configured URL wins and loses its trailing slash", () => {
-    expect(resolvePublicBaseUrl({ configured: "https://x.example/", insecureDev: false, port: 4100 }, () => null)).toBe("https://x.example");
+    expect(access({ tailscaleServeDns: () => "box.tail.ts.net" }, { configured: "https://x.example/" })).toMatchObject({ publicBaseUrl: "https://x.example", secure: true });
   });
 });
 

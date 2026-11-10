@@ -7,20 +7,23 @@ Pigeon is a phone app for Herdr, written as a PWA. It follows the interaction mo
 - **A conversation, not a terminal.** The session page shows the agent's transcript (`agent-session-normalization.md`). Raw keys and the terminal screen appear only when the user asks for them (§5). No key pads, macro bars or double-tap guards on the main screens.
 - **One status, one place.** A pane's status is shown by its row icon on the lists and by the title of its session page.
 - **Summary first, detail on demand.** Consecutive tool calls collapse into one line; a tap opens the group, another tap the detail.
-- **When the agent needs you, the composer steps aside.** A prompt card takes the composer's place (§4).
+- **The composer is always there** (user decision, 2026-11-11). When the agent needs you, a prompt card floats above the composer (§4); typing is never taken away.
 - **One-handed.** Primary actions sit at the bottom; every hit target is at least 44 × 44 px (smaller visuals extend their hit area with padding or a pseudo-element).
 - **UI language.** Simplified Chinese and English, chosen per browser (§10). Labels quoted in this spec are the Chinese strings; English has an equivalent for each.
 
 ### 1.1 Viewport and keyboard
 - Viewport: `width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content`. Chromium resizes the layout above the keyboard, so the composer stays above it without visual-viewport code.
 - Safe areas use `env(safe-area-inset-*)`.
+- **Standalone mode**: when the app runs from the home screen (`display-mode: standalone`, or `navigator.standalone` on iOS), the root carries `data-mode="standalone"` and the composer dock sits 2 px above the bottom safe area instead of 10 px, so no empty band shows under it.
+- **Text size**: the document sets `text-size-adjust: 100%` (and `-webkit-text-size-adjust`), so WebKit never enlarges some lines of a code block, a diff or a list.
 
 ### 1.2 Text input
 - The composer is a native `<textarea>` that grows smoothly with content up to 280px (approx. 12 lines) with internal vertical scrolling and caret auto-scroll.
 - **IME safety**: between `compositionstart` and `compositionend` (including system dictation) Enter never sends and the `/` list (§6.2) never opens.
 - Enter outside composition sends on a hardware keyboard only; on a touch device Enter inserts a newline and the send button sends.
 - **Drafts** are kept per pane in `localStorage` and survive reloads, offline periods and failed sends.
-- **No autofill**: the composer turns off the browser's autofill and form suggestions (`autocomplete="off"` and the matching attributes), so a mobile browser does not show its password, address or card bar above the keyboard where it honours them.
+- **No autofill**: the composer turns off the browser's autofill and form suggestions (`autocomplete="off"` and the matching attributes), so a mobile browser does not show its password, address or card bar above the keyboard where it honours them. The composer is not inside a `<form>`.
+- **Paste**: pasting images into the composer uploads them as attachments (`protocol.md` §7), exactly like the + sheet's pickers; pasted text stays text.
 - **Voice**: Pigeon records no audio. Voice input is the system keyboard's dictation.
 
 ## 2. Home
@@ -29,14 +32,15 @@ Pigeon is a phone app for Herdr, written as a PWA. It follows the interaction mo
 - Top left, the bionic pigeon logo mark (a compact 34×34px SVG `<Logo />` with subtle rounded border and gradient backdrop). Top right, one glass capsule with **filter** (§2.3), **quota** (§11.1) and **settings** (§8.1). There is no ☰, no device row, no tab bar, no pane row and no drawer.
 - An **所有 Agent** summary row (count of agents, and of those waiting) opens §2.2.
 - One collapsible group per Herdr workspace, in Herdr's order. The group header shows the workspace name, its git branch when it has one, and its tab count; its `+` opens a new session (§7.1) in that workspace. Collapsed state is kept in this browser.
-- One row per tab. The left icon is the tab's status (its primary pane's): amber dot = waiting for you (`blocked`), spinner = working, check = done, hollow circle = idle, `>_` = plain terminal. The title is the tab label (`protocol.md` §5.3: the Herdr name the user gave the tab, else the session's title, else the agent's name); the subtitle names the agent and, when the tab has more than one pane, the pane count.
+- One row per tab. The left icon is the tab's status (its primary pane's): amber dot = waiting for you (`blocked`), spinner = working, check = done, hollow circle = idle, `>_` = plain terminal. The title is the tab label (`protocol.md` §5.3: the Herdr name the user gave the tab, else the session's title, else the agent's name), preceded, for an agent tab, by the agent's icon (its mark, 16 px, in its `--agent-*` color). The subtitle shows the primary pane's model (`protocol.md` §5.3 `model`) and, when the tab has more than one pane, the pane count, joined by ` · `; without a known model only the pane count shows. A plain terminal has no agent icon and keeps its program as subtitle.
 - A blue dot marks a tab whose agent finished (`done`) while this browser was not viewing it. Viewing the pane clears the mark, and the mark of a pane that no longer exists is dropped. Kept in this browser only. The status icon itself follows the daemon's seen mark (`herdr-adapter.md` §4): once any phone has viewed a finished pane, it shows idle.
 - Swiping a row left reveals **重命名** and **关闭**; both use the same flows as the ⋯ menu (§6.1, §6.4).
 - Bottom left, a search button filters rows by tab label and workspace name. Bottom right, a **新会话** button opens §7.1 for the workspace Herdr has focused.
 - While the daemon or Herdr is unreachable, the connection banner (§8.3) sits above the list.
+- Home and All Agents view no pane (`protocol.md` §4.4 `paneId: null`), so the daemon polls nothing for them.
 
 ### 2.2 All agents
-The header's glass capsule holds **quota** (§11.1) left of **filter**. Every pane with an agent, across workspaces, grouped by status in this order: **等待你** → **工作中** → **已完成** → **空闲**. Every group starts expanded each time the page opens; a group header collapses or expands its group, and its chevron points down when expanded and right when collapsed. Each row shows the tab label as its title; the subtitle shows the agent as a tinted label, then the workspace with a folder icon in muted text, so the two read apart at a glance. A waiting row adds one amber line saying what it waits for (the pane's summary). A tap opens that session; back returns here.
+The header's glass capsule holds **quota** (§11.1) left of **filter**. Every pane with an agent, across workspaces, grouped by status in this order: **等待你** → **工作中** → **已完成** → **空闲**. Every group starts expanded each time the page opens; a group header collapses or expands its group, and its chevron points down when expanded and right when collapsed. Each row shows the agent's icon and the tab label as its title; the subtitle shows the workspace with a folder icon in muted text, then the model when known (`Pigeon · opus`). A waiting row adds one amber line saying what it waits for (the pane's summary). A tap opens that session; back returns here.
 
 ### 2.3 Filter
 A sheet shared by §2.1 and §2.2: status (等待你, 工作中, 已完成, 空闲, 终端), agent kind, and display options (show plain terminals, show idle tabs). While a filter is active the filter button carries a dot. Stored in this browser's `localStorage` only, never synced.
@@ -44,24 +48,31 @@ A sheet shared by §2.1 and §2.2: status (等待你, 工作中, 已完成, 空�
 ## 3. Session page
 
 ### 3.1 Layout
-- A glass header: back, the session title (prioritizes named tab labels, falling back to the agent session's title, then agent recipe name per `protocol.md` §5.3; a spinner while working, an amber dot while waiting), the pane in the subtitle when the tab has several, and ⋯ (§6.1). Tapping the title switches pane when there are several (§6.8).
+- A glass header bar with a hairline at its bottom edge; content scrolling under it is blurred and never shows through as legible text. It holds back (hit area 44 × 44 px), the session title (prioritizes named tab labels, falling back to the agent session's title, then agent recipe name per `protocol.md` §5.3; a spinner while working, an amber dot while waiting), the pane in the subtitle when the tab has several, and ⋯ (§6.1). Tapping the title switches pane when there are several (§6.8).
 - The body is the transcript (§3.2) when the pane has a structured session, else the screen cards (§3.6). A plain terminal tab shows the terminal view (§5) as its body.
 - The composer (§6) floats at the bottom.
 
+#### Pane views in memory
+- The client keeps the view of up to 10 recently viewed panes in memory: turns (light form, `agent-session-normalization.md` §3.3), `seq`, status, queue, prompt card and scroll position; `pane_tail` (`protocol.md` §5.10) fills views of working and waiting panes the phone is not viewing.
+- **Switching** to a pane swaps its view in synchronously: no empty or loading frame. Before any server data, the header's status comes from the latest `snapshot_update`, never from the previous pane. The bootstrap (`protocol.md` §3.3) is then applied in place, keyed by `turnId`, so turns that did not change keep their DOM (and an expanded reasoning stays expanded). Rendered Markdown is cached by its source text.
+- Sticking to the bottom happens in the same frame as the DOM update, once per bootstrap.
+- Tool and reasoning details (`protocol.md` §4.20) live in memory only; offline they are not available (user decision, 2026-11-10).
+- Each switch records `performance.mark`/`measure` entries for its phases (view swap, bootstrap received, bootstrap applied), with the bootstrap's `serverMs`.
+
 #### Transcript Cache
-- **Store**: IndexedDB database `pigeon`, object store `paneCache`, keyed by `paneId`. Each entry holds `{ paneId, sessionId, savedAt, lastAccess, turns, sessionStats, sessionTitle, todos, session }`. Drafts and preferences stay in `localStorage`.
+- **Store**: IndexedDB database `pigeon`, object store `paneCache`, keyed by `paneId`. Each entry holds `{ paneId, sessionId, seq, savedAt, lastAccess, turns, sessionStats, sessionTitle, todos, session }` in the light form. It restores views after a reload; switching never waits for it. Drafts and preferences stay in `localStorage`.
 - **Eviction**:
   - TTL 7 days from `savedAt`;
   - LRU by `lastAccess`, at most 10 panes;
   - expired entries are swept at startup;
   - entries for panes absent from a snapshot are deleted, but only from a snapshot taken while `herdrConnected` is true, so a Herdr outage does not wipe the cache.
-- **Restore**: opening a pane shows its cached transcript immediately if the entry's `sessionId` is the pane's current session as far as the client knows. While cached content is on screen, the header shows a "syncing" indicator (small spinner and "同步中 / Syncing" text). It clears when the server's first answer for that pane (`normalized_turns` or the resume `turns_delta`) arrives. The cache survives reloads; a pane opened after a reload is restored from it.
+- **Restore**: opening a pane that has no view in memory shows its cached transcript as soon as it is read, if the entry's `sessionId` is the pane's current session as far as the client knows. While cached content is on screen, the header shows a "syncing" indicator (small spinner and "同步中 / Syncing" text). It clears when the server's first answer for that pane (`normalized_turns` or the resume `turns_delta`) arrives. The cache survives reloads; a pane opened after a reload is restored from it.
 - **Invalidation**: the server's answer names a different `sessionId`, or `session.bound` is false → the cached entry is deleted and the fresh data shown.
-- **Writes**, and only these:
-  - after `normalized_turns` and after `turns_delta`, debounced (250–500ms), saving the latest turns together with the pane's current prompt queue;
+- **Writes**, and only these, each saving the pane's view with its prompt queue:
   - when leaving a pane;
-  - on `visibilitychange` to `hidden` and on `pagehide` (flushing any pending debounced write immediately);
+  - on `visibilitychange` to `hidden` and on `pagehide`;
   - when the active pane's `agentStatus` leaves `working` (end of a streamed answer).
+  Nothing is written while turns stream in, and reading an entry does not write it back: `lastAccess` is kept in memory and saved with the next write.
 
 ### 3.2 Messages
 - A user message is a right-aligned bubble; attachments show as thumbnails above it.
@@ -84,20 +95,20 @@ When the session has a todo list (`agent-session-normalization.md` §3), a capsu
 ### 3.5 Running state and scrolling
 - While working, the last turn ends with an animated "思考中…" line, and the send button becomes **■ 停止**.
 - **Stop** sends the recipe's `interruptKeys` (Esc for agents, Ctrl+C for a plain terminal) at once, without confirmation.
-- A message sent while the agent is working is queued by the daemon (`protocol.md` §4.2). Queued messages show as dashed bubbles below the last turn, each with **编辑** and **撤销**; they are sent in order when the turn ends. **编辑** shows only while the composer is on screen: while a prompt card hides the composer, only **撤销** shows. **编辑** loads the message's text and attachments into the composer for in-place editing; the message remains in the server queue at its original position (`protocol.md` §4.14). Submitting the updated prompt sends `queue_update` to update the queued item in-place without altering queue order or advancing newer items. When the message was already sent before update or cancel, the phone says so and leaves the composer unchanged.
-- New content scrolls the page to the bottom only when the page was within 40 px of the bottom. Otherwise a round ↓ button appears above the composer and scrolls to the newest message.
+- A message sent while the agent is working is queued by the daemon (`protocol.md` §4.2). Queued messages show as dashed bubbles below the last turn, each with **编辑** and **撤销**; they are sent in order when the turn ends. **编辑** loads the message's text and attachments into the composer for in-place editing; the draft that was in the composer is kept aside and comes back when the edit is submitted or abandoned. The message remains in the server queue at its original position (`protocol.md` §4.14). Submitting the updated prompt sends `queue_update` to update the queued item in-place without altering queue order or advancing newer items. When the message was already sent before the update, the phone says so and the edited text stays in the composer as an ordinary draft; a cancel that comes too late is reported the same way.
+- New content scrolls the page to the bottom only when the page was within 40 px of the bottom. Otherwise a round ↓ button appears above the composer and scrolls to the newest message. It sits at least 32 px above the composer's top edge, so a thumb reaching for it cannot hit the send button.
 
 ### 3.6 Screen-card fallback
 A pane with an agent but no bound session shows the classified screen cards (`herdr-adapter.md` §8.1) in the same message style: markdown text, tool lines, diffs, thoughts. While waiting for the initial screen data (`!paneLoaded`), the view displays "正在读取这个 pane… / Reading this pane…". Once the initial screen state has loaded and no cards could be classified, the view displays the terminal raw screen fallback or an empty-session state ("无结构化会话") with an "打开终端 / Open terminal" button, rather than continuing to display "Reading this pane…".
 
 ## 4. Prompt cards
 
-When the pane has a `pendingInteraction` (`protocol.md` §5.4), a floating card replaces the composer, the header shows the amber dot and, if this phone is not viewing the pane, a push is sent (`push.md`).
+When the pane has a `pendingInteraction` (`protocol.md` §5.4), a floating card appears above the composer, which stays mounted and usable, the header shows the amber dot and, if this phone is not viewing the pane, a push is sent (`push.md`). Text sent from the composer goes to the pane like any prompt; while Herdr reports `blocked`, Herdr refuses it (`ERR_AGENT_BLOCKED`, `protocol.md` §4.2), and the phone shows that error and keeps the draft.
 
 ### 4.1 Permission
 - Title "需要授权", the question, and the tool call it is about when the transcript has it pending: the command, or a mini diff for an edit (a tap opens §3.3's detail).
 - One button per numbered option, labels and order exactly as on screen. A tap sends that option (`interaction_respond`); the button shows "发送中…" and further taps do nothing until the answer is acked. The card goes away when the prompt leaves the screen.
-- An option whose label asks to tell the agent something ("No, and tell …") is sent, then the composer returns with focus so the user can write the reason.
+- An option whose label asks to tell the agent something ("No, and tell …") is sent, then the composer gets focus so the user can write the reason.
 - **在终端中处理** opens the terminal view (§5). So does an ack with `approved: false`.
 
 ### 4.2 Questions
@@ -105,14 +116,14 @@ When the transcript has a pending question tool call (Claude `AskUserQuestion`),
 Answers are sent as the screen's numbered options: the card matches the current screen prompt to its question by text and sends the digit of the option with the same label. A label matches exactly first; a prefix match counts only when exactly one screen option has that prefix, and anything else opens the terminal view instead of guessing. A multi-select question offers **在终端中处理** in place of **提交**. Without a transcript question, the card is the plain §4.1 card.
 
 ### 4.3 Plan approval
-When the transcript has a pending plan tool call (Claude `ExitPlanMode`), the card shows the plan as Markdown, faded past the card height with **全文** to read it in a sheet, and the screen's options as buttons. An option that asks to keep planning returns the composer like §4.1.
+When the transcript has a pending plan tool call (Claude `ExitPlanMode`), the card shows the plan as Markdown, faded past the card height with **全文** to read it in a sheet, and the screen's options as buttons. An option that asks to keep planning focuses the composer like §4.1.
 
 ### 4.4 No numbered options
 A prompt without numbered options, or `blocked` with nothing recognized, shows its question (or "Agent 在等待") and **在终端中处理** only.
 
 ## 5. Terminal view
 
-- Reached only from a prompt card's **在终端中处理** or the ⋯ menu's **查看终端**. It is a sheet with the pane's current screen (`pane_state.rawScreen`, monospace, no wrapping) and a key row: ↑ ↓ ← → Enter Esc Tab Ctrl+C, plus the prompt's `fallbackKeys`.
+- Reached only from a prompt card's **在终端中处理** or the ⋯ menu's **查看终端**. It is a sheet with the pane's current screen (`pane_state.rawScreen`, monospace, no wrapping) and a key row: ↑ ↓ ← → Enter Esc Tab Ctrl+C, plus the prompt's `fallbackKeys`. While it is open the phone watches the pane's screen (`protocol.md` §4.21).
 - Keys go through `agent_send_keys`. Desktop focus is never moved.
 - A plain terminal tab's session page is this view, and its composer sends command lines (`agent_prompt`).
 
@@ -158,17 +169,20 @@ The **恢复** segment (also reached from `+`) lists the agent's past sessions f
 - **外观**: 跟随系统 / 浅色 / 深色; **降低透明度** (§9.2); **强调色**.
 - **语言**: 跟随系统 / 中文 / English (§10).
 - **额度与用量** (§11.4): rows **订阅额度** and **Token 用量** open §11.2 and §11.3, each with a live one-line summary; **额度显示** 剩余 / 已用; **列表页显示额度按钮**; and under **查询额度的服务** one switch per quota provider.
-- **通知**: the push switches (`push.md` §5). Until delivery exists they are shown disabled with the note "推送投递尚未接通".
+- **通知**: the push switches **等你确认** and **完成时** (`push.md` §6). Turning one on asks for notification permission from that tap and subscribes this device. They are disabled, with a note, in a plain HTTP mode ("需要 HTTPS（Tailscale Serve）"), on iOS outside the home-screen app ("添加到主屏幕后可用"), and when permission was denied ("通知权限已被拒绝").
 - **设备与配对**: the connection to the computer and to Herdr; paired devices, newest paired first, each with **移除** (revokes at once, `protocol.md` §4.12). The five newest show; any others sit behind one row that expands them; how to pair another phone (`pigeon pair` on the computer).
-- **关于**: version; install-as-app hint.
+- **关于**: the version with its environment (`architecture.md` §4.8): `0.1.8`, `0.1.8 (dev)` or `0.1.8 (test:4101)`; install-as-app hint.
 
 ### 8.2 Unpaired
 Without a valid pairing only the pairing guide shows: scan the QR code from `pigeon pair`. It does not reconnect in a loop. Opening `/pair#code=…` pairs and goes to home (`security-and-pairing.md` §2).
+- A pairing request that fails without an answer (network down, daemon restarting) shows the error with **重试**; the code is kept until the daemon accepts or refuses it.
+- In an in-app browser (WeChat, QQ, Weibo, Telegram, Line, Facebook, Instagram, recognized by user agent) the page sends no pairing request, so a single-use code is not spent in a browser the user then leaves. It asks to open the link in Safari or Chrome and offers to copy it.
 
 ### 8.3 Connection
 - Daemon unreachable or Herdr offline: a banner at the top ("电脑未连接" / "Herdr 没有响应"), retried every 3 s, gone when back.
 - A failed send keeps the draft and shows a toast with the reason.
 - A new client build shows **有新版本 · 重新加载** (`architecture.md` §4.1).
+- Close code `4409` (incompatible protocol) shows **应用版本过旧 · 重新加载** and does not reconnect (`protocol.md` §2.2).
 
 ## 9. Themes
 
@@ -183,7 +197,7 @@ Without a valid pairing only the pairing guide shows: scan the QR code from `pig
 
 ### 9.2 Liquid Glass
 - Glass is used only on the floating control layer: header buttons and capsules, the composer, the todo capsule, the ↓ button, menus, sheets, prompt cards and the `/` popover. Messages and lists stay opaque.
-- Glass = a translucent fill with `backdrop-filter: blur() saturate()`, a light inner top edge, a dark inner bottom edge, and a soft diagonal highlight. The session header is a progressive blur fading into the content rather than a bar.
+- Glass = a translucent fill with `backdrop-filter: blur() saturate()`, a light inner top edge, a dark inner bottom edge, and a soft diagonal highlight. The session header is a glass bar with a bottom hairline (§3.1).
 - WebKit cannot refract inside `backdrop-filter`, so there is no lens distortion.
 - **降低透明度** replaces every glass surface with an opaque `--elev` surface. It defaults to on when `prefers-reduced-transparency: reduce` matches. Stored in this browser.
 

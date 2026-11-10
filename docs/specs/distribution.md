@@ -53,7 +53,7 @@ When `pigeon` is invoked via CLI or `npx`/`bunx`:
 
 ### 4.1 Continuous Integration (`ci.yml`)
 - Triggered on pull requests and pushes targeting `main` (ignoring changes confined to `docs/**`, `**.md`, and `.agents/**`).
-- Environment: `ubuntu-latest`.
+- Environment: a matrix of `ubuntu-latest` and `macos-latest` (user decision, 2026-11-11: macOS is a supported platform, verified, not only built). Both run every step.
 - Steps:
   1. Checks out repository.
   2. Sets up Bun (`oven-sh/setup-bun@v2`).

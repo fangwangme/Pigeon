@@ -16,7 +16,7 @@ Session records are files written by other programs: they are a trust boundary. 
 ### 2.0 Binding a pane to its session
 Herdr Core reports no session id (`herdr-adapter.md` §4). Pigeon binds each agent pane from what the Core does report: the agent kind, the foreground process id (`foreground.pid`), the pane's folder (`foreground.cwd`, else `cwd`) and the terminal's creation time (`created_ms`).
 
-1. **Exact**: the agent process names the session it is writing. claude: `~/.claude/sessions/<pid>.json` names `sessionId` and `cwd`; the session is `~/.claude/projects/<slug(cwd)>/<sessionId>.jsonl`. Every other agent: among the files that the pane's foreground process or any of its descendants holds open (Linux `/proc/<pid>/fd`), the one that is a session file of that agent (§2.1–§2.5 name the file per agent) is its session. The descendants count because an agent's command is often a launcher whose child does the work. A process that has gone or whose open files cannot be read gives no exact signal.
+1. **Exact**: the agent process names the session it is writing. claude: `~/.claude/sessions/<pid>.json` names `sessionId` and `cwd`; the session is `~/.claude/projects/<slug(cwd)>/<sessionId>.jsonl`. Every other agent: among the files that the pane's foreground process or any of its descendants holds open (Linux: `/proc/<pid>/fd`, descendants from `/proc`; macOS: `lsof`, descendants from `ps`), the one that is a session file of that agent (§2.1–§2.5 name the file per agent) is its session. The descendants count because an agent's command is often a launcher whose child does the work. A process that has gone or whose open files cannot be read gives no exact signal.
 2. **Folder and time (every agent without an exact signal)**: the newest session of that agent whose folder is the pane's folder and that was last written at or after the terminal's creation time. AGY records carry no folder, so for AGY the newest session written since the creation time is used.
 3. A session already bound to another pane is skipped by rules 2 and 6, so two panes in the same folder do not show the same conversation.
 4. No match leaves the pane unbound (Track 2).
@@ -24,13 +24,13 @@ Herdr Core reports no session id (`herdr-adapter.md` §4). Pigeon binds each age
 6. A pane bound by rule 2 or rule 5 keeps its session while it runs the same agent, until a newer session appears: after every unbound pane has picked by rule 2, a bound pane without an exact signal moves to a session of its agent and folder (any folder for AGY) that is unclaimed and was last written after its current session. That is how `/clear` or `/new` in such a pane is followed (user decision, 2026-11-07). Unbound panes pick first, so a new pane opened in the same folder takes its own new session before an older pane can move to it. The accepted cost: when one pane's folder has two sessions written at the same time by programs outside any pane, the pane can move to the wrong one.
 7. A pane whose agent exits (a plain terminal again) is unbound.
 
-Binding is re-evaluated on every snapshot (`herdr-adapter.md` §3.1). When the result changes (rule 1 names a new session after `/clear`, rule 6 moves the pane, the pane's agent restarted, a resume), the pane switches session and its viewers get a fresh `normalized_turns` (`protocol.md` §5.6). A session is read only while its pane is viewed or bound; closing the pane drops it.
+Binding is re-evaluated for every pane on every snapshot (`herdr-adapter.md` §3.1), and for one pane on that pane's status event (`herdr-adapter.md` §3.2). When the result changes (rule 1 names a new session after `/clear`, rule 6 moves the pane, the pane's agent restarted, a resume), the pane switches session and its viewers get a fresh `normalized_turns` (`protocol.md` §5.6). A session is read only while its pane is viewed or bound; closing the pane drops it.
 
 `slug(path)` replaces every character outside `[A-Za-z0-9]` with `-` (`/home/u/My.Proj` → `-home-u-My-Proj`).
 
 ### 2.1 OpenCode (`opencode`)
 - **Storage**: SQLite at `~/.local/share/opencode/opencode.db`, opened read-only with `PRAGMA query_only = ON` and `PRAGMA busy_timeout = 2000`, so the running OpenCode is never locked.
-- **Session**: `session_v2` (`id`, `directory`, `title`, `time_updated`, summary columns); messages and parts (`text`, `tool`, `reasoning`, …) in `session_message`.
+- **Session**: `session_v2` (`id`, `directory`, `title`, `time_updated`, summary columns), or `session` in older databases; binding probes the table the same way the usage scanner does (`quota-and-usage.md` §3.1). Messages and parts (`text`, `tool`, `reasoning`, …) in `session_message`. A change re-reads only the messages newer than the last one read.
 - **Binding and listing** use `directory` and `time_updated` (milliseconds). All sessions share one database file, so no open file names a session (§2.0 rule 1 does not apply).
 - **Model**: the latest assistant message's `model` (`{ providerID, id }`), as `<providerID>/<id>` like `opencode models` (source `log`).
 - **Title**: `session_v2.title` unless it is OpenCode's default placeholder (`New session - <ISO time>`, matching `/^New session - \d{4}-\d{2}-\d{2}T/`). An absent or placeholder title leaves the session untitled (no first-prompt fallback); listing still falls back to the first prompt (§2.6).
@@ -124,10 +124,19 @@ interface TodoItem { text: string; status: "pending" | "in_progress" | "complete
 ### 3.2 Todos
 The session's todo list is the input of its latest todo tool call (Claude `TodoWrite`, Codex `update_plan`), mapped to `TodoItem`. A todo call also appears in the turn's `items` as `{ kind: "todo", done, total }`.
 
+### 3.3 Light list form
+The daemon sends turns to the phone in a light form (user decision, 2026-11-10: the list needs about 5% of the full records); the full records stay in the daemon and are fetched with `detail_get` (`protocol.md` §4.20).
+- `userPrompt`, text items, `assistantResponse`, `pendingQuestion`, `pendingPlan` and todo items are sent in full.
+- A tool item's `call` keeps `id`, `name`, `verb`, `target` (at most 200 characters), `description`, `status`, `exitCode`, `durationMs`, and for an edit `diff` without `patch`. `input` and `output` are left out.
+- `reasoning` keeps `durationMs` and `isStreaming`; `text` is left out and `hasText: true` says there is one.
+- `toolCalls` is not sent; `items` holds the calls in order.
+- `sessionStats` is sent as `{ filesModified, additions, deletions, files }`, where `files` lists each file's `filePath`, `status`, `additions` and `deletions`; a file's accumulated patch comes from `detail_get`.
+- The resume anchor hash (`protocol.md` §3.1) is computed over this form.
+
 ## 4. Reading and streaming
 
 1. **Incremental reads**: JSONL sessions keep a byte offset per file; a change notification reads only the appended bytes. A full read starts from scratch.
-2. **Partial lines**: the last line of a file being written may be incomplete; it is kept until its newline arrives.
-3. **Change notification**: the session file is watched (`fs.watch`), debounced by 100 ms. OpenCode watches its `-wal` file.
+2. **Partial lines**: the last line of a file being written may be incomplete; it is kept as bytes until its newline arrives. Only complete lines are decoded as UTF-8, so a multi-byte character split between two reads is never broken.
+3. **Change notification**: the session file is watched (`fs.watch`), debounced by 100 ms. OpenCode watches its `-wal` file; when that file is deleted (a checkpoint), the watcher is dropped and set up again at the pane's next binding evaluation.
 4. **Deltas**: a change emits `turns_delta` (`protocol.md` §5.6) with the changed last turn and any appended turns.
-5. A read error other than a missing file is logged with its stack and the pane keeps its last turns.
+5. A read error other than a missing file goes to the source's error boundary (`architecture.md` §5): it is logged with its stack, at a limited rate, and the pane keeps its last turns.

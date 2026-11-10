@@ -17,7 +17,7 @@ The older terminal multiplexer `herdr` (TUI, 0.9.x, `~/.config/herdr/herdr.sock`
 - **No version pinning**: Pigeon does not assert a Herdr version. It relies on the App's socket commands (`herdr-app commands`) and the Core's OpenRPC API (`hc schema`), and was developed against Herdr App 0.1.13 and Herdr Core 0.1.18 (protocol generation 1). Unknown fields are ignored.
 - **App channel**: the Unix socket `herdr-app.sock` in `$HERDR_APP_HOME`, or in `~/.config/herdr-app` by default. It exists only while the window runs. One JSON object per line: `{"ls":{}}`, `{"status":{}}` or `{"do":"<command>","args":{…}}`. The reply is the result object, or `{"error":"<text>"}`.
 - **Core channel**: the Unix socket `$HC_TERMINAL_SOCKET`, or `$XDG_RUNTIME_DIR/herdr-core/default.sock` by default, carrying newline-delimited JSON-RPC 2.0. An error carries its stable kind in `error.data.kind`.
-- Both paths are resolved from the environment at every start (or from `--herdr-app-sock` / `--herdr-core-sock`) and never written to `config.json`. When the Core path cannot be resolved (no flag, `HC_TERMINAL_SOCKET` or `XDG_RUNTIME_DIR`), the daemon refuses to start.
+- Both paths are resolved from the environment at every start (or from `--herdr-app-sock` / `--herdr-core-sock`) and never written to `config.json`. On macOS, where `XDG_RUNTIME_DIR` is usually unset, the Core default is the path Herdr Core itself uses on macOS (checked against `hc` on a Mac). When the Core path cannot be resolved, the daemon refuses to start.
 - **One request per connection**: Every request opens a fresh connection, sends one request, reads one response and closes. The Core event subscription has its own long-lived connection, which carries nothing but the subscription.
 - **Errors**: A Core error becomes a `HerdrError(<kind>)`. An App `{"error":…}` reply becomes a `HerdrError("app_error")` carrying the App's text. The socket failures `ECONNREFUSED`, `ENOENT`, `ECONNRESET` and `EPIPE` mean "not reachable". They change connection state (§3.4) and are not logged as bugs. Every other failure is logged with its stack trace.
 
@@ -40,20 +40,23 @@ A snapshot joins three answers: App `ls` (spaces, their tabs, and each tab's ter
 - A terminal the App shows but the Core does not list (it finished, or its machine is not connected) is a pane without an agent and with status `unknown`.
 - **Branch**: a workspace's `branch` is read from its folder, a tab's from its first pane's folder: walk up to the nearest `.git` (a directory, or a worktree's `.git` file naming its `gitdir`), read its `HEAD`, and take the name after `ref: refs/heads/`. A detached HEAD or no repository gives no branch. Read failures other than a missing file fail loudly.
 - A snapshot is taken at startup, shortly after every topology event (debounced), every time the subscription (re)connects, and every 30 seconds as reconciliation. The reconciliation also picks up renames in the App, which no Core event reports.
+- A pane status in a snapshot that differs from the one Pigeon holds is handled exactly like a `status` event (§3.2): viewers, push triggers and the prompt queue see it. This covers changes missed while the subscription was down.
 
 ### 3.2 Subscription
 Core `events.subscribe {}` covers every terminal. Its notifications are `{"method":"event","params":{"type","terminal","data"}}`:
-- `status`: `data.status` is the terminal's new root status record. It updates that pane's status at once, notifies the push logic (`push.md` §4), schedules a screen read when the pane is blocked or already being watched, and schedules a snapshot.
+- `status`: `data.status` is the terminal's new root status record. It updates that pane's status at once, notifies the push logic (`push.md` §4) and the prompt queue (`protocol.md` §4.2), schedules a screen read when the pane is blocked or already being watched, and re-evaluates the session binding of that pane only (`agent-session-normalization.md` §2.0). It schedules no snapshot.
 - `created`, `removed`, `finished`, `lost`, `restarted` and `labels` schedule a snapshot. The App places a terminal in a tab through its `herdr.space` / `herdr.tab` labels.
 - A `missed` notification (the subscriber fell behind) schedules a snapshot.
 - Every other notification, including the 15-second `heartbeat`, is ignored.
+- A notification whose `params` lack what its type needs (for `status`, a string `data.status.state`) is logged once per type and shape, and schedules a snapshot so the state is reconciled. It never throws out of the socket handler.
 
 Status events for terminals the window does not show (hidden workers) change nothing.
 
 ### 3.3 Screen Reads
 Herdr has no "output changed" event. The panes that connected clients are viewing (the union over all connections) are therefore read once per second with Core `terminal.read { terminal, lines: 200 }`.
-- **Full-screen programs**: Reading history of a full-screen program scrolls it on the desktop and back. Once a read answers `how: "stitched"` — or a history read times out, which happens when the Core cannot scroll a full-screen program — Pigeon reads that terminal with `lines: 0` (the visible screen only) for as long as it exists, falling back to `lines: 0` at once on the timeout.
+- **Full-screen programs**: Reading history of a full-screen program scrolls it on the desktop and back. Once a read answers `how: "stitched"` — or a history read times out, which happens when the Core cannot scroll a full-screen program — Pigeon reads that terminal with `lines: 0` (the visible screen only), falling back to `lines: 0` at once on the timeout. A terminal demoted by `stitched` stays demoted for as long as it exists. A terminal demoted by a timeout (which a busy machine also causes) is tried with history again 5 minutes later; a read that then answers without `stitched` restores history reads.
 - A pane is not polled while a read of it is still in flight.
+- A pane nobody views is not polled; a connection that views no pane (`protocol.md` §4.4, `paneId: null`) adds nothing to the union.
 - A read is dropped before classification when both the screen hash and the pane's Herdr status are unchanged. A status change alone is therefore classified again and reaches viewers (§3.2), even when the screen did not change.
 - A changed screen produces a new `PaneStatePayload` with the next `revision`.
 - Reads after sending keys always read fresh and never reuse a read already in flight.
@@ -115,6 +118,8 @@ The `terminal` recipe sends no `argv`, so the tab starts the machine's shell.
   | `timeout` | `ERR_TIMEOUT` |
   | anything else | `ERR_INTERNAL` |
 
+  A request that fails because the socket is not reachable (§2) becomes `ERR_UPSTREAM_OFFLINE` (`protocol.md` §4.2), not `ERR_INTERNAL`.
+
 ## 7. Agent Menus and Slash Commands
 
 Pigeon does not drive agent menus with a state machine. An agent command such as `/model`, `/compact` or a skill invocation is sent as prompt text (§6). The menu it opens is then either:
@@ -171,6 +176,8 @@ The prompt is pending only when it sits at the bottom of the screen. After its o
 
 - **Numbered options** (`1. Yes`, `[2] No`, `(3) …`, with an optional `❯ › ▶ >` cursor) become structured options. Each has id `opt_<n>` and `keyShortcut` set to the digit. In the agent TUIs the digit selects the option directly.
 - **Menus without numbers** (arrow-cursor lists, `Yes / No` lines) get **no** structured options, because a guessed key sequence could pick the wrong item. They show the raw key pad.
+- **What counts as a menu**: an arrow-cursor list is a prompt's option block only when at least two consecutive option lines start directly under the question line and one of them carries the cursor (`❯ › ▶ >`). A single cursor line — such as the agent's own input line (`> `, `❯ `) — is never a menu.
+- **A question line alone** (no numbered options, no cursor list) is a prompt only when it carries a `(y/n)`, `[y/N]` or `[Y/n]` marker. Plain output that starts with `Select`, `Choose` and the like, sitting above the agent's input line, is therefore not a prompt; when the agent really waits, Herdr's `blocked` still produces an interaction without options (§4).
 - **Key pad**: `fallbackKeys` is `["y","n","enter","esc"]` for y/n prompts and `["enter","esc","up","down"]` otherwise.
 - **Identity**: `interactionId` is a hash of the question and the option labels, and `fingerprint` also covers the payload lines. Both stay the same while unrelated output scrolls away, and both change when the prompt changes.
 

@@ -1,7 +1,8 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdirSync, readlinkSync, utimesSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdirSync, readlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { AgentAdapterManager } from "../src/server/agent-adapters/index";
+import { JsonlTail } from "../src/server/sessions/common";
 import { ConfigManager } from "../src/server/config-manager";
 import { HerdrClient } from "../src/server/herdr-client";
 import { PushManager } from "../src/server/push";
@@ -504,5 +505,18 @@ describe("listing past sessions (protocol.md §4.10, agent-session-normalization
       ["new", "Named one"],
       ["old", "First prompt"],
     ]);
+  });
+});
+
+describe("partial lines (agent-session-normalization.md §4.2)", () => {
+  test("a multi-byte character split between two reads is decoded intact (B6)", () => {
+    const path = join(tempDir("tail"), "session.jsonl");
+    const line = Buffer.from(JSON.stringify({ text: "修复队列" }) + "\n", "utf-8");
+    const cut = line.indexOf(Buffer.from("复", "utf-8")) + 1; // inside the three bytes of 复
+    writeFileSync(path, line.subarray(0, cut));
+    const tail = new JsonlTail(path);
+    expect(tail.read().records).toEqual([]);
+    appendFileSync(path, line.subarray(cut));
+    expect(tail.read().records).toEqual([{ text: "修复队列" }]);
   });
 });

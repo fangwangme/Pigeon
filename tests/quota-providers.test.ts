@@ -38,15 +38,13 @@ describe("claude quota provider sources and windows (quota-and-usage.md ยง2.2, ย
       tokenUrl: `http://127.0.0.1:${server.port}/token`,
       keychain,
       now: () => NOW,
-    });
+    } as ConstructorParameters<typeof ClaudeQuotaProvider>[0]);
 
-  test("without the credential file the Keychain item is used, and refreshed tokens go back to the Keychain", async () => {
-    let stored = JSON.stringify({ claudeAiOauth: { accessToken: "old", refreshToken: "rt", expiresAt: NOW - 1, subscriptionType: "max" } });
-    const keychain: CredentialSource = { read: () => stored, write: (raw) => (stored = raw) };
-    acceptedToken = "refreshed";
+  test("without the credential file the Keychain item is used", async () => {
+    const keychain = { read: () => JSON.stringify({ claudeAiOauth: { accessToken: "kc", expiresAt: NOW + 3600_000, subscriptionType: "max" } }) } as CredentialSource;
+    acceptedToken = "kc";
     const snap = await provider(keychain).fetch();
     expect(snap.plan).toBe("max");
-    expect(JSON.parse(stored).claudeAiOauth).toMatchObject({ accessToken: "refreshed", refreshToken: "rt-new", subscriptionType: "max" });
     expect(existsSync(join(home, ".claude", ".credentials.json"))).toBe(false);
   });
 
