@@ -539,7 +539,10 @@ export async function fetchQuota(): Promise<QuotaProviderState[]> {
     const res = await request({ type: "quota_get", payload: {} });
     if (res?.providers) {
       setState("quotaSnapshots", res.providers);
-      setState("quotaUpdated", Date.now());
+      const serverFetchedAt =
+        res.fetchedAt ||
+        Math.max(0, ...res.providers.map((p: any) => p.snapshot?.fetchedAt ?? p.error?.at ?? 0));
+      setState("quotaUpdated", serverFetchedAt > 0 ? serverFetchedAt : Date.now());
       return res.providers;
     }
   } catch (err) {

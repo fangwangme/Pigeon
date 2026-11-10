@@ -5,6 +5,7 @@ import { ConfigManager } from "../src/server/config-manager";
 import { HerdrClient } from "../src/server/herdr-client";
 import { PushManager } from "../src/server/push";
 import { ClaudeQuotaProvider } from "../src/server/quota/claude";
+import { QuotaService } from "../src/server/quota/index";
 import { SkillScanner } from "../src/server/skill-scanner";
 import { validateClientMessage } from "../src/server/ws-validate";
 import { PricingManager } from "../src/server/usage/pricing";
@@ -441,5 +442,50 @@ describe("quota config and usage request validation (quota-and-usage.md §2.5, p
     const qWs2 = fakeWs();
     await send(qWs2.ws, { type: "quota_get", id: "q2", payload: {} });
     expect(lastError(qWs2.sent)).toBeUndefined();
+  });
+
+  test("server accurately tracks and returns actual scan and fetch timestamps for usage and quota", async () => {
+    const d = tempDir("actual-timestamps");
+    const fakeHome = join(d, "home");
+    mkdirSync(fakeHome, { recursive: true });
+
+    let fakeNow = 1700000000000;
+    const nowFn = () => fakeNow;
+
+    // 1. UsageStore: scan records actual scan time in lastScannedAt and returns it in scannedAt
+    const store = new UsageStore({ dbPath: join(d, "usage.db"), home: fakeHome, now: nowFn, discoverLs: async () => null });
+    const pricing = new PricingManager({ cachePath: join(d, "pricing.json"), fetch: (() => Promise.reject()) as any });
+
+    // Initial state before scan
+    expect(store.getLastScannedAt()).toBe(0);
+
+    // Perform scan at t = 1700000000000
+    await store.scanIncremental(pricing);
+    expect(store.getLastScannedAt()).toBe(1700000000000);
+
+    // Later at t = 1700000050000, client requests report without scanning
+    fakeNow = 1700000050000;
+    const rep = store.getUsageReport({ preset: "today", agents: ["claude"] }, { from: "2023-11-14", to: "2023-11-14" }, "2023-11-14", false);
+    // scannedAt reflects the actual scan time (1700000000000), not the query time (1700000050000)!
+    expect(rep.scannedAt).toBe(1700000000000);
+
+    store.close();
+
+    // 2. QuotaService: returns actual fetchedAt from providers, and cached requests reuse that server timestamp
+    const qService = new QuotaService({
+      now: nowFn,
+      claude: { fetch: async () => ({ provider: "claude" as const, windows: [], credits: [], fetchedAt: fakeNow }) } as any,
+      codex: { fetch: async () => ({ provider: "codex" as const, windows: [], credits: [], fetchedAt: fakeNow }) } as any,
+      antigravity: { fetch: async () => ({ provider: "antigravity" as const, windows: [], credits: [], fetchedAt: fakeNow }) } as any,
+    });
+
+    const res1 = await qService.getQuota({ quotaProviders: { claude: true, codex: false, antigravity: false } } as any);
+    expect(res1.fetchedAt).toBe(1700000050000);
+
+    // 30 seconds later, within 60s cache window:
+    fakeNow = 1700000080000;
+    const res2 = await qService.getQuota({ quotaProviders: { claude: true, codex: false, antigravity: false } } as any);
+    // res2 should return the original server fetch time from cache!
+    expect(res2.fetchedAt).toBe(1700000050000);
   });
 });

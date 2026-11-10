@@ -150,5 +150,8 @@ describe("mobile layout enhancements (mobile-ui-and-themes.md §1.2, §2.1)", ()
     expect(usageSrc).toContain("usage.loading");
     expect(usageSrc).toMatch(/Show when=\{loading\(\) && !usageReport\(\)\}/);
     expect(usageSrc).toMatch(/Show when=\{!loading\(\) && tableRows\(\)\.length === 0\}/);
+
+    const wsSrc = readFileSync(join(rootDir, "src", "client", "src", "state", "ws.ts"), "utf-8");
+    expect(wsSrc).toMatch(/res\.fetchedAt/);
   });
 });

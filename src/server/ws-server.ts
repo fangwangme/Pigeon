@@ -592,7 +592,7 @@ export class WsServer {
         }
         this.quotaService ??= new QuotaService({ configManager: this.configManager });
         const res = await this.quotaService.getQuota(this.configManager.getClientConfig());
-        this.sendAck(ws, msg.id, { providers: res.providers });
+        this.sendAck(ws, msg.id, { providers: res.providers, fetchedAt: res.fetchedAt });
         return;
       }
 

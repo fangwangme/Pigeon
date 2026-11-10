@@ -183,6 +183,7 @@ export interface QuotaProviderState {
 
 export interface QuotaGetPayload {
   providers: QuotaProviderState[];
+  fetchedAt?: number;
 }
 
 export interface UsageTotals {
