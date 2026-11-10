@@ -27,7 +27,7 @@ import {
 } from "../types/protocol";
 
 const PROTOCOL_VERSION = "1.0.0";
-export const SERVER_VERSION = "0.1.6";
+export const SERVER_VERSION = "0.1.7";
 const PUSH_DEDUPE_MS = 60_000;
 
 import { QuotaService } from "./quota/index";
@@ -101,21 +101,13 @@ export class WsServer {
   private flushing = new Set<string>();
   private sawWorkingAfterSend = new Map<string, boolean>();
   private sendingTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  private pendingRestoredPanes = new Set<string>();
 
   constructor(options: WsServerOptions) {
     this.buildId = options.buildId;
     this.queueFilePath = options.queueFilePath;
     this.loadQueues();
-    queueMicrotask(() => {
-      for (const [paneId, queue] of this.queues.entries()) {
-        if (queue.length > 0 && !this.flushing.has(paneId)) {
-          const status = this.herdrClient.getPaneHerdrStatus(paneId);
-          if (status === "idle" || status === "done") {
-            void this.flushQueue(paneId);
-          }
-        }
-      }
-    });
+    queueMicrotask(() => this.dispatchPendingRestoredPanes());
     this.herdrClient = options.herdrClient;
     this.pushManager = options.pushManager;
     this.modelCatalog = options.modelCatalog ?? new ModelCatalog();
@@ -138,11 +130,11 @@ export class WsServer {
       if (delta.appendTurns && delta.appendTurns.length > 0) {
         const sending = this.queues.get(delta.paneId)?.find((q) => q.item.sending);
         if (sending) {
+          const needle = sending.item.text || sending.send;
           const matched = delta.appendTurns.some((t: NormalizedTurn) => {
             if (!t.userPrompt) return false;
             if (delta.sinceTurnIndex > 0) return true;
-            if (!sending.item.text) return true;
-            return t.userPrompt.text.includes(sending.item.text);
+            return needle ? t.userPrompt.text.includes(needle) : true;
           });
           if (matched) this.clearSendingPrompt(delta.paneId);
         }
@@ -169,6 +161,7 @@ export class WsServer {
           this.queues.delete(paneId);
           this.flushing.delete(paneId);
           this.sawWorkingAfterSend.delete(paneId);
+          this.pendingRestoredPanes.delete(paneId);
           for (const [key, timer] of Array.from(this.sendingTimers.entries())) {
             if (key.startsWith(`${paneId}:`)) {
               clearTimeout(timer);
@@ -180,14 +173,7 @@ export class WsServer {
       this.saveQueues();
       this.rebindSessions();
       this.broadcast({ type: "snapshot_update", payload: snapshot });
-      for (const [paneId, queue] of this.queues.entries()) {
-        if (queue.length > 0 && !this.flushing.has(paneId)) {
-          const status = this.herdrClient.getPaneHerdrStatus(paneId);
-          if (status === "idle" || status === "done") {
-            void this.flushQueue(paneId);
-          }
-        }
-      }
+      this.dispatchPendingRestoredPanes();
     });
     this.rebindSessions();
 
@@ -838,6 +824,22 @@ export class WsServer {
     this.sendToSubscribers(paneId, { type: "prompt_queue", payload: { paneId, items: (this.queues.get(paneId) ?? []).map((q) => q.item) } });
   }
 
+  private dispatchPendingRestoredPanes(): void {
+    if (this.pendingRestoredPanes.size === 0) return;
+    for (const paneId of Array.from(this.pendingRestoredPanes)) {
+      if (this.herdrClient.hasPane(paneId)) {
+        this.pendingRestoredPanes.delete(paneId);
+        const queue = this.queues.get(paneId);
+        if (queue && queue.length > 0 && !this.flushing.has(paneId)) {
+          const status = this.herdrClient.getPaneHerdrStatus(paneId);
+          if (status === "idle" || status === "done") {
+            void this.flushQueue(paneId);
+          }
+        }
+      }
+    }
+  }
+
   private loadQueues(): void {
     if (!this.queueFilePath || !existsSync(this.queueFilePath)) return;
     try {
@@ -850,6 +852,7 @@ export class WsServer {
             const pending = (items as Array<{ item: QueuedPrompt; send: string }>).filter((entry) => !entry?.item?.sending);
             if (pending.length > 0) {
               this.queues.set(paneId, pending);
+              this.pendingRestoredPanes.add(paneId);
             }
           }
         }

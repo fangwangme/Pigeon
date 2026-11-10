@@ -286,10 +286,10 @@ export function scanAntigravityDb(path: string): RawUsageRecord[] {
 
     // Timestamps from steps
     const timestamps = new Map<string, number>();
-    try {
-      const stepRows: any[] = db.query("SELECT metadata FROM steps WHERE metadata IS NOT NULL").all();
-      for (const r of stepRows) {
-        if (!r.metadata) continue;
+    const stepRows: any[] = db.query("SELECT metadata FROM steps WHERE metadata IS NOT NULL").all();
+    for (const r of stepRows) {
+      if (!r.metadata) continue;
+      try {
         const flds = parseProto(r.metadata);
         const uuidFld = flds.find((x) => x.fieldNum === 12);
         const tsFld = flds.find((x) => x.fieldNum === 1);
@@ -300,8 +300,8 @@ export function scanAntigravityDb(path: string): RawUsageRecord[] {
           const nanos = tsSub.find((x) => x.fieldNum === 2)?.val || 0;
           if (sec > 0) timestamps.set(uuid, sec * 1000 + Math.floor(nanos / 1_000_000));
         }
-      }
-    } catch {}
+      } catch {}
+    }
 
     const sessionId = path.slice(path.lastIndexOf("/") + 1).replace(/\.db$/, "");
 

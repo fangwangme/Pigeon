@@ -214,6 +214,25 @@ describe("prompt queue (protocol.md §4.2, §4.13, §5.8)", () => {
     expect(herdr.callsOf("terminal.send")[1].params.text).toBe("second unbound");
   });
 
+  test("subsequent snapshot_updated events do not dispatch next queued prompt before working state (review B1)", async () => {
+    await client.connect();
+    server.paneStore.registerPaneSession("p1", "claude", "ses_multi");
+    const c = await viewer("p1");
+    await send(c.ws, { type: "agent_prompt", id: "a1", payload: { targetPaneId: "p1", text: "first prompt" } });
+    await send(c.ws, { type: "agent_prompt", id: "a2", payload: { targetPaneId: "p1", text: "second prompt" } });
+
+    herdr.emitEvent("status", "p1", { status: { state: "idle", app: "claude-code" } });
+    await until(() => herdr.callsOf("terminal.send").length === 1);
+    expect(herdr.callsOf("terminal.send")[0].params.text).toBe("first prompt");
+
+    client.applySnapshot(topologyOf(PANES.map((p) => ({ ...p, cwd: dir, ...(p.paneId === "p1" ? { state: "idle" } : {}) })), { folder: "/start" }));
+    client.applySnapshot(topologyOf(PANES.map((p) => ({ ...p, cwd: dir, ...(p.paneId === "p1" ? { state: "idle" } : {}) })), { folder: "/start" }));
+    await Bun.sleep(50);
+
+    expect(herdr.callsOf("terminal.send").length).toBe(1);
+    expect(c.ofType("prompt_queue").at(-1).payload.items).toHaveLength(2);
+  });
+
   test("the agent finished during sending, then clearSendingPrompt flushes the next prompt", async () => {
     await client.connect();
     server.paneStore.registerPaneSession("p1", "claude", "ses_fast");

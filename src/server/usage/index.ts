@@ -108,6 +108,7 @@ export class UsageService {
     this.scanPromise = rebuildPromise;
 
     try {
+      this.hasScannedOnce = false;
       await this.pricing.initialize();
       const res = await this.store.rebuildAll(this.pricing);
       this.hasScannedOnce = true;
