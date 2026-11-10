@@ -384,7 +384,16 @@ export function Settings() {
           <div class="card">
             <div class="li">
               <div class="tx">{t("settings.version")}</div>
-              <span class="v mono">{state.serverVersion ?? "—"}</span>
+              <span class="v mono">
+                {(() => {
+                  const v = state.serverVersion ?? "—";
+                  const env = state.environment;
+                  if (!env || env.kind === "production") return v;
+                  if (env.kind === "dev") return `${v} (dev)`;
+                  if (env.kind === "test") return `${v} (test:${env.port})`;
+                  return v;
+                })()}
+              </span>
             </div>
             <Show
               when={state.canInstallPWA}

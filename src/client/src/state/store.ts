@@ -49,6 +49,7 @@ export interface AppState {
   toast: { message: string; at: number } | null;
   updateAvailable: boolean;
   serverVersion: string | null;
+  environment?: { kind: "production" | "dev" | "test"; port: number } | null;
   herdrConnected: boolean;
   workspaces: WorkspaceSummary[];
   activeTabId: string | null;
@@ -132,6 +133,7 @@ const [state, setState] = createStore<AppState>({
   toast: null,
   updateAvailable: false,
   serverVersion: null,
+  environment: null,
   herdrConnected: true,
   workspaces: [],
   activeTabId: null,

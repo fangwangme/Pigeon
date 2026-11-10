@@ -32,6 +32,51 @@ export function detectQuotaProviders(home: string, env: NodeJS.ProcessEnv = proc
 /** The production port; every other port runs an isolated instance (`architecture.md` §4.6). */
 export const DEFAULT_PORT = 4100;
 
+export interface InstancePaths {
+  stateDir: string;
+  configPath: string;
+  adminSocketPath: string;
+  devicesPath: string;
+  queuePath: string;
+  vapidPath: string;
+  pushSubscriptionsPath: string;
+  uploadsDir: string;
+  usageDbPath: string;
+  pricingCachePath: string;
+}
+
+export function resolveInstancePaths(options: {
+  env?: NodeJS.ProcessEnv | Record<string, string | undefined>;
+  port?: number;
+  productionPort?: number;
+}): InstancePaths {
+  const env = options.env ?? process.env;
+  const home = env.HOME || "";
+  const dataHome = env.XDG_DATA_HOME ? env.XDG_DATA_HOME : join(home, ".local", "share");
+  const runDir = env.XDG_RUNTIME_DIR ? env.XDG_RUNTIME_DIR : join(dataHome, "pigeon");
+
+  const prodPort = options.productionPort ?? DEFAULT_PORT;
+  const port = options.port ?? prodPort;
+  const isProd = port === prodPort;
+
+  const instanceName = isProd ? "pigeon" : `pigeon-${port}`;
+  const stateDir = join(dataHome, instanceName);
+  const adminSocketPath = join(runDir, isProd ? "pigeon.sock" : `pigeon-${port}.sock`);
+
+  return {
+    stateDir,
+    configPath: join(stateDir, "config.json"),
+    adminSocketPath,
+    devicesPath: join(stateDir, "devices.json"),
+    queuePath: join(stateDir, "queue.json"),
+    vapidPath: join(stateDir, "vapid.json"),
+    pushSubscriptionsPath: join(stateDir, "push-subscriptions.json"),
+    uploadsDir: join(stateDir, "uploads"),
+    usageDbPath: join(dataHome, "pigeon", "usage.db"),
+    pricingCachePath: join(dataHome, "pigeon", "pricing-cache.json"),
+  };
+}
+
 /**
  * `architecture.md` §4.6: a daemon on a port other than 4100 keeps its own admin socket, devices
  * and queue files, so a test daemon never touches the production one. `pigeon.sock` → `pigeon-4101.sock`.

@@ -49,7 +49,7 @@ export class HerdrError extends Error {
 type Channel = "app" | "core";
 
 // Socket-level failures that mean Herdr is not reachable (as opposed to a rejected request).
-const UNREACHABLE_CODES = new Set(["ECONNREFUSED", "ENOENT", "ECONNRESET", "EPIPE"]);
+export const UNREACHABLE_CODES = new Set(["ECONNREFUSED", "ENOENT", "ECONNRESET", "EPIPE", "closed", "socket_error"]);
 const READ_LINES = 200;
 const REQUEST_TIMEOUT_MS = 8000;
 const HISTORY_READ_TIMEOUT_MS = 2000;
@@ -107,8 +107,11 @@ export class HerdrClient extends EventEmitter {
   private paneClassifyKeys = new Map<string, string>();
   private paneReadsInFlight = new Map<string, Promise<PaneStatePayload>>();
   private paneDebounceTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  private isConnecting = false;
   // Terminals whose read answered `how: "stitched"`; read without history from then on (§3.3).
-  private fullScreenPanes = new Set<string>();
+  private stitchedPanes = new Set<string>();
+  private timeoutDemotedAt = new Map<string, number>();
+  private loggedEventShapes = new Set<string>();
   // Facts from the latest snapshot; rebuilt on every snapshot so closed panes drop out.
   private knownPanes = new Map<string, KnownPane>();
   private currentSnapshot: SnapshotPayload = { workspaces: [], workingAgents: [] };
@@ -133,6 +136,7 @@ export class HerdrClient extends EventEmitter {
 
   public async connect(): Promise<void> {
     this.stopped = false;
+    this.isConnecting = true;
     this.startSubscription();
     this.startPolling();
     try {
@@ -141,6 +145,8 @@ export class HerdrClient extends EventEmitter {
       // Herdr offline at startup is an expected state; it surfaces as `upstream_status` and the
       // subscription and reconciliation loops keep retrying.
       if (!(err instanceof HerdrError) || !UNREACHABLE_CODES.has(err.code)) throw err;
+    } finally {
+      this.isConnecting = false;
     }
   }
 
@@ -340,7 +346,7 @@ export class HerdrClient extends EventEmitter {
     socket.on("connect", () => {
       this.setReachable("core", true);
       // Events between the last snapshot and this subscription would otherwise be lost.
-      this.scheduleSnapshot();
+      if (!this.isConnecting) this.scheduleSnapshot();
     });
     socket.on("data", (chunk) => {
       buffer += chunk.toString("utf-8");
@@ -384,8 +390,22 @@ export class HerdrClient extends EventEmitter {
   }
 
   private handleCoreEvent(params: { type: string; terminal: string; data: any }): void {
+    if (!params || typeof params !== "object") {
+      this.scheduleSnapshot();
+      return;
+    }
     if (params.type === "status") {
       const paneId = params.terminal;
+      if (!params.data || typeof params.data !== "object" || !params.data.status || typeof params.data.status.state !== "string") {
+        const shape = params.data ? Object.keys(params.data).join(",") : "null";
+        const key = `status:${shape}`;
+        if (!this.loggedEventShapes.has(key)) {
+          this.loggedEventShapes.add(key);
+          console.warn(`[pigeon] Herdr Core status event has unknown shape (${key}); scheduling reconciliation snapshot`);
+        }
+        this.scheduleSnapshot();
+        return;
+      }
       const known = this.knownPanes.get(paneId);
       if (!known) return; // a terminal the window does not show
       const status = this.normalizeStatus(params.data.status);
@@ -397,7 +417,7 @@ export class HerdrClient extends EventEmitter {
       this.emit("pane_status_changed", { paneId, status });
       // The read re-classifies under the new status, which reaches viewers as a new pane_state.
       if (status === "blocked" || this.paneStates.has(paneId)) this.scheduleDebouncedRead(paneId);
-      this.scheduleSnapshot();
+      if (this.lastTopology) this.applySnapshot(this.lastTopology);
       return;
     }
     if (TOPOLOGY_EVENTS.has(params.type)) this.scheduleSnapshot();
@@ -465,10 +485,20 @@ export class HerdrClient extends EventEmitter {
       this.paneStates.delete(id);
       this.paneClassifyKeys.delete(id);
     }
-    for (const id of Array.from(this.fullScreenPanes)) if (!nextKnown.has(id)) this.fullScreenPanes.delete(id);
+    for (const id of Array.from(this.stitchedPanes)) if (!nextKnown.has(id)) this.stitchedPanes.delete(id);
+    for (const id of Array.from(this.timeoutDemotedAt.keys())) if (!nextKnown.has(id)) this.timeoutDemotedAt.delete(id);
     for (const id of Array.from(this.seenPanes)) if (nextKnown.get(id)?.herdrStatus !== "done") this.seenPanes.delete(id);
+    const prevKnown = this.knownPanes;
     this.knownPanes = nextKnown;
     this.focusedPaneId = focusedPaneId;
+
+    // herdr-adapter.md §3.1: a pane status in a snapshot that differs from the one Pigeon holds is handled like a status event
+    for (const [paneId, next] of nextKnown.entries()) {
+      const prev = prevKnown.get(paneId);
+      if (prev && prev.herdrStatus !== next.herdrStatus) {
+        this.emit("pane_status_changed", { paneId, status: next.herdrStatus });
+      }
+    }
     // herdr-adapter.md §3.1: the App's space folder is where the space was started, not the project.
     const folderOf = (space: (typeof topology.ls.spaces)[number]): string => {
       const first = space.tabs[0]?.terminals[0]?.terminal;
@@ -643,7 +673,8 @@ export class HerdrClient extends EventEmitter {
     const run = (async () => {
       if (previous) await previous.catch(() => undefined); // its failure is reported by its own caller
       // herdr-adapter.md §3.3: history reads scroll a full-screen program on the desktop.
-      const lines = this.fullScreenPanes.has(paneId) ? 0 : READ_LINES;
+      const isDemoted = this.stitchedPanes.has(paneId) || (this.timeoutDemotedAt.has(paneId) && Date.now() - this.timeoutDemotedAt.get(paneId)! < 5 * 60_000);
+      const lines = isDemoted ? 0 : READ_LINES;
       let res: HerdrCoreReadResult;
       try {
         res = await this.coreRequest<HerdrCoreReadResult>(
@@ -651,15 +682,19 @@ export class HerdrClient extends EventEmitter {
           { terminal: paneId, lines },
           lines > 0 ? Math.min(HISTORY_READ_TIMEOUT_MS, this.requestTimeoutMs) : undefined
         );
+        if (lines > 0) this.timeoutDemotedAt.delete(paneId);
       } catch (err) {
         if (lines > 0 && err instanceof HerdrError && err.code === "timeout") {
-          this.fullScreenPanes.add(paneId);
+          this.timeoutDemotedAt.set(paneId, Date.now());
           res = await this.coreRequest<HerdrCoreReadResult>("terminal.read", { terminal: paneId, lines: 0 });
         } else {
           throw err;
         }
       }
-      if (res.how === "stitched") this.fullScreenPanes.add(paneId);
+      if (res.how === "stitched") {
+        this.stitchedPanes.add(paneId);
+        this.timeoutDemotedAt.delete(paneId);
+      }
       return this.applyScreen(paneId, res.text);
     })();
     this.paneReadsInFlight.set(paneId, run);

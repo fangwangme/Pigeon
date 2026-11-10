@@ -59,3 +59,60 @@ self.addEventListener("fetch", (event) => {
     })
   );
 });
+
+self.addEventListener("push", (event) => {
+  let data = {};
+  try {
+    data = event.data ? event.data.json() : {};
+  } catch {
+    data = {};
+  }
+  const agent = data.agent ? String(data.agent) : "";
+  const agentLabel =
+    agent === "claude"
+      ? "Claude Code"
+      : agent === "codex"
+        ? "Codex"
+        : agent === "opencode"
+          ? "OpenCode"
+          : agent === "pi"
+            ? "Pi"
+            : agent === "agy"
+              ? "Antigravity"
+              : agent || "Agent";
+  const title = data.event === "done" ? `${agentLabel} 已完成` : `${agentLabel} 等你确认`;
+  const parts = [];
+  if (data.workspace) parts.push(data.workspace);
+  if (data.tab) parts.push(data.tab);
+  const body = parts.join(" · ");
+  const options = {
+    body,
+    icon: "/icon-192.png",
+    badge: "/icon-192.png",
+    data: { paneId: data.paneId, url: data.paneId ? `/?pane=${encodeURIComponent(data.paneId)}` : "/" },
+    tag: data.paneId ? `pane:${data.paneId}` : undefined,
+  };
+  event.waitUntil(self.registration.showNotification(title, options));
+});
+
+self.addEventListener("notificationclick", (event) => {
+  event.notification.close();
+  const urlToOpen = event.notification.data?.url || "/";
+  event.waitUntil(
+    self.clients.matchAll({ type: "window", includeUncontrolled: true }).then((windowClients) => {
+      for (const client of windowClients) {
+        if ("focus" in client) {
+          if (client.url.includes(self.location.origin)) {
+            if ("navigate" in client && event.notification.data?.url) {
+              client.navigate(event.notification.data.url);
+            }
+            return client.focus();
+          }
+        }
+      }
+      if (self.clients.openWindow) {
+        return self.clients.openWindow(urlToOpen);
+      }
+    })
+  );
+});

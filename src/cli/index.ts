@@ -65,7 +65,7 @@ Usage:
   pigeon pair [--ephemeral] [--json] [--port <n>]
   pigeon devices [revoke <id>] [--port <n>]
   pigeon status [--port <n>]
-  pigeon rebuild-cache [--json] [--port <n>]
+  pigeon rebuild-cache [--json] [--port <n>] [--yes]
 
 The admin commands reach the daemon on the configured port, or on --port.
 `;
@@ -150,8 +150,35 @@ async function main() {
       console.log("Paired devices:", list);
     }
   } else if (command === "status") {
-    console.log("Pigeon status:", await sendAdminCommand(adminSocketPath, "status"));
+    const status: any = await sendAdminCommand(adminSocketPath, "status");
+    if (args.includes("--json")) {
+      console.log(JSON.stringify(status, null, 2));
+    } else {
+      console.log("Pigeon status:");
+      console.log(`  Herdr connected:   ${status.herdrConnected ? "yes" : "no"}`);
+      console.log(`  Public URL:        ${status.publicBaseUrl}`);
+      console.log(`  Active sessions:   ${status.activeSessions}`);
+      if (status.queues && Object.keys(status.queues).length > 0) {
+        console.log("  Queues:");
+        for (const [pane, q] of Object.entries(status.queues as Record<string, any>)) {
+          console.log(`    Pane ${pane}: length=${q.length}, state=${q.state}`);
+        }
+      }
+      if (status.lastUsageScan) {
+        const timeStr = status.lastUsageScan.time ? new Date(status.lastUsageScan.time).toISOString() : "never";
+        console.log(`  Last usage scan:   ${timeStr} (${status.lastUsageScan.durationMs || 0}ms)`);
+      }
+      if (status.sourceErrors) {
+        console.log("  Source errors:");
+        for (const [src, err] of Object.entries(status.sourceErrors)) {
+          console.log(`    ${src}: ${err || "none"}`);
+        }
+      }
+    }
   } else if (command === "rebuild-cache") {
+    if (adminPort !== 4100 && !args.includes("--yes")) {
+      fail("Refusing to rebuild shared usage cache from test instance without --yes.");
+    }
     console.log("Rebuilding usage database from all sources...");
     let res: any;
     try {

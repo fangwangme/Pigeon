@@ -115,7 +115,8 @@ const AGENT_RECIPES: Record<string, AgentRecipe> = {
 };
 
 export function getAgentRecipe(kind: string): AgentRecipe | undefined {
-  return AGENT_RECIPES[kind.toLowerCase()];
+  const k = kind.toLowerCase();
+  return Object.hasOwn(AGENT_RECIPES, k) ? AGENT_RECIPES[k] : undefined;
 }
 
 export function listAgentRecipes(): AgentRecipe[] {

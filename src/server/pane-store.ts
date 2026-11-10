@@ -3,6 +3,7 @@ import { watch, type FSWatcher, existsSync } from "node:fs";
 import type { AgentAdapterManager } from "./agent-adapters/index";
 import type { NormalizedTurn, SessionStats, TodoItem } from "../shared/agent-session";
 import type { NormalizedTurnsPayload, SessionInfo, TurnsDeltaPayload } from "../types/protocol";
+import { toLightTurn, toLightStats } from "../types/protocol";
 
 export type { TurnsDeltaPayload } from "../types/protocol";
 
@@ -161,12 +162,12 @@ export class PaneStore extends EventEmitter {
     const same = (a: NormalizedTurn | undefined, b: NormalizedTurn | undefined) => JSON.stringify(a) === JSON.stringify(b);
     let delta: TurnsDeltaPayload | null;
     if (oldLen === 0 || newLen < oldLen) {
-      delta = { paneId, seqWatermark: state.seqWatermark, sinceTurnIndex: 0, appendTurns: turns, ...extra };
+      delta = { paneId, seq: state.seqWatermark, seqWatermark: state.seqWatermark, sinceTurnIndex: 0, appendTurns: turns, ...extra };
     } else if (newLen > oldLen) {
       const patch = same(oldTurns[oldLen - 1], turns[oldLen - 1]) ? undefined : turns[oldLen - 1];
-      delta = { paneId, seqWatermark: state.seqWatermark, sinceTurnIndex: oldLen, appendTurns: turns.slice(oldLen), ...(patch ? { patchLastTurn: patch } : {}), ...extra };
+      delta = { paneId, seq: state.seqWatermark, seqWatermark: state.seqWatermark, sinceTurnIndex: oldLen, appendTurns: turns.slice(oldLen), ...(patch ? { patchLastTurn: patch } : {}), ...extra };
     } else if (!same(oldTurns[oldLen - 1], turns[newLen - 1]) || infoChanged) {
-      delta = { paneId, seqWatermark: state.seqWatermark, sinceTurnIndex: oldLen - 1, appendTurns: [], patchLastTurn: turns[newLen - 1], isStreaming: true, ...extra };
+      delta = { paneId, seq: state.seqWatermark, seqWatermark: state.seqWatermark, sinceTurnIndex: oldLen - 1, appendTurns: [], patchLastTurn: turns[newLen - 1], isStreaming: true, ...extra };
     } else delta = null;
     if (delta) this.emit("turns_delta", delta);
   }
@@ -194,6 +195,7 @@ export class PaneStore extends EventEmitter {
     const state = this.paneStates.get(paneId);
     return {
       paneId,
+      seq: state?.seqWatermark ?? 0,
       turns: state?.turns ?? [],
       ...(state?.stats ? { sessionStats: state.stats } : {}),
       ...(state?.sessionTitle ? { sessionTitle: state.sessionTitle } : {}),

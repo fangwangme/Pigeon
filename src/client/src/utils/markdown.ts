@@ -31,13 +31,15 @@ export function renderMarkdown(content: string): string {
   if (typeof window !== "undefined" && typeof window.document !== "undefined") {
     return DOMPurify.sanitize(rawHtml, {
       USE_PROFILES: { html: true },
+      FORBID_TAGS: ["style", "form", "input", "button", "textarea", "select"],
       ADD_ATTR: ["target"],
       ALLOWED_URI_REGEXP: /^(?:(?:https?|mailto):|[^a-z]|[a-z+.\-]+(?:[^a-z+.\-:]|$))/i,
     });
   }
   // In headless environments without DOMParser, strip script/handlers and disallowed URI schemes (architecture.md §5).
   return rawHtml
-    .replace(/<script[\s\S]*?<\/script>/gi, "")
+    .replace(/<(script|style|form|textarea|select)[\s\S]*?<\/\1>/gi, "")
+    .replace(/<(input|button)\b[^>]*\/?>/gi, "")
     .replace(/on\w+\s*=\s*(["'][^"']*["']|[^\s>]+)/gi, "")
     .replace(/(href|src)\s*=\s*["']\s*(?!https?:|mailto:|\/|#)([a-z][a-z0-9+.\-]*:)[^"']*["']/gi, "");
 }

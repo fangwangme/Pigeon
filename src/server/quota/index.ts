@@ -70,11 +70,11 @@ export class QuotaService {
           error: cached.error,
         };
       }
-      if (cached.error && now - cached.error.at < 60_000 && !cached.snapshot) {
+      if (cached.error && now - cached.error.at < 60_000) {
         return {
           provider: key,
           enabled: true,
-          snapshot: null,
+          snapshot: cached.snapshot,
           error: cached.error,
         };
       }

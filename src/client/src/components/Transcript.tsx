@@ -352,7 +352,11 @@ function blocksOf(turn: NormalizedTurn): Block[] {
       const last = out[out.length - 1];
       if (last?.kind === "tools") last.calls.push(it.call);
       else out.push({ kind: "tools", calls: [it.call] });
-    } else out.push(it.kind === "text" ? { kind: "text", markdown: it.markdown } : it);
+    } else if (it.kind === "text") {
+      out.push({ kind: "text", markdown: it.markdown });
+    } else if (it.kind === "todo") {
+      out.push(it);
+    }
   }
   return out;
 }

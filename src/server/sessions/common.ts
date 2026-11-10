@@ -29,7 +29,7 @@ export function claudeSlug(path: string): string {
  */
 export class JsonlTail {
   private offset = 0;
-  private partial = "";
+  private partial: Buffer = Buffer.alloc(0);
 
   constructor(public readonly path: string) {}
 
@@ -39,7 +39,7 @@ export class JsonlTail {
     let reset = false;
     if (size < this.offset) {
       this.offset = 0;
-      this.partial = "";
+      this.partial = Buffer.alloc(0);
       reset = true;
     }
     if (size === this.offset) return { records: [], reset };
@@ -51,10 +51,14 @@ export class JsonlTail {
       closeSync(fd);
     }
     this.offset = size;
-    const text = this.partial + buf.toString("utf-8");
-    const lastNl = text.lastIndexOf("\n");
-    this.partial = lastNl === -1 ? text : text.slice(lastNl + 1);
-    const complete = lastNl === -1 ? "" : text.slice(0, lastNl);
+    const combined = this.partial.length > 0 ? Buffer.concat([this.partial, buf]) : buf;
+    const lastNl = combined.lastIndexOf(0x0a);
+    if (lastNl === -1) {
+      this.partial = combined;
+      return { records: [], reset };
+    }
+    const complete = combined.subarray(0, lastNl).toString("utf-8");
+    this.partial = combined.subarray(lastNl + 1);
     return { records: parseJsonLines(complete), reset };
   }
 }

@@ -282,6 +282,7 @@ export function Composer(props: ComposerProps) {
   const [atts, setAtts] = createSignal<Attachment[]>([]);
   const [sending, setSending] = createSignal<boolean>(false);
   const [editingQueueId, setEditingQueueId] = createSignal<string | null>(null);
+  let savedDraftBeforeEdit: { text: string; atts: Attachment[] } | null = null;
   let keySeq = 0;
   let ta: HTMLTextAreaElement | undefined;
 
@@ -325,7 +326,7 @@ export function Composer(props: ComposerProps) {
     return state.skills.filter((s) => s.invocation.toLowerCase().includes(q.query) || s.name.toLowerCase().includes(q.query)).slice(0, 40);
   });
 
-  const addFiles = async (files: FileList | null) => {
+  const addFiles = async (files: FileList | null | File[]) => {
     if (!files) return;
     for (const f of Array.from(files)) {
       const key = ++keySeq;
@@ -342,6 +343,23 @@ export function Composer(props: ComposerProps) {
     }
   };
   addFilesHook = addFiles;
+
+  const handlePaste = (e: ClipboardEvent) => {
+    const items = e.clipboardData?.items;
+    if (!items) return;
+    const files: File[] = [];
+    for (let i = 0; i < items.length; i++) {
+      const item = items[i];
+      if (item.type.startsWith("image/")) {
+        const file = item.getAsFile();
+        if (file) files.push(file);
+      }
+    }
+    if (files.length > 0) {
+      e.preventDefault();
+      void addFiles(files);
+    }
+  };
 
   const restore = (s: string, uploadIds: string[]) => {
     const v = text();
@@ -362,6 +380,7 @@ export function Composer(props: ComposerProps) {
   restoreHook = restore;
 
   const startEditQueue = (queueId: string, s: string, uploadIds: string[]) => {
+    savedDraftBeforeEdit = { text: text(), atts: atts() };
     setEditingQueueId(queueId);
     save(s);
     setAtts(uploadIds.map((id) => ({ key: ++keySeq, name: t("composer.attachment"), id })));
@@ -378,9 +397,17 @@ export function Composer(props: ComposerProps) {
   const cancelEdit = (qId?: string) => {
     if (qId && editingQueueId() !== qId) return;
     setEditingQueueId(null);
-    save("");
-    for (const a of atts()) if (a.preview) URL.revokeObjectURL(a.preview);
-    setAtts([]);
+    if (!qId) {
+      if (savedDraftBeforeEdit) {
+        save(savedDraftBeforeEdit.text);
+        setAtts(savedDraftBeforeEdit.atts);
+      } else {
+        save("");
+        for (const a of atts()) if (a.preview) URL.revokeObjectURL(a.preview);
+        setAtts([]);
+      }
+    }
+    savedDraftBeforeEdit = null;
     setTimeout(grow, 0);
   };
   cancelEditQueueHook = cancelEdit;
@@ -401,6 +428,7 @@ export function Composer(props: ComposerProps) {
     props
       .onSend(text().trim(), ids, qId ?? undefined)
       .then(() => {
+        savedDraftBeforeEdit = null;
         setEditingQueueId(null);
         save("");
         for (const a of atts()) if (a.preview) URL.revokeObjectURL(a.preview);
@@ -482,6 +510,7 @@ export function Composer(props: ComposerProps) {
           autocomplete="off"
           aria-autocomplete="none"
           data-form-type="other"
+          onPaste={handlePaste}
           onFocus={() => {
             setFocused(true);
             setTimeout(grow, 0);

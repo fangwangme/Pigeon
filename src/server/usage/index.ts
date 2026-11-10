@@ -23,6 +23,9 @@ export class UsageService {
   private backgroundTimer: ReturnType<typeof setInterval> | null = null;
   private hasScannedOnce = false;
   private lastEnabled = true;
+  private lastScanTime: number | null = null;
+  private lastScanDurationMs = 0;
+  private lastScanError: string | null = null;
 
   constructor(options: UsageServiceOptions = {}) {
     this.configManager = options.configManager;
@@ -91,13 +94,30 @@ export class UsageService {
     else close();
   }
 
+  public getLastScanInfo() {
+    return {
+      time: this.lastScanTime,
+      durationMs: this.lastScanDurationMs,
+      error: this.lastScanError,
+    };
+  }
+
   public async scan(): Promise<{ scannedFiles: number; recordsAdded: number }> {
     if (this.scanPromise) return this.scanPromise;
     this.scanPromise = (async () => {
-      await this.pricing.initialize();
-      const res = await this.store.scanIncremental(this.pricing);
-      this.hasScannedOnce = true;
-      return res;
+      const start = this.now();
+      try {
+        await this.pricing.initialize();
+        const res = await this.store.scanIncremental(this.pricing);
+        this.hasScannedOnce = true;
+        this.lastScanTime = this.now();
+        this.lastScanDurationMs = this.now() - start;
+        this.lastScanError = null;
+        return res;
+      } catch (err: any) {
+        this.lastScanError = err.message || String(err);
+        throw err;
+      }
     })().finally(() => {
       this.scanPromise = null;
     });

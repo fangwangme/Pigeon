@@ -244,7 +244,6 @@ export function SessionPage() {
   );
 
   const showCard = () => !!state.pendingInteraction && !isTerminal();
-  const composerVisible = () => !showCard() || (cardCollapsed() && !!state.normalizedTurns[state.normalizedTurns.length - 1]?.pendingQuestion);
 
   return (
     <div class="page">
@@ -344,9 +343,7 @@ export function SessionPage() {
                   <div class="ubm">
                     {q.sending ? t("common.sending") : t("session.queued")}
                     <Show when={!q.sending}>
-                      <Show when={composerVisible()}>
-                        <button onClick={() => editQueued(q)}>{t("session.edit")}</button>
-                      </Show>
+                      <button onClick={() => editQueued(q)}>{t("session.edit")}</button>
                       <button
                         onClick={() => {
                           cancelQueuedPromptEdit(q.queueId);
@@ -379,7 +376,7 @@ export function SessionPage() {
         <Show when={showCard()}>
           <PromptCard collapsed={cardCollapsed()} onCollapse={() => setCardCollapsed(true)} onExpand={() => setCardCollapsed(false)} />
         </Show>
-        <Show when={composerVisible() && state.activePaneId} keyed>
+        <Show when={state.activePaneId} keyed>
           {(paneId) => (
             <Composer
               draftId={paneId}

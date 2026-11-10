@@ -142,10 +142,13 @@ export async function initWebSocket(): Promise<void> {
     lastPongTime = Date.now();
     let have: HaveInfo | undefined;
     if (state.activePaneId && state.session?.bound && state.session.sessionId && state.normalizedTurns.length > 0) {
+      const turnCount = state.normalizedTurns.length;
       have = {
         sessionId: state.session.sessionId,
-        turnCount: state.normalizedTurns.length,
-        lastTurnHash: hashTurn(state.normalizedTurns[state.normalizedTurns.length - 1]),
+        turnCount,
+        ...(turnCount >= 2
+          ? { anchorHash: hashTurn(state.normalizedTurns[turnCount - 2]) }
+          : { lastTurnHash: hashTurn(state.normalizedTurns[turnCount - 1]) }),
       };
       setState("paneSyncing", true);
     }
@@ -249,6 +252,9 @@ export function handleServerMessage(msg: ServerMessage): void {
       setState("configReady", true);
       setState("recipes", msg.payload.recipes);
       setState("serverVersion", msg.payload.serverVersion);
+      if (msg.payload.environment) {
+        setState("environment", msg.payload.environment);
+      }
       if (state.quotaUsageEnabled !== false) {
         void fetchQuota();
       }
@@ -287,6 +293,51 @@ export function handleServerMessage(msg: ServerMessage): void {
         }
       }
       return;
+
+    case "pane_bootstrap": {
+      if (msg.payload.paneId !== state.activePaneId) return;
+      freshDataArrivedPaneId = msg.payload.paneId;
+      if (msg.payload.state) {
+        applyPaneState(msg.payload.state);
+        setState("paneLoaded", true);
+      }
+      if (msg.payload.queue) {
+        setState("queue", msg.payload.queue);
+      }
+      if (msg.payload.turns) {
+        setState({
+          normalizedTurns: msg.payload.turns.turns,
+          sessionStats: msg.payload.turns.sessionStats || null,
+          sessionTitle: msg.payload.turns.sessionTitle || null,
+          todos: msg.payload.turns.todos || null,
+          session: msg.payload.turns.session,
+          paneSyncing: false,
+        });
+        const metaInfo = meta(msg.payload.paneId);
+        if (!msg.payload.turns.session?.bound || (metaInfo && metaInfo.sessionId !== msg.payload.turns.session?.sessionId)) {
+          void remove(msg.payload.paneId);
+        } else if (msg.payload.turns.session?.sessionId && msg.payload.turns.turns?.length) {
+          saveActivePaneSnapshot(msg.payload.paneId);
+        }
+      } else if (msg.payload.resume) {
+        setState("paneSyncing", false);
+        const { sinceTurnIndex, appendTurns, patchLastTurn, sessionStats, sessionTitle, todos, session } = msg.payload.resume;
+        let current = [...state.normalizedTurns];
+        if (sinceTurnIndex === 0 && !patchLastTurn) {
+          current = appendTurns;
+        } else {
+          if (patchLastTurn) current[Math.max(0, sinceTurnIndex - (appendTurns.length > 0 ? 1 : 0))] = patchLastTurn;
+          if (appendTurns.length > 0) current = [...current.slice(0, sinceTurnIndex), ...appendTurns];
+        }
+        setState("normalizedTurns", current);
+        if (sessionStats) setState("sessionStats", sessionStats);
+        if (sessionTitle) setState("sessionTitle", sessionTitle);
+        if (todos) setState("todos", todos);
+        if (session) setState("session", session);
+        debouncedSaveActivePaneSnapshot(msg.payload.paneId);
+      }
+      return;
+    }
 
     case "pane_state":
       applyPaneState(msg.payload);
@@ -498,10 +549,13 @@ export async function selectPane(paneId: string): Promise<void> {
       paneSyncing: true,
     });
     if (cached.sessionId && cached.turns.length > 0) {
+      const turnCount = cached.turns.length;
       have = {
         sessionId: cached.sessionId,
-        turnCount: cached.turns.length,
-        lastTurnHash: hashTurn(cached.turns[cached.turns.length - 1]),
+        turnCount,
+        ...(turnCount >= 2
+          ? { anchorHash: hashTurn(cached.turns[turnCount - 2]) }
+          : { lastTurnHash: hashTurn(cached.turns[turnCount - 1]) }),
       };
     }
   }

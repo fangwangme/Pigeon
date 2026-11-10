@@ -75,7 +75,9 @@ function Toast() {
 function App() {
   const [systemReduce, setSystemReduce] = createSignal(systemReducesTransparency());
   onMount(async () => {
-    (window as any).__pigeon = { state, setState, navigate, applyTheme };
+    if (import.meta.env.DEV) {
+      (window as any).__pigeon = { state, setState, navigate, applyTheme };
+    }
     window.matchMedia("(prefers-color-scheme: light)").addEventListener("change", () => applyTheme(state.themeMode, state.accent));
     window.matchMedia("(prefers-reduced-transparency: reduce)").addEventListener?.("change", (e) => setSystemReduce(e.matches));
     window.addEventListener("beforeinstallprompt", (e) => {

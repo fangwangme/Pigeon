@@ -45,6 +45,7 @@ export interface PairingOptions {
   devicesFilePath: string;
   /** `pigeon rebuild-cache` (`quota-and-usage.md` §3.7): rebuilds the daemon's own usage database. */
   rebuildUsage?: () => Promise<unknown>;
+  getStatus?: () => Promise<Record<string, any>> | Record<string, any>;
 }
 
 export interface PairingTokenOptions {
@@ -76,6 +77,7 @@ export class PairingManager extends EventEmitter {
   private adminSocketPath: string;
   private devicesFilePath: string;
   private rebuildUsage?: () => Promise<unknown>;
+  private getStatus?: () => Promise<Record<string, any>> | Record<string, any>;
   private adminServer: NetServer | null = null;
 
   constructor(options: PairingOptions) {
@@ -85,6 +87,7 @@ export class PairingManager extends EventEmitter {
     this.adminSocketPath = options.adminSocketPath;
     this.devicesFilePath = options.devicesFilePath;
     this.rebuildUsage = options.rebuildUsage;
+    this.getStatus = options.getStatus;
 
     this.loadDevices();
   }
@@ -376,12 +379,14 @@ export class PairingManager extends EventEmitter {
           break;
         }
         case "status": {
+          const extra = this.getStatus ? await this.getStatus() : {};
           socket.write(
             JSON.stringify({
               id,
               result: {
                 activeSessions: this.sessions.size,
                 publicBaseUrl: this.publicBaseUrl,
+                ...extra,
               },
             }) + "\n"
           );
