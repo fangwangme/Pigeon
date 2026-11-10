@@ -209,7 +209,7 @@ Without a valid pairing only the pairing guide shows: scan the QR code from `pig
 Behavior and numbers come from `quota-and-usage.md`; this section is the presentation. The approved mockups are kept with issue #13's notes. Both pages share a header (back, the title **额度与用量** with the last refresh time, a refresh button) and a segmented **额度 | 用量** switch below it.
 
 ### 11.1 Quota button
-- A gauge icon in the home capsule (left of settings) and in the All Agents capsule (left of filter); both open §11.2. **列表页显示额度按钮** hides both.
+- A gauge icon in the home capsule (left of settings) and in the All Agents capsule (left of filter); both open §11.2. The button shows when both `client.quotaUsageEnabled` and `client.quotaButton` are on (`architecture.md` §4.7); when either is off the button is hidden on both pages.
 - A dot on the button: amber when any enabled provider's last snapshot has a window at level warn, red when one is exhausted (`quota-and-usage.md` §2.4); none otherwise.
 
 ### 11.2 Quota page
@@ -233,6 +233,7 @@ Behavior and numbers come from `quota-and-usage.md`; this section is the present
 - Under the list: costs are estimates at public API prices, which subscriptions are not billed by; unpriced models and unavailable prices are named (`quota-and-usage.md` §3.3).
 
 ### 11.4 Settings group
+- The **额度与用量** card begins with the master toggle **启用额度与用量查询** (`client.quotaUsageEnabled`, default `true`). When off, all following items in the card and the **查询额度的服务** card are hidden. If the client route is on quota or usage when the toggle turns off (including broadcasts from other phones or route restored on reload), it redirects immediately to home.
 - **订阅额度** (summary: one short item per enabled provider following **额度显示**, e.g. **Claude 5h 剩 48%**) and **Token 用量** (summary: **今日 $x · 近 7 天 $y**).
 - **额度显示**: 剩余 / 已用 (`client.quotaDisplay`).
 - **列表页显示额度按钮** (`client.quotaButton`).

@@ -119,4 +119,20 @@ describe("mobile layout enhancements (mobile-ui-and-themes.md §1.2, §2.1)", ()
     const composerSrc = readFileSync(join(rootDir, "src", "client", "src", "components", "Composer.tsx"), "utf-8");
     expect(composerSrc).toContain("Math.min(ta.scrollHeight, 280)");
   });
+
+  test("master switch quotaUsageEnabled gates gauge buttons on Home and All Agents (mobile-ui-and-themes.md §11.1, §11.4)", () => {
+    const homeSrc = readFileSync(join(rootDir, "src", "client", "src", "components", "Home.tsx"), "utf-8");
+    // Verify both header gauge buttons check quotaButtonShown or quotaUsageEnabled
+    const matches = [...homeSrc.matchAll(/<Show when=\{([^}]+)\}>\s*<button aria-label=\{t\("quota\.title"\)\}/g)];
+    expect(matches.length).toBe(2);
+    for (const m of matches) {
+      expect(m[1]).toMatch(/quotaButtonShown|quotaUsageEnabled/);
+    }
+
+    const settingsSrc = readFileSync(join(rootDir, "src", "client", "src", "components", "Settings.tsx"), "utf-8");
+    expect(settingsSrc).toContain("quotaUsageEnabled");
+
+    const indexSrc = readFileSync(join(rootDir, "src", "client", "src", "index.tsx"), "utf-8");
+    expect(indexSrc).toContain("quotaFeatureOn");
+  });
 });

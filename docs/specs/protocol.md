@@ -177,7 +177,7 @@ Fills the model catalog again from every agent's source (`herdr-adapter.md` §7.
 ```json
 { "type": "quota_get", "id": "cli_20", "payload": {} }
 ```
-Answers with the quota of every provider (`quota-and-usage.md` §2). Answers from the daemon's 60-second provider cache to protect upstream provider rate limits. The ack carries:
+Answers with the quota of every provider (`quota-and-usage.md` §2). Answers from the daemon's 60-second provider cache to protect upstream provider rate limits. When `quotaUsageEnabled` is `false` (`quota-and-usage.md` §1.1), the request is rejected with `ERR_FEATURE_DISABLED` without querying any provider. The ack carries:
 ```json
 { "providers": [ { "provider": "claude", "enabled": true,
     "snapshot": { "provider": "claude", "plan": "pro", "account": "you@example.com", "fetchedAt": 1794218000000, "credits": [],
@@ -190,7 +190,7 @@ One entry per provider, enabled or not; a disabled provider has `snapshot: null`
 ```json
 { "type": "usage_get", "id": "cli_21", "payload": { "preset": "custom", "from": "2026-10-01", "to": "2026-10-31", "agents": ["claude", "codex", "agy", "opencode", "pi"] } }
 ```
-`preset` is `today`, `7d`, `30d`, `year`, `all` or `custom`; `custom` requires `from` and `to` (`YYYY-MM-DD`), which other presets must not carry. An optional boolean `force` (the refresh button) scans what changed before answering, also in scheduled mode (`quota-and-usage.md` §3.7). `agents` is a non-empty list of distinct agent kinds and filters every figure in the reply. Anything else is `ERR_INVALID_PAYLOAD` and nothing is scanned. The ack carries:
+`preset` is `today`, `7d`, `30d`, `year`, `all` or `custom`; `custom` requires `from` and `to` (`YYYY-MM-DD`), which other presets must not carry. An optional boolean `force` (the refresh button) scans what changed before answering, also in scheduled mode (`quota-and-usage.md` §3.7). `agents` is a non-empty list of distinct agent kinds and filters every figure in the reply. Anything else is `ERR_INVALID_PAYLOAD` and nothing is scanned. When `quotaUsageEnabled` is `false` (`quota-and-usage.md` §1.1), the request is rejected with `ERR_FEATURE_DISABLED` without scanning files or querying prices. The ack carries:
 - `range` (`from`, `to`), `firstDay` (the first day with usage, or null), `scannedAt`, `pricesAvailable`;
 - `totals` and, when `quota-and-usage.md` §3.5 gives one, `comparison` (`from`, `to`, `totals`); totals are `{ cost, tokens, input, output, cacheRead, cacheWrite, messages, sessions }`;
 - `days`: every day of the range with usage, newest first, each with the totals fields and `date`;
@@ -200,13 +200,13 @@ One entry per provider, enabled or not; a disabled provider has `snapshot: null`
 ```json
 { "type": "usage_day", "id": "cli_22", "payload": { "date": "2026-11-06", "agents": ["claude", "codex"] } }
 ```
-The ack carries `date`, `totals`, and `agents`: per agent its totals and `models` (each model's totals), sorted by cost.
+When `quotaUsageEnabled` is `false`, the request is rejected with `ERR_FEATURE_DISABLED`. The ack carries `date`, `totals`, and `agents`: per agent its totals and `models` (each model's totals), sorted by cost.
 
 ### 4.19 Model Detail (`usage_model`)
 ```json
 { "type": "usage_model", "id": "cli_23", "payload": { "model": "gpt-5-6-sol", "from": "2026-10-11", "to": "2026-11-09", "agents": ["codex"] } }
 ```
-The ack carries `model`, `company`, `totals`, `lastUsed`, `agents` (per agent: kind and totals) and `perDay` (every day of the range in order, with `date`, `tokens` and `cost`, zero on days without use). An unknown model is answered with zero totals, not an error.
+When `quotaUsageEnabled` is `false`, the request is rejected with `ERR_FEATURE_DISABLED`. The ack carries `model`, `company`, `totals`, `lastUsed`, `agents` (per agent: kind and totals) and `perDay` (every day of the range in order, with `date`, `tokens` and `cost`, zero on days without use). An unknown model is answered with zero totals, not an error.
 
 ## 5. Server Events (`server -> client`)
 
@@ -365,9 +365,9 @@ The client part of `config.json` (appearance) is shared by all paired devices.
 { "type": "config_patch", "id": "cli_21", "payload": { "client": { "accent": "green" } } }
 ```
 *Server Behavior*:
-1. The patch is validated against a whitelist of keys and value types: `themeMode` (`system`, `light`, `dark`), `accent` (`blue`, `purple`, `green`, `orange`, `pink`), `quotaProviders` (an object with any of `claude`, `codex`, `antigravity`, each a boolean), `quotaDisplay` (`remaining`, `used`), `quotaButton` (boolean), `quotaShowAccount` (boolean), `usageScanMode` (`scheduled`, `realtime`) and `usageScanInterval` (`1m`, `2m`, `5m`, `10m`, `15m`). Any unknown key or bad value rejects the whole patch with `ERR_INVALID_PAYLOAD`, and nothing is saved.
+1. The patch is validated against a whitelist of keys and value types: `themeMode` (`system`, `light`, `dark`), `accent` (`blue`, `purple`, `green`, `orange`, `pink`), `quotaUsageEnabled` (boolean), `quotaProviders` (an object with any of `claude`, `codex`, `antigravity`, each a boolean), `quotaDisplay` (`remaining`, `used`), `quotaButton` (boolean), `quotaShowAccount` (boolean), `usageScanMode` (`scheduled`, `realtime`) and `usageScanInterval` (`1m`, `2m`, `5m`, `10m`, `15m`). Any unknown key or bad value rejects the whole patch with `ERR_INVALID_PAYLOAD`, and nothing is saved.
 2. The patch is deep-merged and written to `config.json` before the reply. A write error is reported as `ERR_INTERNAL`.
-3. Defaults are `themeMode: "system"`, `accent: "blue"`, `quotaDisplay: "remaining"`, `quotaButton: true`, `quotaShowAccount: true`, `usageScanMode: "scheduled"` and `usageScanInterval: "5m"`; `quotaProviders` defaults to the providers logged in on this computer (`quota-and-usage.md` §2.5). The config version is bumped. The sender gets `ack` with `{ "version", "client" }`.
+3. Defaults are `themeMode: "system"`, `accent: "blue"`, `quotaUsageEnabled: true`, `quotaDisplay: "remaining"`, `quotaButton: true`, `quotaShowAccount: true`, `usageScanMode: "scheduled"` and `usageScanInterval: "5m"`; `quotaProviders` defaults to the providers logged in on this computer (`quota-and-usage.md` §2.5). The config version is bumped. The sender gets `ack` with `{ "version", "client" }`.
 4. Every other client gets `{ "type": "config_updated", "payload": { "version", "client" } }`. Clients ignore a `config_sync` or `config_updated` whose version is older than one they have already applied.
 
 ## 7. Uploads (`POST /api/uploads`)
@@ -384,6 +384,7 @@ Attachments are uploaded before the prompt that uses them.
 | Error Code | Meaning | Recovery Action |
 | :--- | :--- | :--- |
 | `ERR_INVALID_PAYLOAD` | Frame failed validation, unknown type, unknown option/model/key | Fix the request; nothing was executed |
+| `ERR_FEATURE_DISABLED` | The requested quota or usage feature is disabled in client settings | Enable quota and usage in Settings |
 | `ERR_NOT_FOUND` | Targeted pane, tab, workspace or device is unknown, or a queued prompt is no longer queued | Wait for the next `snapshot_update`, or refresh the list |
 | `ERR_INTERACTION_STALE` | Prompt changed, was already answered, or is being answered | Re-select the pane for fresh state |
 | `ERR_AGENT_NOT_READY` | Herdr: agent not ready for input | Retry once the agent is idle |

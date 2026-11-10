@@ -393,4 +393,53 @@ describe("quota config and usage request validation (quota-and-usage.md §2.5, p
       process.env.CODEX_HOME = origCodex;
     }
   });
+
+  test("quotaUsageEnabled master switch: config validation, preservation, and command gating (quota-and-usage.md §1.1, protocol.md §4.16–§4.19, §6.3)", async () => {
+    // 1. Fresh config has quotaUsageEnabled: true
+    const cfgMgr = new ConfigManager(join(dir, "config.json"), { HOME: dir });
+    expect(cfgMgr.getClientConfig().quotaUsageEnabled).toBe(true);
+
+    // 2. Patch with invalid value is rejected
+    const badWs = fakeWs();
+    await send(badWs.ws, { type: "config_patch", id: "p_bad", payload: { client: { quotaUsageEnabled: "no" } } });
+    expect(lastError(badWs.sent)).toBe(ProtocolErrors.ERR_INVALID_PAYLOAD);
+
+    // 3. Patch with quotaUsageEnabled: false is accepted, preserving other fields
+    const patchWs = fakeWs();
+    await send(patchWs.ws, { type: "config_patch", id: "p_ok", payload: { client: { quotaUsageEnabled: false, quotaDisplay: "used" } } });
+    expect(lastError(patchWs.sent)).toBeUndefined();
+    expect(server.configManager.getClientConfig().quotaUsageEnabled).toBe(false);
+    expect(server.configManager.getClientConfig().quotaDisplay).toBe("used");
+    const diskClient = JSON.parse(readFileSync(join(dir, "config.json"), "utf-8")).client;
+    expect(diskClient.quotaUsageEnabled).toBe(false);
+    expect(diskClient.quotaDisplay).toBe("used");
+
+    // 4. When quotaUsageEnabled is false, quota_get, usage_get, usage_day, usage_model are all rejected with ERR_FEATURE_DISABLED
+    const qWs = fakeWs();
+    await send(qWs.ws, { type: "quota_get", id: "q1", payload: {} });
+    expect(lastError(qWs.sent)).toBe(ProtocolErrors.ERR_FEATURE_DISABLED);
+
+    const uWs = fakeWs();
+    await send(uWs.ws, { type: "usage_get", id: "u1", payload: { preset: "7d", agents: ["claude"] } });
+    expect(lastError(uWs.sent)).toBe(ProtocolErrors.ERR_FEATURE_DISABLED);
+
+    const udWs = fakeWs();
+    await send(udWs.ws, { type: "usage_day", id: "ud1", payload: { date: "2026-11-10", agents: ["claude"] } });
+    expect(lastError(udWs.sent)).toBe(ProtocolErrors.ERR_FEATURE_DISABLED);
+
+    const umWs = fakeWs();
+    await send(umWs.ws, { type: "usage_model", id: "um1", payload: { model: "claude-3-opus", from: "2026-11-01", to: "2026-11-10", agents: ["claude"] } });
+    expect(lastError(umWs.sent)).toBe(ProtocolErrors.ERR_FEATURE_DISABLED);
+
+    // 5. Re-enabling the switch restores command access and preserves previous quotaDisplay
+    const reenableWs = fakeWs();
+    await send(reenableWs.ws, { type: "config_patch", id: "p_on", payload: { client: { quotaUsageEnabled: true } } });
+    expect(lastError(reenableWs.sent)).toBeUndefined();
+    expect(server.configManager.getClientConfig().quotaUsageEnabled).toBe(true);
+    expect(server.configManager.getClientConfig().quotaDisplay).toBe("used");
+
+    const qWs2 = fakeWs();
+    await send(qWs2.ws, { type: "quota_get", id: "q2", payload: {} });
+    expect(lastError(qWs2.sent)).toBeUndefined();
+  });
 });

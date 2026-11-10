@@ -11,6 +11,18 @@ Both run inside the daemon. Pigeon never runs or reads the separate `tokenpulse`
 
 Not covered: API-key balances (Pi, OpenCode providers), quota history, quota push alerts, and usage of agents Pigeon does not drive.
 
+### 1.1 Master switch
+
+`client.quotaUsageEnabled` (`architecture.md` §4.7, default `true`) controls both Subscription Quota and Token Usage Dashboard features across every paired phone (`mobile-ui-and-themes.md` §11.4).
+
+When disabled (`false`):
+- **Entry masking:** the Settings card shows only the master switch; all inner navigation rows and detailed settings, as well as the queried-providers card, are hidden (`mobile-ui-and-themes.md` §8.1, §11.4). The header gauge buttons on both Home and All Agents pages are hidden (`mobile-ui-and-themes.md` §11.1). Navigating to or restoring a quota or usage route redirects immediately to Home.
+- **Value preservation:** all other client configuration keys in `config.json` (such as `quotaDisplay`, `quotaButton`, `quotaShowAccount`, `quotaProviders`, `usageScanMode`, and `usageScanInterval`) remain untouched. Aggregated session usage in `usage.db` remains intact. When re-enabled, previous settings and historical data are instantly restored.
+- **Scan and query shutdown:** the phone sends no `quota_get`, `usage_get`, `usage_day`, or `usage_model`. The daemon's WebSocket dispatch rejects any of those requests with `ERR_FEATURE_DISABLED` without calling a provider or scanning files (`protocol.md` §4.16–§4.19). `UsageService` stops its background scheduled timer; no session files are scanned. `QuotaService` makes no network requests or language server queries.
+- **In-flight work:** any scan or quota query already in flight when the switch is disabled is allowed to complete gracefully without interruption to avoid corrupting SQLite or file states.
+- **Rebuild cache:** `pigeon rebuild-cache` via CLI remains permitted as an explicit administrative maintenance operation.
+- **Re-enabling:** transitioning from disabled to enabled immediately triggers one usage scan and one quota fetch to restore fresh data without waiting for an interval timer.
+
 ## 2. Quota
 
 ### 2.1 Snapshot model
