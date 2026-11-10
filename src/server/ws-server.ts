@@ -106,6 +106,16 @@ export class WsServer {
     this.buildId = options.buildId;
     this.queueFilePath = options.queueFilePath;
     this.loadQueues();
+    queueMicrotask(() => {
+      for (const [paneId, queue] of this.queues.entries()) {
+        if (queue.length > 0 && !this.flushing.has(paneId)) {
+          const status = this.herdrClient.getPaneHerdrStatus(paneId);
+          if (status === "idle" || status === "done") {
+            void this.flushQueue(paneId);
+          }
+        }
+      }
+    });
     this.herdrClient = options.herdrClient;
     this.pushManager = options.pushManager;
     this.modelCatalog = options.modelCatalog ?? new ModelCatalog();
@@ -125,8 +135,17 @@ export class WsServer {
     this.paneStore.on("upstream_status", (status) => this.broadcast({ type: "upstream_status", payload: status }));
     this.paneStore.on("turns_delta", (delta) => {
       this.sendToSubscribers(delta.paneId, { type: "turns_delta", payload: delta });
-      if (delta.sinceTurnIndex > 0 && delta.appendTurns && delta.appendTurns.length > 0 && delta.appendTurns.some((t: NormalizedTurn) => !!t.userPrompt)) {
-        this.clearSendingPrompt(delta.paneId);
+      if (delta.appendTurns && delta.appendTurns.length > 0) {
+        const sending = this.queues.get(delta.paneId)?.find((q) => q.item.sending);
+        if (sending) {
+          const matched = delta.appendTurns.some((t: NormalizedTurn) => {
+            if (!t.userPrompt) return false;
+            if (delta.sinceTurnIndex > 0) return true;
+            if (!sending.item.text) return true;
+            return t.userPrompt.text.includes(sending.item.text);
+          });
+          if (matched) this.clearSendingPrompt(delta.paneId);
+        }
       }
     });
     this.paneStore.on("session_changed", (paneId: string) => {
@@ -161,6 +180,14 @@ export class WsServer {
       this.saveQueues();
       this.rebindSessions();
       this.broadcast({ type: "snapshot_update", payload: snapshot });
+      for (const [paneId, queue] of this.queues.entries()) {
+        if (queue.length > 0 && !this.flushing.has(paneId)) {
+          const status = this.herdrClient.getPaneHerdrStatus(paneId);
+          if (status === "idle" || status === "done") {
+            void this.flushQueue(paneId);
+          }
+        }
+      }
     });
     this.rebindSessions();
 

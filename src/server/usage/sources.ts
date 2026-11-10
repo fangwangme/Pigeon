@@ -372,7 +372,6 @@ export function scanAntigravityDb(path: string): RawUsageRecord[] {
         totalTokens: total,
       });
     }
-  } catch {
   } finally {
     if (db) db.close();
   }
@@ -430,7 +429,6 @@ export function scanAntigravityCacheDb(path: string): RawUsageRecord[] {
         totalTokens: total,
       });
     }
-  } catch {
   } finally {
     if (db) db.close();
   }
@@ -496,7 +494,6 @@ export function scanOpenCodeDb(path: string, stats: ScanStats = { skipped: 0 }):
         totalTokens: total,
       });
     }
-  } catch {
   } finally {
     if (db) db.close();
   }

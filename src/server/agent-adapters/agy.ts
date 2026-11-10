@@ -18,7 +18,7 @@ function cleanArgValue(val: unknown): any {
         const parsed = JSON.parse(trimmed);
         return parsed;
       } catch {
-        return trimmed.slice(1, -1);
+        return val;
       }
     }
     return val;

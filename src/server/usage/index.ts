@@ -11,6 +11,7 @@ export interface UsageServiceOptions {
   pricing?: PricingManager;
   configManager?: ConfigManager;
   now?: () => number;
+  autoScan?: boolean;
 }
 
 export class UsageService {
@@ -30,7 +31,9 @@ export class UsageService {
       options.store ?? new UsageStore({ dbPath: stateDir ? join(stateDir, "usage.db") : undefined, home: options.configManager?.home });
     this.pricing = options.pricing ?? new PricingManager({ cachePath: stateDir ? join(stateDir, "pricing-cache.json") : undefined });
     this.now = options.now ?? (() => Date.now());
-    this.startBackgroundTimer();
+    if (options.autoScan !== false) {
+      this.startBackgroundTimer();
+    }
   }
 
   public getScanMode(): "realtime" | "scheduled" {
@@ -92,17 +95,34 @@ export class UsageService {
   }
 
   public async rebuild(): Promise<{ scannedFiles: number; recordsAdded: number; totalTokens: number; totalCost: number; recordCount: number }> {
-    await this.pricing.initialize();
-    const res = await this.store.rebuildAll(this.pricing);
-    this.hasScannedOnce = true;
-    const totals = this.store.getTotalsSummary();
-    return {
-      scannedFiles: res.scannedFiles,
-      recordsAdded: res.recordsAdded,
-      recordCount: totals.recordCount,
-      totalTokens: totals.totalTokens,
-      totalCost: totals.totalCost,
-    };
+    while (this.scanPromise) {
+      try {
+        await this.scanPromise;
+      } catch {}
+    }
+
+    let resolveRebuild: () => void = () => {};
+    const rebuildPromise = new Promise<{ scannedFiles: number; recordsAdded: number }>((resolve) => {
+      resolveRebuild = () => resolve({ scannedFiles: 0, recordsAdded: 0 });
+    });
+    this.scanPromise = rebuildPromise;
+
+    try {
+      await this.pricing.initialize();
+      const res = await this.store.rebuildAll(this.pricing);
+      this.hasScannedOnce = true;
+      const totals = this.store.getTotalsSummary();
+      return {
+        scannedFiles: res.scannedFiles,
+        recordsAdded: res.recordsAdded,
+        recordCount: totals.recordCount,
+        totalTokens: totals.totalTokens,
+        totalCost: totals.totalCost,
+      };
+    } finally {
+      this.scanPromise = null;
+      resolveRebuild();
+    }
   }
 
   public async getUsage(req: { preset: string; from?: string; to?: string; agents: string[]; force?: boolean }): Promise<UsageGetPayload> {
