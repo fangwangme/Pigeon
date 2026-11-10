@@ -22,9 +22,11 @@ export class UsageService {
   private scanPromise: Promise<{ scannedFiles: number; recordsAdded: number }> | null = null;
   private backgroundTimer: ReturnType<typeof setInterval> | null = null;
   private hasScannedOnce = false;
+  private lastEnabled = true;
 
   constructor(options: UsageServiceOptions = {}) {
     this.configManager = options.configManager;
+    this.lastEnabled = options.configManager?.getClientConfig().quotaUsageEnabled !== false;
     // The usage database sits in the daemon's state directory; the agents' files are under the config's home.
     const stateDir = options.configManager?.getServerConfig().stateDir;
     this.store =
@@ -57,6 +59,8 @@ export class UsageService {
       clearInterval(this.backgroundTimer);
       this.backgroundTimer = null;
     }
+    const clientCfg = this.configManager?.getClientConfig();
+    if (clientCfg && clientCfg.quotaUsageEnabled === false) return;
     if (this.getScanMode() !== "scheduled") return;
     const backgroundScan = () => void this.scan().catch((err) => console.error("[Pigeon] background usage scan failed:", err));
     // §3.7: scheduled mode scans in the background; the timer never keeps a one-shot CLI process alive.
@@ -65,9 +69,15 @@ export class UsageService {
     if (!this.hasScannedOnce) backgroundScan();
   }
 
-  /** The scan mode or interval may have changed (`config_patch`). */
+  /** The scan mode, interval, or master switch may have changed (`config_patch`). */
   public updateConfig(): void {
+    const isNowEnabled = this.configManager?.getClientConfig().quotaUsageEnabled !== false;
+    const becameEnabled = !this.lastEnabled && isNowEnabled;
+    this.lastEnabled = isNowEnabled;
     this.startBackgroundTimer();
+    if (becameEnabled) {
+      void this.scan().catch((err) => console.error("[Pigeon] post-enable usage scan failed:", err));
+    }
   }
 
   public destroy(): void {

@@ -1,5 +1,5 @@
 import { createMemo, createSignal, For, Show } from "solid-js";
-import { filterActive, navigate, state, toggleCollapsed, type FilterState } from "../state/store";
+import { filterActive, navigate, quotaButtonShown, state, toggleCollapsed, type FilterState } from "../state/store";
 import { selectPane } from "../state/ws";
 import type { PaneSummary, TabSummary, WorkspaceSummary } from "../../../types/protocol";
 import { openOverlay } from "./overlays";
@@ -118,7 +118,7 @@ function FilterButton() {
   const dot = () => quotaDot(state.quotaSnapshots);
   return (
     <div class="cap">
-      <Show when={state.quotaButton}>
+      <Show when={quotaButtonShown()}>
         <button aria-label={t("quota.title")} onClick={() => navigate({ name: "quota", from: "home" })}>
           <Icon name="gauge" />
           <Show when={dot()}>
@@ -277,7 +277,7 @@ export function AgentsPage() {
           <div class="t">{t("agents.title")}</div>
         </div>
         <div class="cap">
-          <Show when={state.quotaButton}>
+          <Show when={quotaButtonShown()}>
             <button aria-label={t("quota.title")} onClick={() => navigate({ name: "quota", from: "agents" })}>
               <Icon name="gauge" />
               <Show when={quotaDot(state.quotaSnapshots)}>

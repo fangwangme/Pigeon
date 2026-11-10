@@ -367,6 +367,8 @@ export const en = {
   "usage.levelEmpty": "0 (Empty)",
 
   "settings.quotaUsage": "Quota & usage",
+  "settings.quotaUsageEnabled": "Enable quota & usage",
+  "settings.quotaUsageDisabledHint": "Quota and usage features are disabled; background scans and queries are stopped.",
   "settings.subscriptionQuota": "Subscription quota",
   "settings.tokenUsage": "Token usage",
   "settings.usageSummary": "Today {today} · 7d {week}",

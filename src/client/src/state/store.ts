@@ -79,6 +79,8 @@ export interface AppState {
   collapsed: Record<string, boolean>;
   unread: Record<string, boolean>;
   canInstallPWA: boolean;
+  configReady: boolean;
+  quotaUsageEnabled: boolean;
   quotaDisplay: "remaining" | "used";
   quotaButton: boolean;
   quotaShowAccount: boolean;
@@ -157,6 +159,8 @@ const [state, setState] = createStore<AppState>({
   collapsed: readJson<Record<string, boolean>>("pigeon_collapsed", {}),
   unread: readJson<Record<string, boolean>>("pigeon_unread", {}),
   canInstallPWA: false,
+  configReady: false,
+  quotaUsageEnabled: readPref("pigeon_quota_usage_enabled") !== "0",
   quotaDisplay: "remaining",
   quotaButton: true,
   quotaShowAccount: true,
@@ -188,6 +192,10 @@ export function applySyncedClientConfig(config: Partial<ClientConfig> | undefine
   if (!config) return;
   if (config.themeMode) setState("themeMode", config.themeMode);
   if (config.accent) setState("accent", config.accent);
+  if (config.quotaUsageEnabled !== undefined) {
+    setState("quotaUsageEnabled", config.quotaUsageEnabled);
+    writePref("pigeon_quota_usage_enabled", config.quotaUsageEnabled ? "1" : "0");
+  }
   if (config.quotaDisplay !== undefined) setState("quotaDisplay", config.quotaDisplay);
   if (config.quotaButton !== undefined) setState("quotaButton", config.quotaButton);
   if (config.quotaShowAccount !== undefined) setState("quotaShowAccount", config.quotaShowAccount);
@@ -248,3 +256,6 @@ export function openTerminal(): void {
 export function draftKey(paneId: string | null): string {
   return `pigeon_draft_${paneId ?? "new"}`;
 }
+
+export const quotaFeatureOn = () => state.quotaUsageEnabled !== false;
+export const quotaButtonShown = () => quotaFeatureOn() && state.quotaButton;

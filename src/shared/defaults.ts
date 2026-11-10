@@ -5,6 +5,7 @@ import type { ClientConfig } from "../types/protocol";
 export const DEFAULT_CLIENT_CONFIG: ClientConfig = {
   themeMode: "system",
   accent: "blue",
+  quotaUsageEnabled: true,
   quotaDisplay: "remaining",
   quotaButton: true,
   quotaShowAccount: true,

@@ -140,6 +140,7 @@ export type UsageScanInterval = "1m" | "2m" | "5m" | "10m" | "15m";
 export interface ClientConfig {
   themeMode: ThemeMode;
   accent: AccentName;
+  quotaUsageEnabled?: boolean;
   quotaProviders?: QuotaProvidersConfig;
   quotaDisplay?: QuotaDisplayMode;
   quotaButton?: boolean;
@@ -432,6 +433,7 @@ export type ServerMessage =
 
 export const ProtocolErrors = {
   ERR_INVALID_PAYLOAD: "ERR_INVALID_PAYLOAD",
+  ERR_FEATURE_DISABLED: "ERR_FEATURE_DISABLED",
   ERR_NOT_FOUND: "ERR_NOT_FOUND",
   ERR_INTERACTION_STALE: "ERR_INTERACTION_STALE",
   ERR_AGENT_NOT_READY: "ERR_AGENT_NOT_READY",

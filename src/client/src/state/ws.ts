@@ -180,6 +180,7 @@ export async function initWebSocket(): Promise<void> {
     if (socket !== ws) return;
     socket = null;
     setState("connected", false);
+    setState("configReady", false);
     if (pingInterval) clearInterval(pingInterval);
     pingInterval = null;
     for (const p of pending.values()) p.reject({ code: "ERR_OFFLINE", message: t("error.disconnected") });
@@ -245,9 +246,12 @@ export function handleServerMessage(msg: ServerMessage): void {
       paneRevisions.clear();
       configVersion = 0;
       applySyncedClientConfig(msg.payload.clientConfig);
+      setState("configReady", true);
       setState("recipes", msg.payload.recipes);
       setState("serverVersion", msg.payload.serverVersion);
-      void fetchQuota();
+      if (state.quotaUsageEnabled !== false) {
+        void fetchQuota();
+      }
       return;
 
     case "skills_sync":
@@ -264,11 +268,19 @@ export function handleServerMessage(msg: ServerMessage): void {
       return;
 
     case "config_sync":
-    case "config_updated":
+    case "config_updated": {
       if (msg.payload.version < configVersion) return; // an older broadcast arriving late
       configVersion = msg.payload.version;
+      const prevEnabled = state.quotaUsageEnabled;
       applySyncedClientConfig(msg.payload.client);
+      if (prevEnabled === false && state.quotaUsageEnabled) {
+        void fetchQuota();
+      } else if (prevEnabled === true && !state.quotaUsageEnabled) {
+        setState("quotaSnapshots", []);
+        setState("quotaUpdated", null);
+      }
       return;
+    }
 
     case "snapshot_update":
       trackUnread(msg.payload);

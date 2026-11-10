@@ -368,6 +368,8 @@ export const zh: Messages = {
   "usage.levelEmpty": "0（无用量）",
 
   "settings.quotaUsage": "额度与用量",
+  "settings.quotaUsageEnabled": "启用额度与用量查询",
+  "settings.quotaUsageDisabledHint": "已停用额度与用量功能，后台已停止扫描与外部请求。",
   "settings.subscriptionQuota": "订阅额度",
   "settings.tokenUsage": "Token 用量",
   "settings.usageSummary": "今日 {today} · 近 7 天 {week}",
