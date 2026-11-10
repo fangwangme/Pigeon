@@ -1,6 +1,6 @@
 {
   "name": "pigeon",
-  "version": "0.1.6",
+  "version": "0.1.7",
   "description": "Mobile-first voice-driven remote control and mirror client for Herdr",
   "type": "module",
   "private": true,

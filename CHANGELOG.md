@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.7] - 2026-11-10
+
+### Fixed
+- **Prompt queue on restart**: restored queued prompts on an already idle pane are dispatched immediately on startup instead of waiting for a status transition (#15).
+- **Prompt queue turn 0 clearing**: the first prompt of a fresh session clears its sending state as soon as its initial turn appears in transcript deltas (#15).
+- **Rebuild cache timeout**: `pigeon rebuild-cache` against a running daemon uses an extended timeout (up to 2 minutes) to avoid 5-second socket timeouts on large repositories (#15).
+- **Usage rebuild concurrency**: `UsageService.rebuild()` serializes with background scans and prevents background timers during standalone CLI execution (#15).
+- **Pricing retry & fallback**: pricing manager uses stale cache (>24h) as offline fallback when network is unreachable, and retries on subsequent background scans rather than locking into an unpriced state (#15).
+- **SQLite scanner error handling**: locked or corrupted agent databases log a warning without recording fingerprints in `scan_file_state`, allowing future scans to retry (#15).
+- **Antigravity argument parser**: `cleanArgValue` no longer strips outer quotes from non-JSON code arguments (#15).
+
 ## [0.1.6] - 2026-11-09
 
 ### Added
