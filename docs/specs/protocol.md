@@ -182,9 +182,9 @@ Answers with the quota of every provider (`quota-and-usage.md` §2). Answers fro
 { "providers": [ { "provider": "claude", "enabled": true,
     "snapshot": { "provider": "claude", "plan": "pro", "account": "you@example.com", "fetchedAt": 1794218000000, "credits": [],
       "windows": [ { "id": "five_hour", "label": "5h", "usedPercent": 52, "periodMs": 18000000, "resetsAt": 1794228620000 } ] },
-    "error": null } ] }
+    "error": null } ], "fetchedAt": 1794218000000 }
 ```
-One entry per provider, enabled or not; a disabled provider has `snapshot: null` and is not fetched. A provider that failed has `error: { "message", "at" }` and keeps its previous `snapshot` (or null when it never had one). Provider failures never turn into a command error.
+One entry per provider, enabled or not; a disabled provider has `snapshot: null` and is not fetched. The top-level `fetchedAt` carries the timestamp when the daemon last fetched or checked the providers. A provider that failed has `error: { "message", "at" }` and keeps its previous `snapshot` (or null when it never had one). Provider failures never turn into a command error.
 
 ### 4.17 Usage Report (`usage_get`)
 ```json
