@@ -183,6 +183,7 @@ describe("mobile layout enhancements (mobile-ui-and-themes.md §1.2, §2.1)", ()
 
   test("sendConfigPatch turn-on waits for server ack then fetches quota on initiating phone (quota-and-usage.md §1.1)", async () => {
     const sentFrames: any[] = [];
+    let fakeWsInstance: any = null;
     const origWs = globalThis.WebSocket;
     const origFetch = globalThis.fetch;
     const origWindow = globalThis.window;
@@ -203,6 +204,9 @@ describe("mobile layout enhancements (mobile-ui-and-themes.md §1.2, §2.1)", ()
         _onopen: any = null;
         onmessage: any = null;
         onclose: any = null;
+        constructor() {
+          fakeWsInstance = this;
+        }
         set onopen(fn: any) {
           this._onopen = fn;
           queueMicrotask(() => fn?.());
@@ -213,7 +217,10 @@ describe("mobile layout enhancements (mobile-ui-and-themes.md §1.2, §2.1)", ()
         send(data: string) {
           sentFrames.push(JSON.parse(data));
         }
-        close() {}
+        close() {
+          this.readyState = 3;
+          this.onclose?.({ code: 4409 });
+        }
       }
       globalThis.WebSocket = FakeClientWs as any;
 
@@ -247,6 +254,9 @@ describe("mobile layout enhancements (mobile-ui-and-themes.md §1.2, §2.1)", ()
       // 4. After server ack, quota_get is sent to fetch fresh quota!
       expect(sentFrames.some((f) => f.type === "quota_get")).toBe(true);
     } finally {
+      if (fakeWsInstance) {
+        fakeWsInstance.close();
+      }
       globalThis.WebSocket = origWs;
       globalThis.fetch = origFetch;
       globalThis.window = origWindow;
