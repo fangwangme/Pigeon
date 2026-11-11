@@ -1,6 +1,6 @@
-import { createMemo, createSignal, For, onCleanup, Show, type JSX } from "solid-js";
+import { createEffect, createMemo, createSignal, For, onCleanup, onMount, Show, type JSX } from "solid-js";
 import { draftKey, readPref, showToast, state, writePref } from "../state/store";
-import { refreshModels, uploadFile } from "../state/ws";
+import { refreshModels, requestSkills, uploadFile } from "../state/ws";
 import type { AgentRecipeSummary, SkillEntry } from "../../../types/protocol";
 import { Icon, Sheet } from "./ui";
 import { t, type MessageId } from "../i18n";
@@ -46,6 +46,7 @@ const GROUP_ORDER = ["project", "user", "plugin", "command"] as const;
 
 /** §6.3 */
 export function SkillsSheet(props: { onPick: (e: SkillEntry) => void; onClose: () => void }) {
+  onMount(() => requestSkills());
   const [seg, setSeg] = createSignal<"all" | (typeof GROUP_ORDER)[number]>("all");
   const present = () => GROUP_ORDER.filter((g) => state.skills.some((s) => groupOf(s) === g));
   return (
@@ -324,6 +325,10 @@ export function Composer(props: ComposerProps) {
     const q = slash();
     if (!q) return [];
     return state.skills.filter((s) => s.invocation.toLowerCase().includes(q.query) || s.name.toLowerCase().includes(q.query)).slice(0, 40);
+  });
+
+  createEffect(() => {
+    if (slash()) requestSkills();
   });
 
   const addFiles = async (files: FileList | null | File[]) => {

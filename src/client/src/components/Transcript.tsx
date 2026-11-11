@@ -1,6 +1,6 @@
 import { createSignal, For, Match, Show, Switch } from "solid-js";
 import { state } from "../state/store";
-import { copyText } from "../state/ws";
+import { copyText, getDetail } from "../state/ws";
 import { renderMarkdown } from "../utils/markdown";
 import type { Card, FileDiffSummary, NormalizedToolCall, NormalizedTurn, ToolVerb, TurnItem } from "../../../types/protocol";
 import type { IconName } from "../icons";
@@ -84,14 +84,44 @@ function groupSummary(calls: NormalizedToolCall[]): string {
 
 const [toolSheet, setToolSheet] = createSignal<{ calls: NormalizedToolCall[]; title: string; detail: NormalizedToolCall | null; direct: boolean } | null>(null);
 
+function findTurnForCall(callId: string): string | undefined {
+  for (const turn of state.normalizedTurns) {
+    if (turn.toolCalls?.some((c) => c.id === callId)) return turn.turnId;
+    if (turn.items?.some((i: any) => i.kind === "tool" && i.call?.id === callId)) return turn.turnId;
+  }
+  return undefined;
+}
+
+function loadCallDetailIfNeeded(call: NormalizedToolCall) {
+  if (!state.activePaneId || !call.id) return;
+  if (call.input !== undefined && call.output !== undefined && (!call.diff || call.diff.patch !== undefined)) return;
+  const turnId = findTurnForCall(call.id);
+  if (!turnId) return;
+  void getDetail({ paneId: state.activePaneId, kind: "tool", turnId, callId: call.id })
+    .then((res) => {
+      if (res?.call) {
+        setToolSheet((cur) => (cur && cur.detail?.id === call.id ? { ...cur, detail: res.call } : cur));
+      }
+    })
+    .catch(() => {});
+}
+
 export function openToolDetail(call: NormalizedToolCall): void {
   setToolSheet({ calls: [call], title: callLine(call), detail: call, direct: true });
+  loadCallDetailIfNeeded(call);
 }
 
 export function openDiffs(path: string, diffs: FileDiffSummary[]): void {
   const call: NormalizedToolCall = { id: `file:${path}`, name: "edit", verb: "edit", target: path, input: {}, status: "completed", diff: undefined };
   setToolSheet({ calls: [call], title: path.split("/").pop() || path, detail: call, direct: true });
   setFileDiffs(diffs);
+  if (state.activePaneId && (!diffs.length || !diffs[0].patch)) {
+    void getDetail({ paneId: state.activePaneId, kind: "file", filePath: path })
+      .then((res) => {
+        if (res?.diff) setFileDiffs([res.diff]);
+      })
+      .catch(() => {});
+  }
 }
 
 const [fileDiffs, setFileDiffs] = createSignal<FileDiffSummary[] | null>(null);
@@ -253,7 +283,7 @@ export function ToolSheet() {
               fallback={
                 <For each={s.calls}>
                   {(c) => (
-                    <button class="tli" onClick={() => setToolSheet({ ...s, detail: c })}>
+                    <button class="tli" onClick={() => { setToolSheet({ ...s, detail: c }); loadCallDetailIfNeeded(c); }}>
                       <Show when={c.status !== "running"} fallback={<span class="spin" style={{ margin: "2px" }} />}>
                         <Icon name={VERB_ICON[c.verb]} />
                       </Show>

@@ -451,6 +451,14 @@ export interface PaneBootstrapPayload {
   serverMs: number;
 }
 
+export interface PaneTailPayload {
+  paneId: string;
+  agentStatus: AgentStatus;
+  seq: number;
+  sessionId: string;
+  turns: NormalizedTurn[];
+}
+
 // Client -> Server messages
 export type ClientMessage =
   | { type: "hello"; id: string; payload: { protocolVersion: string; subscribePaneId?: string; have?: HaveInfo } }
@@ -496,6 +504,7 @@ export type ServerMessage =
   | { type: "turns_delta"; payload: TurnsDeltaPayload }
   | { type: "prompt_queue"; payload: PromptQueuePayload }
   | { type: "pane_bootstrap"; payload: PaneBootstrapPayload }
+  | { type: "pane_tail"; payload: PaneTailPayload }
   | { type: "recipes_sync"; payload: { recipes: Record<string, AgentRecipeSummary> } };
 
 export const ProtocolErrors = {

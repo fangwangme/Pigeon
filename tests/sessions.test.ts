@@ -44,12 +44,42 @@ async function setup(home: string, panes: FakePane[], folder = "/work") {
     const c = fakeWs();
     server.handleOpen(c.ws);
     await server.handleMessage(c.ws, JSON.stringify({ type: "hello", id: "h", payload: { protocolVersion: "1.0.0", subscribePaneId: paneId } }));
+    const boot = c.ofType("pane_bootstrap").at(-1)?.payload;
+    if (boot?.turns?.turns) {
+      for (const turn of boot.turns.turns) {
+        const calls: any[] = [];
+        for (const item of turn.items ?? []) {
+          if (item.kind === "tool" && item.call?.id) {
+            const reqId = `d_${item.call.id}`;
+            await server.handleMessage(c.ws, JSON.stringify({ type: "detail_get", id: reqId, payload: { paneId, kind: "tool", turnId: turn.turnId, callId: item.call.id } }));
+            const ack = c.ofType("ack").find((a) => a.replyTo === reqId)?.payload;
+            if (ack?.call) calls.push(ack.call);
+          } else if (item.kind === "reasoning") {
+            const reqId = `dr_${turn.turnId}`;
+            await server.handleMessage(c.ws, JSON.stringify({ type: "detail_get", id: reqId, payload: { paneId, kind: "reasoning", turnId: turn.turnId } }));
+            const ack = c.ofType("ack").find((a) => a.replyTo === reqId)?.payload;
+            if (ack?.text) turn.reasoning = { text: ack.text };
+          }
+        }
+        if (calls.length) turn.toolCalls = calls;
+      }
+      if (boot.turns.sessionStats?.files) {
+        const diffs: any[] = [];
+        for (const f of boot.turns.sessionStats.files) {
+          const reqId = `df_${f.filePath}`;
+          await server.handleMessage(c.ws, JSON.stringify({ type: "detail_get", id: reqId, payload: { paneId, kind: "file", filePath: f.filePath } }));
+          const ack = c.ofType("ack").find((a) => a.replyTo === reqId)?.payload;
+          if (ack?.diff) diffs.push(ack.diff);
+        }
+        if (diffs.length) boot.turns.sessionStats.diffs = diffs;
+      }
+    }
     return c;
   };
   return { herdr, client, server, open };
 }
 
-const turnsOf = (c: ReturnType<typeof fakeWs>) => c.ofType("normalized_turns").at(-1).payload;
+const turnsOf = (c: ReturnType<typeof fakeWs>) => (c.ofType("pane_bootstrap").at(-1)?.payload.turns ?? c.ofType("normalized_turns").at(-1)?.payload);
 
 function claudeTranscript(proj: string) {
   const at = (s: number) => new Date(Date.UTC(2026, 10, 6, 10, 0, s)).toISOString();

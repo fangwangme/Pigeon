@@ -23,6 +23,7 @@ const pending = new Map<string, { resolve: (p: any) => void; reject: (e: { code:
 let freshDataArrivedPaneId: string | null = null;
 let lastAlivePanesKey = "";
 let pendingSelectViewId: string | null = null;
+const paneSeqs = new Map<string, number>();
 
 function toPlain<T>(obj: T): T {
   if (obj === null || typeof obj !== "object") return obj;
@@ -297,6 +298,11 @@ export function handleServerMessage(msg: ServerMessage): void {
     case "pane_bootstrap": {
       if (msg.payload.paneId !== state.activePaneId) return;
       freshDataArrivedPaneId = msg.payload.paneId;
+      if (typeof msg.payload.turns?.seq === "number") {
+        paneSeqs.set(msg.payload.paneId, msg.payload.turns.seq);
+      } else if (typeof msg.payload.resume?.seq === "number") {
+        paneSeqs.set(msg.payload.paneId, msg.payload.resume.seq);
+      }
       if (msg.payload.state) {
         applyPaneState(msg.payload.state);
         setState("paneLoaded", true);
@@ -347,6 +353,9 @@ export function handleServerMessage(msg: ServerMessage): void {
     case "normalized_turns": {
       if (msg.payload.paneId !== state.activePaneId) return;
       freshDataArrivedPaneId = msg.payload.paneId;
+      if (typeof msg.payload.seq === "number") {
+        paneSeqs.set(msg.payload.paneId, msg.payload.seq);
+      }
       setState({
         normalizedTurns: msg.payload.turns,
         sessionStats: msg.payload.sessionStats || null,
@@ -367,6 +376,15 @@ export function handleServerMessage(msg: ServerMessage): void {
     case "turns_delta": {
       if (msg.payload.paneId !== state.activePaneId) return;
       freshDataArrivedPaneId = msg.payload.paneId;
+      if (typeof msg.payload.seq === "number") {
+        const lastSeq = paneSeqs.get(msg.payload.paneId);
+        if (lastSeq !== undefined && msg.payload.seq !== lastSeq + 1) {
+          console.warn(`[Pigeon] seq gap on pane ${msg.payload.paneId}: expected ${lastSeq + 1}, got ${msg.payload.seq}. Resyncing.`);
+          void selectPane(msg.payload.paneId);
+          return;
+        }
+        paneSeqs.set(msg.payload.paneId, msg.payload.seq);
+      }
       setState("paneSyncing", false);
       const { sinceTurnIndex, appendTurns, patchLastTurn, sessionStats, sessionTitle, todos, session } = msg.payload;
       let current = [...state.normalizedTurns];
@@ -382,6 +400,13 @@ export function handleServerMessage(msg: ServerMessage): void {
       if (todos) setState("todos", todos);
       if (session) setState("session", session);
       debouncedSaveActivePaneSnapshot(msg.payload.paneId);
+      return;
+    }
+
+    case "pane_tail": {
+      if (msg.payload.paneId !== state.activePaneId) {
+        paneSeqs.set(msg.payload.paneId, msg.payload.seq);
+      }
       return;
     }
 
@@ -486,6 +511,19 @@ export function sendPrompt(text: string, attachments: string[] = []): Promise<an
 export function sendKeys(keys: string[]): void {
   if (!state.activePaneId) return;
   sendMessage({ type: "agent_send_keys", id: nextId(), payload: { targetPaneId: state.activePaneId, keys } });
+}
+
+export function setScreenWatch(paneId: string, on: boolean): void {
+  if (!paneId) return;
+  sendMessage({ type: "screen_watch", id: nextId(), payload: { paneId, on } });
+}
+
+export function getDetail(payload: { paneId: string; kind: "tool" | "reasoning" | "file"; turnId?: string; callId?: string; filePath?: string }): Promise<any> {
+  return request({ type: "detail_get", payload });
+}
+
+export function requestSkills(): void {
+  sendMessage({ type: "skills_get", id: nextId() });
 }
 
 export function respondInteraction(interactionId: string, optionId: string, fingerprint: string): Promise<any> {

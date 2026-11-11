@@ -25,6 +25,8 @@ import {
   type TurnsDeltaPayload,
   type NormalizedTurnsPayload,
   type NormalizedTurn,
+  type PaneTailPayload,
+  type AgentStatus,
   toLightTurn,
   toLightStats,
   hashTurn,
@@ -158,14 +160,28 @@ export class WsServer {
 
     this.paneStore.on("upstream_status", (status) => this.broadcast({ type: "upstream_status", payload: status }));
     this.paneStore.on("turns_delta", (delta) => {
-      this.sendToSubscribers(delta.paneId, { type: "turns_delta", payload: delta });
+      const lightDelta: TurnsDeltaPayload = {
+        ...delta,
+        appendTurns: delta.appendTurns?.map(toLightTurn),
+        ...(delta.patchLastTurn ? { patchLastTurn: toLightTurn(delta.patchLastTurn) } : {}),
+        ...(delta.sessionStats ? { sessionStats: toLightStats(delta.sessionStats) } : {}),
+      };
+      this.sendToSubscribers(delta.paneId, { type: "turns_delta", payload: lightDelta });
       if (delta.appendTurns && delta.appendTurns.length > 0) {
         const hasUser = delta.appendTurns.some((t: NormalizedTurn) => !!t.userPrompt);
         if (hasUser) this.transitionQueue(delta.paneId, { type: "user_turn" });
       }
+      this.maybeSendPaneTail(delta.paneId);
     });
     this.paneStore.on("session_changed", (paneId: string) => {
-      this.sendToSubscribers(paneId, { type: "normalized_turns", payload: this.paneStore.getPayload(paneId, this.herdrClient.getPaneAgentKind(paneId)) });
+      const payload = this.paneStore.getPayload(paneId, this.herdrClient.getPaneAgentKind(paneId));
+      const lightPayload: NormalizedTurnsPayload = {
+        ...payload,
+        turns: payload.turns.map(toLightTurn),
+        ...(payload.sessionStats ? { sessionStats: toLightStats(payload.sessionStats) } : {}),
+      };
+      this.sendToSubscribers(paneId, { type: "normalized_turns", payload: lightPayload });
+      this.maybeSendPaneTail(paneId);
     });
 
     // herdr-adapter.md §7.1: a model named in a session's records that the catalog lacks fills it again.
@@ -234,6 +250,16 @@ export class WsServer {
       this.transitionQueue(paneId, { type: "status", status });
       // herdr-adapter.md §4: finishing while a phone visibly watches it is finishing seen.
       if (status === "done" && this.pushManager.shouldSuppressPush(paneId)) this.herdrClient.markSeen(paneId);
+
+      // pane_tail §5.10: push to non-viewing connections when working or blocked, and once more when leaving.
+      const wasActive = previous === "working" || previous === "blocked";
+      const isActive = status === "working" || status === "blocked";
+      if (isActive) {
+        this.maybeSendPaneTail(paneId);
+      } else if (wasActive) {
+        this.maybeSendPaneTail(paneId, true);
+      }
+
       // push.md §4: notify on transition into blocked or done (push.md §4.1), at most once per minute per pane.
       const isBlocked = status === "blocked" && previous !== "blocked";
       const isDone = status === "done" && previous === "working";
@@ -412,7 +438,7 @@ export class WsServer {
           this.sendError(ws, msg.id, ProtocolErrors.ERR_NOT_FOUND, `Unknown pane ${msg.payload.paneId}`);
           return;
         }
-        await this.bootstrapPane(ws, msg.payload.paneId, msg.payload.have, true);
+        await this.bootstrapPane(ws, msg.payload.paneId, msg.payload.have);
         this.sendAck(ws, msg.id);
         return;
       }
@@ -772,7 +798,7 @@ export class WsServer {
   }
 
   /** Subscribes the connection to one pane and sends everything the client needs to render it. */
-  private async bootstrapPane(ws: Ws, paneId: string, have?: HaveInfo, isSelectView = false): Promise<void> {
+  private async bootstrapPane(ws: Ws, paneId: string, have?: HaveInfo): Promise<void> {
     const startMs = Date.now();
     ws.data.subscribedPaneId = paneId;
     this.syncMonitoredPanes();
@@ -834,39 +860,73 @@ export class WsServer {
     const queueItems = (this.queues.get(paneId) ?? []).map((q) => q.item);
     const serverMs = Date.now() - startMs;
 
-    if (isSelectView) {
-      const lightTurns = turnsPayload
-        ? {
-            ...turnsPayload,
-            turns: turnsPayload.turns.map(toLightTurn),
-            ...(turnsPayload.sessionStats ? { sessionStats: toLightStats(turnsPayload.sessionStats) } : {}),
-          }
-        : null;
-      this.send(ws, {
-        type: "pane_bootstrap",
-        payload: {
-          paneId,
-          turns: lightTurns,
-          resume: resumePayload,
-          queue: queueItems,
-          state: cached ?? null,
-          serverMs,
-        },
-      });
-    }
-
-    if (resumePayload) {
-      this.send(ws, { type: "turns_delta", payload: resumePayload });
-    } else if (turnsPayload) {
-      this.send(ws, { type: "normalized_turns", payload: turnsPayload });
-    }
-
-    this.sendSkills(ws, paneId);
+    const lightTurns = turnsPayload
+      ? {
+          ...turnsPayload,
+          turns: turnsPayload.turns.map(toLightTurn),
+          ...(turnsPayload.sessionStats ? { sessionStats: toLightStats(turnsPayload.sessionStats) } : {}),
+        }
+      : null;
+    this.send(ws, {
+      type: "pane_bootstrap",
+      payload: {
+        paneId,
+        turns: lightTurns,
+        resume: resumePayload,
+        queue: queueItems,
+        state: cached ?? null,
+        serverMs,
+      },
+    });
     this.send(ws, { type: "prompt_queue", payload: { paneId, items: queueItems } });
-    // The cached state renders at once; the fresh read reaches this subscriber as a `cards_updated`
-    // pane_state only when the screen changed, so the client never gets the same state twice.
     if (cached) this.send(ws, { type: "pane_state", payload: cached });
     await this.herdrClient.readAndClassifyPane(paneId);
+  }
+
+  private lastPaneTailAt = new Map<string, number>();
+
+  /**
+   * protocol.md §5.10: For every pane whose status is working or blocked and that has a bound session,
+   * push to connections not viewing that pane the last turns in light form fitting in 32 KB.
+   * At most one pane_tail per pane per second, and one more when leaving working or blocked.
+   */
+  private maybeSendPaneTail(paneId: string, force = false): void {
+    const sessionState = this.paneStore.getPaneState(paneId);
+    if (!sessionState) return;
+    const herdrStatus = this.herdrClient.getPaneHerdrStatus(paneId);
+    const inActiveState = herdrStatus === "working" || herdrStatus === "blocked";
+    if (!inActiveState && !force) return;
+
+    const now = Date.now();
+    const last = this.lastPaneTailAt.get(paneId) || 0;
+    if (!force && now - last < 1000) return;
+    this.lastPaneTailAt.set(paneId, now);
+
+    const rawTurns = sessionState.turns;
+    const lightTurns: NormalizedTurn[] = [];
+    let size = 0;
+    for (let i = rawTurns.length - 1; i >= 0; i--) {
+      const lt = toLightTurn(rawTurns[i]);
+      const turnSize = Buffer.byteLength(JSON.stringify(lt));
+      if (size + turnSize > 32 * 1024 && lightTurns.length > 0) break;
+      lightTurns.unshift(lt);
+      size += turnSize;
+    }
+
+    const payload: PaneTailPayload = {
+      paneId,
+      agentStatus: (herdrStatus as AgentStatus) || "idle",
+      seq: sessionState.seqWatermark,
+      sessionId: sessionState.sessionId,
+      turns: lightTurns,
+    };
+
+    const msg = JSON.stringify({ type: "pane_tail", payload });
+    for (const ws of this.clients) {
+      if (ws.data.subscribedPaneId !== paneId) {
+        ws.send(msg);
+      }
+    }
   }
 
   /** The daemon injects its usage service; tests without one get a service on first use. */

@@ -7,7 +7,7 @@ import { ModelCatalog } from "../src/server/model-catalog";
 import { PushManager } from "../src/server/push";
 import { SkillScanner } from "../src/server/skill-scanner";
 import { WsServer } from "../src/server/ws-server";
-import { ProtocolErrors, hashTurn, fnv1a32, type NormalizedTurn } from "../src/types/protocol";
+import { ProtocolErrors, hashTurn, fnv1a32, type NormalizedTurn, toLightTurn } from "../src/types/protocol";
 import { FakeHerdr, fakeWs, tempDir, topologyOf } from "./helpers/fixtures";
 
 // protocol.md: §3 handshake, §4 client commands, §6 configuration sync, §7 error codes.
@@ -44,16 +44,18 @@ const send = (ws: any, msg: object) => server.handleMessage(ws, JSON.stringify(m
 const lastError = (sent: any[]) => sent.filter((m) => m.type === "error").at(-1)?.error.code;
 
 describe("handshake (protocol.md §3)", () => {
-  test("hello is answered with welcome, health, topology, then the pane's turns, skills and state", async () => {
+  test("hello is answered with welcome, health, topology, then the pane's bootstrap", async () => {
     const c = fakeWs();
     server.handleOpen(c.ws);
     await send(c.ws, { type: "hello", id: "h1", payload: { protocolVersion: "1.0.0", subscribePaneId: "p1" } });
     const types = c.sent.map((m) => m.type);
     expect(types.slice(0, 3)).toEqual(["welcome", "upstream_status", "snapshot_update"]);
     expect(c.ofType("welcome")[0].payload.buildId).toBe("build_test");
-    // Health may be re-broadcast once the pane read reaches Herdr; the pane data comes exactly once each.
-    expect(types.slice(3).filter((t) => t !== "upstream_status")).toEqual(["normalized_turns", "skills_sync", "prompt_queue", "pane_state"]);
-    expect(c.ofType("normalized_turns")[0].payload).toMatchObject({ paneId: "p1", turns: [] });
+    // Health may be re-broadcast once the pane read reaches Herdr; pane_bootstrap comes exactly once.
+    expect(types.slice(3).filter((t) => t !== "upstream_status")).toEqual(["pane_bootstrap", "prompt_queue", "pane_state"]);
+    const boot = c.ofType("pane_bootstrap")[0].payload;
+    expect(boot.paneId).toBe("p1");
+    expect(boot.turns).toMatchObject({ paneId: "p1", turns: [] });
     expect(c.ofType("pane_state")[0].payload.paneId).toBe("p1");
   });
 
@@ -268,18 +270,17 @@ describe("incremental resume with have (protocol.md §3.1, §3.3, §4.4)", () =>
         },
       },
     });
-    const deltas = c.ofType("turns_delta");
-    expect(deltas.length).toBe(1);
-    expect(c.ofType("normalized_turns").length).toBe(0);
-    expect(deltas[0].payload).toMatchObject({
+    const boot = c.ofType("pane_bootstrap");
+    expect(boot.length).toBe(1);
+    expect(boot[0].payload.resume).toMatchObject({
       paneId: "p1",
       sinceTurnIndex: 2,
-      appendTurns: [turn3],
+      appendTurns: [toLightTurn(turn3)],
       sessionTitle: "My Session",
     });
   });
 
-  test("a mismatched hash gets a full normalized_turns", async () => {
+  test("a mismatched hash gets a full bootstrap", async () => {
     const c = fakeWs();
     server.handleOpen(c.ws);
     await send(c.ws, {
@@ -294,13 +295,13 @@ describe("incremental resume with have (protocol.md §3.1, §3.3, §4.4)", () =>
         },
       },
     });
-    expect(c.ofType("turns_delta").length).toBe(0);
-    const full = c.ofType("normalized_turns");
-    expect(full.length).toBe(1);
-    expect(full[0].payload.turns).toHaveLength(3);
+    const boot = c.ofType("pane_bootstrap");
+    expect(boot.length).toBe(1);
+    expect(boot[0].payload.resume).toBeNull();
+    expect(boot[0].payload.turns.turns).toHaveLength(3);
   });
 
-  test("a mismatched sessionId gets a full normalized_turns", async () => {
+  test("a mismatched sessionId gets a full bootstrap", async () => {
     const c = fakeWs();
     server.handleOpen(c.ws);
     await send(c.ws, {
@@ -315,13 +316,13 @@ describe("incremental resume with have (protocol.md §3.1, §3.3, §4.4)", () =>
         },
       },
     });
-    expect(c.ofType("turns_delta").length).toBe(0);
-    const full = c.ofType("normalized_turns");
-    expect(full.length).toBe(1);
-    expect(full[0].payload.turns).toHaveLength(3);
+    const boot = c.ofType("pane_bootstrap");
+    expect(boot.length).toBe(1);
+    expect(boot[0].payload.resume).toBeNull();
+    expect(boot[0].payload.turns.turns).toHaveLength(3);
   });
 
-  test("an unbound pane gets normalized_turns with bound: false", async () => {
+  test("an unbound pane gets bootstrap with bound: false", async () => {
     const c = fakeWs();
     server.handleOpen(c.ws);
     await send(c.ws, {
@@ -336,13 +337,13 @@ describe("incremental resume with have (protocol.md §3.1, §3.3, §4.4)", () =>
         },
       },
     });
-    expect(c.ofType("turns_delta").length).toBe(0);
-    const full = c.ofType("normalized_turns");
-    expect(full.length).toBe(1);
-    expect(full[0].payload.session.bound).toBe(false);
+    const boot = c.ofType("pane_bootstrap");
+    expect(boot.length).toBe(1);
+    expect(boot[0].payload.resume).toBeNull();
+    expect(boot[0].payload.turns.session.bound).toBe(false);
   });
 
-  test("a malformed have gets a full normalized_turns", async () => {
+  test("a malformed have gets a full bootstrap", async () => {
     const c = fakeWs();
     server.handleOpen(c.ws);
     await send(c.ws, {
@@ -357,10 +358,10 @@ describe("incremental resume with have (protocol.md §3.1, §3.3, §4.4)", () =>
         } as any,
       },
     });
-    expect(c.ofType("turns_delta").length).toBe(0);
-    const full = c.ofType("normalized_turns");
-    expect(full.length).toBe(1);
-    expect(full[0].payload.turns).toHaveLength(3);
+    const boot = c.ofType("pane_bootstrap");
+    expect(boot.length).toBe(1);
+    expect(boot[0].payload.resume).toBeNull();
+    expect(boot[0].payload.turns.turns).toHaveLength(3);
   });
 });
 
