@@ -1,5 +1,5 @@
 import { Database } from "bun:sqlite";
-import { existsSync, readdirSync, statSync } from "node:fs";
+import { existsSync, readdirSync, realpathSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { OpenCodeAdapter, type OpenCodeAdapterOptions } from "./opencode";
@@ -28,13 +28,39 @@ export interface AgentAdapterManagerOptions {
 class AgySource implements SessionSource {
   public readonly agent = "agy";
   private presenceDir: string;
+  private realPresenceDir: string;
+  private realBrainDir: string;
+
   constructor(private adapter: AgyAdapter, private brainDir: string) {
     this.presenceDir = join(dirname(brainDir), "presence");
+    try {
+      this.realPresenceDir = realpathSync(this.presenceDir);
+    } catch {
+      this.realPresenceDir = this.presenceDir;
+    }
+    try {
+      this.realBrainDir = realpathSync(brainDir);
+    } catch {
+      this.realBrainDir = brainDir;
+    }
   }
+
   public sessionOfFile(path: string): string | null {
-    if (path.startsWith(this.presenceDir + "/") && path.endsWith(".lock")) return path.slice(this.presenceDir.length + 1, -".lock".length) || null;
-    if (!path.startsWith(this.brainDir + "/") || !/\/\.system_generated\/logs\/transcript(_full)?\.jsonl$/.test(path)) return null;
-    return path.slice(this.brainDir.length + 1).split("/")[0] || null;
+    const inPresence = path.startsWith(this.presenceDir + "/")
+      ? this.presenceDir
+      : path.startsWith(this.realPresenceDir + "/")
+      ? this.realPresenceDir
+      : null;
+    if (inPresence && path.endsWith(".lock")) {
+      return path.slice(inPresence.length + 1, -".lock".length) || null;
+    }
+    const inBrain = path.startsWith(this.brainDir + "/")
+      ? this.brainDir
+      : path.startsWith(this.realBrainDir + "/")
+      ? this.realBrainDir
+      : null;
+    if (!inBrain || !/\/\.system_generated\/logs\/transcript(_full)?\.jsonl$/.test(path)) return null;
+    return path.slice(inBrain.length + 1).split("/")[0] || null;
   }
   public lastWritten(sessionId: string): number | null {
     const log = this.adapter.getSessionLogPath(sessionId);

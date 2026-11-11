@@ -31,8 +31,12 @@ describe("session log streaming (agent-session-normalization.md §4)", () => {
     store.on("turns_delta", (d) => deltas.push(d));
 
     store.registerPaneSession("p1", "agy", "s1");
+    await Bun.sleep(50);
     appendFileSync(log, line({ step_index: 1, type: "USER_INPUT", content: "<USER_REQUEST>second</USER_REQUEST>", created_at: new Date(2000).toISOString() }));
-    await Bun.sleep(400); // fs.watch plus the store's debounce
+    const deadline = Date.now() + 1500;
+    while (modes.length < 2 && Date.now() < deadline) {
+      await Bun.sleep(25);
+    }
 
     expect(modes[0]).toBe(false);
     expect(modes.slice(1).length).toBeGreaterThan(0);
@@ -53,8 +57,12 @@ describe("session log streaming (agent-session-normalization.md §4)", () => {
     mkdirSync(logs, { recursive: true });
     writeFileSync(log, line({ step_index: 0, type: "USER_INPUT", content: "<USER_REQUEST>first</USER_REQUEST>", created_at: new Date(1000).toISOString() }));
     store.registerPaneSession("p1", "agy", "s1"); // the next snapshot's binding
+    await Bun.sleep(50);
     appendFileSync(log, line({ step_index: 1, type: "USER_INPUT", content: "<USER_REQUEST>second</USER_REQUEST>", created_at: new Date(2000).toISOString() }));
-    await Bun.sleep(400); // fs.watch plus the store's debounce
+    const deadline = Date.now() + 1500;
+    while (store.getPayload("p1", "agy").turns.length < 2 && Date.now() < deadline) {
+      await Bun.sleep(25);
+    }
 
     expect(store.getPayload("p1", "agy").turns.map((t) => t.userPrompt?.text)).toEqual(["first", "second"]);
   });

@@ -1,4 +1,4 @@
-import { existsSync, readdirSync, statSync } from "node:fs";
+import { existsSync, readdirSync, realpathSync, statSync } from "node:fs";
 import { join } from "node:path";
 import type { PastSession } from "../../types/protocol";
 import { isObj, JsonlTail, lineDiff, readHeadJsonLines, str, TurnBuilder, tsOf, type SessionRead } from "./common";
@@ -12,11 +12,17 @@ function mtimeOf(path: string | undefined): number | null {
 export class PiSource implements SessionSource {
   public readonly agent = "pi";
   private root: string;
+  private realRoot: string;
   private paths = new Map<string, string>();
   private readers = new Map<string, { tail: JsonlTail; builder: TurnBuilder }>();
 
   constructor(home: string) {
     this.root = join(home, ".pi", "agent", "sessions");
+    try {
+      this.realRoot = realpathSync(this.root);
+    } catch {
+      this.realRoot = this.root;
+    }
   }
 
   private dirOf(folder: string): string {
@@ -33,7 +39,8 @@ export class PiSource implements SessionSource {
   }
 
   public sessionOfFile(path: string): string | null {
-    if (!path.startsWith(this.root + "/") || !path.endsWith(".jsonl")) return null;
+    const inRoot = path.startsWith(this.root + "/") || path.startsWith(this.realRoot + "/");
+    if (!inRoot || !path.endsWith(".jsonl")) return null;
     const id = path.slice(path.lastIndexOf("/") + 1, -".jsonl".length);
     this.paths.set(id, path);
     return id;

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { appendFileSync, mkdirSync, readlinkSync, utimesSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdirSync, readlinkSync, realpathSync, utimesSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { AgentAdapterManager } from "../src/server/agent-adapters/index";
 import { JsonlTail } from "../src/server/sessions/common";
@@ -211,9 +211,25 @@ describe("following the session the agent writes (agent-session-normalization.md
     cleanup.push(() => proc.kill());
     const holds = async (path: string) => {
       const end = Date.now() + 2000;
+      let target = path;
+      try {
+        target = realpathSync(path);
+      } catch {}
       while (Date.now() < end) {
         try {
-          if (readlinkSync(`/proc/${proc.pid}/fd/3`) === path) return;
+          if (process.platform === "darwin") {
+            const res = Bun.spawnSync(["lsof", "-p", String(proc.pid), "-Fn"], { timeout: 500, stderr: "ignore" });
+            if (res.exitCode === 0 && res.stdout) {
+              for (const line of res.stdout.toString().split("\n")) {
+                if (line.startsWith("n/")) {
+                  const p = line.slice(1);
+                  if (p === target || p === path) return;
+                }
+              }
+            }
+          } else {
+            if (readlinkSync(`/proc/${proc.pid}/fd/3`) === path) return;
+          }
         } catch {}
         await Bun.sleep(10);
       }
