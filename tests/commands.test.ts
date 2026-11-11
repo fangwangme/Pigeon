@@ -79,7 +79,7 @@ describe("prompt queue (protocol.md §4.2, §4.13, §5.8)", () => {
   test("a prompt to a working agent is queued, shown to viewers, and sent when the agent goes idle", async () => {
     await client.connect();
     const c = await viewer("p1");
-    expect(c.ofType("prompt_queue").at(-1).payload).toEqual({ paneId: "p1", items: [] });
+    expect(c.ofType("pane_bootstrap").at(-1)!.payload.queue).toEqual([]);
     await send(c.ws, { type: "agent_prompt", id: "a1", payload: { targetPaneId: "p1", text: "also run lint" } });
     expect(lastAck(c)).toMatchObject({ queued: true });
     expect(herdr.callsOf("terminal.send")).toHaveLength(0);
@@ -474,7 +474,7 @@ describe("creating sessions (protocol.md §4.5, herdr-adapter.md §5)", () => {
     herdr.handlers["tab.new"] = () => ({ result: { terminal: "p1" } });
     await send(c.ws, { type: "create_tab_and_agent", id: "n1", payload: { workspaceId: "w1", agentKind: "claude", modelId: "opus", thinking: "high" } });
     await send(c.ws, { type: "select_view", id: "s", payload: { paneId: "p1" } });
-    expect((c.ofType("pane_bootstrap").at(-1)?.payload.turns ?? c.ofType("normalized_turns").at(-1)?.payload).session).toMatchObject({ model: { value: "opus", source: "launch" }, thinking: { value: "high", source: "launch" } });
+    expect(c.ofType("pane_bootstrap").at(-1)!.payload.turns.session).toMatchObject({ model: { value: "opus", source: "launch" }, thinking: { value: "high", source: "launch" } });
   });
 });
 

@@ -1,4 +1,4 @@
-import type { NormalizedTurn, SessionStats, TodoItem, SessionInfo, HaveInfo, QueuedPrompt } from "../../../types/protocol";
+import type { NormalizedTurn, SessionStats, TodoItem, SessionInfo, HaveInfo, QueuedPrompt, AgentStatus } from "../../../types/protocol";
 import { hashTurn } from "../../../types/protocol";
 
 export const PANE_CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
@@ -10,6 +10,8 @@ export interface PaneCacheEntry {
   savedAt: number;
   lastAccess: number;
   turns: NormalizedTurn[];
+  seq?: number;
+  agentStatus?: AgentStatus;
   sessionStats?: SessionStats | null;
   sessionTitle?: string | null;
   todos?: TodoItem[] | null;
@@ -22,6 +24,58 @@ export const DB_VERSION = 2;
 export const STORE_NAME = "paneCache";
 
 const metaIndex = new Map<string, { sessionId: string; turnCount: number; lastTurnHash: string }>();
+const inMemoryViews = new Map<string, PaneCacheEntry>();
+
+export function getMemoryPaneView(paneId: string): PaneCacheEntry | undefined {
+  return inMemoryViews.get(paneId);
+}
+
+export function applyPaneTail(payload: {
+  paneId: string;
+  agentStatus: AgentStatus;
+  seq: number;
+  sessionId: string;
+  turns: NormalizedTurn[];
+}): void {
+  const existing = inMemoryViews.get(payload.paneId);
+  const now = Date.now();
+  let entry: PaneCacheEntry;
+
+  if (existing && existing.sessionId === payload.sessionId) {
+    const existingIndex = payload.turns.length > 0
+      ? existing.turns.findIndex((t) => t.turnId === payload.turns[0].turnId)
+      : -1;
+    let mergedTurns: NormalizedTurn[];
+    if (existingIndex !== -1) {
+      mergedTurns = [...existing.turns.slice(0, existingIndex), ...payload.turns];
+    } else {
+      mergedTurns = payload.turns;
+    }
+
+    entry = {
+      ...existing,
+      sessionId: payload.sessionId,
+      seq: payload.seq,
+      agentStatus: payload.agentStatus,
+      turns: mergedTurns,
+      savedAt: now,
+      lastAccess: now,
+    };
+  } else {
+    entry = {
+      paneId: payload.paneId,
+      sessionId: payload.sessionId,
+      seq: payload.seq,
+      agentStatus: payload.agentStatus,
+      turns: payload.turns,
+      savedAt: now,
+      lastAccess: now,
+    };
+  }
+
+  inMemoryViews.set(payload.paneId, entry);
+  updateMeta(entry);
+}
 
 let dbInstance: IDBDatabase | null = null;
 let dbOpenPromise: Promise<IDBDatabase | null> | null = null;
@@ -103,16 +157,19 @@ export async function load(paneId: string): Promise<PaneCacheEntry | null> {
       const val = req.result as PaneCacheEntry | undefined;
       if (!val) {
         metaIndex.delete(paneId);
+        inMemoryViews.delete(paneId);
         return resolve(null);
       }
       if (Date.now() - val.savedAt > PANE_CACHE_TTL_MS) {
         store.delete(paneId);
         metaIndex.delete(paneId);
+        inMemoryViews.delete(paneId);
         return resolve(null);
       }
       val.lastAccess = Date.now();
       store.put(val);
       updateMeta(val);
+      inMemoryViews.set(paneId, val);
       resolve(val);
     };
     req.onerror = () => {
@@ -135,9 +192,6 @@ export async function save(
   }
 ): Promise<void> {
   if (!entry.sessionId) return;
-  const db = await openDb();
-  if (!db) return;
-
   const now = Date.now();
   const fullEntry: PaneCacheEntry = {
     paneId,
@@ -151,6 +205,11 @@ export async function save(
     session: entry.session,
     queue: entry.queue,
   };
+  inMemoryViews.set(paneId, fullEntry);
+  updateMeta(fullEntry);
+
+  const db = await openDb();
+  if (!db) return;
 
   await new Promise<void>((resolve, reject) => {
     const tx = db.transaction(STORE_NAME, "readwrite");
@@ -174,6 +233,7 @@ export async function save(
             if (evictId !== paneId) {
               store.delete(evictId);
               metaIndex.delete(evictId);
+              inMemoryViews.delete(evictId);
               evicted++;
             }
             cursor.continue();
@@ -190,11 +250,10 @@ export async function save(
       reject(tx.error);
     };
   });
-
-  updateMeta(fullEntry);
 }
 
 export async function remove(paneId: string): Promise<void> {
+  inMemoryViews.delete(paneId);
   metaIndex.delete(paneId);
   const db = await openDb();
   if (!db) return;
@@ -211,6 +270,7 @@ export async function remove(paneId: string): Promise<void> {
 }
 
 export async function clearAll(): Promise<void> {
+  inMemoryViews.clear();
   metaIndex.clear();
   const db = await openDb();
   if (!db) return;
@@ -247,6 +307,7 @@ export async function sweep(alivePaneIds?: string[]): Promise<void> {
         const id = cursor.primaryKey as string;
         store.delete(id);
         metaIndex.delete(id);
+        inMemoryViews.delete(id);
         cursor.continue();
       }
     };
@@ -262,6 +323,7 @@ export async function sweep(alivePaneIds?: string[]): Promise<void> {
           if (!aliveSet.has(id)) {
             store.delete(id);
             metaIndex.delete(id);
+            inMemoryViews.delete(id);
           }
           cursor.continue();
         }
@@ -284,6 +346,7 @@ export async function sweep(alivePaneIds?: string[]): Promise<void> {
             const evictId = cursor.primaryKey as string;
             store.delete(evictId);
             metaIndex.delete(evictId);
+            inMemoryViews.delete(evictId);
             evicted++;
             cursor.continue();
           }

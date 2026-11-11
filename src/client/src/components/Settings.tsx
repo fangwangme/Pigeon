@@ -57,9 +57,20 @@ export function Settings() {
   const isPushSupported = () =>
     typeof window !== "undefined" && "serviceWorker" in navigator && "PushManager" in window && window.isSecureContext;
 
+  const PUSH_WAITING_KEY = "pigeon_push_waiting";
+  const PUSH_DONE_KEY = "pigeon_push_done";
+
   const [pushActive, setPushActive] = createSignal(false);
-  const [pushWaiting, setPushWaiting] = createSignal(true);
-  const [pushDone, setPushDone] = createSignal(false);
+  const [pushWaiting, setPushWaiting] = createSignal(
+    typeof localStorage !== "undefined" && localStorage.getItem(PUSH_WAITING_KEY) !== null
+      ? localStorage.getItem(PUSH_WAITING_KEY) === "true"
+      : true
+  );
+  const [pushDone, setPushDone] = createSignal(
+    typeof localStorage !== "undefined" && localStorage.getItem(PUSH_DONE_KEY) !== null
+      ? localStorage.getItem(PUSH_DONE_KEY) === "true"
+      : false
+  );
   const [pushBusy, setPushBusy] = createSignal(false);
 
   onMount(async () => {
@@ -104,7 +115,7 @@ export function Settings() {
           applicationServerKey: urlB64ToUint8Array(publicKey) as any,
         });
         const subJson = sub.toJSON();
-        await fetch("/api/push/subscribe", {
+        const subRes = await fetch("/api/push/subscribe", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -113,25 +124,33 @@ export function Settings() {
             events: { blocked: pushWaiting(), done: pushDone() },
           }),
         });
+        if (!subRes.ok) throw new Error(`Subscribe failed with HTTP ${subRes.status}`);
         setPushActive(true);
       }
     } catch (err) {
       console.error("Push toggle error:", err);
+      showToast("Failed to update push notifications");
     } finally {
       setPushBusy(false);
     }
   };
 
   const updatePushEvents = async (waiting: boolean, done: boolean) => {
+    const prevWaiting = pushWaiting();
+    const prevDone = pushDone();
     setPushWaiting(waiting);
     setPushDone(done);
+    if (typeof localStorage !== "undefined") {
+      localStorage.setItem(PUSH_WAITING_KEY, String(waiting));
+      localStorage.setItem(PUSH_DONE_KEY, String(done));
+    }
     if (!pushActive()) return;
     try {
       const reg = await navigator.serviceWorker.ready;
       const sub = await reg.pushManager.getSubscription();
       if (sub) {
         const subJson = sub.toJSON();
-        await fetch("/api/push/subscribe", {
+        const res = await fetch("/api/push/subscribe", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -140,9 +159,17 @@ export function Settings() {
             events: { blocked: waiting, done },
           }),
         });
+        if (!res.ok) throw new Error(`Update push events failed with HTTP ${res.status}`);
       }
     } catch (err) {
       console.error("Failed to update push events:", err);
+      setPushWaiting(prevWaiting);
+      setPushDone(prevDone);
+      if (typeof localStorage !== "undefined") {
+        localStorage.setItem(PUSH_WAITING_KEY, String(prevWaiting));
+        localStorage.setItem(PUSH_DONE_KEY, String(prevDone));
+      }
+      showToast("Failed to update push events");
     }
   };
 

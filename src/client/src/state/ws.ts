@@ -1,5 +1,5 @@
 import { state, setState, applySyncedClientConfig, openTerminal, setUnread, showToast, writePref } from "./store";
-import { load, save, remove, clearAll, sweep, meta, migrateLocalStorageCache, type PaneCacheEntry } from "./pane-cache";
+import { load, save, remove, clearAll, sweep, meta, migrateLocalStorageCache, getMemoryPaneView, applyPaneTail, type PaneCacheEntry } from "./pane-cache";
 import type { ClientMessage, ServerMessage, SnapshotPayload, PaneStatePayload, ClientConfig, AgentStatus, HaveInfo, QuotaProviderState } from "../../../types/protocol";
 import { hashTurn } from "../../../types/protocol";
 import { t } from "../i18n";
@@ -406,6 +406,7 @@ export function handleServerMessage(msg: ServerMessage): void {
     case "pane_tail": {
       if (msg.payload.paneId !== state.activePaneId) {
         paneSeqs.set(msg.payload.paneId, msg.payload.seq);
+        applyPaneTail(msg.payload);
       }
       return;
     }
@@ -541,21 +542,23 @@ export async function selectPane(paneId: string): Promise<void> {
 
   freshDataArrivedPaneId = null;
   paneRevisions.delete(paneId);
+
+  const memoryView = getMemoryPaneView(paneId);
   setState({
     activePaneId: paneId,
     cards: [],
-    normalizedTurns: [],
-    sessionStats: null,
-    sessionTitle: null,
-    todos: null,
-    session: null,
-    queue: [],
+    normalizedTurns: memoryView ? memoryView.turns : [],
+    sessionStats: memoryView?.sessionStats || null,
+    sessionTitle: memoryView?.sessionTitle || null,
+    todos: memoryView?.todos || null,
+    session: memoryView?.session || null,
+    queue: memoryView?.queue || [],
     pendingInteraction: null,
     rawScreen: "",
     skills: [],
     terminalOpen: false,
-    paneSyncing: false,
-    paneLoaded: false,
+    paneSyncing: !!memoryView,
+    paneLoaded: !!memoryView,
   });
 
   for (const w of state.workspaces) {
@@ -567,11 +570,13 @@ export async function selectPane(paneId: string): Promise<void> {
   }
   setUnread(paneId, false);
 
-  let cached: PaneCacheEntry | null = null;
-  try {
-    cached = await load(paneId);
-  } catch (err) {
-    console.error("[Pigeon] Failed to load pane cache, continuing with network view:", err);
+  let cached: PaneCacheEntry | null = memoryView || null;
+  if (!cached) {
+    try {
+      cached = await load(paneId);
+    } catch (err) {
+      console.error("[Pigeon] Failed to load pane cache, continuing with network view:", err);
+    }
   }
   if (state.activePaneId !== paneId) return;
 

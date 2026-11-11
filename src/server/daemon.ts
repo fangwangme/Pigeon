@@ -115,19 +115,25 @@ function detectTailscaleDns(port?: number): string | null {
   if (!dns) return null;
 
   // When port is provided, verify tailscale serve is proxying to this port.
-  // If not yet serving, attempt auto-configuration (architecture.md §4.2).
+  // If not yet serving, attempt auto-configuration only when serve is not active (architecture.md §4.2).
   if (port) {
     try {
       const serveProc = Bun.spawnSync(["tailscale", "serve", "status", "--json"], { timeout: 2000, stderr: "ignore" });
+      let serveEmpty = false;
       if (serveProc.exitCode === 0 && serveProc.stdout) {
         const text = serveProc.stdout.toString().trim();
-        if (text && text !== "{}") {
-          const data = JSON.parse(text);
-          if (isServingPort(data, port)) return dns;
+        if (text === "{}" || text === "") {
+          serveEmpty = true;
+        } else {
+          try {
+            const data = JSON.parse(text);
+            if (isServingPort(data, port)) return dns;
+          } catch {}
+          return null;
         }
       }
-      // Attempt auto-configure if operator permission was granted
-      if (tryAutoTailscaleServe(port)) {
+      // Auto-configure only when tailscale serve status is empty ({})
+      if (serveEmpty && tryAutoTailscaleServe(port)) {
         return dns;
       }
       return null;

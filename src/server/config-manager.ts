@@ -155,9 +155,22 @@ export class ConfigManager {
   /** The home directory the agents' files are found under (the environment's `HOME`). */
   public readonly home: string;
   public readonly env: NodeJS.ProcessEnv;
+  public readonly port: number;
 
-  constructor(customPath?: string, env: NodeJS.ProcessEnv = process.env) {
+  constructor(customPathOrOptions?: string | { port?: number; path?: string }, env: NodeJS.ProcessEnv = process.env) {
     this.env = env;
+    let customPath: string | undefined;
+    let explicitPort: number | undefined;
+    if (typeof customPathOrOptions === "string") {
+      customPath = customPathOrOptions;
+    } else if (customPathOrOptions) {
+      customPath = customPathOrOptions.path;
+      explicitPort = customPathOrOptions.port;
+    }
+    if (!customPath && explicitPort) {
+      customPath = resolveInstancePaths({ port: explicitPort, env }).configPath;
+    }
+    this.port = explicitPort ?? DEFAULT_PORT;
     this.configPath = resolveConfigPath(customPath, env);
     this.home = env.HOME || "";
     this.stored = this.loadOrCreate();
@@ -167,14 +180,22 @@ export class ConfigManager {
       quotaProviders: detectedProviders,
     };
     this.config = {
-      server: { ...STATIC_SERVER_DEFAULTS, ...resolveRuntimeServerDefaults(env), ...(this.stored.server || {}) } as ServerConfig,
+      server: {
+        ...STATIC_SERVER_DEFAULTS,
+        ...(explicitPort ? { port: explicitPort } : {}),
+        ...resolveRuntimeServerDefaults(env),
+        ...(this.stored.server || {}),
+      } as ServerConfig,
       client: deepMerge(clientDefaults, this.stored.client || {}),
     };
   }
 
   private loadOrCreate(): StoredConfig {
     if (!existsSync(this.configPath)) {
-      const initial: StoredConfig = { server: { ...STATIC_SERVER_DEFAULTS }, client: { ...DEFAULT_CLIENT_CONFIG } };
+      const initial: StoredConfig = {
+        server: { ...STATIC_SERVER_DEFAULTS, ...(this.port ? { port: this.port } : {}) },
+        client: { ...DEFAULT_CLIENT_CONFIG },
+      };
       this.write(initial);
       return initial;
     }

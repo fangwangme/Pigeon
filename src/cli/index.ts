@@ -78,15 +78,25 @@ function fail(message: string): never {
 async function main() {
   const args = process.argv.slice(2);
   const command = args[0] || "start";
-  const configManager = new ConfigManager();
-  // architecture.md §4.6: the admin commands reach the daemon of the configured port, or of --port.
-  const portIdx = command === "start" ? -1 : args.indexOf("--port");
-  const adminPort = portIdx > 0 ? Number(args[portIdx + 1]) : configManager.getServerConfig().port;
-  if (!Number.isInteger(adminPort) || adminPort <= 0 || adminPort > 65535) fail(`Invalid --port '${args[portIdx + 1]}'`);
+
+  const portIdx = args.indexOf("--port");
+  let cliPort: number | undefined;
+  if (portIdx !== -1) {
+    const val = args[portIdx + 1];
+    cliPort = Number(val);
+    if (!Number.isInteger(cliPort) || cliPort < 1 || cliPort > 65535) {
+      fail(`Invalid --port '${val}'`);
+    }
+  }
+
+  // Load config from instance's state directory if --port was specified, else production
+  const configPath = cliPort ? resolveInstancePaths({ port: cliPort }).configPath : undefined;
+  const configManager = new ConfigManager(configPath ? { path: configPath, port: cliPort } : undefined);
+  const adminPort = cliPort ?? configManager.getServerConfig().port;
   const adminSocketPath = resolveInstancePaths({ port: adminPort, env: configManager.env }).adminSocketPath;
 
   if (command === "start") {
-    let port: number | undefined;
+    let port: number | undefined = cliPort;
     let insecureDev: boolean | undefined;
     let herdrAppSocketPath: string | undefined;
     let herdrCoreSocketPath: string | undefined;
@@ -96,8 +106,7 @@ async function main() {
     for (let i = 1; i < args.length; i++) {
       const value = args[i + 1];
       if (args[i] === "--port" && value) {
-        port = Number(value);
-        if (!Number.isInteger(port) || port < 1 || port > 65535) fail(`Invalid --port '${value}'`);
+        port = cliPort;
         i++;
       } else if (args[i] === "--insecure-dev") {
         insecureDev = true;

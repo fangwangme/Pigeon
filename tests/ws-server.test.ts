@@ -52,7 +52,7 @@ describe("handshake (protocol.md §3)", () => {
     expect(types.slice(0, 3)).toEqual(["welcome", "upstream_status", "snapshot_update"]);
     expect(c.ofType("welcome")[0].payload.buildId).toBe("build_test");
     // Health may be re-broadcast once the pane read reaches Herdr; pane_bootstrap comes exactly once.
-    expect(types.slice(3).filter((t) => t !== "upstream_status")).toEqual(["pane_bootstrap", "prompt_queue", "pane_state"]);
+    expect(types.slice(3).filter((t) => t !== "upstream_status")).toEqual(["pane_bootstrap", "pane_state"]);
     const boot = c.ofType("pane_bootstrap")[0].payload;
     expect(boot.paneId).toBe("p1");
     expect(boot.turns).toMatchObject({ paneId: "p1", turns: [] });

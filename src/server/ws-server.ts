@@ -264,10 +264,11 @@ export class WsServer {
       const isBlocked = status === "blocked" && previous !== "blocked";
       const isDone = status === "done" && previous === "working";
       if (!isBlocked && !isDone) return;
-      const now = Date.now();
-      if (now - (this.lastPushAt.get(paneId) || 0) < PUSH_DEDUPE_MS) return;
-      this.lastPushAt.set(paneId, now);
       const pushEvent = isBlocked ? "blocked" : "done";
+      const dedupeKey = `${paneId}:${pushEvent}`;
+      const now = Date.now();
+      if (now - (this.lastPushAt.get(dedupeKey) || 0) < PUSH_DEDUPE_MS) return;
+      this.lastPushAt.set(dedupeKey, now);
       this.pushManager.sendNotification(this.pushMessage(paneId, pushEvent));
     };
     this.herdrClient.on("pane_status_changed", this.onPaneStatusChanged);
@@ -878,7 +879,6 @@ export class WsServer {
         serverMs,
       },
     });
-    this.send(ws, { type: "prompt_queue", payload: { paneId, items: queueItems } });
     if (cached) this.send(ws, { type: "pane_state", payload: cached });
     await this.herdrClient.readAndClassifyPane(paneId);
   }

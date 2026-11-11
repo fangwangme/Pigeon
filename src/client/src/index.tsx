@@ -105,6 +105,7 @@ function App() {
     const urlParams = new URLSearchParams(window.location.search);
     const targetPane = urlParams.get("pane");
     if (targetPane) {
+      window.history.replaceState(null, "", window.location.pathname || "/");
       await selectPane(targetPane);
     } else if (state.activePaneId) {
       await selectPane(state.activePaneId);

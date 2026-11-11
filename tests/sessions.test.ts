@@ -79,7 +79,7 @@ async function setup(home: string, panes: FakePane[], folder = "/work") {
   return { herdr, client, server, open };
 }
 
-const turnsOf = (c: ReturnType<typeof fakeWs>) => (c.ofType("pane_bootstrap").at(-1)?.payload.turns ?? c.ofType("normalized_turns").at(-1)?.payload);
+const turnsOf = (c: ReturnType<typeof fakeWs>) => c.ofType("pane_bootstrap").at(-1)?.payload.turns;
 
 function claudeTranscript(proj: string) {
   const at = (s: number) => new Date(Date.UTC(2026, 10, 6, 10, 0, s)).toISOString();
