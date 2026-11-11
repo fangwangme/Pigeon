@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import { Database } from "bun:sqlite";
 import { appendFileSync, mkdirSync, readlinkSync, realpathSync, utimesSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { AgentAdapterManager } from "../src/server/agent-adapters/index";
@@ -658,3 +659,33 @@ describe("transcript questions, agent errors and turn times (issue #21)", () => 
     expect(c.ofType("error").find((e) => e.replyTo === "m1")?.error.code).toBe("ERR_INVALID_PAYLOAD");
   });
 });
+
+describe("Antigravity past sessions (agent-session-normalization.md §2.6, issue #21)", () => {
+  test("agy sessions of the workspace folder come from its conversation summaries", () => {
+    const home = tempDir("home");
+    const proj = tempDir("proj");
+    const dir = join(home, ".gemini", "antigravity-cli");
+    mkdirSync(dir, { recursive: true });
+    const db = new Database(join(dir, "conversation_summaries.db"));
+    db.run(
+      "CREATE TABLE `conversation_summaries` (`conversation_id` text,`title` text NOT NULL DEFAULT \"\",`preview` text NOT NULL DEFAULT \"\",`step_count` integer NOT NULL DEFAULT 0,`last_modified_time` datetime NOT NULL,`workspace_uris` text NOT NULL,`status` text NOT NULL DEFAULT \"\",`source` text NOT NULL DEFAULT \"\",`project_id` text NOT NULL DEFAULT \"\",`agent_name` text NOT NULL DEFAULT \"\",`parent_conversation_id` text NOT NULL DEFAULT \"\",`nesting_depth` integer NOT NULL DEFAULT 0,`battle_id` text NOT NULL DEFAULT \"\",`winning_conversation_id` text NOT NULL DEFAULT \"\",`not_fully_idle` numeric NOT NULL DEFAULT false,`killed` numeric NOT NULL DEFAULT false,`last_user_input_time` datetime NOT NULL,`last_user_input_step_index` integer NOT NULL DEFAULT -1,`app_data_dir` text NOT NULL DEFAULT \"\", raw_summary BLOB, group_id TEXT NOT NULL DEFAULT '',PRIMARY KEY (`conversation_id`))"
+    );
+    const row = (id: string, title: string, preview: string, time: string, folder: string, depth = 0) =>
+      db.run(
+        "INSERT INTO conversation_summaries (conversation_id, title, preview, last_modified_time, workspace_uris, nesting_depth, last_user_input_time) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        [id, title, preview, time, JSON.stringify([`file://${folder}`]), depth, time]
+      );
+    row("a-root", "Fix the login flow", "fix login", "2026-11-11 10:00:00.5+00:00", proj);
+    row("a-sub", "", "Review the parser", "2026-11-11 12:00:00.25+00:00", join(proj, "pkg"));
+    row("a-child", "Sub-agent task", "x", "2026-11-11 13:00:00+00:00", proj, 1);
+    row("a-other", "Elsewhere", "y", "2026-11-11 14:00:00+00:00", "/elsewhere");
+    db.close();
+
+    const adapters = new AgentAdapterManager({ home });
+    expect(adapters.listSessions("agy", proj)).toEqual([
+      { id: "a-sub", title: "Review the parser", updatedAt: Date.UTC(2026, 10, 11, 12, 0, 0, 250) },
+      { id: "a-root", title: "Fix the login flow", updatedAt: Date.UTC(2026, 10, 11, 10, 0, 0, 500) },
+    ]);
+  });
+});
+

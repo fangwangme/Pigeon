@@ -459,11 +459,17 @@ describe("creating sessions (protocol.md §4.5, herdr-adapter.md §5)", () => {
     expect(created().argv).toEqual(["codex", "--no-daemon", "resume", "c1"]);
   });
 
+  test("AGY resumes a conversation with --conversation (herdr-adapter.md §5, issue #21)", async () => {
+    const c = fakeWs();
+    await send(c.ws, { type: "create_tab_and_agent", id: "n1", payload: { workspaceId: "w1", agentKind: "agy", resumeSessionId: "0320deaf-87cb-41db-9d80-bb5e0fae629e" } });
+    expect(created().argv).toEqual(["agy", "--conversation", "0320deaf-87cb-41db-9d80-bb5e0fae629e"]);
+  });
+
   test("a malformed resume id, or an agent that cannot resume, is rejected before anything is created", async () => {
     const c = fakeWs();
     await send(c.ws, { type: "create_tab_and_agent", id: "n1", payload: { workspaceId: "w1", agentKind: "claude", resumeSessionId: "../../etc" } });
     expect(lastError(c)).toBe("ERR_INVALID_PAYLOAD");
-    await send(c.ws, { type: "create_tab_and_agent", id: "n2", payload: { workspaceId: "w1", agentKind: "agy", resumeSessionId: "abc" } });
+    await send(c.ws, { type: "create_tab_and_agent", id: "n2", payload: { workspaceId: "w1", agentKind: "terminal", resumeSessionId: "abc" } });
     expect(lastError(c)).toBe("ERR_INVALID_PAYLOAD");
     expect(herdr.callsOf("tab.new")).toHaveLength(0);
   });
