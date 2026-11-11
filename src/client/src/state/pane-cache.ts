@@ -74,7 +74,15 @@ export function applyPaneTail(payload: {
   }
 
   inMemoryViews.set(payload.paneId, entry);
-  updateMeta(entry);
+  // Nit 3: cap in-memory views to MAX_CACHED_PANES (10)
+  if (inMemoryViews.size > MAX_CACHED_PANES) {
+    const oldestKey = inMemoryViews.keys().next().value;
+    if (oldestKey && oldestKey !== payload.paneId) inMemoryViews.delete(oldestKey);
+  }
+  // Nit 2: only update meta if existing was a full/contiguous view, so tail-only views don't corrupt turnCount
+  if (existing) {
+    updateMeta(entry);
+  }
 }
 
 let dbInstance: IDBDatabase | null = null;

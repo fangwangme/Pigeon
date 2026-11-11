@@ -129,7 +129,7 @@ export function Settings() {
       }
     } catch (err) {
       console.error("Push toggle error:", err);
-      showToast("Failed to update push notifications");
+      showToast(t("settings.pushError"));
     } finally {
       setPushBusy(false);
     }
@@ -169,7 +169,7 @@ export function Settings() {
         localStorage.setItem(PUSH_WAITING_KEY, String(prevWaiting));
         localStorage.setItem(PUSH_DONE_KEY, String(prevDone));
       }
-      showToast("Failed to update push events");
+      showToast(t("settings.pushEventsError"));
     }
   };
 

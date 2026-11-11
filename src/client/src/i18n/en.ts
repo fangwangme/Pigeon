@@ -212,6 +212,8 @@ export const en = {
   "settings.pushWaiting": "When an agent waits for you",
   "settings.pushDone": "When an agent finishes",
   "settings.pushNotConnected": "Push delivery isn't connected yet.",
+  "settings.pushError": "Failed to update push notifications",
+  "settings.pushEventsError": "Failed to update push events",
   "settings.devicesAndPairing": "Devices and pairing",
   "settings.computer": "Computer",
   "settings.connected": "Connected",

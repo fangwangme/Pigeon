@@ -213,6 +213,8 @@ export const zh: Messages = {
   "settings.pushWaiting": "Agent 等你时",
   "settings.pushDone": "Agent 完成时",
   "settings.pushNotConnected": "推送投递尚未接通。",
+  "settings.pushError": "更新推送通知失败",
+  "settings.pushEventsError": "更新推送事件失败",
   "settings.devicesAndPairing": "设备与配对",
   "settings.computer": "电脑",
   "settings.connected": "已连接",
