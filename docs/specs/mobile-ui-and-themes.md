@@ -155,7 +155,7 @@ Chosen only when a session is created (§7.1; user decision, 2026-11-12). A runn
 - A search field filters by id and label when the agent has more than five models. There is no provider filter.
 - Each row shows the model's label and, when it has levels, their count.
 - A refresh button asks the daemon to fetch this agent's list again (`protocol.md` §4.15).
-- **Model names** everywhere (home and All agents rows, the session header, the picker, the usage model rows) show the model's catalog label (`herdr-adapter.md` §7.1). A model the catalog does not list shows the part of its id after the last `/`, or the whole id when it has none.
+- **Model names** everywhere (home and All agents rows, the 恢复 list, the session header, the picker, the usage model rows; one rule for all of them) show the model's catalog label (`herdr-adapter.md` §7.1). A model the catalog does not list shows the part of its id after the last `/`, or the whole id when it has none.
 
 ### 6.5 ⋯ menu
 重命名 (renames the Herdr tab), 复制分支 (copies the tab's git branch; shown when there is one), 本会话的变更 (§6.6), 切换 pane (shown with several panes, §6.8), 查看终端 (§5), and **关闭会话** in red (§6.7).
@@ -175,7 +175,7 @@ A sheet listing the tab's panes (agent or shell, status). The session page defau
 A blank session page: segments **新建 / 恢复**, chips for **工作区** (Herdr's workspaces; preset from where it was opened), **Agent** (recipes) and **模型** (opens §6.4's picker; only for an agent that takes a model at launch, `protocol.md` §5.7), then the composer for the first message. Sending creates the tab with the first message (`protocol.md` §4.5) and opens it; the title starts as the first message and can be renamed. Creating a Herdr workspace is not offered.
 
 ### 7.2 Resume
-The **恢复** segment (also reached from `+`) lists the agent's past sessions for the chosen workspace's folder (`protocol.md` §4.10): title or first message, and age. A tap opens a new tab that resumes it (`protocol.md` §4.5 `resumeSessionId`) and goes there. Resuming always opens a new tab.
+The **恢复** segment (also reached from `+`) lists the agent's past sessions for the chosen workspace's folder (`protocol.md` §4.10): title or first message, then the age and the model joined by ` · ` (only the age when the model is unknown). A tap opens a new tab that resumes it (`protocol.md` §4.5 `resumeSessionId`) and goes there. Resuming always opens a new tab.
 
 ## 8. Settings, pairing and connection
 

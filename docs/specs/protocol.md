@@ -160,7 +160,7 @@ Removed (user decision, 2026-11-12): a session's model and thinking level are ch
 ```json
 { "type": "sessions_list", "id": "cli_15", "payload": { "workspaceId": "w1", "agentKind": "claude" } }
 ```
-The ack carries `{ "sessions": [ { "id", "title", "updatedAt" } ] }`: the agent's own sessions whose project folder is the workspace's folder or below it, newest first, at most 50 (`agent-session-normalization.md` §2.6). `title` is the session's title, else its first user message (at most 120 characters). An agent kind without a session store answers with an empty list; an unknown workspace is `ERR_NOT_FOUND`.
+The ack carries `{ "sessions": [ { "id", "title", "updatedAt", "model" } ] }`, `model` being the model id the session last used (left out when its records name none; issue #21): the agent's own sessions whose project folder is the workspace's folder or below it, newest first, at most 50 (`agent-session-normalization.md` §2.6). `title` is the session's title, else its first user message (at most 120 characters). An agent kind without a session store answers with an empty list; an unknown workspace is `ERR_NOT_FOUND`.
 
 ### 4.11 Rename Tab (`tab_rename`)
 ```json

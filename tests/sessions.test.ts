@@ -689,3 +689,27 @@ describe("Antigravity past sessions (agent-session-normalization.md §2.6, issue
   });
 });
 
+describe("past session models (protocol.md §4.10, issue #21)", () => {
+  test("a listed session carries the model its records last name", () => {
+    const home = tempDir("home");
+    const proj = tempDir("proj");
+    const dir = join(home, ".claude", "projects", slug(proj));
+    mkdirSync(dir, { recursive: true });
+    const at = (s: number) => new Date(Date.UTC(2026, 10, 12, 9, 0, s)).toISOString();
+    writeFileSync(
+      join(dir, "s1.jsonl"),
+      jsonl([
+        { type: "user", timestamp: at(0), cwd: proj, message: { role: "user", content: "Fix the tests" } },
+        { type: "assistant", timestamp: at(1), cwd: proj, message: { model: "claude-sonnet-5-5", role: "assistant", content: [{ type: "text", text: "On it." }] } },
+        { type: "assistant", timestamp: at(2), cwd: proj, message: { model: "claude-opus-5-5", role: "assistant", content: [{ type: "text", text: "Done." }] } },
+        { type: "assistant", timestamp: at(3), cwd: proj, isApiErrorMessage: true, error: "rate_limit", message: { model: "<synthetic>", role: "assistant", content: [{ type: "text", text: "You've hit your session limit" }] } },
+      ])
+    );
+    writeFileSync(join(dir, "s2.jsonl"), jsonl([{ type: "user", timestamp: at(0), cwd: proj, message: { role: "user", content: "Hello" } }]));
+
+    const sessions = new AgentAdapterManager({ home }).listSessions("claude", proj);
+    expect(sessions.find((s) => s.id === "s1")?.model).toBe("claude-opus-5-5");
+    expect(sessions.find((s) => s.id === "s2")).not.toHaveProperty("model");
+  });
+});
+

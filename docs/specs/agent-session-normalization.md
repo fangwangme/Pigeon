@@ -73,6 +73,7 @@ Binding is re-evaluated for every pane on every snapshot (`herdr-adapter.md` §3
 - codex: rollouts whose `session_meta.cwd` is the folder or inside it; title from the first prompt. At most 2000 rollouts are inspected.
 - opencode: `session_v2` rows by `directory`, not archived.
 - pi: files of the folder's session directory; the id is the file name without `.jsonl`.
+- **Model** (issue #21): each listed session carries the model its records name, by its agent's **Model** rule above (the value with source `log`; a session that names none has no model). Only the listed sessions are read for it.
 - agy (issue #21): rows of the table `conversation_summaries` in `~/.gemini/antigravity-cli/conversation_summaries.db` whose `workspace_uris` (a JSON list of `file://` URIs) names the folder or a folder inside it, with `nesting_depth` 0 (a sub-agent's conversation is not listed). Id `conversation_id`; title `title`, else `preview`; `updatedAt` `last_modified_time`. The database is AGY's own: it is opened read-only, and a locked or changed database degrades only this list (`architecture.md` §5).
 
 ## 3. Normalized model
