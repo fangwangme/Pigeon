@@ -1,7 +1,7 @@
 import type { Component } from "solid-js";
-import { Match, Show, Switch } from "solid-js";
+import { Match, Switch } from "solid-js";
 
-export const AgentIcon: Component<{ kind?: string | null; class?: string; unread?: boolean }> = (props) => {
+export const AgentIcon: Component<{ kind?: string | null; class?: string }> = (props) => {
   const normKind = () => {
     const raw = (props.kind || "terminal").toLowerCase().trim();
     if (raw === "antigravity" || raw === "agy") return "agy";
@@ -156,9 +156,6 @@ export const AgentIcon: Component<{ kind?: string | null; class?: string; unread
           </svg>
         </Match>
       </Switch>
-      <Show when={props.unread}>
-        <span class="udot-badge" aria-label="未读" />
-      </Show>
     </div>
   );
 };

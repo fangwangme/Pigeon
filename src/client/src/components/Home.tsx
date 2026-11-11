@@ -93,7 +93,7 @@ function TabRow(props: { ws: WorkspaceSummary; tab: TabSummary }) {
           if (p) openPane(p.id, "home");
         }}
       >
-        <AgentIcon kind={pane()?.agent} unread={Boolean(pane() && state.unread[pane()!.id])} />
+        <AgentIcon kind={pane()?.agent} />
         <div class="tx">
           <div class="t">{props.tab.label}</div>
           <div class="s">{sub()}</div>
@@ -363,7 +363,7 @@ export function AgentsPage() {
                       <For each={items()}>
                         {(r) => (
                           <button class="srow" onClick={() => openPane(r.pane.id, "agents")}>
-                            <AgentIcon kind={r.pane.agent} unread={Boolean(state.unread[r.pane.id])} />
+                            <AgentIcon kind={r.pane.agent} />
                             <div class="tx">
                               <div class="t">{r.tab.label}</div>
                               <div class="s who">
@@ -409,7 +409,7 @@ export function AgentsPage() {
                           const st = () => paneStatus(r.pane);
                           return (
                             <button class="srow" onClick={() => openPane(r.pane.id, "agents")}>
-                              <AgentIcon kind={r.pane.agent} unread={Boolean(state.unread[r.pane.id])} />
+                              <AgentIcon kind={r.pane.agent} />
                               <div class="tx">
                                 <div class="t">{r.tab.label}</div>
                                 <div class="s who">
