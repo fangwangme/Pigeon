@@ -416,4 +416,53 @@ describe("HTTP and WebSocket gate (security-and-pairing.md §3, §4)", () => {
     expect(getRes.headers.get("x-content-type-options")).toBe("nosniff");
     expect(getRes.headers.get("content-security-policy")).toBe("default-src 'none'; sandbox");
   });
+
+  // Issue #21: a browser sends no Origin for <img> loads or link navigation.
+  test("an upload is readable without an Origin header, a foreign Origin is still refused (protocol.md §7)", async () => {
+    const cookie = pairedCookie();
+    const { id } = await (await upload({ Origin: PUBLIC, Cookie: cookie })).json();
+    const plain = await fetch(`${base}/api/uploads/${id}`, { headers: { Cookie: cookie } });
+    expect(plain.status).toBe(200);
+    expect(await plain.text()).toBe("hello");
+    expect((await fetch(`${base}/api/uploads/${id}`, { headers: { Origin: "https://evil.example", Cookie: cookie } })).status).toBe(403);
+    expect((await fetch(`${base}/api/uploads/${id}`)).status).toBe(401);
+  });
+
+  test("the app shell's CSP allows blob: images (architecture.md §5)", async () => {
+    const res = await fetch(`${base}/`);
+    const imgSrc = (res.headers.get("content-security-policy") ?? "")
+      .split(";")
+      .map((d) => d.trim())
+      .find((d) => d.startsWith("img-src"));
+    expect(imgSrc?.split(/\s+/)).toContain("blob:");
+  });
+});
+
+describe("daemon log file (architecture.md §4.6, issue #21)", () => {
+  test("the daemon log file is truncated at start", async () => {
+    const dir = tempDir("daemon-log");
+    const logPath = join(dir, "pigeon.log");
+    writeFileSync(logPath, "stale line from the previous run\n");
+    const port = 43000 + Math.floor(Math.random() * 2000);
+    const daemon = new PigeonDaemon({
+      configManager: new ConfigManager(join(dir, "config.json"), { HOME: dir }),
+      port,
+      publicBaseUrl: "https://pigeon.example.ts.net",
+      herdrAppSocketPath: join(dir, "no-app.sock"),
+      herdrCoreSocketPath: join(dir, "no-core.sock"),
+      adminSocketPath: join(dir, "admin.sock"),
+      devicesFilePath: join(dir, "devices.json"),
+      vapidPath: join(dir, "vapid.json"),
+      embeddedHtml: "<!doctype html><title>Pigeon</title>",
+      logPath,
+    });
+    await daemon.start();
+    try {
+      const text = readFileSync(logPath, "utf-8");
+      expect(text).not.toContain("stale line");
+      expect(text.split("\n")[0]).toContain(String(port));
+    } finally {
+      await daemon.stop();
+    }
+  });
 });

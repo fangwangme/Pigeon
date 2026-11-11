@@ -57,7 +57,7 @@ The HTTP server answers only the routes below. Every other path is 404, and noth
 
 To protect against Cross-Site WebSocket Hijacking (CSWSH) and DNS Rebinding attacks:
 
-Both checks run on the WebSocket upgrade and on `POST /api/uploads`, before the session check:
+Both checks run on the WebSocket upgrade and on `POST /api/uploads`, before the session check. `GET /api/uploads/:id` runs the Host check, and the Origin check only when an `Origin` header is present (`protocol.md` §7):
 - **Origin Check**: The `Origin` header must be present and must equal, exactly (scheme, host and port), the origin of `publicBaseUrl`. In `--insecure-dev`, the origins `http://{localhost,127.0.0.1,[::1]}` on the daemon port and on the Vite dev port 5173 are also accepted, as is the LAN host on port 5173. Anything else is HTTP 403.
 - **Host Whitelist**: The host name in `Host`, compared without its port and with IPv6 brackets kept, must be `localhost`, `127.0.0.1`, `[::1]`, or the host of `publicBaseUrl`. Anything else is HTTP 403. This defeats DNS rebinding.
 - **Proxy Headers**: `X-Forwarded-*` headers are ignored.

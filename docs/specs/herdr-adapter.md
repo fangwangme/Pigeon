@@ -79,7 +79,7 @@ A terminal is an agent while its program reports a status to the Core (OSC 7501)
 | `error` | `blocked`: a person has to look |
 | no status | `unknown` |
 
-A pane's effective status is that status, with one override: a prompt recognized on screen (§8.2) makes it `blocked`. When the status is `blocked` but no prompt is recognized, the pane still gets a pending interaction. That interaction has no options, so the phone shows the raw key pad instead of hiding the fact that the agent is waiting.
+A pane's effective status is that status, with two overrides: a prompt recognized on screen (§8.2), or a pending question or plan in the pane's bound session (`protocol.md` §5.4, transcript interaction), makes it `blocked`. When the status is `blocked` but no prompt is recognized, the pane still gets a pending interaction. That interaction has no options, so the phone shows the raw key pad instead of hiding the fact that the agent is waiting.
 
 **Seen** (user decision, 2026-11-07): Herdr turns `done` into `idle` once the pane is looked at on the desktop, and the phone cannot tell Herdr it looked. The daemon therefore keeps its own seen mark per pane, shared by every phone. A pane is seen when a connected phone reports it is visible and viewing that pane (`presence_update`, `protocol.md` §2.1) while the pane is `done`, or when the pane turns `done` while such a phone is viewing it. A seen pane is reported as `idle` everywhere the phone gets a status (`snapshot_update`, `pane_state`, push triggers). The mark is cleared by the pane's next Core status change, so its next `done` is reported as `done` again. The mark changes only what is reported: the prompt queue (`protocol.md` §4.2) still follows the Core status. The desktop Herdr is not touched.
 
@@ -126,7 +126,7 @@ Pigeon does not drive agent menus with a state machine. An agent command such as
 - a recognized numbered prompt (§8.2), answered with one tap; or
 - a menu without numbers, answered with the raw key pad (arrows, Enter, Esc).
 
-**Runtime model switch** (`protocol.md` §4.9): claude accepts `/model <id>` as prompt text. Another agent declares a runtime model or effort switch only once it has been checked against the real CLI: either a command that takes the value as text, or its model menu driven the way the screen shows it (a numbered option, or the value typed into the menu's search followed by Enter). An agent without a checked switch has none, and the phone offers its values only when creating a session. Checked (2026-11-07):
+**No runtime model switch** (user decision, 2026-11-12): Pigeon sets a session's model and effort only at launch (§5, `protocol.md` §4.5). For reference, what each CLI offers inside a running session (checked 2026-11-07):
 
 | Agent | Model | Effort |
 | :--- | :--- | :--- |
@@ -137,21 +137,30 @@ Pigeon does not drive agent menus with a state machine. An agent command such as
 | agy | none: `/model <id>` also saves the model as the default for new sessions | none (the model names its effort) |
 
 ### 7.1 Model catalog
-Each recipe's model list (`protocol.md` §5.7) comes from a catalog the daemon keeps in memory, one list per agent, filled from the agent's own source:
+Each recipe's model list (`protocol.md` §5.7) comes from a catalog the daemon keeps, one list per agent, filled from the agent's own source:
 
 | Agent | Source | Thinking levels |
 | :--- | :--- | :--- |
-| claude | the CLI's aliases (`opus`, `sonnet`, `haiku`) | the effort ladder (`low` … `max`); none for `haiku` |
+| claude | Anthropic's Models API, `GET https://api.anthropic.com/v1/models` (every page), with the Claude Code OAuth access token (`security-and-pairing.md` §6) as `Authorization: Bearer`, plus `anthropic-beta: oauth-2025-04-20` and `anthropic-version: 2023-06-01`. Id `id`, label `display_name`, in the API's order | the levels under `capabilities.effort` whose `supported` is true, in the API's order; none when `capabilities.effort.supported` is false |
 | codex | `~/.codex/models_cache.json` (models not marked hidden) | the model's `supported_reasoning_levels` |
 | pi | `~/.pi/agent/models-store.json`: every provider's `models[]` (`id`, `name`, `reasoning`, `thinkingLevelMap`); the id sent is `<provider>/<id>` | when `reasoning` is true: the keys of `thinkingLevelMap` whose value is not null; without a map, the levels pi offers for the model (checked against the CLI) |
-| opencode | the output of `opencode models`, one `<provider>/<model>` per line | none |
+| opencode | ids from the output of `opencode models`, one `<provider>/<model>` per line; the label from OpenCode's models cache `~/.cache/opencode/models.json`, entry `<provider>.models.<model>` (`<provider>` is the id up to its first `/`), field `name`; the id when the cache lacks the entry | the `values` of the entry's `reasoning_options` item whose `type` is `effort`; none otherwise |
 | agy | the output of `agy models`, one `<id>` TAB `<label>` per line | none: each model already names its effort (`gemini-3.8-flash-high`, label `Gemini 3.8 Flash (High)`) |
 
-- The sources are files and command output written by other programs: a trust boundary. An entry without a string id is skipped; a source that is missing, fails or times out leaves that agent's previous list in place and is not an error the phone sees.
+- **Persistence and the daily limit** (user decision, 2026-11-12): the catalog is written to `models.json` in the instance's state directory after every fill that changed it, with the time of each agent's last successful fetch, and read when the catalog is created, so the lists are there before any source answers. An automatic fill (daemon start, a model named by session records that the list lacks) requests the Claude Models API only when its last successful request is more than 24 hours old; a fill asked by `models_refresh` (`protocol.md` §4.15) always requests. The other sources are local and are read on every fill. Without Claude credentials no request is made.
+- `ModelCatalog` takes, besides `home` and `env`, the options `cachePath`, `anthropicModelsUrl` (default: the Models API URL above), `keychain` (read the Claude credential from the macOS keychain, as `quota-and-usage.md` does; default on macOS) and `now`, so tests use a temporary file, a local server, the credential file and a fixed clock. `refresh()` is the automatic fill; `models_refresh` is the asked fill.
+- Session records name Claude models by full id (`claude-opus-5-5`), which the list holds; Claude's `<synthetic>` is never a model (`agent-session-normalization.md` §2.3). The CLI's aliases are not listed.
+- The sources are files, command output and an external API written by other programs: a trust boundary. An entry without a string id is skipped; a source that is missing, fails or times out leaves that agent's previous list in place and is not an error the phone sees.
 - A model value read from session records is resolved to a catalog id through `ModelCatalog.resolve(agent, idOrLabel)`: by exact id, else by case-insensitive label match, else kept as read. An unknown value triggers the existing one-time refill (`noteModel`).
 - The catalog is filled at daemon start, off the startup path, so `welcome` never waits for it. It is filled again when `models_refresh` asks for it (`protocol.md` §4.14), and when a bound session's records name a model (source `log`) that the agent's list lacks — at most once per model name, so a model the source never lists does not refresh in a loop.
 - After every fill that changes a list, every connected phone gets `recipes_sync` (`protocol.md` §5.9).
 
+
+### 7.2 Answering transcript questions
+A transcript interaction (`protocol.md` §5.4) is answered with the keys the agent's question UI takes, checked against the real CLI and listed here per agent, with the date of the check. An agent not listed, and any question kind its row does not cover (a multi-select question, typing an "other" answer), is answered in the terminal view (`mobile-ui-and-themes.md` §5).
+
+| Agent | Question tool | Keys for option `n` of question `k` |
+| :--- | :--- | :--- |
 
 ## 8. Screen Parse Rules
 

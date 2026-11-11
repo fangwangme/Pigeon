@@ -14,7 +14,10 @@ Pigeon is a phone app for Herdr, written as a PWA. It follows the interaction mo
 ### 1.1 Viewport and keyboard
 - Viewport: `width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content`. Chromium resizes the layout above the keyboard, so the composer stays above it without visual-viewport code.
 - Safe areas use `env(safe-area-inset-*)`.
-- **Standalone mode**: when the app runs from the home screen (`display-mode: standalone`, or `navigator.standalone` on iOS), the root carries `data-mode="standalone"` and the composer dock sits 2 px above the bottom safe area instead of 10 px, so no empty band shows under it.
+- **Standalone mode**: when the app runs from the home screen (`display-mode: standalone`, or `navigator.standalone` on iOS), the root carries `data-mode="standalone"`. The composer dock sits 2 px above the bottom safe area instead of 10 px, and the home bottom bar (§2.1) 8 px instead of 20 px, so no empty band shows under them.
+- **Full height in standalone** (issue #21): the page reaches the screen's bottom edge. An iOS 26 home-screen app can be given a layout viewport shorter than the screen by the top safe area, which leaves the page's bottom above the screen's bottom (a black band, a list cut off mid-row, controls floating high). In standalone mode the page height compensates, so the scroll area and the bottom controls reach the screen's bottom edge. The fix was chosen from on-device readings (inner height, visual viewport height, screen height, `100vh` / `100lvh` / `100dvh`, the safe-area insets) taken with a temporary overlay that is not shipped.
+- **Headers and the top safe area**: every page header reserves `env(safe-area-inset-top)` above its controls, and no page replaces that padding, so nothing tappable sits under the status bar. In a home-screen app iOS blurs content that scrolls under the status bar; a web page cannot turn that off.
+- **Back by swipe** (user decision, 2026-11-12): on every page except Home, a horizontal swipe that starts within 24 px of the left screen edge and travels right at least 80 px goes back, exactly like the header's back button, so a page whose back button is out of reach never traps the user. A swipe that starts inside a horizontally scrolling element (range chips, tables, code blocks, diffs) scrolls that element instead.
 - **Text size**: the document sets `text-size-adjust: 100%` (and `-webkit-text-size-adjust`), so WebKit never enlarges some lines of a code block, a diff or a list.
 
 ### 1.2 Text input
@@ -29,10 +32,11 @@ Pigeon is a phone app for Herdr, written as a PWA. It follows the interaction mo
 ## 2. Home
 
 ### 2.1 Workspaces (the start screen)
+- The header's top padding is the top safe area alone (§1.1), and the gaps below it are kept tight.
 - Top left, the bionic pigeon logo mark (a compact 34×34px SVG `<Logo />` with subtle rounded border and gradient backdrop). Top right, one glass capsule with **filter** (§2.3), **quota** (§11.1) and **settings** (§8.1). There is no ☰, no device row, no tab bar, no pane row and no drawer.
 - An **所有 Agent** summary row (count of agents, and of those waiting) opens §2.2.
 - One collapsible group per Herdr workspace, in Herdr's order. The group header shows the workspace name, its git branch when it has one, and its tab count; its `+` opens a new session (§7.1) in that workspace. Collapsed state is kept in this browser.
-- One row per tab. The left icon is the agent or shell avatar (`<AgentIcon>`: official Antigravity arch, Claude 8-bit crab, Codex rosette, OpenCode box, Pi mark, or skeumorphic terminal window with traffic lights and prompt). The title is the tab label (`protocol.md` §5.3: the Herdr name the user gave the tab, else the session's title, else the agent's name). The subtitle shows the primary pane's model (`protocol.md` §5.3 `model`) and, when the tab has more than one pane, the pane count, joined by ` · `; without a known model only the pane count shows. A plain terminal keeps its program as subtitle.
+- One row per tab. The left icon is the agent or shell avatar (`<AgentIcon>`: official Antigravity arch, Claude 8-bit crab, Codex rosette, OpenCode box, Pi mark, or skeumorphic terminal window with traffic lights and prompt). The title is the tab label (`protocol.md` §5.3: the Herdr name the user gave the tab, else the session's title, else the agent's name). The subtitle shows the primary pane's model (`protocol.md` §5.3 `model`, named as in §6.4) and, when the tab has more than one pane, the pane count, joined by ` · `; without a known model only the pane count shows. A plain terminal keeps its program as subtitle.
 - The row's right end holds the single status dot (`<StatusIcon>`: amber dot = waiting for you / `blocked`, blue pulsing dot = `working`, green dot `#10b981` = finished / `done`, subtle gray dot = `idle` / plain terminal). Session status is indicated purely by this dot's color: an agent that finishes shows green (`done`) waiting to be read; viewing the pane reports presence to the daemon (`herdr-adapter.md` §4), which marks it seen and transitions it to gray (`idle`). No separate unread dot is shown.
 - Swiping a row left reveals **重命名** and **关闭**; both use the same flows as the ⋯ menu (§6.1, §6.4).
 - Bottom left, a search button filters rows by tab label and workspace name. Bottom right, a **新会话** button opens §7.1 for the workspace Herdr has focused.
@@ -51,7 +55,7 @@ A sheet shared by §2.1 and §2.2: status (等待你, 工作中, 已完成, 空�
 ## 3. Session page
 
 ### 3.1 Layout
-- A glass header bar with a hairline at its bottom edge; content scrolling under it is blurred and never shows through as legible text. It holds back (hit area 44 × 44 px), the session title (prioritizes named tab labels, falling back to the agent session's title, then agent recipe name per `protocol.md` §5.3; a spinner while working, an amber dot while waiting), the pane in the subtitle when the tab has several, and ⋯ (§6.1). Tapping the title switches pane when there are several (§6.8).
+- A glass header bar with a hairline at its bottom edge; content scrolling under it is blurred and never shows through as legible text. It holds back (hit area 44 × 44 px), the session title (prioritizes named tab labels, falling back to the agent session's title, then agent recipe name per `protocol.md` §5.3; a spinner while working, an amber dot while waiting), a subtitle, and ⋯ (§6.1). The subtitle is the pane's model (named as in §6.4) and thinking level joined by ` · ` (`protocol.md` §5.6 `session.model`, `session.thinking`; an unknown value is left out, and the line when both are), preceded by the pane's name when the tab has several panes. Tapping the title switches pane when there are several (§6.8).
 - The body is the transcript (§3.2) when the pane has a structured session, else the screen cards (§3.6). A plain terminal tab shows the terminal view (§5) as its body.
 - The composer (§6) floats at the bottom.
 
@@ -78,15 +82,16 @@ A sheet shared by §2.1 and §2.2: status (等待你, 工作中, 已完成, 空�
   Nothing is written while turns stream in, and reading an entry does not write it back: `lastAccess` is kept in memory and saved with the next write.
 
 ### 3.2 Messages
-- A user message is a right-aligned bubble; attachments show as thumbnails above it.
+- A user message is a right-aligned bubble; attachments show as thumbnails above it. A tap on an image thumbnail opens the image full-screen inside the app (pinch to zoom; a tap or ✕ closes it). The page never navigates away for it, because a page opened outside the home-screen app does not carry its session cookie.
 - Assistant text is GitHub-flavored Markdown laid out on the page, not in a card: headings, lists, inline code, code blocks with a copy button, links that open outside the app. Tables keep their column widths and scroll horizontally (`display:block; overflow-x:auto; white-space:nowrap`).
-- The last reply of a finished turn has a copy button.
+- The last reply of a finished turn has a copy button and its time (`agent-session-normalization.md` §3 `updatedAt`): `HH:mm` on the same day, else `MM-DD HH:mm`.
+- An agent error (`agent-session-normalization.md` §3, item `error`) shows in its turn as one line in `--danger` with the agent's own text, for example "You've hit your session limit · resets 4:40pm". Pigeon adds no explanation of its own.
 - Reasoning collapses to one line, "思考了 N 秒" (or "思考" when no duration is known); a tap shows the full text.
 - Agent output is untrusted: Markdown is sanitized (`architecture.md` §5).
 
 ### 3.3 Tool calls
 - Consecutive tool calls of a turn collapse into one summary line that counts them by verb, e.g. "读取了 4 个文件，编辑了 3 个文件", with the added/removed line totals of its edits. A group of one shows that call's own icon and label and opens its detail directly.
-- **Group sheet**: the summary as its title, then a timeline of the calls. Each item shows its verb (运行, 编辑, 创建, 读取, 搜索, or the tool name) and its object; a command shows the agent's own description of it when the transcript has one, else the command.
+- **Group sheet**: the summary as its title, then a timeline of the calls. The sheet shows a scroll indicator, and while it is not scrolled to its end a round ↓ button scrolls to the last call. Each item shows its verb (运行, 编辑, 创建, 读取, 搜索, or the tool name) and its object; a command shows the agent's own description of it when the transcript has one, else the command.
 - **Detail** (pushed inside the sheet, with back instead of close):
   - Command: description, command (wrapped, copyable), output (monospace, wrapped, copyable, truncated with "展开" past 40 lines), then exit code and duration; a non-zero exit code is red.
   - Edit / write: the file path (copyable, displayed with reverse truncation anchored to the file name so the tail is always visible and leading paths truncate first) and the change as a diff with line numbers and add/remove bars. Diff lines do not wrap; the block scrolls horizontally.
@@ -99,6 +104,7 @@ When the session has a todo list (`agent-session-normalization.md` §3), a capsu
 - While working, the last turn ends with an animated "思考中…" line, and the send button becomes **■ 停止**.
 - **Stop** sends the recipe's `interruptKeys` (Esc for agents, Ctrl+C for a plain terminal) at once, without confirmation.
 - A message sent while the agent is working is queued by the daemon (`protocol.md` §4.2). Queued messages show as dashed bubbles below the last turn, each with **编辑** and **撤销**; they are sent in order when the turn ends. **编辑** loads the message's text and attachments into the composer for in-place editing; the draft that was in the composer is kept aside and comes back when the edit is submitted or abandoned. The message remains in the server queue at its original position (`protocol.md` §4.14). Submitting the updated prompt sends `queue_update` to update the queued item in-place without altering queue order or advancing newer items. When the message was already sent before the update, the phone says so and the edited text stays in the composer as an ordinary draft; a cancel that comes too late is reported the same way.
+- While the pane's queue is paused after an agent error (`protocol.md` §4.2), the queued bubbles show **已暂停**, and the first one offers **继续发送**, which sends `queue_resume` (`protocol.md` §4.22).
 - New content scrolls the page to the bottom only when the page was within 40 px of the bottom. Otherwise a round ↓ button appears above the composer and scrolls to the newest message. It sits at least 32 px above the composer's top edge, so a thumb reaching for it cannot hit the send button.
 
 ### 3.6 Screen-card fallback
@@ -115,8 +121,8 @@ When the pane has a `pendingInteraction` (`protocol.md` §5.4), a floating card 
 - **在终端中处理** opens the terminal view (§5). So does an ack with `approved: false`.
 
 ### 4.2 Questions
-When the transcript has a pending question tool call (Claude `AskUserQuestion`), the card uses it: a large question title, options as "label + description", and **其他…** last, which sends the screen's own "other" option and then focuses the composer. **其他…** is shown only when the screen has such an option, and like **提交** it works only for the question on screen. With several questions the card pages with "‹ 1/4 ›"; the last page's button is **提交**. **下一题** stays disabled until an option is picked. ✕ collapses the card into a capsule "n 个问题等你回答" above the composer, which reopens it.
-Answers are sent as the screen's numbered options: the card matches the current screen prompt to its question by text and sends the digit of the option with the same label. A label matches exactly first; a prefix match counts only when exactly one screen option has that prefix, and anything else opens the terminal view instead of guessing. A multi-select question offers **在终端中处理** in place of **提交**. Without a transcript question, the card is the plain §4.1 card.
+When the transcript has a pending question tool call (Claude `AskUserQuestion`), the card uses it, whether the interaction was recognized on screen or comes from the transcript (`protocol.md` §5.4 `source`): a large question title, options as "label + description", and **其他…** last, which sends the screen's own "other" option and then focuses the composer. **其他…** is shown only when the screen has such an option, and like **提交** it works only for the question on screen. With several questions the card pages with "‹ 1/4 ›"; the last page's button is **提交**. **下一题** stays disabled until an option is picked. ✕ collapses the card into a capsule "n 个问题等你回答" above the composer, which reopens it.
+Answers to an interaction recognized on screen are sent as the screen's numbered options: the card matches the current screen prompt to its question by text and sends the digit of the option with the same label. A label matches exactly first; a prefix match counts only when exactly one screen option has that prefix, and anything else opens the terminal view instead of guessing. Answers to a transcript interaction pick its option ids (`protocol.md` §5.4), and the daemon sends the keys the agent's question UI takes (`herdr-adapter.md` §7.2); an agent without checked keys gets **在终端中处理** in place of the option buttons. A multi-select question offers **在终端中处理** in place of **提交**. Without a transcript question, the card is the plain §4.1 card.
 
 ### 4.3 Plan approval
 When the transcript has a pending plan tool call (Claude `ExitPlanMode`), the card shows the plan as Markdown, faded past the card height with **全文** to read it in a sheet, and the screen's options as buttons. An option that asks to keep planning focuses the composer like §4.1.
@@ -133,7 +139,7 @@ A prompt without numbered options, or `blocked` with nothing recognized, shows i
 ## 6. Composer and session actions
 
 ### 6.1 Composer
-- Collapsed: a clean glass capsule with the text field and send button (the `+` button is hidden when collapsed to maximize horizontal space and avoid visual clutter). Focused: expanded multi-line textarea (min-height: 64px) for comfortable scrolling and dragging, attachment thumbnails, the bottom toolbar pairing the compact `+` helper button directly alongside the model capsule (`max-width: calc(100% - 92px)`), and a full-size 44px send button.
+- Collapsed: a clean glass capsule with the text field and send button (the `+` button is hidden when collapsed to maximize horizontal space and avoid visual clutter). Focused: expanded multi-line textarea (min-height: 64px) for comfortable scrolling and dragging, attachment thumbnails, the bottom toolbar with the compact `+` helper button, and a full-size 44px send button. The composer has no model control: a session's model and thinking level are chosen when it is created (§6.4, §7.1) and shown in the header (§3.1).
 - **+ sheet**: 相机, 照片, 文件 (the system pickers; files are uploaded at once, `protocol.md` §7), **Skills 与命令** (§6.3), **从历史会话恢复** (§7.2).
 - Sending with attachments passes their upload ids; the daemon writes them into the prompt (`protocol.md` §4.2).
 
@@ -143,8 +149,13 @@ Typing `/` as the first character of a line (outside IME composition) opens a po
 ### 6.3 Skills and commands
 A sheet of the pane's entries (`protocol.md` §5.7), grouped by source: 项目 → 用户 → 插件 → 命令, with segment buttons to narrow. Each row shows the name and description. Choosing one inserts its invocation into the composer.
 
-### 6.4 Model and effort
-A sheet listing every model of the recipe (`herdr-adapter.md` §7.1) with a search field that filters by id and label, and, for the chosen model, its effort levels. A refresh button asks the daemon to read the agents' model lists again (`protocol.md` §4.14). The model capsule is shown for every agent pane, even while its list is empty. It shows the current values and their source: **启动参数** (from Pigeon's launch), **日志** (the transcript names the model) or **未知**. Changing them sends the recipe's runtime command as a prompt (`protocol.md` §4.9); when the agent has no such command the sheet says that the value can be chosen in a new session (or, for an agent that takes no model at launch either, only inside the agent) and changes nothing.
+### 6.4 Model and thinking level
+Chosen only when a session is created (§7.1; user decision, 2026-11-12). A running session's model and level are shown in its header (§3.1) and never changed from the phone; to use another model, the user starts a new session.
+- **Picker sheet**: the agent's models (`herdr-adapter.md` §7.1). A fixed card at the top holds the chosen model: its label, its id in monospace, and its thinking levels as one row of chips that scrolls sideways when it does not fit, or **不支持** when the model has none (the model's levels are a list, empty for a model without thinking). Choosing a model in the list moves it into the card; the level is kept when the new model offers it, else the model's first level is chosen. The list scrolls under the card, which never scrolls away. The approved mockup is board C of issue #21's design canvas.
+- A search field filters by id and label when the agent has more than five models. There is no provider filter.
+- Each row shows the model's label and, when it has levels, their count.
+- A refresh button asks the daemon to fetch this agent's list again (`protocol.md` §4.15).
+- **Model names** everywhere (home and All agents rows, the session header, the picker, the usage model rows) show the model's catalog label (`herdr-adapter.md` §7.1). A model the catalog does not list shows the part of its id after the last `/`, or the whole id when it has none.
 
 ### 6.5 ⋯ menu
 重命名 (renames the Herdr tab), 复制分支 (copies the tab's git branch; shown when there is one), 本会话的变更 (§6.6), 切换 pane (shown with several panes, §6.8), 查看终端 (§5), and **关闭会话** in red (§6.7).
@@ -161,7 +172,7 @@ A sheet listing the tab's panes (agent or shell, status). The session page defau
 ## 7. New session
 
 ### 7.1 New
-A blank session page: segments **新建 / 恢复**, chips for **工作区** (Herdr's workspaces; preset from where it was opened), **Agent** (recipes) and **模型** (with effort; only for an agent that takes a model at launch, `protocol.md` §5.7), then the composer for the first message. Sending creates the tab with the first message (`protocol.md` §4.5) and opens it; the title starts as the first message and can be renamed. Creating a Herdr workspace is not offered.
+A blank session page: segments **新建 / 恢复**, chips for **工作区** (Herdr's workspaces; preset from where it was opened), **Agent** (recipes) and **模型** (opens §6.4's picker; only for an agent that takes a model at launch, `protocol.md` §5.7), then the composer for the first message. Sending creates the tab with the first message (`protocol.md` §4.5) and opens it; the title starts as the first message and can be renamed. Creating a Herdr workspace is not offered.
 
 ### 7.2 Resume
 The **恢复** segment (also reached from `+`) lists the agent's past sessions for the chosen workspace's folder (`protocol.md` §4.10): title or first message, and age. A tap opens a new tab that resumes it (`protocol.md` §4.5 `resumeSessionId`) and goes there. Resuming always opens a new tab.
@@ -223,7 +234,7 @@ Without a valid pairing only the pairing guide shows: scan the QR code from `pig
 
 ## 11. Quota and usage
 
-Behavior and numbers come from `quota-and-usage.md`; this section is the presentation. The approved mockups are kept with issue #13's notes. Both pages share a header (back, the title **额度与用量** with the last refresh time, a refresh button) and a segmented **额度 | 用量** switch below it.
+Behavior and numbers come from `quota-and-usage.md`; this section is the presentation. The approved mockups are kept with issue #13's notes. Both pages share a header (back, the title **额度与用量** with the last refresh time, a refresh button; the standard page header with the top safe area of §1.1) and a segmented **额度 | 用量** switch below it.
 
 ### 11.1 Quota button
 - A gauge icon in the home capsule (left of settings) and in the All Agents capsule (left of filter); both open §11.2. The button shows when both `client.quotaUsageEnabled` and `client.quotaButton` are on (`architecture.md` §4.7); when either is off the button is hidden on both pages.
@@ -246,7 +257,7 @@ Behavior and numbers come from `quota-and-usage.md`; this section is the present
 - **Figure cards**: 花费, Token, 会话, each with the change against the comparison (`quota-and-usage.md` §3.5), and one line naming what is compared (e.g. **与上周一（11-02）截至 17:33 比较**). Increase is `--danger`, decrease `--addfg`.
 - **Single day** (today, or a custom range of one day): the cards, then the model list. **Period**: the cards, the heatmap, then the list with **按日期 | 按模型**.
 - **Heatmap** (`quota-and-usage.md` §3.6): strip and week-row layouts fill the card width with cells labeled by date and need no zoom; the week-column layout opens at the newest week, scrolls sideways, and has **− / 适配 / +** zoom steps (cells of fit, 16, 24, 32 and 44px; dates show from 28px). The card shows active days and the current and longest streak in the range, and a five-step legend. Tapping a day with usage opens the day sheet.
-- **List rows** show the full date or model name on the first line (never truncated) and, on the second, sessions (date rows) or agents (model rows), tokens, cost and the share; a bar under them shows the row against the largest. Date rows are newest first, model rows sorted by the page switch, or by cache-hit ratio when the model list's **排序** is set to **缓存命中**, which then shows **命中 N%**. Ten rows show, more load on scroll. Every row opens a sheet.
+- **List rows** show the full date or model name on the first line (never truncated; a model by its catalog label when the catalog resolves its id, else as recorded) and, on the second, sessions (date rows) or agents (model rows), tokens, cost and the share; a bar under them shows the row against the largest. Date rows are newest first, model rows sorted by the page switch, or by cache-hit ratio when the model list's **排序** is set to **缓存命中**, which then shows **命中 N%**. Ten rows show, more load on scroll. Every row opens a sheet.
 - **Day sheet**: the date and weekday; cost, tokens, input, output, cache read, cache write, cache hit, messages, sessions; then per agent its cost and its models with their figures.
 - **Model sheet**: the model in its company color, the company and the range; cost, tokens, input, output, cache read, cache write, cache hit, messages, last used; per agent its tokens and cost; a small bar chart of the model's use per day in the range.
 - Under the list: costs are estimates at public API prices, which subscriptions are not billed by; unpriced models and unavailable prices are named (`quota-and-usage.md` §3.3).

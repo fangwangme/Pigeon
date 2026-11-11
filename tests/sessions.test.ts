@@ -566,3 +566,95 @@ describe("partial lines (agent-session-normalization.md §4.2)", () => {
     expect(tail.read().records).toEqual([{ text: "修复队列" }]);
   });
 });
+
+// Issue #21: agent errors, turn times, transcript questions (protocol.md §4.2, §4.9, §5.4; agent-session-normalization.md §2.3, §3).
+describe("transcript questions, agent errors and turn times (issue #21)", () => {
+  const at = (s: number) => new Date(Date.UTC(2026, 10, 12, 9, 0, s)).toISOString();
+
+  /** A home whose Claude process 4242 runs session s1 in a fresh project folder, with the records `build` returns. */
+  function claudeHome(build: (proj: string) => string) {
+    const home = tempDir("home");
+    const proj = tempDir("proj");
+    mkdirSync(join(home, ".claude", "sessions"), { recursive: true });
+    writeFileSync(join(home, ".claude", "sessions", "4242.json"), JSON.stringify({ pid: 4242, sessionId: "s1", cwd: proj }));
+    mkdirSync(join(home, ".claude", "projects", slug(proj)), { recursive: true });
+    writeFileSync(join(home, ".claude", "projects", slug(proj), "s1.jsonl"), build(proj));
+    return { home, proj };
+  }
+
+  const rateLimited = (proj: string) =>
+    jsonl([
+      { type: "user", timestamp: at(0), cwd: proj, message: { role: "user", content: "Fix the tests" } },
+      { type: "assistant", timestamp: at(5), message: { model: "claude-opus-5-5", role: "assistant", content: [{ type: "text", text: "Working on it." }] } },
+      { type: "user", timestamp: at(10), message: { role: "user", content: "Go on" } },
+      {
+        type: "assistant",
+        timestamp: at(11),
+        isApiErrorMessage: true,
+        error: "rate_limit",
+        message: { model: "<synthetic>", role: "assistant", content: [{ type: "text", text: "You've hit your session limit · resets 4:40pm" }] },
+      },
+    ]);
+
+  async function until<T>(read: () => T | undefined | null | false, ms = 3000): Promise<T> {
+    const end = Date.now() + ms;
+    for (;;) {
+      const value = read();
+      if (value) return value;
+      if (Date.now() > end) throw new Error("timed out waiting");
+      await Bun.sleep(10);
+    }
+  }
+
+  test("an API error record is an error item and its synthetic model is ignored", async () => {
+    const { home, proj } = claudeHome(rateLimited);
+    const { open } = await setup(home, [{ paneId: "p1", app: "claude-code", cwd: proj, pid: 4242 }]);
+    const payload = turnsOf(await open("p1"));
+    expect(payload.turns[1].items).toContainEqual({ kind: "error", errorKind: "rate_limit", text: "You've hit your session limit · resets 4:40pm" });
+    expect(payload.session.model).toEqual({ value: "claude-opus-5-5", source: "log" });
+  });
+
+  test("a turn's updatedAt is its latest record time", async () => {
+    const { home, proj } = claudeHome(rateLimited);
+    const { open } = await setup(home, [{ paneId: "p1", app: "claude-code", cwd: proj, pid: 4242 }]);
+    const payload = turnsOf(await open("p1"));
+    expect(payload.turns.map((t: any) => t.updatedAt)).toEqual([Date.parse(at(5)), Date.parse(at(11))]);
+  });
+
+  test("a pending transcript question blocks the pane without a screen prompt", async () => {
+    const { home, proj } = claudeHome(claudeTranscript);
+    const { client, open } = await setup(home, [{ paneId: "p1", app: "claude-code", cwd: proj, pid: 4242, state: "working" }]);
+    const c = await open("p1");
+    const interaction = await until(() => c.ofType("pane_state").map((m) => m.payload).find((p) => p.paneId === "p1" && p.pendingInteraction)?.pendingInteraction);
+    expect(interaction).toMatchObject({ source: "transcript", question: "Which database?" });
+    expect(interaction.options.map((o: any) => [o.id, o.label])).toEqual([
+      ["q1_opt_1", "SQLite"],
+      ["q1_opt_2", "Postgres"],
+    ]);
+    expect(c.ofType("pane_state").at(-1)?.payload.agentStatus).toBe("blocked");
+    expect(client.getSnapshot().workspaces[0].tabs[0].panes[0].agentStatus).toBe("blocked");
+  });
+
+  test("the queue pauses after an agent error and queue_resume releases it", async () => {
+    const { home, proj } = claudeHome(rateLimited);
+    const { herdr, server, open } = await setup(home, [{ paneId: "p1", app: "claude-code", cwd: proj, pid: 4242, state: "idle" }]);
+    herdr.handlers["terminal.send"] = () => ({ result: {} });
+    const c = await open("p1");
+    await server.handleMessage(c.ws, JSON.stringify({ type: "agent_prompt", id: "a1", payload: { targetPaneId: "p1", text: "retry please" } }));
+    expect(c.ofType("ack").find((a) => a.replyTo === "a1")?.payload).toMatchObject({ queued: true });
+    expect(c.ofType("prompt_queue").at(-1)?.payload).toMatchObject({ paneId: "p1", paused: true });
+    expect(herdr.calls.some((call) => call.method === "terminal.send")).toBe(false);
+
+    await server.handleMessage(c.ws, JSON.stringify({ type: "queue_resume", id: "r1", payload: { paneId: "p1" } }));
+    const sent = await until(() => herdr.calls.find((call) => call.method === "terminal.send"));
+    expect(JSON.stringify(sent.params)).toContain("retry please");
+  });
+
+  test("agent_set_model is no longer accepted", async () => {
+    const { home, proj } = claudeHome(claudeTranscript);
+    const { server, open } = await setup(home, [{ paneId: "p1", app: "claude-code", cwd: proj, pid: 4242 }]);
+    const c = await open("p1");
+    await server.handleMessage(c.ws, JSON.stringify({ type: "agent_set_model", id: "m1", payload: { targetPaneId: "p1", modelId: "opus" } }));
+    expect(c.ofType("error").find((e) => e.replyTo === "m1")?.error.code).toBe("ERR_INVALID_PAYLOAD");
+  });
+});
