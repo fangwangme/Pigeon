@@ -93,7 +93,7 @@ function TabRow(props: { ws: WorkspaceSummary; tab: TabSummary }) {
           if (p) openPane(p.id, "home");
         }}
       >
-        <AgentIcon kind={pane()?.agent} />
+        <AgentIcon kind={pane()?.agent} unread={Boolean(pane() && state.unread[pane()!.id])} />
         <div class="tx">
           <div class="t">{props.tab.label}</div>
           <div class="s">{sub()}</div>
@@ -103,9 +103,6 @@ function TabRow(props: { ws: WorkspaceSummary; tab: TabSummary }) {
         </div>
         <div class="srow-end">
           <StatusIcon status={status()} />
-          <Show when={pane() && state.unread[pane()!.id]}>
-            <span class="udot" aria-label={t("home.unread")} />
-          </Show>
         </div>
       </button>
     </div>
@@ -366,7 +363,7 @@ export function AgentsPage() {
                       <For each={items()}>
                         {(r) => (
                           <button class="srow" onClick={() => openPane(r.pane.id, "agents")}>
-                            <AgentIcon kind={r.pane.agent} />
+                            <AgentIcon kind={r.pane.agent} unread={Boolean(state.unread[r.pane.id])} />
                             <div class="tx">
                               <div class="t">{r.tab.label}</div>
                               <div class="s who">
@@ -382,9 +379,6 @@ export function AgentsPage() {
                             </div>
                             <div class="srow-end">
                               <StatusIcon status={status} />
-                              <Show when={state.unread[r.pane.id]}>
-                                <span class="udot" />
-                              </Show>
                             </div>
                           </button>
                         )}
@@ -415,7 +409,7 @@ export function AgentsPage() {
                           const st = () => paneStatus(r.pane);
                           return (
                             <button class="srow" onClick={() => openPane(r.pane.id, "agents")}>
-                              <AgentIcon kind={r.pane.agent} />
+                              <AgentIcon kind={r.pane.agent} unread={Boolean(state.unread[r.pane.id])} />
                               <div class="tx">
                                 <div class="t">{r.tab.label}</div>
                                 <div class="s who">
@@ -427,9 +421,6 @@ export function AgentsPage() {
                               </div>
                               <div class="srow-end">
                                 <StatusIcon status={st()} />
-                                <Show when={state.unread[r.pane.id]}>
-                                  <span class="udot" />
-                                </Show>
                               </div>
                             </button>
                           );

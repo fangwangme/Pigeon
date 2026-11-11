@@ -330,11 +330,11 @@ export function Composer(props: ComposerProps) {
     if (!files) return;
     for (const f of Array.from(files)) {
       const key = ++keySeq;
-      const preview = f.type.startsWith("image/") ? URL.createObjectURL(f) : undefined;
+      const preview = f.type.startsWith("image/") || /\.(png|jpe?g|webp|gif|svg)$/i.test(f.name || "") ? URL.createObjectURL(f) : undefined;
       setAtts([...atts(), { key, name: f.name || t("plus.photo"), preview }]);
       try {
         const res = await uploadFile(f);
-        setAtts(atts().map((a) => (a.key === key ? { ...a, id: res.id } : a)));
+        setAtts(atts().map((a) => (a.key === key ? { ...a, id: res.id, preview: a.preview || `/api/uploads/${res.id}` } : a)));
       } catch (e) {
         setAtts(atts().filter((a) => a.key !== key));
         if (preview) URL.revokeObjectURL(preview);
@@ -346,18 +346,34 @@ export function Composer(props: ComposerProps) {
 
   const handlePaste = (e: ClipboardEvent) => {
     const items = e.clipboardData?.items;
-    if (!items) return;
-    const files: File[] = [];
-    for (let i = 0; i < items.length; i++) {
-      const item = items[i];
-      if (item.type.startsWith("image/")) {
-        const file = item.getAsFile();
-        if (file) files.push(file);
+    if (items) {
+      const files: File[] = [];
+      for (let i = 0; i < items.length; i++) {
+        const item = items[i];
+        if (item.type.startsWith("image/")) {
+          const file = item.getAsFile();
+          if (file) files.push(file);
+        }
+      }
+      if (files.length > 0) {
+        e.preventDefault();
+        void addFiles(files);
+        return;
       }
     }
-    if (files.length > 0) {
-      e.preventDefault();
-      void addFiles(files);
+
+    const textData = e.clipboardData?.getData("text/plain")?.trim();
+    if (textData) {
+      const uploadMatch = textData.match(/(?:^|\/)(up_[0-9a-f]{16})(?:-([^\s]+))?(\.(?:png|jpe?g|webp|gif|svg))?$/i);
+      if (uploadMatch) {
+        const uploadId = uploadMatch[1];
+        const rawName = uploadMatch[2] ? `${uploadMatch[2]}${uploadMatch[3] || ""}` : (uploadMatch[3] ? `image${uploadMatch[3]}` : "image.png");
+        const fileName = rawName.replace(/^-/, "");
+        e.preventDefault();
+        const key = ++keySeq;
+        setAtts([...atts(), { key, name: fileName, id: uploadId, preview: `/api/uploads/${uploadId}` }]);
+        return;
+      }
     }
   };
 
@@ -367,7 +383,7 @@ export function Composer(props: ComposerProps) {
     const before = v.slice(0, at);
     const gap = before && !before.endsWith("\n") && s ? "\n" : "";
     save(`${before}${gap}${s}${v.slice(at)}`);
-    setAtts([...atts(), ...uploadIds.map((id) => ({ key: ++keySeq, name: t("composer.attachment"), id }))]);
+    setAtts([...atts(), ...uploadIds.map((id) => ({ key: ++keySeq, name: t("composer.attachment"), id, preview: `/api/uploads/${id}` }))]);
     setTimeout(() => {
       if (!ta) return;
       ta.focus();
@@ -383,7 +399,7 @@ export function Composer(props: ComposerProps) {
     savedDraftBeforeEdit = { text: text(), atts: atts() };
     setEditingQueueId(queueId);
     save(s);
-    setAtts(uploadIds.map((id) => ({ key: ++keySeq, name: t("composer.attachment"), id })));
+    setAtts(uploadIds.map((id) => ({ key: ++keySeq, name: t("composer.attachment"), id, preview: `/api/uploads/${id}` })));
     setTimeout(() => {
       if (!ta) return;
       ta.focus();
@@ -473,26 +489,30 @@ export function Composer(props: ComposerProps) {
         <Show when={atts().length}>
           <div class="thumbs">
             <For each={atts()}>
-              {(a) => (
-                <div class="thumb">
-                  <Show when={a.preview} fallback={<span>{a.name}</span>}>
-                    <img src={a.preview} alt={a.name} />
-                  </Show>
-                  <Show when={!a.id}>
-                    <span class="spin" style={{ position: "absolute" }} />
-                  </Show>
-                  <button
-                    class="rm"
-                    aria-label={t("common.remove")}
-                    onClick={() => {
-                      if (a.preview) URL.revokeObjectURL(a.preview);
-                      setAtts(atts().filter((x) => x.key !== a.key));
-                    }}
-                  >
-                    ×
-                  </button>
-                </div>
-              )}
+              {(a) => {
+                const previewUrl = () => a.preview || (a.id ? `/api/uploads/${a.id}` : undefined);
+                const isImg = () => Boolean(previewUrl()) || /\.(png|jpe?g|webp|gif|svg)$/i.test(a.name || "");
+                return (
+                  <div class={`thumb${isImg() ? "" : " file"}`}>
+                    <Show when={previewUrl()} fallback={<span>{a.name}</span>}>
+                      <img src={previewUrl()!} alt={a.name} onError={(e) => { (e.currentTarget as HTMLElement).style.display = "none"; }} />
+                    </Show>
+                    <Show when={!a.id}>
+                      <span class="spin" style={{ position: "absolute" }} />
+                    </Show>
+                    <button
+                      class="rm"
+                      aria-label={t("common.remove")}
+                      onClick={() => {
+                        if (a.preview && a.preview.startsWith("blob:")) URL.revokeObjectURL(a.preview);
+                        setAtts(atts().filter((x) => x.key !== a.key));
+                      }}
+                    >
+                      ×
+                    </button>
+                  </div>
+                );
+              }}
             </For>
           </div>
         </Show>
