@@ -65,11 +65,13 @@ sudo ufw allow in on tailscale0
 
 ## Step 4: Start Tailscale Serve (HTTPS Reverse Proxy)
 
-Tailscale Serve listens on standard port 443 with a trusted SSL certificate and forwards decrypted traffic to Pigeon's local port `4100`:
+Tailscale Serve listens on port 8443 (default for production, or 18443 for test instances) with a trusted SSL certificate and forwards decrypted traffic to Pigeon's local port `4100`:
 
 ```bash
-tailscale serve --bg 4100
+tailscale serve --bg --https=8443 4100
 ```
+
+> **Note**: `pigeon start` automatically configures this for you if no mapping exists and Tailscale operator permissions are granted.
 
 Verify that the proxy is active:
 ```bash
@@ -78,7 +80,7 @@ tailscale serve status
 
 You should see output similar to:
 ```text
-https://<machine>.<tailnet>.ts.net (tailnet only)
+https://<machine>.<tailnet>.ts.net:8443 (tailnet only)
 |-- / proxy http://127.0.0.1:4100
 ```
 
@@ -95,7 +97,7 @@ pigeon start
 Pigeon automatically queries `tailscale status --json`, detects that Tailscale Serve is proxying to port `4100`, binds securely to loopback `127.0.0.1`, and prints the pairing QR code:
 
 ```text
-Pairing URL: https://<machine>.<tailnet>.ts.net/pair#code=...
+Pairing URL: https://<machine>.<tailnet>.ts.net:8443/pair#code=...
 ```
 
 1. **On your phone**: Open the **Tailscale App** and ensure the VPN switch is **Connected**.
@@ -114,21 +116,24 @@ When running development or test instances on port `4101`:
 bun ./src/cli/index.ts start --port 4101
 ```
 
-- Port `4101` automatically falls back to **Tailscale IP mode** (`http://<tailscale-ip>:4101`) or MagicDNS HTTP without conflicting with production port 443.
-- Both Tailscale IP and MagicDNS hostnames are accepted by Pigeon's WebSocket host/origin security gates.
+- Test instances use port `18443` on Tailscale Serve (`tailscale serve --bg --https=18443 4101`) by default, reachable at `https://<machine>.<tailnet>.ts.net:18443`.
+- Production (8443) and test (18443) instances coexist simultaneously with independent web origins.
+- If Tailscale Serve cannot be used or is occupied by another service, Pigeon falls back to Tailscale IP mode (`http://<tailscale-ip>:4101`), LAN, or localhost.
+- The HTTPS port can be customized in each instance's `config.json` via `server.tailscaleHttpsPort`.
 
 ---
 
 ## Troubleshooting & FAQ
 
-### 1. Connection Refused on `https://<machine>.<tailnet>.ts.net`
+### 1. Connection Refused on `https://<machine>.<tailnet>.ts.net:8443`
 - Verify Tailscale Serve is running: `tailscale serve status`.
-- If `No serve config` appears, run `tailscale serve --bg 4100`.
+- If no serve config exists for 8443, run `tailscale serve --bg --https=8443 4100` (or `tailscale serve --bg --https=18443 4101` for test instances).
+- If an older setup had port 443 configured, disable it via `tailscale serve --https=443 off`.
 - Verify the Pigeon daemon is running: `pigeon status` or `curl -I http://127.0.0.1:4100`.
 
 ### 2. "Cannot establish a secure connection" / SSL Protocol Error
 - This occurs if you attempt to access an HTTP port using `https://` (for example, navigating to `https://100.120.x.x:4101`).
-- For port 4100 (Serve mode), use `https://<machine>.<tailnet>.ts.net` without port.
+- For port 4100 (Serve mode), use `https://<machine>.<tailnet>.ts.net:8443`.
 - For plain HTTP ports, ensure the URL scheme is `http://`, not `https://`.
 
 ### 3. Phone cannot reach computer / Timeout

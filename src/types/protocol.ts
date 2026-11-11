@@ -259,6 +259,7 @@ export interface UsageModelPayload {
 
 export interface ServerConfig {
   port: number;
+  tailscaleHttpsPort?: number;
   host: string;
   insecureDev: boolean;
   publicBaseUrl: string;

@@ -29,6 +29,8 @@ export function detectQuotaProviders(home: string, env: NodeJS.ProcessEnv = proc
 }
 
 export const DEFAULT_PORT = 4100;
+export const DEFAULT_TAILSCALE_HTTPS_PORT = 8443;
+export const DEFAULT_TEST_TAILSCALE_HTTPS_PORT = 18443;
 
 export interface InstancePaths {
   stateDir: string;
@@ -88,7 +90,13 @@ export function resolveInstancePaths(options: {
   };
 }
 
-const STATIC_SERVER_DEFAULTS = { port: DEFAULT_PORT, host: "", insecureDev: false, publicBaseUrl: "" };
+const STATIC_SERVER_DEFAULTS = {
+  port: DEFAULT_PORT,
+  tailscaleHttpsPort: DEFAULT_TAILSCALE_HTTPS_PORT,
+  host: "",
+  insecureDev: false,
+  publicBaseUrl: "",
+};
 
 /**
  * Environment-derived defaults. Resolved on every start and never written to disk, so a later
@@ -156,6 +164,7 @@ export class ConfigManager {
   public readonly home: string;
   public readonly env: NodeJS.ProcessEnv;
   public readonly port: number;
+  public readonly productionPort: number;
 
   constructor(customPathOrOptions?: string | { port?: number; path?: string; productionPort?: number }, env: NodeJS.ProcessEnv = process.env) {
     this.env = env;
@@ -170,6 +179,7 @@ export class ConfigManager {
       productionPort = customPathOrOptions.productionPort;
     }
     const prodPort = productionPort ?? resolveProductionPort(env);
+    this.productionPort = prodPort;
     if (!customPath && explicitPort) {
       customPath = resolveInstancePaths({ port: explicitPort, productionPort: prodPort, env }).configPath;
     }
@@ -182,9 +192,12 @@ export class ConfigManager {
       ...DEFAULT_CLIENT_CONFIG,
       quotaProviders: detectedProviders,
     };
+    const isTest = this.port !== prodPort;
+    const defaultTailscalePort = isTest ? DEFAULT_TEST_TAILSCALE_HTTPS_PORT : DEFAULT_TAILSCALE_HTTPS_PORT;
     this.config = {
       server: {
         ...STATIC_SERVER_DEFAULTS,
+        tailscaleHttpsPort: defaultTailscalePort,
         ...(explicitPort ? { port: explicitPort } : {}),
         ...resolveRuntimeServerDefaults(env),
         ...(this.stored.server || {}),
@@ -195,8 +208,13 @@ export class ConfigManager {
 
   private loadOrCreate(): StoredConfig {
     if (!existsSync(this.configPath)) {
+      const isTest = this.port !== this.productionPort;
       const initial: StoredConfig = {
-        server: { ...STATIC_SERVER_DEFAULTS, ...(this.port ? { port: this.port } : {}) },
+        server: {
+          ...STATIC_SERVER_DEFAULTS,
+          port: this.port,
+          tailscaleHttpsPort: isTest ? DEFAULT_TEST_TAILSCALE_HTTPS_PORT : DEFAULT_TAILSCALE_HTTPS_PORT,
+        },
         client: { ...DEFAULT_CLIENT_CONFIG },
       };
       this.write(initial);

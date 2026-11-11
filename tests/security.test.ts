@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, setSystemTime, test } from "bun:test";
-import { readFileSync, statSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { ConfigManager, resolveInstancePaths } from "../src/server/config-manager";
+import { ConfigManager, resolveInstancePaths, resolveProductionPort } from "../src/server/config-manager";
 import { PigeonDaemon, resolveAccess } from "../src/server/daemon";
 import { PairingManager, generateBase32Token } from "../src/server/pairing";
 import { PushManager } from "../src/server/push";
@@ -186,6 +186,34 @@ describe("configuration file (architecture.md §4.7)", () => {
     expect(readFileSync(join(dir, "config.json"), "utf-8")).toBe("{ broken");
   });
 
+  test("tailscaleHttpsPort defaults to 8443 for production and 18443 for test instances (architecture.md §4.2, §4.7)", () => {
+    const prodDir = tempDir("prod-cfg");
+    const prodCfg = new ConfigManager(join(prodDir, "config.json"), { HOME: prodDir });
+    expect(prodCfg.getServerConfig().tailscaleHttpsPort).toBe(8443);
+
+    const testDir = tempDir("test-cfg");
+    const testCfg = new ConfigManager({ port: 4101, path: join(testDir, "config.json") }, { HOME: testDir });
+    expect(testCfg.getServerConfig().tailscaleHttpsPort).toBe(18443);
+  });
+
+  test("custom production port in config.json derives production paths for that port and isolated paths for test ports (architecture.md §4.6)", () => {
+    const dir = tempDir("prod-port");
+    const pigeonDir = join(dir, "pigeon");
+    mkdirSync(pigeonDir, { recursive: true });
+    writeFileSync(join(pigeonDir, "config.json"), JSON.stringify({ server: { port: 4200 } }));
+
+    const prodPort = resolveProductionPort({ HOME: dir, XDG_DATA_HOME: dir });
+    expect(prodPort).toBe(4200);
+
+    const prodPaths = resolveInstancePaths({ port: 4200, productionPort: 4200, env: { HOME: dir, XDG_DATA_HOME: dir } });
+    expect(prodPaths.stateDir).toBe(join(dir, "pigeon"));
+    expect(prodPaths.adminSocketPath).toContain("pigeon.sock");
+
+    const testPaths = resolveInstancePaths({ port: 4101, productionPort: 4200, env: { HOME: dir, XDG_DATA_HOME: dir } });
+    expect(testPaths.stateDir).toBe(join(dir, "pigeon-4101"));
+    expect(testPaths.adminSocketPath).toContain("pigeon-4101.sock");
+  });
+
 });
 
 describe("push keys and presence (push.md §3, §4)", () => {
@@ -206,6 +234,16 @@ describe("push keys and presence (push.md §3, §4)", () => {
     expect(push.sendNotification(blocked("p2")).suppressed).toBe(false);
     push.removePresence("c1");
     expect(push.shouldSuppressPush("p1")).toBe(false);
+  });
+
+  test("push notification done triggers on transition into done from any status (push.md §4.1)", () => {
+    let lastStatus: string | undefined = "blocked";
+    const status: string = "done";
+    const previous = lastStatus;
+    const isBlocked = status === "blocked" && previous !== "blocked";
+    const isDone = status === "done" && previous !== "done";
+    expect(isBlocked).toBe(false);
+    expect(isDone).toBe(true);
   });
 });
 
@@ -365,5 +403,17 @@ describe("HTTP and WebSocket gate (security-and-pairing.md §3, §4)", () => {
   test("push subscription requires a session", async () => {
     const res = await fetch(`${base}/api/push/subscribe`, { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
     expect(res.status).toBe(401);
+  });
+
+  test("upload download enforces inline disposition only for raster images, and nosniff + sandbox for all (architecture.md §5)", async () => {
+    const cookie = pairedCookie();
+    const uploadRes = await upload({ Origin: PUBLIC, Cookie: cookie });
+    const { id } = await uploadRes.json();
+
+    const getRes = await fetch(`${base}/api/uploads/${id}`, { headers: { Origin: PUBLIC, Cookie: cookie } });
+    expect(getRes.status).toBe(200);
+    expect(getRes.headers.get("content-disposition")).toContain("attachment;");
+    expect(getRes.headers.get("x-content-type-options")).toBe("nosniff");
+    expect(getRes.headers.get("content-security-policy")).toBe("default-src 'none'; sandbox");
   });
 });

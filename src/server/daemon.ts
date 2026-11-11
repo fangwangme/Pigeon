@@ -7,7 +7,7 @@ import { PairingManager } from "./pairing";
 import { PushManager, type PushSubscriptionData } from "./push";
 import { WsServer, newConnectionId, SERVER_VERSION, type ClientConnectionData } from "./ws-server";
 import { EMBEDDED_HTML } from "./embedded-html";
-import { ConfigManager, resolveInstancePaths, resolveProductionPort, DEFAULT_PORT } from "./config-manager";
+import { ConfigManager, resolveInstancePaths, resolveProductionPort, DEFAULT_PORT, DEFAULT_TAILSCALE_HTTPS_PORT, DEFAULT_TEST_TAILSCALE_HTTPS_PORT } from "./config-manager";
 import { ModelCatalog } from "./model-catalog";
 import { MAX_UPLOAD_BYTES, UploadStore } from "./uploads";
 import { QuotaService } from "./quota/index";
@@ -30,6 +30,7 @@ export interface DaemonConfig {
   uploadsDir?: string;
   embeddedHtml?: string;
   productionPort?: number;
+  autoServe?: boolean;
 }
 
 export interface ResolvedDaemonConfig {
@@ -67,27 +68,12 @@ function detectLocalIp(): string | null {
   return null;
 }
 
-/** Tailscale MagicDNS name of this machine, or null when Tailscale is absent or not running. */
-function isServingPort(data: any, port: number): boolean {
-  if (!data || typeof data !== "object") return false;
-  try {
-    const str = JSON.stringify(data);
-    return (
-      str.includes(`127.0.0.1:${port}`) ||
-      str.includes(`localhost:${port}`) ||
-      str.includes(`[::1]:${port}`)
-    );
-  } catch {
-    return false;
-  }
-}
-
 function detectTailscaleHostname(): string | null {
   let proc: ReturnType<typeof Bun.spawnSync>;
   try {
     proc = Bun.spawnSync(["tailscale", "status", "--json"], { timeout: 2000, stderr: "ignore" });
   } catch {
-    return null; // tailscale binary not installed
+    return null;
   }
   if (proc.exitCode !== 0 || !proc.stdout) return null;
   try {
@@ -98,48 +84,70 @@ function detectTailscaleHostname(): string | null {
   }
 }
 
-function tryAutoTailscaleServe(port: number, isProduction: boolean = true): boolean {
-  if (process.argv.some((arg) => arg.includes("test")) || !isProduction) {
-    return false;
-  }
+function tryAutoTailscaleServe(port: number, httpsPort: number): boolean {
   try {
-    const res = Bun.spawnSync(["tailscale", "serve", "--bg", String(port)], { timeout: 3000, stderr: "ignore" });
+    const res = Bun.spawnSync(["tailscale", "serve", "--bg", `--https=${httpsPort}`, String(port)], {
+      timeout: 3000,
+      stderr: "ignore",
+    });
     return res.exitCode === 0;
   } catch {
     return false;
   }
 }
 
-function detectTailscaleDns(port?: number, isProduction: boolean = true): string | null {
-  const dns = detectTailscaleHostname();
-  if (!dns) return null;
+export interface ServeCheckResult {
+  host: string | null;
+  conflict?: { httpsPort: number; target: string };
+}
 
-  if (port) {
+function checkTailscaleServe(port: number, httpsPort: number, enableAutoServe: boolean = true): ServeCheckResult {
+  const dns = detectTailscaleHostname();
+  if (!dns) return { host: null };
+
+  try {
+    const serveProc = Bun.spawnSync(["tailscale", "serve", "status", "--json"], { timeout: 2000, stderr: "ignore" });
+    if (serveProc.exitCode !== 0 || !serveProc.stdout) return { host: null };
+    const text = serveProc.stdout.toString().trim();
+    let data: any = {};
     try {
-      const serveProc = Bun.spawnSync(["tailscale", "serve", "status", "--json"], { timeout: 2000, stderr: "ignore" });
-      let serveEmpty = false;
-      if (serveProc.exitCode === 0 && serveProc.stdout) {
-        const text = serveProc.stdout.toString().trim();
-        if (text === "{}" || text === "") {
-          serveEmpty = true;
-        } else {
-          try {
-            const data = JSON.parse(text);
-            if (isServingPort(data, port)) return dns;
-          } catch {}
-          return null;
+      data = text ? JSON.parse(text) : {};
+    } catch {
+      return { host: null };
+    }
+
+    let rootProxy: string | undefined;
+    if (data.Web && typeof data.Web === "object") {
+      for (const [k, entry] of Object.entries(data.Web)) {
+        const portMatch = k.endsWith(`:${httpsPort}`) || (httpsPort === 443 && !k.includes(":"));
+        if (portMatch) {
+          rootProxy = (entry as any)?.Handlers?.["/"]?.Proxy;
+          break;
         }
       }
-      if (serveEmpty && isProduction && tryAutoTailscaleServe(port, isProduction)) {
-        return dns;
-      }
-      return null;
-    } catch {
-      return null;
     }
-  }
 
-  return dns;
+    const isTargetingPort =
+      rootProxy === `http://127.0.0.1:${port}` ||
+      rootProxy === `http://localhost:${port}` ||
+      rootProxy === `http://[::1]:${port}`;
+
+    if (isTargetingPort) {
+      return { host: httpsPort === 443 ? dns : `${dns}:${httpsPort}` };
+    }
+
+    if (rootProxy) {
+      return { host: null, conflict: { httpsPort, target: rootProxy } };
+    }
+
+    if (enableAutoServe && tryAutoTailscaleServe(port, httpsPort)) {
+      return { host: httpsPort === 443 ? dns : `${dns}:${httpsPort}` };
+    }
+
+    return { host: null };
+  } catch {
+    return { host: null };
+  }
 }
 
 function detectTailscaleIp(): string | null {
@@ -174,13 +182,29 @@ export interface ResolvedAccess {
   secure: boolean;
   bindHost: string;
   alternatives: Array<{ mode: string; url: string }>;
+  serveConflict?: { httpsPort: number; target: string };
 }
 
 export function resolveAccess(
-  opts: { configured?: string; insecureDev?: boolean; port: number; isProduction?: boolean },
+  opts: {
+    configured?: string;
+    insecureDev?: boolean;
+    port: number;
+    tailscaleHttpsPort?: number;
+    isProduction?: boolean;
+    autoServe?: boolean;
+  },
   probes: AccessProbes = {}
 ): ResolvedAccess {
-  const tailscaleServeDns = probes.tailscaleServeDns ?? (() => detectTailscaleDns(opts.port, opts.isProduction ?? true));
+  const httpsPort =
+    opts.tailscaleHttpsPort ??
+    (opts.port === DEFAULT_PORT ? DEFAULT_TAILSCALE_HTTPS_PORT : DEFAULT_TEST_TAILSCALE_HTTPS_PORT);
+  const serveResult =
+    !opts.insecureDev && !opts.configured && !probes.tailscaleServeDns
+      ? checkTailscaleServe(opts.port, httpsPort, opts.autoServe ?? true)
+      : { host: null };
+
+  const tailscaleServeDns = probes.tailscaleServeDns ?? (() => serveResult.host);
   const tailscaleIp = probes.tailscaleIp ?? detectTailscaleIp;
   const lanIp = probes.lanIp ?? detectLocalIp;
 
@@ -222,6 +246,7 @@ export function resolveAccess(
         secure: false,
         bindHost: "",
         alternatives,
+        serveConflict: serveResult.conflict,
       };
     }
   }
@@ -232,6 +257,7 @@ export function resolveAccess(
       secure: false,
       bindHost: "",
       alternatives,
+      serveConflict: serveResult.conflict,
     };
   }
 
@@ -240,6 +266,7 @@ export function resolveAccess(
     secure: false,
     bindHost: "",
     alternatives,
+    serveConflict: serveResult.conflict,
   };
 }
 
@@ -248,9 +275,10 @@ export function resolveAccess(
  */
 export function resolvePublicBaseUrl(
   opts: { configured?: string; insecureDev: boolean; port: number },
-  detectTs: (port?: number) => string | null = detectTailscaleDns
+  detectTs?: (port?: number) => string | null
 ): string {
-  return resolveAccess(opts, { tailscaleServeDns: () => detectTs(opts.port) }).publicBaseUrl;
+  const probes = detectTs ? { tailscaleServeDns: () => detectTs(opts.port) } : {};
+  return resolveAccess(opts, probes).publicBaseUrl;
 }
 
 function hostOf(hostHeader: string): string | null {
@@ -284,7 +312,17 @@ export class PigeonDaemon {
     const insecureDev = opts.insecureDev ?? serverCfg.insecureDev;
     const productionPort = opts.productionPort ?? resolveProductionPort(this.configManager.env);
     const isProduction = port === productionPort;
-    const access = resolveAccess({ configured: opts.publicBaseUrl || serverCfg.publicBaseUrl, insecureDev, port, isProduction });
+    const tailscaleHttpsPort =
+      serverCfg.tailscaleHttpsPort ??
+      (isProduction ? DEFAULT_TAILSCALE_HTTPS_PORT : DEFAULT_TEST_TAILSCALE_HTTPS_PORT);
+    const access = resolveAccess({
+      configured: opts.publicBaseUrl || serverCfg.publicBaseUrl,
+      insecureDev,
+      port,
+      tailscaleHttpsPort,
+      isProduction,
+      autoServe: opts.autoServe,
+    });
     this.access = access;
 
     const instancePaths = resolveInstancePaths({ port, productionPort, env: this.configManager.env });
@@ -329,6 +367,7 @@ export class PigeonDaemon {
       this.allowedOrigins.add(`http://${tsHost}:${port}`);
       this.allowedOrigins.add(`https://${tsHost}`);
       this.allowedOrigins.add(`https://${tsHost}:${port}`);
+      this.allowedOrigins.add(`https://${tsHost}:${tailscaleHttpsPort}`);
       if (insecureDev || !isProduction) {
         this.allowedOrigins.add(`http://${tsHost}:${VITE_DEV_PORT}`);
       }
@@ -427,8 +466,16 @@ export class PigeonDaemon {
           "obtains the pairing link can control your terminals. Web Push is disabled in this mode.\n"
       );
     } else if (!isHttps) {
+      let conflictNote = "";
+      if (this.access.serveConflict) {
+        conflictNote =
+          `  Tailscale Serve port ${this.access.serveConflict.httpsPort} is currently proxying to ${this.access.serveConflict.target}.\n` +
+          `  To route to this instance, run: tailscale serve --bg --https=${this.access.serveConflict.httpsPort} ${this.config.port}\n` +
+          `  Or configure a different port in config.json (server.tailscaleHttpsPort).\n`;
+      }
       console.warn(
         "\n\x1b[43;30m WARNING \x1b[0m Plain-HTTP mode: Web push notifications are unavailable over plain HTTP (Tailscale HTTPS required for push).\n" +
+          conflictNote +
           "Reachable addresses:\n" +
           this.access.alternatives.map((a) => `  - ${a.mode}: ${a.url}`).join("\n") + "\n"
       );
