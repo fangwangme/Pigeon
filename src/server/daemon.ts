@@ -81,7 +81,7 @@ function isServingPort(data: any, port: number): boolean {
   }
 }
 
-function detectTailscaleDns(port?: number): string | null {
+function detectTailscaleHostname(): string | null {
   let proc: ReturnType<typeof Bun.spawnSync>;
   try {
     proc = Bun.spawnSync(["tailscale", "status", "--json"], { timeout: 2000, stderr: "ignore" });
@@ -89,12 +89,16 @@ function detectTailscaleDns(port?: number): string | null {
     return null; // tailscale binary not installed
   }
   if (proc.exitCode !== 0 || !proc.stdout) return null;
-  let dns: string | undefined;
   try {
-    dns = JSON.parse(proc.stdout.toString()).Self?.DNSName;
+    const dns: string | undefined = JSON.parse(proc.stdout.toString()).Self?.DNSName;
+    return dns ? dns.replace(/\.+$/, "") : null;
   } catch {
     return null;
   }
+}
+
+function detectTailscaleDns(port?: number): string | null {
+  const dns = detectTailscaleHostname();
   if (!dns) return null;
 
   // When port is provided, verify tailscale serve is proxying to this port
@@ -112,7 +116,7 @@ function detectTailscaleDns(port?: number): string | null {
     }
   }
 
-  return dns.replace(/\.+$/, "");
+  return dns;
 }
 
 function detectTailscaleIp(): string | null {
@@ -290,6 +294,17 @@ export class PigeonDaemon {
           this.allowedOrigins.add(`http://${u.hostname}:${VITE_DEV_PORT}`);
         }
       } catch {}
+    }
+
+    const tsHost = detectTailscaleHostname();
+    if (tsHost) {
+      this.allowedHosts.add(tsHost);
+      this.allowedOrigins.add(`http://${tsHost}:${port}`);
+      this.allowedOrigins.add(`https://${tsHost}`);
+      this.allowedOrigins.add(`https://${tsHost}:${port}`);
+      if (insecureDev) {
+        this.allowedOrigins.add(`http://${tsHost}:${VITE_DEV_PORT}`);
+      }
     }
 
     if (insecureDev) {
