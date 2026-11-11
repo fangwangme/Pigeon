@@ -266,6 +266,18 @@ const GROUPS: Array<[RowStatus, MessageId]> = [
   ["idle", "status.idle"],
 ];
 
+const STATUS_ORDER: Record<string, number> = {
+  blocked: 0,
+  working: 1,
+  done: 2,
+  idle: 3,
+  terminal: 4,
+};
+
+function statusRank(st: RowStatus): number {
+  return STATUS_ORDER[st] ?? 99;
+}
+
 /** §2.2 */
 export function AgentsPage() {
   // §2.2: every group starts expanded each time the page opens.
@@ -283,7 +295,15 @@ export function AgentsPage() {
       }
       g.items.push(r);
     }
-    return Array.from(map.values());
+    const list = Array.from(map.values()).map((g) => ({
+      ...g,
+      items: g.items.slice().sort((a, b) => statusRank(paneStatus(a.pane)) - statusRank(paneStatus(b.pane))),
+    }));
+    return list.sort((a, b) => {
+      const rankA = a.items.reduce((m, item) => Math.min(m, statusRank(paneStatus(item.pane))), 99);
+      const rankB = b.items.reduce((m, item) => Math.min(m, statusRank(paneStatus(item.pane))), 99);
+      return rankA - rankB;
+    });
   });
 
   return (
