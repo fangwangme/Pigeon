@@ -67,7 +67,21 @@ function detectLocalIp(): string | null {
 }
 
 /** Tailscale MagicDNS name of this machine, or null when Tailscale is absent or not running. */
-function detectTailscaleDns(): string | null {
+function isServingPort(data: any, port: number): boolean {
+  if (!data || typeof data !== "object") return false;
+  try {
+    const str = JSON.stringify(data);
+    return (
+      str.includes(`127.0.0.1:${port}`) ||
+      str.includes(`localhost:${port}`) ||
+      str.includes(`[::1]:${port}`)
+    );
+  } catch {
+    return false;
+  }
+}
+
+function detectTailscaleDns(port?: number): string | null {
   let proc: ReturnType<typeof Bun.spawnSync>;
   try {
     proc = Bun.spawnSync(["tailscale", "status", "--json"], { timeout: 2000, stderr: "ignore" });
@@ -75,12 +89,30 @@ function detectTailscaleDns(): string | null {
     return null; // tailscale binary not installed
   }
   if (proc.exitCode !== 0 || !proc.stdout) return null;
+  let dns: string | undefined;
   try {
-    const dns: string | undefined = JSON.parse(proc.stdout.toString()).Self?.DNSName;
-    return dns ? dns.replace(/\.+$/, "") : null;
+    dns = JSON.parse(proc.stdout.toString()).Self?.DNSName;
   } catch {
     return null;
   }
+  if (!dns) return null;
+
+  // When port is provided, verify tailscale serve is proxying to this port
+  // (architecture.md §4.2: "when tailscale serve proxies to 127.0.0.1:<port>")
+  if (port) {
+    try {
+      const serveProc = Bun.spawnSync(["tailscale", "serve", "status", "--json"], { timeout: 2000, stderr: "ignore" });
+      if (serveProc.exitCode !== 0 || !serveProc.stdout) return null;
+      const text = serveProc.stdout.toString().trim();
+      if (!text || text === "{}") return null;
+      const data = JSON.parse(text);
+      if (!isServingPort(data, port)) return null;
+    } catch {
+      return null;
+    }
+  }
+
+  return dns.replace(/\.+$/, "");
 }
 
 function detectTailscaleIp(): string | null {
@@ -121,7 +153,7 @@ export function resolveAccess(
   opts: { configured?: string; insecureDev?: boolean; port: number },
   probes: AccessProbes = {}
 ): ResolvedAccess {
-  const tailscaleServeDns = probes.tailscaleServeDns ?? detectTailscaleDns;
+  const tailscaleServeDns = probes.tailscaleServeDns ?? (() => detectTailscaleDns(opts.port));
   const tailscaleIp = probes.tailscaleIp ?? detectTailscaleIp;
   const lanIp = probes.lanIp ?? detectLocalIp;
 
@@ -189,9 +221,9 @@ export function resolveAccess(
  */
 export function resolvePublicBaseUrl(
   opts: { configured?: string; insecureDev: boolean; port: number },
-  detectTs: () => string | null = detectTailscaleDns
+  detectTs: (port?: number) => string | null = detectTailscaleDns
 ): string {
-  return resolveAccess(opts, { tailscaleServeDns: detectTs }).publicBaseUrl;
+  return resolveAccess(opts, { tailscaleServeDns: () => detectTs(opts.port) }).publicBaseUrl;
 }
 
 function hostOf(hostHeader: string): string | null {
