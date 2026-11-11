@@ -56,17 +56,45 @@ export class AntigravityQuotaProvider {
   }
 
   private readAccountEmail(): string | undefined {
-    const p = this.tokenPath();
-    if (!existsSync(p)) return undefined;
-    try {
-      const data = JSON.parse(readFileSync(p, "utf-8"));
-      if (data?.id_token) {
-        const payload = decodeJwtPayload(data.id_token);
-        if (payload?.email) return payload.email;
+    // 1. Check OAuth token file (antigravity-oauth-token)
+    const tokenPaths = [
+      process.env.TOKENPULSE_ANTIGRAVITY_AUTH_PATH,
+      this.tokenPath(),
+    ].filter(Boolean) as string[];
+
+    for (const tp of tokenPaths) {
+      if (existsSync(tp)) {
+        try {
+          const data = JSON.parse(readFileSync(tp, "utf-8"));
+          if (data?.id_token) {
+            const payload = decodeJwtPayload(data.id_token);
+            if (payload?.email) return payload.email;
+          }
+        } catch {
+          // ignore
+        }
       }
-    } catch {
-      // ignore
     }
+
+    // 2. Check Antigravity Desktop app_storage.json
+    const storagePaths = [
+      join(this.home, ".config", "Antigravity", "app_storage.json"),
+      join(this.home, "Library", "Application Support", "Antigravity", "app_storage.json"),
+    ];
+    for (const sp of storagePaths) {
+      if (existsSync(sp)) {
+        try {
+          const data = JSON.parse(readFileSync(sp, "utf-8"));
+          const username = data?.["jetski.onboarding.lastLoginUsername"];
+          if (typeof username === "string" && username.includes("@")) {
+            return username.trim();
+          }
+        } catch {
+          // ignore
+        }
+      }
+    }
+
     return undefined;
   }
 
@@ -129,7 +157,29 @@ export class AntigravityQuotaProvider {
     const data = (await res.json()) as any;
     const summary = data?.response || data;
     if (!summary?.groups) return null;
-    return this.buildSnapshotFromGroups(summary.groups);
+
+    let lsEmail: string | undefined;
+    try {
+      const statusRes = await fetch(`http://${address}/exa.language_server_pb.LanguageServerService/GetUserStatus`, {
+        method: "POST",
+        headers,
+        signal: AbortSignal.timeout(5000),
+        body: JSON.stringify({
+          metadata: { ideName: "antigravity", extensionName: "antigravity", ideVersion: "unknown", locale: "en" },
+        }),
+      });
+      if (statusRes.ok) {
+        const sData = (await statusRes.json()) as any;
+        const email = sData?.userStatus?.email;
+        if (typeof email === "string" && email.trim()) {
+          lsEmail = email.trim();
+        }
+      }
+    } catch {
+      // ignore
+    }
+
+    return this.buildSnapshotFromGroups(summary.groups, lsEmail);
   }
 
   private async probeAgyCli(): Promise<QuotaSnapshot | null> {
@@ -212,7 +262,7 @@ export class AntigravityQuotaProvider {
     return this.buildSnapshotFromGroups(summary.groups);
   }
 
-  private buildSnapshotFromGroups(groups: any[]): QuotaSnapshot {
+  private buildSnapshotFromGroups(groups: any[], preferredEmail?: string): QuotaSnapshot {
     interface WindowSortItem {
       gRank: number;
       gIdx: number;
@@ -268,7 +318,7 @@ export class AntigravityQuotaProvider {
     });
 
     const windows = items.map((i) => i.window);
-    const account = this.readAccountEmail();
+    const account = preferredEmail || this.readAccountEmail();
 
     return {
       provider: "antigravity",

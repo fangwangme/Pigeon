@@ -10,6 +10,8 @@ export const en = {
   "agent.terminal": "Terminal",
 
   "agents.title": "All agents",
+  "agents.groupByStatus": "By Status",
+  "agents.groupByWorkspace": "By Workspace",
   "agents.empty": "No agents",
   "agents.emptyFiltered": "Nothing matches the current filter.",
   "agents.emptyHint": "Start an agent from a new session.",

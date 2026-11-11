@@ -11,6 +11,8 @@ export const zh: Messages = {
   "agent.terminal": "终端",
 
   "agents.title": "所有 Agent",
+  "agents.groupByStatus": "按状态",
+  "agents.groupByWorkspace": "按工作区",
   "agents.empty": "没有 Agent",
   "agents.emptyFiltered": "当前筛选下没有结果。",
   "agents.emptyHint": "在新会话里启动一个 Agent。",
