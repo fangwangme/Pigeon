@@ -186,7 +186,7 @@ svg.i.sm { width: 16px; height: 16px; }
 .todo { position: relative; display: inline-flex; align-items: center; gap: 8px; height: 38px; padding: 0 14px; border-radius: 19px; font-size: 13px; max-width: 72%; }
 .todo span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .ring { width: 16px; height: 16px; border-radius: 50%; flex: none; -webkit-mask: radial-gradient(circle, transparent 4.5px, #000 5px); mask: radial-gradient(circle, transparent 4.5px, #000 5px); }
-.jump { position: relative; width: 44px; height: 44px; border-radius: 50%; display: grid; place-items: center; margin-left: auto; }
+.jump { position: relative; width: 44px; height: 44px; border-radius: 50%; display: grid; place-items: center; margin-left: auto; margin-bottom: 10px; }
 .qcap { position: relative; align-self: center; height: 38px; padding: 0 16px; border-radius: 19px; font-size: 13.5px; color: var(--warn); display: inline-flex; align-items: center; gap: 8px; }
 .pop { position: relative; border-radius: 24px; padding: 6px 12px; max-height: 46vh; overflow-y: auto; }
 
