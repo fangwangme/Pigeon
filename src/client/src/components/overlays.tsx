@@ -124,6 +124,21 @@ function FilterSheet() {
         </Show>
       }
     >
+      <div class="sec">{t("filter.grouping")}</div>
+      <div class="chipr">
+        <button
+          class={`chip${(state.filter.groupBy || "status") === "status" ? " hi" : ""}`}
+          onClick={() => setFilter({ ...state.filter, groupBy: "status" })}
+        >
+          {t("agents.groupByStatus")}
+        </button>
+        <button
+          class={`chip${state.filter.groupBy === "workspace" ? " hi" : ""}`}
+          onClick={() => setFilter({ ...state.filter, groupBy: "workspace" })}
+        >
+          {t("agents.groupByWorkspace")}
+        </button>
+      </div>
       <div class="sec">{t("filter.status")}</div>
       <div class="chipr" style={{ "flex-wrap": "wrap" }}>
         <For each={STATUS_CHOICES}>
@@ -143,21 +158,6 @@ function FilterSheet() {
             </button>
           )}
         </For>
-      </div>
-      <div class="sec">{t("filter.grouping")}</div>
-      <div class="chipr">
-        <button
-          class={`chip${(state.filter.groupBy || "status") === "status" ? " hi" : ""}`}
-          onClick={() => setFilter({ ...state.filter, groupBy: "status" })}
-        >
-          {t("agents.groupByStatus")}
-        </button>
-        <button
-          class={`chip${state.filter.groupBy === "workspace" ? " hi" : ""}`}
-          onClick={() => setFilter({ ...state.filter, groupBy: "workspace" })}
-        >
-          {t("agents.groupByWorkspace")}
-        </button>
       </div>
       <div class="sec">{t("filter.show")}</div>
       <div class="card">
