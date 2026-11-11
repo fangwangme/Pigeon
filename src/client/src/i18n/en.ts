@@ -80,6 +80,7 @@ export const en = {
   "filter.title": "Filter",
   "filter.reset": "Reset",
   "filter.status": "Status",
+  "filter.grouping": "Grouping",
   "filter.show": "Show",
   "filter.showTerminals": "Plain terminals",
   "filter.showIdle": "Idle sessions",

@@ -279,7 +279,7 @@ function statusRank(st: RowStatus): number {
 export function AgentsPage() {
   // §2.2: every group starts expanded each time the page opens.
   const [shut, setShut] = createSignal<Record<string, boolean>>({});
-  const [groupBy, setGroupBy] = createSignal<"status" | "workspace">("status");
+  const groupBy = () => state.filter.groupBy || "status";
   const rows = createMemo(() => agentPanes().filter((a) => passes(paneStatus(a.pane), a.pane.agent, state.filter)));
 
   const wsGroups = createMemo(() => {
@@ -332,14 +332,6 @@ export function AgentsPage() {
       <ConnectionBanner />
       <div class="scroll">
         <div class="home">
-          <div class="seg" style={{ margin: "4px 0 14px" }}>
-            <button class={groupBy() === "status" ? "on" : ""} onClick={() => setGroupBy("status")}>
-              {t("agents.groupByStatus")}
-            </button>
-            <button class={groupBy() === "workspace" ? "on" : ""} onClick={() => setGroupBy("workspace")}>
-              {t("agents.groupByWorkspace")}
-            </button>
-          </div>
           <Show when={rows().length === 0}>
             <div class="emptyh">
               <div class="big">{t("agents.empty")}</div>

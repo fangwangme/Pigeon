@@ -144,6 +144,21 @@ function FilterSheet() {
           )}
         </For>
       </div>
+      <div class="sec">{t("filter.grouping")}</div>
+      <div class="chipr">
+        <button
+          class={`chip${(state.filter.groupBy || "status") === "status" ? " hi" : ""}`}
+          onClick={() => setFilter({ ...state.filter, groupBy: "status" })}
+        >
+          {t("agents.groupByStatus")}
+        </button>
+        <button
+          class={`chip${state.filter.groupBy === "workspace" ? " hi" : ""}`}
+          onClick={() => setFilter({ ...state.filter, groupBy: "workspace" })}
+        >
+          {t("agents.groupByWorkspace")}
+        </button>
+      </div>
       <div class="sec">{t("filter.show")}</div>
       <div class="card">
         <button class="li" onClick={() => setFilter({ ...state.filter, showTerminals: !state.filter.showTerminals })}>

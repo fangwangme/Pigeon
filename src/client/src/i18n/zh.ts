@@ -81,6 +81,7 @@ export const zh: Messages = {
   "filter.title": "筛选",
   "filter.reset": "重置",
   "filter.status": "状态",
+  "filter.grouping": "分组方式",
   "filter.show": "显示",
   "filter.showTerminals": "显示普通终端",
   "filter.showIdle": "显示空闲的会话",

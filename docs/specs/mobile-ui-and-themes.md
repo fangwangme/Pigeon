@@ -40,13 +40,13 @@ Pigeon is a phone app for Herdr, written as a PWA. It follows the interaction mo
 - Home and All Agents view no pane (`protocol.md` §4.4 `paneId: null`), so the daemon polls nothing for them.
 
 ### 2.2 All agents
-The header holds a grouping toggle (By Status vs By Workspace), **quota** (§11.1), and **filter**.
-- **By Status** (default): Every pane with an agent, grouped by status in urgency order: **等待你** → **工作中** → **已完成** → **空闲**.
-- **By Workspace**: Grouped by Herdr workspace, with workspaces and items sorted by status urgency priority (`blocked` → `working` → `done` → `idle`).
+The header holds **quota** (§11.1) and **filter** (§2.3).
+- **By Status** (default, selected via filter sheet §2.3): Every pane with an agent, grouped by status in urgency order: **等待你** → **工作中** → **已完成** → **空闲**.
+- **By Workspace** (selected via filter sheet §2.3): Grouped by Herdr workspace, with workspaces and items sorted by status urgency priority (`blocked` → `working` → `done` → `idle`).
 - Every group starts expanded each time the page opens; a group header collapses or expands its group, and its chevron points down when expanded and right when collapsed. Each row shows the agent's icon, the tab label as title, and a subtitle with workspace folder and model tag (flex allocation prioritizes workspace folder visibility over model label when space is tight). A waiting row adds one amber line saying what it waits for (the pane's summary). A tap opens that session; back returns here.
 
 ### 2.3 Filter
-A sheet shared by §2.1 and §2.2: status (等待你, 工作中, 已完成, 空闲, 终端), agent kind, and display options (show plain terminals, show idle tabs). While a filter is active the filter button carries a dot. Stored in this browser's `localStorage` only, never synced.
+A sheet shared by §2.1 and §2.2: status (等待你, 工作中, 已完成, 空闲, 终端), agent kind, grouping (按状态 / By Status default, or 按工作区 / By Workspace), and display options (show plain terminals, show idle tabs). While a filter is active the filter button carries a dot. Stored in this browser's `localStorage` only, never synced.
 
 ## 3. Session page
 

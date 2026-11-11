@@ -37,9 +37,10 @@ export interface FilterState {
   agents: string[];
   showTerminals: boolean;
   showIdle: boolean;
+  groupBy?: "status" | "workspace";
 }
 
-export const EMPTY_FILTER: FilterState = { statuses: [], agents: [], showTerminals: true, showIdle: true };
+export const EMPTY_FILTER: FilterState = { statuses: [], agents: [], showTerminals: true, showIdle: true, groupBy: "status" };
 
 export interface AppState {
   connected: boolean;
@@ -226,7 +227,7 @@ export function setFilter(filter: FilterState): void {
 }
 
 export function filterActive(f: FilterState = state.filter): boolean {
-  return f.statuses.length > 0 || f.agents.length > 0 || !f.showTerminals || !f.showIdle;
+  return f.statuses.length > 0 || f.agents.length > 0 || !f.showTerminals || !f.showIdle || (Boolean(f.groupBy) && f.groupBy !== "status");
 }
 
 export function toggleCollapsed(workspaceId: string): void {
