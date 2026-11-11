@@ -429,12 +429,23 @@ export function Turn(props: { turn: NormalizedTurn; last: boolean; working: bool
             <Show when={p().files?.length}>
               <div class="att">
                 <For each={p().files}>
-                  {(f) => (
-                    <span>
-                      <Icon name="image" sm />
-                      {f.split("/").pop()}
-                    </span>
-                  )}
+                  {(f) => {
+                    const uploadMatch = f.match(/up_[0-9a-f]{16}/);
+                    const uploadId = uploadMatch ? uploadMatch[0] : null;
+                    const fileName = f.split("/").pop() || f;
+                    const isImg = /\.(png|jpe?g|webp|gif|svg)$/i.test(f) || !!uploadId;
+                    return uploadId ? (
+                      <a href={`/api/uploads/${uploadId}`} target="_blank" rel="noopener noreferrer" class="att-thumb-link">
+                        <img src={`/api/uploads/${uploadId}`} alt={fileName} class="att-thumb" />
+                        <span class="att-name">{fileName.replace(/^up_[0-9a-f]{16}-/, "")}</span>
+                      </a>
+                    ) : (
+                      <span>
+                        <Icon name={isImg ? "image" : "folder"} sm />
+                        {fileName}
+                      </span>
+                    );
+                  }}
                 </For>
               </div>
             </Show>

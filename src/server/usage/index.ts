@@ -157,8 +157,19 @@ export class UsageService {
   }
 
   public async getUsage(req: { preset: string; from?: string; to?: string; agents: string[]; force?: boolean }): Promise<UsageGetPayload> {
-    if (req.force || this.getScanMode() === "realtime" || !this.hasScannedOnce) {
-      await this.scan();
+    const mode = this.getScanMode();
+    if (mode === "scheduled") {
+      // In scheduled mode, background timer keeps the cache fresh; do not scan on query unless never scanned
+      if (!this.hasScannedOnce) {
+        await this.scan();
+      }
+    } else {
+      // In realtime mode, allow query refresh with 60-second cooldown
+      const now = this.now();
+      const isCooldown = this.lastScanTime !== null && (now - this.lastScanTime < 60_000);
+      if (!isCooldown || !this.hasScannedOnce) {
+        await this.scan();
+      }
     }
 
     const nowDt = new Date(this.now());

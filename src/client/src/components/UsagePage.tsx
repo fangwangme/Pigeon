@@ -558,7 +558,7 @@ export function UsagePage() {
               ? (usageReport() ? t("quota.refreshing") : t("usage.loading"))
               : usageReport()?.scannedAt
               ? t("quota.scannedTo", {
-                  time: new Date(usageReport()!.scannedAt).toTimeString().slice(0, 5),
+                  time: new Date(usageReport()!.scannedAt).toTimeString().slice(0, 8),
                 })
               : ""}
           </div>

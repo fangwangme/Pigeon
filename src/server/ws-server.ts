@@ -654,6 +654,7 @@ export class WsServer {
       case "config_patch": {
         const client = this.configManager.patchClientConfig(msg.payload.client);
         this.usageService?.updateConfig();
+        this.quotaService?.updateConfig();
         this.configVersion++;
         this.sendAck(ws, msg.id, { version: this.configVersion, client });
         this.broadcastConfigUpdated(client, ws);
@@ -936,9 +937,11 @@ export class WsServer {
   private composePrompt(paneId: string, text: string, paths: string[]): string {
     if (paths.length === 0) return text;
     const kind = this.herdrClient.getPaneAgentKind(paneId);
-    const prefix = (kind && getAgentRecipe(kind)?.mentionPrefix) || "";
-    const lines = paths.map((p) => prefix + p).join("\n");
-    return text.trim() ? `${text}\n\n${lines}` : lines;
+    const recipe = kind ? getAgentRecipe(kind) : undefined;
+    const prefix = recipe?.mentionPrefix ?? "";
+    const sep = recipe?.attachmentSeparator ?? "\n\n";
+    const lines = paths.map((p) => prefix + p).join(sep === " " ? " " : "\n");
+    return text.trim() ? `${text}${sep}${lines}` : lines;
   }
 
   private getQueueState(paneId: string): { state: "idle" | "sending"; sawWorking: boolean; unboundSent: boolean; timer?: ReturnType<typeof setTimeout> } {
@@ -1243,6 +1246,7 @@ export class WsServer {
     this.herdrClient.off("cards_updated", this.onCardsUpdated);
     this.herdrClient.off("pane_status_changed", this.onPaneStatusChanged);
     this.usageService?.destroy();
+    this.quotaService?.destroy();
     this.paneStore.destroy();
   }
 }

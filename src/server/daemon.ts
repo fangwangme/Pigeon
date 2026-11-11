@@ -130,7 +130,7 @@ export function resolveAccess(
   const tsServe = !opts.insecureDev ? tailscaleServeDns() : null;
   if (tsServe) alternatives.push({ mode: "Tailscale Serve", url: `https://${tsServe.replace(/\/+$/, "")}` });
 
-  const tsIp = !opts.insecureDev ? tailscaleIp() : null;
+  const tsIp = tailscaleIp();
   if (tsIp) alternatives.push({ mode: "Tailscale IP", url: `http://${tsIp}:${opts.port}` });
 
   const lan = lanIp();
@@ -247,6 +247,19 @@ export class PigeonDaemon {
     const publicUrl = new URL(this.config.publicBaseUrl);
     this.allowedHosts = new Set(["localhost", "127.0.0.1", "[::1]", publicUrl.hostname]);
     this.allowedOrigins = new Set([publicUrl.origin]);
+
+    for (const alt of this.access.alternatives) {
+      try {
+        const u = new URL(alt.url);
+        this.allowedHosts.add(u.hostname);
+        this.allowedOrigins.add(u.origin);
+        if (insecureDev) {
+          this.allowedOrigins.add(`http://${u.hostname}:${port}`);
+          this.allowedOrigins.add(`http://${u.hostname}:${VITE_DEV_PORT}`);
+        }
+      } catch {}
+    }
+
     if (insecureDev) {
       for (const h of ["localhost", "127.0.0.1", "[::1]"]) {
         this.allowedOrigins.add(`http://${h}:${port}`);
@@ -415,6 +428,23 @@ export class PigeonDaemon {
           const mime = (req.headers.get("content-type") || "application/octet-stream").split(";")[0].trim();
           const info = self.uploadStore.save({ name, mime, bytes });
           return Response.json({ id: info.id, name: info.name, size: info.size, mime: info.mime });
+        }
+
+        const uploadMatch = url.pathname.match(/^\/api\/uploads\/(up_[0-9a-f]{16})$/);
+        if (uploadMatch && req.method === "GET") {
+          const rejected = self.checkHostAndOrigin(req);
+          if (rejected) return rejected;
+          if (!sessionOf(req)) return new Response("Unauthorized", { status: 401 });
+          const info = self.uploadStore.get(uploadMatch[1]);
+          if (!info) return new Response("Not found", { status: 404 });
+          const file = Bun.file(info.path);
+          return new Response(file, {
+            headers: {
+              "Content-Type": info.mime || "application/octet-stream",
+              "Content-Disposition": `inline; filename="${encodeURIComponent(info.name)}"`,
+              "Cache-Control": "private, max-age=86400",
+            },
+          });
         }
 
         if (url.pathname === "/api/version") return Response.json({ version: SERVER_VERSION, name: "pigeon" });

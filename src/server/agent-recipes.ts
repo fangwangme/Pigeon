@@ -23,6 +23,8 @@ export interface AgentRecipe {
   launchModel?: false;
   /** Prefix for an attachment's path in a prompt (`protocol.md` §4.2). */
   mentionPrefix: string;
+  /** Separator between prompt text and attachment paths (defaults to "\n\n"). */
+  attachmentSeparator?: string;
   /** The agent's own runtime commands (`herdr-adapter.md` §7); absent when it has none. */
   runtimeModelCommand?: (modelId: string) => string;
   runtimeThinkingCommand?: (level: string) => string;
@@ -75,7 +77,8 @@ const AGENT_RECIPES: Record<string, AgentRecipe> = {
     promptInArgv: true,
     interruptKeys: ["esc"],
     resumable: false,
-    mentionPrefix: "@",
+    mentionPrefix: "",
+    attachmentSeparator: " ",
   },
   opencode: {
     kind: "opencode",
