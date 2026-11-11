@@ -16,8 +16,8 @@
     <link rel="icon" type="image/png" sizes="192x192" href="/icon-192.png" />
     <title>Pigeon</title>
     <style>
-      :where(:root) { color-scheme: light dark; }
-      :where(html, body) { background: #111113; color: #F2F2F3; margin: 0; height: 100%; }
+      :where(:root) { color-scheme: light dark; -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
+      :where(html, body) { background: #111113; color: #F2F2F3; margin: 0; height: 100%; -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
       @media (prefers-color-scheme: light) {
         :where(:root:not([data-theme="dark"]), :root:not([data-theme="dark"]) body) { background: #F8F8F6; color: #18181A; }
       }

@@ -1,12 +1,13 @@
 /* Pigeon PWA — mobile-ui-and-themes.md. Colors come only from the tokens set by themes.ts. */
 * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
-:root { color-scheme: light dark; }
+:root { color-scheme: light dark; -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
 :root[data-theme="dark"] { color-scheme: dark; }
 :root[data-theme="light"] { color-scheme: light; }
-html, body, #root { height: 100%; width: 100%; overflow: hidden; background: var(--bg); color: var(--fg); }
+html, body, #root { height: 100%; width: 100%; overflow: hidden; background: var(--bg); color: var(--fg); -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
 body {
   font: 15px/1.5 -apple-system, BlinkMacSystemFont, "SF Pro Text", Inter, "PingFang SC", "Noto Sans SC", "Segoe UI", sans-serif;
   -webkit-font-smoothing: antialiased; overscroll-behavior: none;
+  -webkit-text-size-adjust: 100%; text-size-adjust: 100%;
 }
 button { font: inherit; color: inherit; background: none; border: 0; cursor: pointer; }
 input, textarea { font: inherit; color: inherit; }
@@ -105,8 +106,8 @@ svg.i.sm { width: 16px; height: 16px; }
 .msg a { color: var(--accent); text-underline-offset: 2px; }
 .msg blockquote { border-left: 3px solid var(--line2); padding: 2px 12px; color: var(--muted); margin: 8px 0; }
 .msg code:not(pre code) { font-size: 13.5px; background: var(--code); border: 1px solid var(--line); padding: 1px 5px; border-radius: 6px; }
-.msg table { display: block; width: max-content; max-width: 100%; overflow-x: auto; -webkit-overflow-scrolling: touch; border-collapse: collapse; white-space: nowrap; font-size: 13.5px; margin: 10px 0; }
-.msg th, .msg td { padding: 7px 12px; border-bottom: 1px solid var(--line); text-align: left; min-width: 72px; }
+.msg table { display: block; width: max-content; max-width: 100%; overflow-x: auto; -webkit-overflow-scrolling: touch; border-collapse: collapse; white-space: nowrap; font-size: 13.5px; margin: 10px 0; -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
+.msg th, .msg td { padding: 7px 12px; border-bottom: 1px solid var(--line); text-align: left; min-width: 72px; font-size: 13.5px; -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
 .msg th { color: var(--muted); font-weight: 600; }
 .msg hr { border: 0; border-top: 1px solid var(--line); margin: 14px 0; }
 .cb { background: var(--code); border: 1px solid var(--line); border-radius: 14px; margin: 10px 0; overflow: hidden; position: relative; }
@@ -215,8 +216,8 @@ svg.i.sm { width: 16px; height: 16px; }
 .fl button { color: var(--accent); min-height: 32px; display: inline-flex; align-items: center; gap: 4px; font-weight: 600; }
 .fbox { background: var(--code); border: 1px solid var(--line); border-radius: 14px; padding: 10px 12px; font-size: 13px; line-height: 1.55; white-space: pre-wrap; word-break: break-all; }
 .fbox.txt { font-family: inherit; font-size: 15px; word-break: normal; }
-.diff { background: var(--code); border: 1px solid var(--line); border-radius: 14px; overflow-x: auto; font-size: 12.5px; line-height: 1.6; padding: 6px 0; }
-.diff div { white-space: pre; padding: 0 12px 0 8px; border-left: 3px solid transparent; width: max-content; min-width: 100%; }
+.diff { background: var(--code); border: 1px solid var(--line); border-radius: 14px; overflow-x: auto; font-size: 12.5px; line-height: 1.6; padding: 6px 0; -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
+.diff div { white-space: pre; padding: 0 12px 0 8px; border-left: 3px solid transparent; width: max-content; min-width: 100%; font-size: 12.5px; -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
 .diff .ln { color: var(--faint); display: inline-block; width: 30px; text-align: right; margin-right: 10px; user-select: none; }
 .diff .a { background: var(--addbg); border-left-color: var(--addfg); }
 .diff .d { background: var(--delbg); border-left-color: var(--delfg); }
