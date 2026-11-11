@@ -508,6 +508,10 @@ export function Composer(props: ComposerProps) {
           enterkeyhint={isTouch() ? "enter" : "send"}
           // mobile-ui-and-themes.md §1.2: no password, address or card suggestions above the keyboard.
           autocomplete="off"
+          autocorrect="off"
+          autocapitalize="sentences"
+          spellcheck={false}
+          inputmode="text"
           aria-autocomplete="none"
           data-form-type="other"
           onPaste={handlePaste}

@@ -120,6 +120,8 @@ export class HerdrClient extends EventEmitter {
   private seenPanes = new Set<string>();
   /** protocol.md §5.3: the title of the session bound to a pane, for tabs without a name of their own. */
   private sessionTitleOf: (paneId: string) => string | undefined = () => undefined;
+  /** protocol.md §5.3: the active/latest model of the session bound to a pane. */
+  private sessionModelOf: (paneId: string) => string | undefined = () => undefined;
   private lastTopology: HerdrTopology | null = null;
   private monitoredPaneIds = new Set<string>();
   private workspaceFolders = new Map<string, string>();
@@ -446,6 +448,10 @@ export class HerdrClient extends EventEmitter {
     this.sessionTitleOf = source;
   }
 
+  public setSessionModelSource(source: (paneId: string) => string | undefined): void {
+    this.sessionModelOf = source;
+  }
+
   /** A bound session's title changed: rebuild the snapshot from the last topology, without asking Herdr. */
   public relabelTabs(): void {
     if (this.lastTopology) this.applySnapshot(this.lastTopology);
@@ -541,6 +547,7 @@ export class HerdrClient extends EventEmitter {
               summaryKind,
             });
           }
+          const model = this.sessionModelOf(ref.terminal);
           return {
             id: ref.terminal,
             agent: known.agentKind,
@@ -548,6 +555,7 @@ export class HerdrClient extends EventEmitter {
             isPrimary: idx === 0,
             name,
             ...(known.program ? { program: known.program } : {}),
+            ...(model ? { model } : {}),
             ...(summaryKind ? { summary, summaryKind } : {}),
           };
         });

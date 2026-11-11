@@ -15,6 +15,13 @@ import { t } from "./i18n";
 
 applyTheme(state.themeMode, state.accent);
 
+if (typeof window !== "undefined") {
+  const isStandalone = window.matchMedia("(display-mode: standalone)").matches || Boolean((navigator as any).standalone);
+  if (isStandalone) {
+    document.documentElement.setAttribute("data-mode", "standalone");
+  }
+}
+
 let waitingWorker: ServiceWorker | null = null;
 
 function applyUpdate() {

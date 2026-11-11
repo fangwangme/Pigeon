@@ -170,9 +170,11 @@ export class WsServer {
     // herdr-adapter.md §7.1: a model named in a session's records that the catalog lacks fills it again.
     this.paneStore.on("session_model", (agent: string, model: string) => {
       void this.modelCatalog.noteModel(agent, model).then((changed) => changed && this.broadcastRecipes());
+      queueMicrotask(() => this.herdrClient.relabelTabs());
     });
     this.paneStore.setModelResolver((agent, idOrLabel) => this.modelCatalog.resolve(agent, idOrLabel));
     this.herdrClient.setSessionTitleSource((paneId) => this.paneStore.sessionTitle(paneId));
+    this.herdrClient.setSessionModelSource((paneId) => this.paneStore.sessionInfo(paneId, null).model.value ?? undefined);
     // Titles change while a snapshot is being handled (binding reads the session), so relabel after it.
     this.paneStore.on("title_changed", () => queueMicrotask(() => this.herdrClient.relabelTabs()));
 

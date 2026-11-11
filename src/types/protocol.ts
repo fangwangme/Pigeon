@@ -66,6 +66,8 @@ export interface PaneSummary {
   name?: string;
   /** The pane's foreground program (`protocol.md` §5.3). */
   program?: string;
+  /** The session's latest active model, or launch model (`protocol.md` §5.3). */
+  model?: string;
   summary?: string;
   /** How the phone shows `summary` (`protocol.md` §5.3). */
   summaryKind?: SummaryKind;

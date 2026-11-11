@@ -4,6 +4,7 @@ import { selectPane } from "../state/ws";
 import type { PaneSummary, TabSummary, WorkspaceSummary } from "../../../types/protocol";
 import { openOverlay } from "./overlays";
 import { agentLabel, Icon, Logo, paneStatus, paneSummary, primaryPane, StatusIcon, tabStatus, type RowStatus } from "./ui";
+import { AgentIcon } from "./AgentIcon";
 import { t, type MessageId } from "../i18n";
 import { quotaDot } from "../../../shared/quota";
 
@@ -43,7 +44,7 @@ function TabRow(props: { ws: WorkspaceSummary; tab: TabSummary }) {
   const status = () => tabStatus(props.tab);
   const sub = () => {
     const p = pane();
-    const parts = [p?.agent ? agentLabel(p.agent) : p?.program || t("agent.terminal")];
+    const parts = [p?.agent ? (p.model || agentLabel(p.agent)) : p?.program || t("agent.terminal")];
     if (props.tab.panes.length > 1) parts.push(t("home.paneCount", { count: props.tab.panes.length }));
     return parts.join(" · ");
   };
@@ -94,7 +95,12 @@ function TabRow(props: { ws: WorkspaceSummary; tab: TabSummary }) {
       >
         <StatusIcon status={status()} />
         <div class="tx">
-          <div class="t">{props.tab.label}</div>
+          <div class="t">
+            <Show when={pane()?.agent}>
+              <AgentIcon kind={pane()!.agent!} />
+            </Show>
+            <span>{props.tab.label}</span>
+          </div>
           <div class="s">{sub()}</div>
           <Show when={status() === "blocked" && paneSummary(pane())}>
             <div class="p">{paneSummary(pane())}</div>
@@ -320,13 +326,18 @@ export function AgentsPage() {
                         <button class="srow" onClick={() => openPane(r.pane.id, "agents")}>
                           <StatusIcon status={status} />
                           <div class="tx">
-                            <div class="t">{r.tab.label}</div>
+                            <div class="t">
+                              <Show when={r.pane.agent}>
+                                <AgentIcon kind={r.pane.agent!} />
+                              </Show>
+                              <span>{r.tab.label}</span>
+                            </div>
                             <div class="s who">
-                              <span class="ag">{agentLabel(r.pane.agent)}</span>
                               <span class="wsn">
                                 <Icon name="folder" sm />
                                 {r.ws.label}
                               </span>
+                              <span class="ag">{r.pane.model || agentLabel(r.pane.agent)}</span>
                             </div>
                             <Show when={status === "blocked" && paneSummary(r.pane)}>
                               <div class="p">{paneSummary(r.pane)}</div>
