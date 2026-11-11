@@ -138,8 +138,8 @@ The full design and contracts live in [`docs/specs/`](docs/specs/).
 
 - The [Herdr](https://herdr.dev) desktop app (`herdr-app` + `herdr-core`) running on your computer with its window open. (The older terminal-only `herdr` TUI is not supported.)
 - [Node.js](https://nodejs.org) or [Bun](https://bun.sh) to install from npm, or Bun to build from source.
-- [Tailscale](https://tailscale.com) on both your computer and your phone, signed into the same tailnet, so the phone gets an HTTPS address.
-- Chrome (or another modern Chromium browser) on Android. iOS Safari isn't supported yet.
+- [Tailscale](https://tailscale.com) on both your computer and your phone, signed into the same tailnet, so the phone gets a trusted HTTPS address for Web Push and PWA install. See the [Tailscale Setup Guide](docs/usage/tailscale.md) for step-by-step HTTPS configuration, firewall rules, and mobile pairing.
+- Chrome on Android, or Safari / Chrome on iOS.
 
 ## Pairing and devices
 
@@ -179,7 +179,7 @@ tailscale serve --bg 4100
 ./dist/pigeon start
 ```
 
-To put `pigeon` on your `PATH`, keep it running with `systemd`, and push updates to your phone as you work, see [`docs/usage/README.md`](docs/usage/README.md).
+To put `pigeon` on your `PATH`, keep it running with `systemd`, and push updates to your phone as you work, see [`docs/usage/README.md`](docs/usage/README.md). For HTTPS certificates and remote access setup, see the [`Tailscale Setup Guide`](docs/usage/tailscale.md).
 
 ## Status
 
