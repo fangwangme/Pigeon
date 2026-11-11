@@ -82,20 +82,6 @@ export function modelLabel(model: string | null | undefined, agent?: string | nu
     const fuzzy = list.find((m) => norm(m.id) === target || norm(m.label) === target);
     if (fuzzy) return fuzzy.label;
   }
-  // Fallback humanization:
-  // e.g. "gemini-3-8-flash-medium" or "gemini-3.8-flash-medium" -> "Gemini 3.8 Flash (Medium)"
-  const geminiMatch = model.match(/^gemini[-.](\d+)[-.](\d+)[-.]flash(?:[-.](low|medium|high|xhigh))?$/i);
-  if (geminiMatch) {
-    const tier = geminiMatch[3] ? ` (${geminiMatch[3].charAt(0).toUpperCase() + geminiMatch[3].slice(1).toLowerCase()})` : "";
-    return `Gemini ${geminiMatch[1]}.${geminiMatch[2]} Flash${tier}`;
-  }
-  const claudeMatch = model.match(/^claude[-.](opus|sonnet|haiku)(?:[-.](\d+)[-.](\d+))?(?:[-.](thinking))?$/i);
-  if (claudeMatch) {
-    const name = claudeMatch[1].charAt(0).toUpperCase() + claudeMatch[1].slice(1).toLowerCase();
-    const ver = claudeMatch[2] ? ` ${claudeMatch[2]}.${claudeMatch[3]}` : "";
-    const th = claudeMatch[4] ? " (Thinking)" : "";
-    return `Claude ${name}${ver}${th}`;
-  }
   return model;
 }
 

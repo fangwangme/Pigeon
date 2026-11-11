@@ -2,57 +2,135 @@ import type { Component } from "solid-js";
 import { Match, Switch } from "solid-js";
 
 export const AgentIcon: Component<{ kind?: string | null; class?: string }> = (props) => {
-  const k = () => props.kind || "terminal";
+  const normKind = () => {
+    const raw = (props.kind || "terminal").toLowerCase().trim();
+    if (raw === "antigravity" || raw === "agy") return "agy";
+    if (raw.startsWith("claude")) return "claude";
+    if (raw.startsWith("codex")) return "codex";
+    if (raw === "opencode") return "opencode";
+    if (raw === "pi") return "pi";
+    if (raw === "terminal" || raw === "shell" || raw === "bash" || raw === "zsh") return "terminal";
+    return raw;
+  };
+
   return (
-    <div class={`ag-avatar ${k()} ${props.class || ""}`} aria-label={k()}>
+    <div class={`ag-avatar ${normKind()} ${props.class || ""}`} aria-label={normKind()}>
       <Switch
         fallback={
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="ag-svg">
-            <rect x="2.5" y="4" width="19" height="16" rx="3.5" />
-            <polyline points="7 9 10 12 7 15" />
-            <line x1="12" y1="15" x2="16.5" y2="15" />
+            <path d="M12 19h8" />
+            <path d="m4 17 6-6-6-6" />
           </svg>
         }
       >
-        <Match when={k() === "claude"}>
-          {/* Anthropic Claude official sunburst spark */}
-          <svg viewBox="0 0 100 100" fill="currentColor" class="ag-svg">
-            <path d="m19.6 66.5 19.7-11 .3-1-.3-.5h-1l-3.3-.2-11.2-.3L14 53l-9.5-.5-2.4-.5L0 49l.2-1.5 2-1.3 2.9.2 6.3.5 9.5.6 6.9.4L38 49.1h1.6l.2-.7-.5-.4-.4-.4L29 41l-10.6-7-5.6-4.1-3-2-1.5-2-.6-4.2 2.7-3 3.7.3.9.2 3.7 2.9 8 6.1L37 36l1.5 1.2.6-.4.1-.3-.7-1.1L33 25l-6-10.4-2.7-4.3-.7-2.6c-.3-1-.4-2-.4-3l3-4.2L28 0l4.2.6L33.8 2l2.6 6 4.1 9.3L47 29.9l2 3.8 1 3.4.3 1h.7v-.5l.5-7.2 1-8.7 1-11.2.3-3.2 1.6-3.8 3-2L61 2.6l2 2.9-.3 1.8-1.1 7.7L59 27.1l-1.5 8.2h.9l1-1.1 4.1-5.4 6.9-8.6 3-3.5L77 13l2.3-1.8h4.3l3.1 4.7-1.4 4.9-4.4 5.6-3.7 4.7-5.3 7.1-3.2 5.7.3.4h.7l12-2.6 6.4-1.1 7.6-1.3 3.5 1.6.4 1.6-1.4 3.4-8.2 2-9.6 2-14.3 3.3-.2.1.2.3 6.4.6 2.8.2h6.8l12.6 1 3.3 2 1.9 2.7-.3 2-5.1 2.6-6.8-1.6-16-3.8-5.4-1.3h-.8v.4l4.6 4.5 8.3 7.5L89 80.1l.5 2.4-1.3 2-1.4-.2-9.2-7-3.6-3-8-6.8h-.5v.7l1.8 2.7 9.8 14.7.5 4.5-.7 1.4-2.6 1-2.7-.6-5.8-8-6-9-4.7-8.2-.5.4-2.9 30.2-1.3 1.5-3 1.2-2.5-2-1.4-3 1.4-6.2 1.6-8 1.3-6.4 1.2-7.9.7-2.6v-.2H49L43 72l-9 12.3-7.2 7.6-1.7.7-3-1.5.3-2.8L24 86l10-12.8 6-7.9 4-4.6-.1-.5h-.3L17.2 77.4l-4.7.6-2-2 .2-3 1-1 8-5.5Z" />
+        <Match when={normKind() === "claude"}>
+          {/* Herdr / Claude Code official 8-bit crab sprite (#D97757) */}
+          <svg viewBox="0 0 24 24" class="ag-svg" xmlns="http://www.w3.org/2000/svg">
+            <path
+              clip-rule="evenodd"
+              fill-rule="evenodd"
+              fill="#D97757"
+              d="M20.998 10.949H24v3.102h-3v3.028h-1.487V20H18v-2.921h-1.487V20H15v-2.921H9V20H7.488v-2.921H6V20H4.487v-2.921H3V14.05H0V10.95h3V5h17.998v5.949zM6 10.949h1.488V8.102H6v2.847zm10.51 0H18V8.102h-1.49v2.847z"
+            />
           </svg>
         </Match>
-        <Match when={k() === "codex"}>
-          {/* OpenAI official rosette / spiral blossom */}
-          <svg viewBox="0 0 24 24" fill="currentColor" class="ag-svg">
-            <path d="M22.2819 9.8211a5.9847 5.9847 0 0 0-.5157-4.9108 6.0462 6.0462 0 0 0-6.5098-2.9A6.0651 6.0651 0 0 0 4.9807 4.1818a5.9847 5.9847 0 0 0-3.9977 2.9 6.0462 6.0462 0 0 0 .7427 7.0966 5.98 5.98 0 0 0 .511 4.9107 6.051 6.051 0 0 0 6.5146 2.9001A5.9847 5.9847 0 0 0 13.2599 24a6.0557 6.0557 0 0 0 5.7718-4.2058 5.9894 5.9894 0 0 0 3.9977-2.9001 6.0557 6.0557 0 0 0-.7475-7.0729zm-9.022 12.6081a4.4755 4.4755 0 0 1-2.8764-1.0408l.1419-.0804 4.7783-2.7582a.7948.7948 0 0 0 .3927-.6813v-6.7369l2.02 1.1686a.071.071 0 0 1 .038.052v5.5826a4.504 4.504 0 0 1-4.4945 4.4944zm-9.6607-4.1254a4.4708 4.4708 0 0 1-.5346-3.0137l.142.0852 4.783 2.7582a.7712.7712 0 0 0 .7806 0l5.8428-3.3685v2.3324a.0804.0804 0 0 1-.0332.0615L9.74 19.9502a4.4992 4.4992 0 0 1-6.1408-1.6464zM2.3408 7.8956a4.485 4.485 0 0 1 2.3655-1.9728V11.6a.7664.7664 0 0 0 .3879.6765l5.8144 3.3543-2.0201 1.1685a.0757.0757 0 0 1-.071 0l-4.8303-2.7865A4.504 4.504 0 0 1 2.3408 7.872zm16.5963 3.8558L13.1038 8.364 15.1192 7.2a.0757.0757 0 0 1 .071 0l4.8303 2.7913a4.4944 4.4944 0 0 1-.6765 8.1042v-5.6772a.79.79 0 0 0-.407-.667zm2.0107-3.0231l-.142-.0852-4.7735-2.7818a.7759.7759 0 0 0-.7854 0L9.409 9.2297V6.8974a.0662.0662 0 0 1 .0284-.0615l4.8303-2.7866a4.4992 4.4992 0 0 1 6.6802 4.66zM8.3065 12.863l-2.02-1.1638a.0804.0804 0 0 1-.038-.0567V6.0742a4.4992 4.4992 0 0 1 7.3757-3.4537l-.142.0805L8.704 5.459a.7948.7948 0 0 0-.3927.6813zm1.0976-2.3654l2.602-1.4998 2.6069 1.4998v2.9994l-2.5974 1.4997-2.6067-1.4997Z" />
+        <Match when={normKind() === "codex"}>
+          {/* Herdr / Codex official rosette on rounded squircle */}
+          <svg viewBox="0 0 24 24" class="ag-svg" xmlns="http://www.w3.org/2000/svg">
+            <path
+              d="M19.503 0H4.496A4.496 4.496 0 000 4.496v15.007A4.496 4.496 0 004.496 24h15.007A4.496 4.496 0 0024 19.503V4.496A4.496 4.496 0 0019.503 0z"
+              fill="#fff"
+            />
+            <path
+              d="M9.064 3.344a4.578 4.578 0 012.285-.312c1 .115 1.891.54 2.673 1.275.01.01.024.017.037.021a.09.09 0 00.043 0 4.55 4.55 0 013.046.275l.047.022.116.057a4.581 4.581 0 012.188 2.399c.209.51.313 1.041.315 1.595a4.24 4.24 0 01-.134 1.223.123.123 0 00.03.115c.594.607.988 1.33 1.183 2.17.289 1.425-.007 2.71-.887 3.854l-.136.166a4.548 4.548 0 01-2.201 1.388.123.123 0 00-.081.076c-.191.551-.383 1.023-.74 1.494-.9 1.187-2.222 1.846-3.711 1.838-1.187-.006-2.239-.44-3.157-1.302a.107.107 0 00-.105-.024c-.388.125-.78.143-1.204.138a4.441 4.441 0 01-1.945-.466 4.544 4.544 0 01-1.61-1.335c-.152-.202-.303-.392-.414-.617a5.81 5.81 0 01-.37-.961 4.582 4.582 0 01-.014-2.298.124.124 0 00.006-.056.085.085 0 00-.027-.048 4.467 4.467 0 01-1.034-1.651 3.896 3.896 0 01-.251-1.192 5.189 5.189 0 01.141-1.6c.337-1.112.982-1.985 1.933-2.618.212-.141.413-.251.601-.33.215-.089.43-.164.646-.227a.098.098 0 00.065-.066 4.51 4.51 0 01.829-1.615 4.535 4.535 0 011.837-1.388zm3.482 10.565a.637.637 0 000 1.272h3.636a.637.637 0 100-1.272h-3.636zM8.462 9.23a.637.637 0 00-1.106.631l1.272 2.224-1.266 2.136a.636.636 0 101.095.649l1.454-2.455a.636.636 0 00.005-.64L8.462 9.23z"
+              fill="url(#pigeon-codex-gradient)"
+            />
+            <defs>
+              <linearGradient gradientUnits="userSpaceOnUse" id="pigeon-codex-gradient" x1="12" x2="12" y1="3" y2="21">
+                <stop stop-color="#B1A7FF" />
+                <stop offset=".5" stop-color="#7A9DFF" />
+                <stop offset="1" stop-color="#3941FF" />
+              </linearGradient>
+            </defs>
           </svg>
         </Match>
-        <Match when={k() === "agy"}>
-          {/* Google Gemini / Antigravity 4-pointed curved sparkle */}
-          <svg viewBox="0 0 24 24" fill="currentColor" class="ag-svg">
-            <path d="M11.04 19.32Q12 21.51 12 24q0-2.49.93-4.68.96-2.19 2.58-3.81t3.81-2.55Q21.51 12 24 12q-2.49 0-4.68-.93a12.3 12.3 0 0 1-3.81-2.58 12.3 12.3 0 0 1-2.58-3.81Q12 2.49 12 0q0 2.49-.96 4.68-.93 2.19-2.55 3.81a12.3 12.3 0 0 1-3.81 2.58Q2.49 12 0 12q2.49 0 4.68.96 2.19.93 3.81 2.55t2.55 3.81" />
+        <Match when={normKind() === "agy"}>
+          {/* Herdr / Antigravity rainbow arch logo */}
+          <svg viewBox="0 0 24 24" class="ag-svg" xmlns="http://www.w3.org/2000/svg">
+            <mask height="23" id="pigeon-antigravity-mask" maskUnits="userSpaceOnUse" width="24" x="0" y="1">
+              <path
+                d="M21.751 22.607c1.34 1.005 3.35.335 1.508-1.508C17.73 15.74 18.904 1 12.037 1 5.17 1 6.342 15.74.815 21.1c-2.01 2.009.167 2.511 1.507 1.506 5.192-3.517 4.857-9.714 9.715-9.714 4.857 0 4.522 6.197 9.714 9.715z"
+                fill="#fff"
+              />
+            </mask>
+            <g mask="url(#pigeon-antigravity-mask)">
+              <g filter="url(#pigeon-antigravity-1)">
+                <path d="M-1.018-3.992c-.408 3.591 2.686 6.89 6.91 7.37 4.225.48 7.98-2.043 8.387-5.633.408-3.59-2.686-6.89-6.91-7.37-4.225-.479-7.98 2.043-8.387 5.633z" fill="#FFE432" />
+              </g>
+              <g filter="url(#pigeon-antigravity-2)">
+                <path d="M15.269 7.747c1.058 4.557 5.691 7.374 10.348 6.293 4.657-1.082 7.575-5.653 6.516-10.21-1.058-4.556-5.691-7.374-10.348-6.292-4.657 1.082-7.575 5.653-6.516 10.21z" fill="#FC413D" />
+              </g>
+              <g filter="url(#pigeon-antigravity-3)">
+                <path d="M-12.443 10.804c1.338 4.703 7.36 7.11 13.453 5.378 6.092-1.733 9.947-6.95 8.61-11.652C8.282-.173 2.26-2.58-3.833-.848-9.925.884-13.78 6.1-12.443 10.804z" fill="#00B95C" />
+              </g>
+              <g filter="url(#pigeon-antigravity-4)">
+                <path d="M-12.443 10.804c1.338 4.703 7.36 7.11 13.453 5.378 6.092-1.733 9.947-6.95 8.61-11.652C8.282-.173 2.26-2.58-3.833-.848-9.925.884-13.78 6.1-12.443 10.804z" fill="#00B95C" />
+              </g>
+              <g filter="url(#pigeon-antigravity-5)">
+                <path d="M-7.608 14.703c3.352 3.424 9.126 3.208 12.896-.483 3.77-3.69 4.108-9.459.756-12.883C2.69-2.087-3.083-1.871-6.853 1.82c-3.77 3.69-4.108 9.458-.755 12.883z" fill="#00B95C" />
+              </g>
+              <g filter="url(#pigeon-antigravity-6)">
+                <path d="M9.932 27.617c1.04 4.482 5.384 7.303 9.7 6.3 4.316-1.002 6.971-5.448 5.93-9.93-1.04-4.483-5.384-7.304-9.7-6.301-4.316 1.002-6.971 5.448-5.93 9.93z" fill="#3186FF" />
+              </g>
+              <g filter="url(#pigeon-antigravity-7)">
+                <path d="M2.572-8.185C.392-3.329 2.778 2.472 7.9 4.771c5.122 2.3 11.042.227 13.222-4.63 2.18-4.855-.205-10.656-5.327-12.955-5.122-2.3-11.042-.227-13.222 4.63z" fill="#FBBC04" />
+              </g>
+              <g filter="url(#pigeon-antigravity-8)">
+                <path d="M-3.267 38.686c-5.277-2.072 3.742-19.117 5.984-24.83 2.243-5.712 8.34-8.664 13.616-6.592 5.278 2.071 11.533 13.482 9.29 19.195-2.242 5.713-23.613 14.298-28.89 12.227z" fill="#3186FF" />
+              </g>
+              <g filter="url(#pigeon-antigravity-9)">
+                <path d="M28.71 17.471c-1.413 1.649-5.1.808-8.236-1.878-3.135-2.687-4.531-6.201-3.118-7.85 1.412-1.649 5.1-.808 8.235 1.878s4.532 6.2 3.119 7.85z" fill="#749BFF" />
+              </g>
+              <g filter="url(#pigeon-antigravity-10)">
+                <path d="M18.163 9.077c5.81 3.93 12.502 4.19 14.946.577 2.443-3.612-.287-9.727-6.098-13.658-5.81-3.931-12.502-4.19-14.946-.577-2.443 3.612.287 9.727 6.098 13.658z" fill="#FC413D" />
+              </g>
+              <g filter="url(#pigeon-antigravity-11)">
+                <path d="M-.915 2.684c-1.44 3.473-.97 6.967 1.05 7.804 2.02.837 4.824-1.3 6.264-4.772 1.44-3.473.97-6.967-1.05-7.804-2.02-.837-4.824 1.3-6.264 4.772z" fill="#FFEE48" />
+              </g>
+            </g>
+            <defs>
+              <filter color-interpolation-filters="sRGB" filterUnits="userSpaceOnUse" height="17.587" id="pigeon-antigravity-1" width="19.838" x="-3.288" y="-11.917"><feFlood flood-opacity="0" result="BackgroundImageFix" /><feBlend in="SourceGraphic" in2="BackgroundImageFix" result="shape" /><feGaussianBlur result="effect1_foregroundBlur_977_115" stdDeviation="1.117" /></filter>
+              <filter color-interpolation-filters="sRGB" filterUnits="userSpaceOnUse" height="38.565" id="pigeon-antigravity-2" width="38.9" x="4.251" y="-13.493"><feFlood flood-opacity="0" result="BackgroundImageFix" /><feBlend in="SourceGraphic" in2="BackgroundImageFix" result="shape" /><feGaussianBlur result="effect1_foregroundBlur_977_115" stdDeviation="5.4" /></filter>
+              <filter color-interpolation-filters="sRGB" filterUnits="userSpaceOnUse" height="36.517" id="pigeon-antigravity-3" width="40.955" x="-21.889" y="-10.592"><feFlood flood-opacity="0" result="BackgroundImageFix" /><feBlend in="SourceGraphic" in2="BackgroundImageFix" result="shape" /><feGaussianBlur result="effect1_foregroundBlur_977_115" stdDeviation="4.591" /></filter>
+              <filter color-interpolation-filters="sRGB" filterUnits="userSpaceOnUse" height="36.517" id="pigeon-antigravity-4" width="40.955" x="-21.889" y="-10.592"><feFlood flood-opacity="0" result="BackgroundImageFix" /><feBlend in="SourceGraphic" in2="BackgroundImageFix" result="shape" /><feGaussianBlur result="effect1_foregroundBlur_977_115" stdDeviation="4.591" /></filter>
+              <filter color-interpolation-filters="sRGB" filterUnits="userSpaceOnUse" height="36.595" id="pigeon-antigravity-5" width="36.632" x="-19.099" y="-10.278"><feFlood flood-opacity="0" result="BackgroundImageFix" /><feBlend in="SourceGraphic" in2="BackgroundImageFix" result="shape" /><feGaussianBlur result="effect1_foregroundBlur_977_115" stdDeviation="4.591" /></filter>
+              <filter color-interpolation-filters="sRGB" filterUnits="userSpaceOnUse" height="34.087" id="pigeon-antigravity-6" width="33.533" x=".981" y="8.758"><feFlood flood-opacity="0" result="BackgroundImageFix" /><feBlend in="SourceGraphic" in2="BackgroundImageFix" result="shape" /><feGaussianBlur result="effect1_foregroundBlur_977_115" stdDeviation="4.363" /></filter>
+              <filter color-interpolation-filters="sRGB" filterUnits="userSpaceOnUse" height="35.276" id="pigeon-antigravity-7" width="35.978" x="-6.143" y="-21.659"><feFlood flood-opacity="0" result="BackgroundImageFix" /><feBlend in="SourceGraphic" in2="BackgroundImageFix" result="shape" /><feGaussianBlur result="effect1_foregroundBlur_977_115" stdDeviation="3.954" /></filter>
+              <filter color-interpolation-filters="sRGB" filterUnits="userSpaceOnUse" height="46.523" id="pigeon-antigravity-8" width="45.114" x="-11.96" y="-.46"><feFlood flood-opacity="0" result="BackgroundImageFix" /><feBlend in="SourceGraphic" in2="BackgroundImageFix" result="shape" /><feGaussianBlur result="effect1_foregroundBlur_977_115" stdDeviation="3.531" /></filter>
+              <filter color-interpolation-filters="sRGB" filterUnits="userSpaceOnUse" height="24.054" id="pigeon-antigravity-9" width="25.094" x="10.485" y=".58"><feFlood flood-opacity="0" result="BackgroundImageFix" /><feBlend in="SourceGraphic" in2="BackgroundImageFix" result="shape" /><feGaussianBlur result="effect1_foregroundBlur_977_115" stdDeviation="3.159" /></filter>
+              <filter color-interpolation-filters="sRGB" filterUnits="userSpaceOnUse" height="30.007" id="pigeon-antigravity-10" width="33.508" x="5.833" y="-12.467"><feFlood flood-opacity="0" result="BackgroundImageFix" /><feBlend in="SourceGraphic" in2="BackgroundImageFix" result="shape" /><feGaussianBlur result="effect1_foregroundBlur_977_115" stdDeviation="2.669" /></filter>
+              <filter color-interpolation-filters="sRGB" filterUnits="userSpaceOnUse" height="26.151" id="pigeon-antigravity-11" width="22.194" x="-8.355" y="-8.876"><feFlood flood-opacity="0" result="BackgroundImageFix" /><feBlend in="SourceGraphic" in2="BackgroundImageFix" result="shape" /><feGaussianBlur result="effect1_foregroundBlur_977_115" stdDeviation="3.303" /></filter>
+            </defs>
           </svg>
         </Match>
-        <Match when={k() === "opencode"}>
-          {/* OpenCode official brand logo */}
-          <svg viewBox="0 0 240 300" fill="none" class="ag-svg">
-            <path d="M180 240H60V120H180V240Z" fill="currentColor" fill-opacity="0.32" />
-            <path d="M180 60H60V240H180V60ZM240 300H0V0H240V300Z" fill="currentColor" />
+        <Match when={normKind() === "opencode"}>
+          {/* Herdr / OpenCode official dual-box brand mark */}
+          <svg viewBox="0 0 24 24" fill="currentColor" fill-rule="evenodd" class="ag-svg">
+            <path d="M16 6H8v12h8V6zm4 16H4V2h16v20z" />
           </svg>
         </Match>
-        <Match when={k() === "pi"}>
-          {/* Pi official tri-block geometric logo */}
-          <svg viewBox="0 0 800 800" class="ag-svg">
-            <path fill="#F09082" d="M165.29 165.29H517.36V400H400V282.65H165.29Z" />
-            <path fill="#4D9ABF" d="M165.29 282.65H282.65V400H400V517.36H282.65V634.72H165.29Z" />
-            <path fill="#F1BE58" d="M517.36 400H634.72V634.72H517.36Z" />
+        <Match when={normKind() === "pi"}>
+          {/* Herdr / Pi official tri-block mark */}
+          <svg viewBox="0 0 800 800" fill="currentColor" class="ag-svg">
+            <path fill-rule="evenodd" d="M165.29 165.29H517.36V400H400V517.36H282.65V634.72H165.29ZM282.65 282.65V400H400V282.65Z" />
+            <path d="M517.36 400H634.72V634.72H517.36Z" />
           </svg>
         </Match>
-        <Match when={k() === "terminal"}>
-          {/* Plain Terminal icon */}
+        <Match when={normKind() === "terminal"}>
+          {/* Herdr / Shell Lucide terminal prompt */}
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="ag-svg">
-            <rect x="2.5" y="4" width="19" height="16" rx="3.5" />
-            <polyline points="7 9 10 12 7 15" />
-            <line x1="12" y1="15" x2="16.5" y2="15" />
+            <path d="M12 19h8" />
+            <path d="m4 17 6-6-6-6" />
           </svg>
         </Match>
       </Switch>
