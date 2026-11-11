@@ -400,7 +400,7 @@ export class PigeonDaemon {
       );
     } else if (!isHttps) {
       console.warn(
-        "\n\x1b[43;30m WARNING \x1b[0m Plain-HTTP mode: Push notifications and PWA home-screen install are unavailable over HTTP.\n" +
+        "\n\x1b[43;30m WARNING \x1b[0m Plain-HTTP mode: Web push notifications are unavailable over plain HTTP (Tailscale HTTPS required for push).\n" +
           "Reachable addresses:\n" +
           this.access.alternatives.map((a) => `  - ${a.mode}: ${a.url}`).join("\n") + "\n"
       );
