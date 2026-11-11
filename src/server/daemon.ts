@@ -97,20 +97,36 @@ function detectTailscaleHostname(): string | null {
   }
 }
 
+function tryAutoTailscaleServe(port: number): boolean {
+  try {
+    const res = Bun.spawnSync(["tailscale", "serve", "--bg", String(port)], { timeout: 3000, stderr: "ignore" });
+    return res.exitCode === 0;
+  } catch {
+    return false;
+  }
+}
+
 function detectTailscaleDns(port?: number): string | null {
   const dns = detectTailscaleHostname();
   if (!dns) return null;
 
-  // When port is provided, verify tailscale serve is proxying to this port
-  // (architecture.md §4.2: "when tailscale serve proxies to 127.0.0.1:<port>")
+  // When port is provided, verify tailscale serve is proxying to this port.
+  // If not yet serving, attempt auto-configuration (architecture.md §4.2).
   if (port) {
     try {
       const serveProc = Bun.spawnSync(["tailscale", "serve", "status", "--json"], { timeout: 2000, stderr: "ignore" });
-      if (serveProc.exitCode !== 0 || !serveProc.stdout) return null;
-      const text = serveProc.stdout.toString().trim();
-      if (!text || text === "{}") return null;
-      const data = JSON.parse(text);
-      if (!isServingPort(data, port)) return null;
+      if (serveProc.exitCode === 0 && serveProc.stdout) {
+        const text = serveProc.stdout.toString().trim();
+        if (text && text !== "{}") {
+          const data = JSON.parse(text);
+          if (isServingPort(data, port)) return dns;
+        }
+      }
+      // Attempt auto-configure if operator permission was granted
+      if (tryAutoTailscaleServe(port)) {
+        return dns;
+      }
+      return null;
     } catch {
       return null;
     }
