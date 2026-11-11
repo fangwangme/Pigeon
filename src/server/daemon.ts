@@ -302,12 +302,12 @@ export class PigeonDaemon {
       this.allowedOrigins.add(`http://${tsHost}:${port}`);
       this.allowedOrigins.add(`https://${tsHost}`);
       this.allowedOrigins.add(`https://${tsHost}:${port}`);
-      if (insecureDev) {
+      if (insecureDev || port === 4101) {
         this.allowedOrigins.add(`http://${tsHost}:${VITE_DEV_PORT}`);
       }
     }
 
-    if (insecureDev) {
+    if (insecureDev || port === 4101) {
       for (const h of ["localhost", "127.0.0.1", "[::1]"]) {
         this.allowedOrigins.add(`http://${h}:${port}`);
         this.allowedOrigins.add(`http://${h}:${VITE_DEV_PORT}`); // vite dev server proxying /ws
