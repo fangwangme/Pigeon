@@ -94,13 +94,9 @@ function TabRow(props: { ws: WorkspaceSummary; tab: TabSummary }) {
         }}
       >
         <StatusIcon status={status()} />
+        <AgentIcon kind={pane()?.agent} />
         <div class="tx">
-          <div class="t">
-            <Show when={pane()?.agent}>
-              <AgentIcon kind={pane()!.agent!} />
-            </Show>
-            <span>{props.tab.label}</span>
-          </div>
+          <div class="t">{props.tab.label}</div>
           <div class="s">{sub()}</div>
           <Show when={status() === "blocked" && paneSummary(pane())}>
             <div class="p">{paneSummary(pane())}</div>
@@ -325,13 +321,9 @@ export function AgentsPage() {
                       {(r) => (
                         <button class="srow" onClick={() => openPane(r.pane.id, "agents")}>
                           <StatusIcon status={status} />
+                          <AgentIcon kind={r.pane.agent} />
                           <div class="tx">
-                            <div class="t">
-                              <Show when={r.pane.agent}>
-                                <AgentIcon kind={r.pane.agent!} />
-                              </Show>
-                              <span>{r.tab.label}</span>
-                            </div>
+                            <div class="t">{r.tab.label}</div>
                             <div class="s who">
                               <span class="wsn">
                                 <Icon name="folder" sm />
