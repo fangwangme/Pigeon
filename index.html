@@ -8,7 +8,8 @@
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <meta name="apple-mobile-web-app-title" content="Pigeon" />
     <meta name="application-name" content="Pigeon" />
-    <meta name="theme-color" content="#111113" />
+    <meta name="theme-color" media="(prefers-color-scheme: light)" content="#F8F8F6" />
+    <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#111113" />
     <meta name="color-scheme" content="light dark" />
     <link rel="manifest" href="/manifest.webmanifest" />
     <link rel="apple-touch-icon" href="/icon-192.png" />
@@ -16,13 +17,16 @@
     <link rel="icon" type="image/png" sizes="192x192" href="/icon-192.png" />
     <title>Pigeon</title>
     <style>
-      :where(:root) { color-scheme: light dark; -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
-      :where(html, body) { background: #111113; color: #F2F2F3; margin: 0; height: 100%; -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
+      :root { color-scheme: light dark; --bg: #111113; --fg: #F2F2F3; -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
+      html, body { background: #111113; color: #F2F2F3; margin: 0; height: 100%; width: 100%; -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
       @media (prefers-color-scheme: light) {
-        :where(:root:not([data-theme="dark"]), :root:not([data-theme="dark"]) body) { background: #F8F8F6; color: #18181A; }
+        :root:not([data-theme="dark"]) { --bg: #F8F8F6; --fg: #18181A; }
+        :root:not([data-theme="dark"]), :root:not([data-theme="dark"]) body { background: #F8F8F6; color: #18181A; }
       }
-      :where(:root[data-theme="light"], :where(:root[data-theme="light"]) body) { background: #F8F8F6; color: #18181A; }
-      :where(:root[data-theme="dark"], :where(:root[data-theme="dark"]) body) { background: #111113; color: #F2F2F3; }
+      :root[data-theme="light"] { --bg: #F8F8F6; --fg: #18181A; }
+      :root[data-theme="light"], :root[data-theme="light"] body { background: #F8F8F6; color: #18181A; }
+      :root[data-theme="dark"] { --bg: #111113; --fg: #F2F2F3; }
+      :root[data-theme="dark"], :root[data-theme="dark"] body { background: #111113; color: #F2F2F3; }
     </style>
     <script>
       // mobile-ui-and-themes.md §9.1: paint the stored palette before the app loads.
@@ -31,12 +35,16 @@
         try { mode = localStorage.getItem("pigeon_mode") || "system"; } catch (e) {}
         var light = mode === "light" || (mode === "system" && window.matchMedia("(prefers-color-scheme: light)").matches);
         var bg = light ? "#F8F8F6" : "#111113";
+        var fg = light ? "#18181A" : "#F2F2F3";
         var root = document.documentElement;
         root.setAttribute("data-theme", light ? "light" : "dark");
         root.style.colorScheme = light ? "light" : "dark";
         root.style.setProperty("--bg", bg);
+        root.style.setProperty("--fg", fg);
         root.style.background = bg;
-        document.querySelector('meta[name="theme-color"]').setAttribute("content", bg);
+        if (document.body) document.body.style.background = bg;
+        var metas = document.querySelectorAll('meta[name="theme-color"]');
+        for (var i = 0; i < metas.length; i++) metas[i].setAttribute("content", bg);
       })();
     </script>
   </head>

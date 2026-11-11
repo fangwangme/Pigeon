@@ -23,16 +23,22 @@ if (typeof window !== "undefined") {
 }
 
 let waitingWorker: ServiceWorker | null = null;
+let updateRequested = false;
 
 function applyUpdate() {
   // A waiting service worker takes over and `controllerchange` reloads once. Without one, the
   // daemon was rebuilt with an unchanged sw.js: reload, and the network-first shell is the new one.
-  if (waitingWorker) waitingWorker.postMessage({ type: "SKIP_WAITING" });
-  else window.location.reload();
+  if (waitingWorker) {
+    updateRequested = true;
+    waitingWorker.postMessage({ type: "SKIP_WAITING" });
+  } else {
+    window.location.reload();
+  }
 }
 
 function registerServiceWorker() {
   if (!("serviceWorker" in navigator)) return;
+  const hadController = Boolean(navigator.serviceWorker.controller);
   navigator.serviceWorker.register("/sw.js").then((registration) => {
     const offerUpdate = (worker: ServiceWorker | null) => {
       if (worker && navigator.serviceWorker.controller) {
@@ -53,6 +59,9 @@ function registerServiceWorker() {
   });
   let refreshing = false;
   navigator.serviceWorker.addEventListener("controllerchange", () => {
+    // Only reload when an explicit update was requested or an existing controller was replaced.
+    // Avoids redundant reloads when a newly installed service worker claims clients on first visit.
+    if (!updateRequested && !hadController) return;
     if (refreshing) return;
     refreshing = true;
     window.location.reload();
