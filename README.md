@@ -23,30 +23,14 @@ A small daemon runs alongside Herdr on your computer and serves the app over you
   </picture>
   &nbsp;
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="docs/images/session-dark.png">
-    <img src="docs/images/session-light.png" width="260" alt="Follow along in a clean chat feed with tasks and tool calls">
-  </picture>
-</p>
-<p align="center">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="docs/images/prompt-dark.png">
-    <img src="docs/images/prompt-light.png" width="260" alt="Approve command permissions and answer questions with a tap">
-  </picture>
-  &nbsp;
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="docs/images/diff-dark.png">
-    <img src="docs/images/diff-light.png" width="260" alt="Inspect per-file additions, deletions, and unified patch diffs">
-  </picture>
-  &nbsp;
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="docs/images/queue-dark.png">
-    <img src="docs/images/queue-light.png" width="260" alt="Queue follow-up prompts while an agent works, with instant undo">
-  </picture>
-</p>
-<p align="center">
-  <picture>
     <source media="(prefers-color-scheme: dark)" srcset="docs/images/commands-dark.png">
     <img src="docs/images/commands-light.png" width="260" alt="Trigger slash commands and project skills right from the composer">
+  </picture>
+</p>
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/images/diff-dark.png">
+    <img src="docs/images/diff-light.png" width="260" alt="Inspect commands and tool execution history with file diffs">
   </picture>
   &nbsp;
   <picture>
