@@ -106,6 +106,24 @@ export function readHeadJsonLines(path: string, maxBytes = 262_144): unknown[] {
   }
 }
 
+export function readTailJsonLines(path: string, maxBytes = 262_144): unknown[] {
+  const fd = openSync(path, "r");
+  try {
+    const stat = statSync(path);
+    const len = stat.size;
+    const bytesToRead = Math.min(len, maxBytes);
+    const start = len - bytesToRead;
+    const buf = Buffer.alloc(bytesToRead);
+    readSync(fd, buf, 0, bytesToRead, start);
+    const text = buf.toString("utf-8");
+    const firstNl = start > 0 ? text.indexOf("\n") : -1;
+    const slice = firstNl >= 0 ? text.slice(firstNl + 1) : text;
+    return parseJsonLines(slice);
+  } finally {
+    closeSync(fd);
+  }
+}
+
 export const isObj = (v: unknown): v is Record<string, any> => typeof v === "object" && v !== null && !Array.isArray(v);
 export const str = (v: unknown): string | undefined => (typeof v === "string" ? v : undefined);
 
@@ -215,9 +233,10 @@ export class TurnBuilder {
   private current(timestamp: number): NormalizedTurn {
     let turn = this.turns[this.turns.length - 1];
     if (!turn) {
-      turn = { turnId: "turn_1", turnNumber: 1, timestamp, toolCalls: [], items: [] };
+      turn = { turnId: "turn_1", turnNumber: 1, timestamp, updatedAt: timestamp, toolCalls: [], items: [] };
       this.turns.push(turn);
     }
+    turn.updatedAt = Math.max(turn.updatedAt ?? turn.timestamp, timestamp);
     return turn;
   }
 
@@ -227,6 +246,7 @@ export class TurnBuilder {
       turnId: `turn_${n}`,
       turnNumber: n,
       timestamp,
+      updatedAt: timestamp,
       userPrompt: { text, ...(files && files.length ? { files } : {}) },
       toolCalls: [],
       items: [],
@@ -237,6 +257,7 @@ export class TurnBuilder {
     if (!text.trim()) return;
     const turn = this.current(timestamp);
     turn.reasoning = { text: turn.reasoning ? `${turn.reasoning.text}\n\n${text}` : text };
+    turn.updatedAt = Math.max(turn.updatedAt ?? turn.timestamp, timestamp);
   }
 
   public text(markdown: string, timestamp: number): void {
@@ -244,10 +265,23 @@ export class TurnBuilder {
     const turn = this.current(timestamp);
     turn.items!.push({ kind: "text", markdown });
     turn.assistantResponse = { markdown };
+    turn.updatedAt = Math.max(turn.updatedAt ?? turn.timestamp, timestamp);
+  }
+
+  public error(errorKind: string, text: string, timestamp: number): void {
+    const turn = this.current(timestamp);
+    turn.items!.push({ kind: "error", errorKind, text });
+    turn.updatedAt = Math.max(turn.updatedAt ?? turn.timestamp, timestamp);
+  }
+
+  public touch(timestamp: number): void {
+    const turn = this.turns[this.turns.length - 1];
+    if (turn) turn.updatedAt = Math.max(turn.updatedAt ?? turn.timestamp, timestamp);
   }
 
   public toolUse(use: ToolUse, timestamp: number): void {
     const turn = this.current(timestamp);
+    turn.updatedAt = Math.max(turn.updatedAt ?? turn.timestamp, timestamp);
     const call: NormalizedToolCall = {
       id: use.id,
       name: use.name,
@@ -276,6 +310,10 @@ export class TurnBuilder {
     call.status = isError ? "failed" : "completed";
     if (exitCode !== undefined) call.exitCode = exitCode;
     if (timestamp !== undefined && entry.startedAt !== undefined && timestamp >= entry.startedAt) call.durationMs = timestamp - entry.startedAt;
+    if (timestamp !== undefined) {
+      const turn = this.turns.find((t) => t.toolCalls?.some((c) => c.id === id));
+      if (turn) turn.updatedAt = Math.max(turn.updatedAt ?? turn.timestamp, timestamp);
+    }
     if (!isError && entry.diffs) for (const d of entry.diffs) if (!this.fileOrder.includes(d.filePath)) this.fileOrder.push(d.filePath);
     return call;
   }

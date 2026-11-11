@@ -78,9 +78,9 @@ export function validateClientMessage(raw: unknown): ValidationResult {
       if (!isObj(p) || !isStr(p.tabId)) return fail(id, "close_tab needs payload.tabId");
       return ok();
     case "agent_set_model":
-      if (!isObj(p) || !isStr(p.targetPaneId) || !optStr(p.modelId, 128) || !optStr(p.thinking, 32) || (p.modelId === undefined && p.thinking === undefined)) {
-        return fail(id, "agent_set_model needs targetPaneId and modelId or thinking");
-      }
+      return fail(id, "agent_set_model is no longer accepted");
+    case "queue_resume":
+      if (!isObj(p) || !isStr(p.paneId)) return fail(id, "queue_resume needs paneId");
       return ok();
     case "sessions_list":
       if (!isObj(p) || !isStr(p.workspaceId) || !isStr(p.agentKind, 32)) return fail(id, "sessions_list needs workspaceId and agentKind");

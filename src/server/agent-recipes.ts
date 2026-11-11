@@ -69,6 +69,7 @@ const AGENT_RECIPES: Record<string, AgentRecipe> = {
     command: "agy",
     launchArgs(o) {
       return [
+        ...(o?.resume ? ["--conversation", o.resume] : []),
         ...(o?.modelId ? ["--model", o.modelId] : []),
         ...(o?.thinking ? ["--effort", o.thinking] : []),
         ...(o?.firstMessage ? ["-i", o.firstMessage] : []),
@@ -76,7 +77,7 @@ const AGENT_RECIPES: Record<string, AgentRecipe> = {
     },
     promptInArgv: true,
     interruptKeys: ["esc"],
-    resumable: false,
+    resumable: true,
     mentionPrefix: "",
     attachmentSeparator: " ",
   },

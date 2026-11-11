@@ -1,7 +1,7 @@
 import { render } from "solid-js/web";
 import { createEffect, createSignal, Match, on, onMount, Show, Switch } from "solid-js";
 import "./styles.css";
-import { navigate, quotaFeatureOn, setState, state, systemReducesTransparency } from "./state/store";
+import { goBack, navigate, quotaFeatureOn, setState, state, systemReducesTransparency } from "./state/store";
 import { applyTheme } from "./themes";
 import { checkPairingFromUrlHash, initWebSocket, reportPresence, selectPane } from "./state/ws";
 import { AgentsPage, Home } from "./components/Home";
@@ -24,6 +24,73 @@ if (typeof window !== "undefined") {
 
 let waitingWorker: ServiceWorker | null = null;
 let updateRequested = false;
+
+function isInsideHorizontalScroller(el: Element | null): boolean {
+  while (el && el !== document.body && el !== document.documentElement) {
+    if (el.matches?.(".chipr, table, pre, code, .cb, .dfb")) return true;
+    try {
+      const style = window.getComputedStyle(el);
+      if (style.overflowX === "auto" || style.overflowX === "scroll") return true;
+    } catch {}
+    el = el.parentElement;
+  }
+  return false;
+}
+
+let touchStartX = 0;
+let touchStartY = 0;
+let eligibleSwipe = false;
+
+if (typeof window !== "undefined") {
+  window.addEventListener("touchstart", (e) => {
+    if (e.touches.length !== 1) {
+      eligibleSwipe = false;
+      return;
+    }
+    if (state.route.name === "home") {
+      eligibleSwipe = false;
+      return;
+    }
+    const touch = e.touches[0];
+    if (touch.clientX > 24) {
+      eligibleSwipe = false;
+      return;
+    }
+    if (isInsideHorizontalScroller(touch.target as Element | null)) {
+      eligibleSwipe = false;
+      return;
+    }
+    touchStartX = touch.clientX;
+    touchStartY = touch.clientY;
+    eligibleSwipe = true;
+  }, { passive: true });
+
+  window.addEventListener("touchmove", (e) => {
+    if (!eligibleSwipe || e.touches.length !== 1) return;
+    const touch = e.touches[0];
+    const dy = Math.abs(touch.clientY - touchStartY);
+    const dx = touch.clientX - touchStartX;
+    if (dy > 30 && dy > dx) {
+      eligibleSwipe = false;
+    }
+  }, { passive: true });
+
+  window.addEventListener("touchend", (e) => {
+    if (!eligibleSwipe) return;
+    eligibleSwipe = false;
+    const touch = e.changedTouches[0];
+    if (!touch) return;
+    const dx = touch.clientX - touchStartX;
+    const dy = Math.abs(touch.clientY - touchStartY);
+    if (dx >= 80 && dx > dy) {
+      goBack();
+    }
+  }, { passive: true });
+
+  window.addEventListener("touchcancel", () => {
+    eligibleSwipe = false;
+  }, { passive: true });
+}
 
 function applyUpdate() {
   // A waiting service worker takes over and `controllerchange` reloads once. Without one, the

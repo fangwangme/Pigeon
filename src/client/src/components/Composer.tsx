@@ -1,8 +1,9 @@
 import { createEffect, createMemo, createSignal, For, onCleanup, onMount, Show, type JSX } from "solid-js";
 import { draftKey, readPref, showToast, state, writePref } from "../state/store";
-import { refreshModels, requestSkills, uploadFile } from "../state/ws";
-import type { AgentRecipeSummary, SkillEntry } from "../../../types/protocol";
+import { requestSkills, uploadFile } from "../state/ws";
+import type { SkillEntry } from "../../../types/protocol";
 import { Icon, Sheet } from "./ui";
+import { openImage } from "./overlays";
 import { t, type MessageId } from "../i18n";
 
 let textareaEl: HTMLTextAreaElement | undefined;
@@ -90,146 +91,6 @@ export function SkillsSheet(props: { onPick: (e: SkillEntry) => void; onClose: (
   );
 }
 
-/** §6.4. `onPick` returns whether it changed anything. */
-export function ModelSheet(props: {
-  recipe: AgentRecipeSummary | undefined;
-  model: string | null;
-  thinking: string | null;
-  modelSource?: string;
-  thinkingSource?: string;
-  canSwitchModel: boolean;
-  canSwitchThinking: boolean;
-  onPick: (change: { modelId?: string; thinking?: string }) => void;
-  onClose: () => void;
-}) {
-  const [query, setQuery] = createSignal("");
-  const [refreshing, setRefreshing] = createSignal(false);
-  const [selectedModel, setSelectedModel] = createSignal<string | null>(props.model);
-  const [selectedThinking, setSelectedThinking] = createSignal<string | null>(props.thinking);
-
-  const models = () => props.recipe?.models ?? [];
-  // mobile-ui-and-themes.md §6.4: the whole list, filtered by id and label.
-  const shown = () => {
-    const q = query().trim().toLowerCase();
-    return q ? models().filter((m) => m.id.toLowerCase().includes(q) || m.label.toLowerCase().includes(q)) : models();
-  };
-  const current = () => models().find((m) => m.id === selectedModel());
-  const levels = () => current()?.thinkingLevels ?? [];
-
-  const handleConfirm = () => {
-    const mId = selectedModel();
-    const th = selectedThinking();
-    if (mId !== props.model || th !== props.thinking) {
-      props.onPick({
-        ...(mId !== props.model ? { modelId: mId ?? undefined } : {}),
-        ...(th !== props.thinking ? { thinking: th ?? undefined } : {}),
-      });
-    }
-    props.onClose();
-  };
-
-  const refresh = () => {
-    setRefreshing(true);
-    refreshModels()
-      .catch((e) => showToast(e.message || t("model.refreshFailed")))
-      .finally(() => setRefreshing(false));
-  };
-  return (
-    <Sheet
-      title={t("model.title")}
-      sub={props.recipe?.label}
-      onClose={props.onClose}
-      right={
-        <button
-          class="cbtn"
-          style={{ color: "var(--accent)" }}
-          aria-label={t("common.confirm")}
-          title={t("common.confirm")}
-          onClick={handleConfirm}
-        >
-          <Icon name="check" />
-        </button>
-      }
-    >
-      <div class="fl">
-        <span>{t("model.model")}</span>
-        <Show when={props.modelSource}>
-          <span style={{ "font-weight": 500 }}>{t("model.source", { source: props.modelSource! })}</span>
-        </Show>
-        <button class="lnk" disabled={refreshing()} onClick={refresh}>
-          {refreshing() ? t("model.refreshing") : t("model.refresh")}
-        </button>
-      </div>
-      <Show when={models().length > 8}>
-        <div class="searchbar">
-          <Icon name="search" sm />
-          <input
-            placeholder={t("model.search")}
-            value={query()}
-            onInput={(e) => setQuery(e.currentTarget.value)}
-            autocomplete="off"
-            autocapitalize="off"
-            spellcheck={false}
-          />
-        </div>
-      </Show>
-      <Show when={models().length} fallback={<p class="note">{t("model.none")}</p>}>
-        <div class="card">
-          <For each={shown()}>
-            {(m) => (
-              <button
-                class={`li${!props.canSwitchModel ? " off" : ""}`}
-                onClick={() => {
-                  if (!props.canSwitchModel) return;
-                  setSelectedModel(m.id);
-                  const lvls = m.thinkingLevels ?? [];
-                  if (selectedThinking() && !lvls.includes(selectedThinking()!)) {
-                    setSelectedThinking(lvls[0] ?? null);
-                  }
-                }}
-              >
-                <div class="tx">
-                  {m.label}
-                  <small class="mono">{m.id}</small>
-                </div>
-                <Show when={m.id === selectedModel()}>
-                  <span class="ck">
-                    <Icon name="check" />
-                  </span>
-                </Show>
-              </button>
-            )}
-          </For>
-        </div>
-      </Show>
-      <Show when={levels().length}>
-        <div class="fl">
-          <span>{t("model.effort")}</span>
-          <Show when={props.thinkingSource}>
-            <span style={{ "font-weight": 500 }}>{t("model.source", { source: props.thinkingSource! })}</span>
-          </Show>
-        </div>
-        <div class="seg">
-          <For each={levels()}>
-            {(l) => (
-              <button
-                class={l === selectedThinking() ? "on" : ""}
-                disabled={!props.canSwitchThinking}
-                onClick={() => props.canSwitchThinking && setSelectedThinking(l)}
-              >
-                {l}
-              </button>
-            )}
-          </For>
-        </div>
-      </Show>
-      <Show when={!props.canSwitchModel || (levels().length > 0 && !props.canSwitchThinking)}>
-        <p class="note">{!props.canSwitchModel ? t(props.recipe?.launchModel === false ? "model.agentOnlyModel" : "model.noSwitchModel") : t("model.noSwitchEffort")}</p>
-      </Show>
-    </Sheet>
-  );
-}
-
 function slashQuery(text: string, caret: number): { start: number; query: string } | null {
   const lineStart = text.lastIndexOf("\n", caret - 1) + 1;
   const line = text.slice(lineStart, caret);
@@ -248,8 +109,6 @@ export interface ComposerProps {
   onStop?: () => void;
   allowAttachments?: boolean;
   onPlus?: () => void;
-  /** The model capsule shown while the composer is open. */
-  modelChip?: JSX.Element;
 }
 
 let insertHook: ((text: string) => void) | null = null;
@@ -500,7 +359,13 @@ export function Composer(props: ComposerProps) {
                 return (
                   <div class={`thumb${isImg() ? "" : " file"}`}>
                     <Show when={previewUrl()} fallback={<span>{a.name}</span>}>
-                      <img src={previewUrl()!} alt={a.name} onError={(e) => { (e.currentTarget as HTMLElement).style.display = "none"; }} />
+                      <img
+                        src={previewUrl()!}
+                        alt={a.name}
+                        onClick={() => previewUrl() && openImage(previewUrl()!, a.name)}
+                        style={{ cursor: "pointer" }}
+                        onError={(e) => { (e.currentTarget as HTMLElement).style.display = "none"; }}
+                      />
                     </Show>
                     <Show when={!a.id}>
                       <span class="spin" style={{ position: "absolute" }} />
@@ -574,7 +439,6 @@ export function Composer(props: ComposerProps) {
                 <Icon name="plus" />
               </button>
             </Show>
-            {props.modelChip}
             <span class="sp" />
           </Show>
           <Show

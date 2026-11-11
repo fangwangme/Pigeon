@@ -119,6 +119,11 @@ export const zh: Messages = {
   "model.refresh": "刷新",
   "model.refreshing": "刷新中…",
   "model.refreshFailed": "刷新模型列表失败",
+  "model.noThinking": "不支持",
+  "model.levelsCount": "{count} 档",
+  "queue.paused": "已暂停",
+  "queue.resume": "继续发送",
+  "queue.resumeFailed": "继续发送失败",
   "composer.attachment": "附件",
 
   "new.title": "新会话",

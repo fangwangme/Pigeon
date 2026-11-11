@@ -41,18 +41,21 @@ export interface MarkdownCard extends BaseCard {
   content: string;
 }
 
+export interface InteractionOption {
+  id: string;
+  label: string;
+  keyShortcut?: string;
+}
+
 export interface InteractionCardData extends BaseCard {
   kind: "interaction";
+  source?: "screen" | "transcript";
   interactionId: string;
   title: string;
   question: string;
   payload?: string;
   fingerprint: string;
-  options: Array<{
-    id: string;
-    label: string;
-    keyShortcut?: string;
-  }>;
+  options: InteractionOption[];
   fallbackKeys: string[];
 }
 
@@ -301,7 +304,7 @@ export interface AgentRecipeSummary {
   /** Whether `create_tab_and_agent` can start the agent on a chosen model (`protocol.md` §4.5). */
   launchModel: boolean;
   /** Which values `agent_set_model` can change (`protocol.md` §4.9). */
-  runtimeSwitch: { model: boolean; thinking: boolean };
+  runtimeSwitch?: { model: boolean; thinking: boolean };
 }
 
 export interface SessionValue {
@@ -353,12 +356,14 @@ export interface QueuedPrompt {
 export interface PromptQueuePayload {
   paneId: string;
   items: QueuedPrompt[];
+  paused?: boolean;
 }
 
 export interface PastSession {
   id: string;
   title: string;
   updatedAt: number;
+  model?: string;
 }
 
 export interface DeviceInfo {
@@ -448,6 +453,7 @@ export interface PaneBootstrapPayload {
   turns: NormalizedTurnsPayload | null;
   resume: TurnsDeltaPayload | null;
   queue: QueuedPrompt[];
+  queuePaused?: boolean;
   state: PaneStatePayload | null;
   serverMs: number;
 }
@@ -478,7 +484,8 @@ export type ClientMessage =
   | { type: "device_revoke"; id: string; payload: { deviceId: string } }
   | { type: "queue_cancel"; id: string; payload: { targetPaneId: string; queueId: string } }
   | { type: "queue_update"; id: string; payload: { targetPaneId: string; queueId: string; text: string; attachments?: string[] } }
-  | { type: "models_refresh"; id: string; payload: Record<string, never> }
+  | { type: "queue_resume"; id: string; payload: { paneId: string } }
+  | { type: "models_refresh"; id: string; payload?: { agent?: string } }
   | { type: "skills_get"; id: string }
   | { type: "config_get"; id: string }
   | { type: "config_patch"; id: string; payload: { client: Partial<ClientConfig> } }

@@ -118,6 +118,11 @@ export const en = {
   "model.refresh": "Refresh",
   "model.refreshing": "Refreshing…",
   "model.refreshFailed": "Couldn't refresh the model list",
+  "model.noThinking": "Not supported",
+  "model.levelsCount": "{count} levels",
+  "queue.paused": "Paused",
+  "queue.resume": "Resume",
+  "queue.resumeFailed": "Couldn't resume sending",
   "composer.attachment": "Attachment",
 
   "new.title": "New session",

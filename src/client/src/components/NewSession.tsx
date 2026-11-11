@@ -1,9 +1,9 @@
 import { createEffect, createSignal, For, on, Show } from "solid-js";
 import { navigate, showToast, state } from "../state/store";
-import { request, selectPane } from "../state/ws";
-import type { PastSession } from "../../../types/protocol";
-import { Composer, ModelSheet } from "./Composer";
-import { ago, agentLabel, Icon, Logo, Sheet } from "./ui";
+import { refreshModels, request, selectPane } from "../state/ws";
+import type { AgentRecipeSummary, PastSession } from "../../../types/protocol";
+import { Composer } from "./Composer";
+import { ago, agentLabel, formatModelName, Icon, Logo, Sheet } from "./ui";
 import { t } from "../i18n";
 
 function defaultAgent(): string | null {
@@ -107,7 +107,7 @@ export function NewSession(props: { workspaceId: string | null; mode: "new" | "r
           <Show when={mode() === "new" && recipe()?.launchModel && recipe()?.models.length}>
             <button class="chip" onClick={() => setSheet("model")}>
               <Icon name="layers" />
-              {(recipe()!.models.find((m) => m.id === model())?.label ?? t("new.defaultModel")) + thinkingLabel()}
+              {(model() ? formatModelName(agent(), model()) : t("new.defaultModel")) + thinkingLabel()}
               <Icon name="chevD" />
             </button>
           </Show>
@@ -151,7 +151,7 @@ export function NewSession(props: { workspaceId: string | null; mode: "new" | "r
                           <Icon name="clock" />
                           <div class="tx">
                             <div style={{ overflow: "hidden", "text-overflow": "ellipsis", "white-space": "nowrap" }}>{s.title || t("new.untitled")}</div>
-                            <small>{ago(s.updatedAt)}</small>
+                            <small>{[ago(s.updatedAt), s.model ? formatModelName(agent(), s.model) : null].filter(Boolean).join(" · ")}</small>
                           </div>
                           <Show when={busy() === s.id} fallback={<Icon name="chevR" sm />}>
                             <span class="spin" />
@@ -228,24 +228,164 @@ export function NewSession(props: { workspaceId: string | null; mode: "new" | "r
           </div>
         </Sheet>
       </Show>
-      <Show when={sheet() === "model"}>
-        <ModelSheet
+      <Show when={sheet() === "model" && agent()}>
+        <ModelPickerSheet
+          agent={agent()!}
           recipe={recipe()}
           model={model()}
           thinking={thinking()}
-          canSwitchModel
-          canSwitchThinking
           onClose={() => setSheet(null)}
-          onPick={(c) => {
-            if (c.modelId) {
-              setModel(c.modelId);
-              const levels = recipe()?.models.find((m) => m.id === c.modelId)?.thinkingLevels ?? [];
-              if (thinking() && !levels.includes(thinking()!)) setThinking(null);
-            }
-            if (c.thinking) setThinking(c.thinking);
+          onPick={(chosenModel, chosenThinking) => {
+            setModel(chosenModel);
+            setThinking(chosenThinking);
           }}
         />
       </Show>
     </div>
+  );
+}
+
+/** Design C Model Picker sheet (§6.4) */
+function ModelPickerSheet(props: {
+  agent: string;
+  recipe: AgentRecipeSummary | undefined;
+  model: string | null;
+  thinking: string | null;
+  onPick: (modelId: string, thinking: string | null) => void;
+  onClose: () => void;
+}) {
+  const [query, setQuery] = createSignal("");
+  const [refreshing, setRefreshing] = createSignal(false);
+  const [selectedModel, setSelectedModel] = createSignal<string | null>(props.model);
+  const [selectedThinking, setSelectedThinking] = createSignal<string | null>(props.thinking);
+
+  const models = () => props.recipe?.models ?? [];
+  const current = () => models().find((m) => m.id === selectedModel());
+  const levels = () => current()?.thinkingLevels ?? [];
+
+  const shown = () => {
+    const q = query().trim().toLowerCase();
+    return q
+      ? models().filter((m) => m.id.toLowerCase().includes(q) || m.label.toLowerCase().includes(q))
+      : models();
+  };
+
+  const selectModel = (id: string) => {
+    setSelectedModel(id);
+    const target = models().find((m) => m.id === id);
+    const lvls = target?.thinkingLevels ?? [];
+    let nextThinking: string | null = null;
+    if (lvls.length > 0) {
+      if (selectedThinking() && lvls.includes(selectedThinking()!)) {
+        nextThinking = selectedThinking();
+      } else {
+        nextThinking = lvls[0] ?? null;
+      }
+    }
+    setSelectedThinking(nextThinking);
+    props.onPick(id, nextThinking);
+  };
+
+  const selectThinking = (lvl: string) => {
+    setSelectedThinking(lvl);
+    if (selectedModel()) {
+      props.onPick(selectedModel()!, lvl);
+    }
+  };
+
+  const refresh = () => {
+    setRefreshing(true);
+    refreshModels(props.agent)
+      .catch((e) => showToast(e.message || t("model.refreshFailed")))
+      .finally(() => setRefreshing(false));
+  };
+
+  return (
+    <Sheet
+      full
+      title={t("model.title")}
+      sub={props.recipe?.label}
+      onClose={props.onClose}
+      right={
+        <button
+          class="cbtn"
+          style={{ color: "var(--accent)" }}
+          aria-label={t("model.refresh")}
+          disabled={refreshing()}
+          onClick={refresh}
+        >
+          <Show when={refreshing()} fallback={<Icon name="refresh" sm />}>
+            <span class="spin" />
+          </Show>
+        </button>
+      }
+    >
+      <div class="model-pinned-card">
+        <div class="nm">{current()?.label ?? (selectedModel() ? formatModelName(props.agent, selectedModel()) : t("model.model"))}</div>
+        <Show when={selectedModel()}>
+          <div class="id mono">{selectedModel()}</div>
+        </Show>
+        <div class="thinking-row">
+          <Show
+            when={levels().length > 0}
+            fallback={<span class="unsupported">{t("model.noThinking")}</span>}
+          >
+            <For each={levels()}>
+              {(l) => (
+                <button
+                  class={`chip${l === selectedThinking() ? " hi" : ""}`}
+                  onClick={() => selectThinking(l)}
+                >
+                  {l}
+                </button>
+              )}
+            </For>
+          </Show>
+        </div>
+      </div>
+
+      <Show when={models().length > 5}>
+        <div class="searchbar">
+          <Icon name="search" sm />
+          <input
+            placeholder={t("model.search")}
+            value={query()}
+            onInput={(e) => setQuery(e.currentTarget.value)}
+            autocomplete="off"
+            autocapitalize="off"
+            spellcheck={false}
+          />
+        </div>
+      </Show>
+
+      <div class="card" style={{ "margin-top": "6px", "overflow-y": "auto", flex: 1 }}>
+        <For each={shown()} fallback={<p class="note">{t("model.none")}</p>}>
+          {(m) => {
+            const count = m.thinkingLevels?.length ?? 0;
+            return (
+              <button
+                class="li"
+                onClick={() => selectModel(m.id)}
+              >
+                <div class="tx">
+                  <div style={{ "font-weight": 600 }}>{m.label}</div>
+                  <small class="mono">{m.id}</small>
+                </div>
+                <Show when={count > 0}>
+                  <span class="v" style={{ "font-size": "13px", "margin-right": "6px" }}>
+                    {t("model.levelsCount", { count })}
+                  </span>
+                </Show>
+                <Show when={m.id === selectedModel()}>
+                  <span class="ck">
+                    <Icon name="check" />
+                  </span>
+                </Show>
+              </button>
+            );
+          }}
+        </For>
+      </div>
+    </Sheet>
   );
 }

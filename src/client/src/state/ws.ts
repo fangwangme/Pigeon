@@ -309,6 +309,7 @@ export function handleServerMessage(msg: ServerMessage): void {
       }
       if (msg.payload.queue) {
         setState("queue", msg.payload.queue);
+        setState("queuePaused", Boolean(msg.payload.queuePaused));
       }
       if (msg.payload.turns) {
         setState({
@@ -412,7 +413,10 @@ export function handleServerMessage(msg: ServerMessage): void {
     }
 
     case "prompt_queue":
-      if (msg.payload.paneId === state.activePaneId) setState("queue", msg.payload.items);
+      if (msg.payload.paneId === state.activePaneId) {
+        setState("queue", msg.payload.items);
+        setState("queuePaused", Boolean(msg.payload.paused));
+      }
       return;
 
     case "ack": {
@@ -488,9 +492,9 @@ type Command = Exclude<ClientMessage, { type: "ping" } | { type: "presence_updat
 type WithoutId<T> = T extends any ? Omit<T, "id"> : never;
 
 /** Sends a command and resolves with its ack payload; rejects with the error (or offline). */
-/** protocol.md §4.14: the daemon reads every agent's model list again. */
-export function refreshModels(): Promise<any> {
-  return request({ type: "models_refresh", payload: {} });
+/** protocol.md §4.14: the daemon reads an agent's (or every agent's) model list again. */
+export function refreshModels(agent?: string): Promise<any> {
+  return request({ type: "models_refresh", payload: agent ? { agent } : {} });
 }
 
 export function request(msg: WithoutId<Command>): Promise<any> {
@@ -553,6 +557,7 @@ export async function selectPane(paneId: string): Promise<void> {
     todos: memoryView?.todos || null,
     session: memoryView?.session || null,
     queue: memoryView?.queue || [],
+    queuePaused: false,
     pendingInteraction: null,
     rawScreen: "",
     skills: [],

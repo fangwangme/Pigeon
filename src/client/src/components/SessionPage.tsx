@@ -7,7 +7,6 @@ import {
   Composer,
   editQueuedPrompt,
   insertIntoComposer,
-  ModelSheet,
   PlusSheet,
   SkillsSheet,
 } from "./Composer";
@@ -15,10 +14,9 @@ import { ConnectionBanner } from "./Home";
 import { openOverlay } from "./overlays";
 import { PromptCard } from "./PromptCard";
 import { DiffView, renderPath, ScreenCard, TodoCapsule, TodoSheet, ToolSheet, Turn } from "./Transcript";
-import { DiffBadge, findPane, Icon, paneLabel, paneStatus, paneSummary, Sheet, StatusIcon } from "./ui";
+import { DiffBadge, findPane, formatModelName, Icon, paneLabel, paneStatus, paneSummary, Sheet, StatusIcon } from "./ui";
 import { t, type MessageId } from "../i18n";
 
-const SOURCE_TEXT: Record<"log" | "launch" | "unknown", MessageId> = { log: "model.sourceLog", launch: "model.sourceLaunch", unknown: "model.sourceUnknown" };
 const TERMINAL_KEYS: Array<[string, string]> = [
   ["↑", "up"],
   ["↓", "down"],
@@ -163,7 +161,7 @@ function PaneSheet(props: { onClose: () => void }) {
   );
 }
 
-type Panel = "menu" | "changes" | "panes" | "plus" | "skills" | "model" | null;
+type Panel = "menu" | "changes" | "panes" | "plus" | "skills" | null;
 
 /** mobile-ui-and-themes.md §3.5: edit a queued prompt in-place on the server without changing queue position. */
 function editQueued(q: QueuedPrompt): void {
@@ -245,17 +243,21 @@ export function SessionPage() {
 
   const modelValue = () => state.session?.model.value ?? null;
   const thinkingValue = () => state.session?.thinking.value ?? null;
-  const modelChip = () => (
-    <Show when={recipe()}>
-      <button class="mc" onMouseDown={(e) => e.preventDefault()} onClick={() => setPanel("model")}>
-        {recipe()!.models.find((m) => m.id === modelValue())?.label ?? modelValue() ?? t("model.model")}
-        <Show when={thinkingValue()}>
-          <em>· {thinkingValue()}</em>
-        </Show>
-        <Icon name="chevD" sm />
-      </button>
-    </Show>
-  );
+  const subText = () => {
+    const parts: string[] = [];
+    if ((tab()?.panes.length ?? 0) > 1 && pane()) {
+      parts.push(paneLabel(pane()!));
+    }
+    const m = modelValue() ? formatModelName(pane()?.agent, modelValue()) : null;
+    const th = thinkingValue();
+    const modelThinking = [m, th].filter(Boolean).join(" · ");
+    if (modelThinking) {
+      parts.push(modelThinking);
+    } else if ((tab()?.panes.length ?? 0) <= 1 && pane()) {
+      parts.push(paneLabel(pane()!));
+    }
+    return parts.join(" · ");
+  };
 
   const showCard = () => !!state.pendingInteraction && !isTerminal();
 
@@ -279,10 +281,12 @@ export function SessionPage() {
             <Show when={state.paneSyncing}>
               <span class="spin" style={{ width: "10px", height: "10px", "border-width": "1.5px", "vertical-align": "-1px", "margin-right": "4px", display: "inline-block" }} />
               <span>{t("session.syncing")}</span>
-              <span> · </span>
+              <Show when={subText()}>
+                <span> · </span>
+              </Show>
             </Show>
-            {pane() ? paneLabel(pane()!) : ""}
-            <Show when={(tab()?.panes.length ?? 0) > 1}> · {t("home.paneCount", { count: tab()!.panes.length })} ▾</Show>
+            {subText()}
+            <Show when={(tab()?.panes.length ?? 0) > 1}> ▾</Show>
           </div>
         </button>
         <button class="cbtn" aria-label={t("session.more")} onClick={() => setPanel("menu")}>
@@ -351,11 +355,28 @@ export function SessionPage() {
               </div>
             </Show>
             <For each={state.queue}>
-              {(q) => (
+              {(q, idx) => (
                 <>
                   <div class="ub q">{q.text || t("session.attachments", { count: q.attachments.length })}</div>
                   <div class="ubm">
-                    {q.sending ? t("common.sending") : t("session.queued")}
+                    <Show
+                      when={state.queuePaused}
+                      fallback={q.sending ? t("common.sending") : t("session.queued")}
+                    >
+                      <span class="wd" style={{ "margin-right": "4px" }} />
+                      <span>{t("queue.paused")}</span>
+                      <Show when={idx() === 0}>
+                        <button
+                          onClick={() => {
+                            request({ type: "queue_resume", payload: { paneId: state.activePaneId! } }).catch((e) =>
+                              showToast(e.message || t("queue.resumeFailed"))
+                            );
+                          }}
+                        >
+                          {t("queue.resume")}
+                        </button>
+                      </Show>
+                    </Show>
                     <Show when={!q.sending}>
                       <button onClick={() => editQueued(q)}>{t("session.edit")}</button>
                       <button
@@ -407,7 +428,6 @@ export function SessionPage() {
               working={working()}
               onStop={stop}
               onPlus={isTerminal() ? undefined : () => setPanel("plus")}
-              modelChip={modelChip()}
             />
           )}
         </Show>
@@ -508,24 +528,6 @@ export function SessionPage() {
           onPick={(s) => {
             setPanel(null);
             insertIntoComposer(s.invocation);
-          }}
-        />
-      </Show>
-      <Show when={panel() === "model"}>
-        <ModelSheet
-          recipe={recipe()}
-          model={modelValue()}
-          thinking={thinkingValue()}
-          modelSource={state.session ? t(SOURCE_TEXT[state.session.model.source]) : undefined}
-          thinkingSource={state.session?.thinking.value ? t(SOURCE_TEXT[state.session.thinking.source]) : undefined}
-          canSwitchModel={!!recipe()?.runtimeSwitch.model}
-          canSwitchThinking={!!recipe()?.runtimeSwitch.thinking}
-          onClose={() => setPanel(null)}
-          onPick={(change) => {
-            request({ type: "agent_set_model", payload: { targetPaneId: state.activePaneId!, ...change } })
-              .then(() => showToast(t("model.switchSent", { value: (change.modelId ?? change.thinking)! })))
-              .catch((e) => showToast(e.message || t("model.switchFailed")));
-            setPanel(null);
           }}
         />
       </Show>

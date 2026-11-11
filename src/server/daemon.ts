@@ -1,6 +1,7 @@
-import { join } from "node:path";
+import { join, dirname } from "node:path";
 import { networkInterfaces } from "node:os";
 import { createHash } from "node:crypto";
+import { mkdirSync, writeFileSync, appendFileSync } from "node:fs";
 import type { Server } from "bun";
 import { HerdrClient } from "./herdr-client";
 import { PairingManager } from "./pairing";
@@ -29,6 +30,7 @@ export interface DaemonConfig {
   pushSubscriptionsPath?: string;
   uploadsDir?: string;
   embeddedHtml?: string;
+  logPath?: string;
   productionPort?: number;
   autoServe?: boolean;
 }
@@ -46,6 +48,7 @@ export interface ResolvedDaemonConfig {
   vapidPath: string;
   pushSubscriptionsPath: string;
   uploadsDir: string;
+  logPath: string;
 }
 
 const VIRTUAL_IFACE_RE = /^(docker|br-|veth|virbr|vmnet|vboxnet|lo|tailscale|tun|tap|wg)/;
@@ -340,6 +343,7 @@ export class PigeonDaemon {
       vapidPath: opts.vapidPath || (isProduction ? join(serverCfg.stateDir, "vapid.json") : instancePaths.vapidPath),
       pushSubscriptionsPath: opts.pushSubscriptionsPath || (isProduction ? join(serverCfg.stateDir, "push-subscriptions.json") : instancePaths.pushSubscriptionsPath),
       uploadsDir: opts.uploadsDir || (isProduction ? join(serverCfg.stateDir, "uploads") : instancePaths.uploadsDir),
+      logPath: opts.logPath || (isProduction ? join(serverCfg.stateDir, "pigeon.log") : instancePaths.logPath),
     };
 
     // Only the HTML compiled into this build is served (never a file found via the cwd).
@@ -421,7 +425,7 @@ export class PigeonDaemon {
       configManager: this.configManager,
       uploadStore: this.uploadStore,
       pairingManager: this.pairingManager,
-      modelCatalog: new ModelCatalog(),
+      modelCatalog: new ModelCatalog({ cachePath: join(instancePaths.stateDir, "models.json") }),
       queueFilePath: this.config.queueFilePath,
       port: this.config.port,
       productionPort,
@@ -441,12 +445,26 @@ export class PigeonDaemon {
   }
 
   /** security-and-pairing.md §4: exact Host and Origin match, against CSWSH and DNS rebinding. */
-  private checkHostAndOrigin(req: Request): Response | null {
+  private checkHostAndOrigin(req: Request, requireOrigin = true): Response | null {
     const host = hostOf(req.headers.get("host") || "");
     if (!host || !this.allowedHosts.has(host)) return new Response("Forbidden Host", { status: 403 });
     const origin = req.headers.get("origin");
-    if (!origin || !this.allowedOrigins.has(origin)) return new Response("Forbidden Origin", { status: 403 });
+    if (origin) {
+      if (!this.allowedOrigins.has(origin)) return new Response("Forbidden Origin", { status: 403 });
+    } else if (requireOrigin) {
+      return new Response("Forbidden Origin", { status: 403 });
+    }
     return null;
+  }
+
+  public log(msg: string): void {
+    const timestamp = new Date().toISOString();
+    const line = `[${timestamp}] ${msg}`;
+    if (this.config.logPath) {
+      try {
+        appendFileSync(this.config.logPath, line + "\n", "utf-8");
+      } catch {}
+    }
   }
 
   /** herdr-adapter.md §7.1: fill the agents' model lists in the background; `welcome` never waits for it. */
@@ -455,6 +473,12 @@ export class PigeonDaemon {
   }
 
   public async start(): Promise<void> {
+    if (this.config.logPath) {
+      try {
+        mkdirSync(dirname(this.config.logPath), { recursive: true });
+        writeFileSync(this.config.logPath, `[${new Date().toISOString()}] Pigeon daemon ${SERVER_VERSION} on port ${this.config.port}\n`, "utf-8");
+      } catch {}
+    }
     await this.pairingManager.startAdminSocket();
     await this.herdrClient.connect();
 
@@ -484,7 +508,7 @@ export class PigeonDaemon {
     const self = this;
     const cookieName = this.pairingManager.getCookieName();
     const csp =
-      "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' ws: wss:; frame-ancestors 'none'; base-uri 'none'; object-src 'none'; form-action 'none';";
+      "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self' ws: wss:; frame-ancestors 'none'; base-uri 'none'; object-src 'none'; form-action 'none';";
     const htmlResponse = () =>
       new Response(self.html, { headers: { "Content-Type": "text/html; charset=utf-8", "Content-Security-Policy": csp } });
     const sessionOf = (req: Request) => self.pairingManager.validateSession(self.parseCookie(req)[cookieName]);
@@ -554,7 +578,7 @@ export class PigeonDaemon {
 
         const uploadMatch = url.pathname.match(/^\/api\/uploads\/(up_[0-9a-f]{16})$/);
         if (uploadMatch && req.method === "GET") {
-          const rejected = self.checkHostAndOrigin(req);
+          const rejected = self.checkHostAndOrigin(req, false);
           if (rejected) return rejected;
           if (!sessionOf(req)) return new Response("Unauthorized", { status: 401 });
           const info = self.uploadStore.get(uploadMatch[1]);

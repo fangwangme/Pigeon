@@ -547,7 +547,7 @@ export function UsagePage() {
   return (
     <div class="page">
       {/* Shared Header */}
-      <div class="hdr" style={{ padding: "12px 12px 8px" }}>
+      <div class="hdr">
         <button class="cbtn" aria-label={t("common.back")} onClick={() => navigate({ name: backTarget() })}>
           <Icon name="chevL" />
         </button>

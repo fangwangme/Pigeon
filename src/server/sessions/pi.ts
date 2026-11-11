@@ -1,7 +1,7 @@
 import { existsSync, readdirSync, realpathSync, statSync } from "node:fs";
 import { join } from "node:path";
 import type { PastSession } from "../../types/protocol";
-import { isObj, JsonlTail, lineDiff, readHeadJsonLines, str, TurnBuilder, tsOf, type SessionRead } from "./common";
+import { isObj, JsonlTail, lineDiff, readHeadJsonLines, readTailJsonLines, str, TurnBuilder, tsOf, type SessionRead } from "./common";
 import type { PaneFacts, SessionSource } from "./source";
 
 function mtimeOf(path: string | undefined): number | null {
@@ -90,13 +90,27 @@ export class PiSource implements SessionSource {
       .map((f) => {
         this.paths.set(f.id, f.path);
         let title: string | undefined;
+        let model: string | undefined;
         for (const r of readHeadJsonLines(f.path)) {
-          if (isObj(r) && r.type === "message" && r.message?.role === "user") {
-            title = blocksText(r.message.content);
-            if (title) break;
+          if (isObj(r) && r.type === "model_change" && str(r.provider) && str(r.modelId)) model = `${r.provider}/${r.modelId}`;
+          if (isObj(r) && r.type === "message" && isObj(r.message)) {
+            const m = r.message;
+            if (m.role === "assistant" && str(m.provider) && str(m.model)) model = `${m.provider}/${m.model}`;
+            if (!title && m.role === "user") {
+              title = blocksText(m.content);
+            }
           }
         }
-        return { id: f.id, title: (title || f.id).slice(0, 120), updatedAt: f.mtime };
+        if (statSync(f.path).size > 262_144) {
+          for (const r of readTailJsonLines(f.path)) {
+            if (isObj(r) && r.type === "model_change" && str(r.provider) && str(r.modelId)) model = `${r.provider}/${r.modelId}`;
+            if (isObj(r) && r.type === "message" && isObj(r.message)) {
+              const m = r.message;
+              if (m.role === "assistant" && str(m.provider) && str(m.model)) model = `${m.provider}/${m.model}`;
+            }
+          }
+        }
+        return { id: f.id, title: (title || f.id).slice(0, 120), updatedAt: f.mtime, ...(model ? { model } : {}) };
       });
   }
 }

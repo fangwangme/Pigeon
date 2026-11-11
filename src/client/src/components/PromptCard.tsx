@@ -102,6 +102,7 @@ function PermissionCard(props: { p: InteractionCardData }) {
 function QuestionCard(props: { p: InteractionCardData; q: NormalizedQuestion; onCollapse: () => void }) {
   const qs = () => props.q.questions;
   const onScreen = createMemo(() => {
+    if (props.p.source === "transcript") return 0;
     const text = norm(props.p.question + " " + (props.p.payload ?? ""));
     const i = qs().findIndex((q) => text.includes(norm(q.question)) || norm(q.question).includes(norm(props.p.question)));
     return i === -1 ? 0 : i;
@@ -111,9 +112,22 @@ function QuestionCard(props: { p: InteractionCardData; q: NormalizedQuestion; on
   const [picked, setPicked] = createSignal<Record<number, string>>({});
   const { sending, answer } = useAnswer(() => props.p);
   const q = () => qs()[cur()];
-  const other = () => props.p.options.find((o) => OTHER_RE.test(o.label));
+  const other = () => (props.p.source === "transcript" ? undefined : props.p.options.find((o) => OTHER_RE.test(o.label)));
   const submit = () => {
     const label = picked()[cur()];
+    if (props.p.source === "transcript") {
+      const optIdx = q()?.options.findIndex((o) => o.label === label) ?? -1;
+      const targetId = optIdx >= 0 ? `q${cur() + 1}_opt_${optIdx + 1}` : null;
+      const opt = props.p.options.find((o) => o.id === targetId || o.label === label);
+      if (!opt) {
+        showToast(t("prompt.mismatch"));
+        openTerminal();
+        return;
+      }
+      setPage(null);
+      answer(opt.id, opt.label);
+      return;
+    }
     const opt = label ? matchScreenOption(props.p.options, label) : undefined;
     if (!opt) {
       showToast(t("prompt.mismatch"));
@@ -178,14 +192,14 @@ function QuestionCard(props: { p: InteractionCardData; q: NormalizedQuestion; on
           {t("agent.terminal")}
         </button>
         <Show
-          when={!q()?.multiSelect}
+          when={!q()?.multiSelect && (props.p.source !== "transcript" || props.p.options.some((o) => o.keyShortcut))}
           fallback={
             <button class="btn acc" onClick={openTerminal}>
               {t("prompt.inTerminal")}
             </button>
           }
         >
-          <button class="btn acc" disabled={!picked()[cur()] || !!sending() || cur() !== onScreen()} onClick={submit}>
+          <button class="btn acc" disabled={!picked()[cur()] || !!sending() || (props.p.source !== "transcript" && cur() !== onScreen())} onClick={submit}>
             {sending() ? t("common.sending") : cur() === qs().length - 1 ? t("prompt.submit") : t("prompt.nextShort")}
           </button>
         </Show>

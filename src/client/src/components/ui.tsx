@@ -82,8 +82,14 @@ export function modelLabel(model: string | null | undefined, agent?: string | nu
     const fuzzy = list.find((m) => norm(m.id) === target || norm(m.label) === target);
     if (fuzzy) return fuzzy.label;
   }
+  const slashIdx = model.lastIndexOf("/");
+  if (slashIdx >= 0 && slashIdx < model.length - 1) {
+    return model.slice(slashIdx + 1);
+  }
   return model;
 }
+
+export const formatModelName = modelLabel;
 
 /** The pane the session page opens by default: the tab's first pane with an agent (§6.8). */
 export function primaryPane(tab: TabSummary): PaneSummary | undefined {

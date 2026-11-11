@@ -7,6 +7,7 @@ import { CardClassifier, buildUnrecognizedPrompt } from "./card-classifier";
 import { getAgentRecipe } from "./agent-recipes";
 import type {
   AgentStatus,
+  InteractionCardData,
   PaneStatePayload,
   SnapshotPayload,
   WorkspaceSummary,
@@ -118,6 +119,7 @@ export class HerdrClient extends EventEmitter {
   private focusedPaneId: string | null = null;
   /** herdr-adapter.md §4: `done` panes a phone has looked at, reported as `idle`. */
   private seenPanes = new Set<string>();
+  private transcriptInteractions = new Map<string, InteractionCardData>();
   /** protocol.md §5.3: the title of the session bound to a pane, for tabs without a name of their own. */
   private sessionTitleOf: (paneId: string) => string | undefined = () => undefined;
   /** protocol.md §5.3: the active/latest model of the session bound to a pane. */
@@ -615,8 +617,38 @@ export class HerdrClient extends EventEmitter {
   /** Herdr's status is authoritative; a recognized prompt on screen can only add `blocked`. */
   private effectiveStatus(paneId: string): AgentStatus {
     const state = this.paneStates.get(paneId);
-    if (state?.pendingInteraction) return "blocked";
+    if (state?.pendingInteraction || this.transcriptInteractions.has(paneId)) return "blocked";
     return this.reportedStatus(paneId);
+  }
+
+  public setTranscriptInteraction(paneId: string, interaction: InteractionCardData | null): void {
+    const previous = this.transcriptInteractions.get(paneId);
+    if (!interaction && !previous) return;
+    if (interaction && previous && interaction.interactionId === previous.interactionId) return;
+    if (interaction) {
+      this.transcriptInteractions.set(paneId, interaction);
+    } else {
+      this.transcriptInteractions.delete(paneId);
+    }
+    const known = this.knownPanes.get(paneId);
+    if (!known) return;
+    const existing = this.paneStates.get(paneId);
+    const screenPrompt = existing?.rawScreen ? this.classifier.classifyScreen(existing.rawScreen).pendingInteraction : null;
+    const pendingInteraction = screenPrompt ?? interaction ?? (known.herdrStatus === "blocked" && existing ? buildUnrecognizedPrompt(existing.rawScreen) : null);
+    const agentStatus = pendingInteraction ? "blocked" : this.reportedStatus(paneId);
+    const payload: PaneStatePayload = {
+      paneId,
+      workspaceId: known.workspaceId,
+      tabId: known.tabId,
+      agentStatus,
+      cards: existing?.cards ?? [],
+      pendingInteraction,
+      rawScreen: existing?.rawScreen ?? "",
+      revision: (existing?.revision || 0) + 1,
+    };
+    this.paneStates.set(paneId, payload);
+    this.emit("cards_updated", payload);
+    if (this.lastTopology) this.applySnapshot(this.lastTopology);
   }
 
   /** Herdr's status, with a seen `done` reported as `idle` (herdr-adapter.md §4). */
@@ -719,12 +751,17 @@ export class HerdrClient extends EventEmitter {
     if (!known) throw new HerdrError("not_found", `Pane ${paneId} is not in the Herdr snapshot`);
     const existing = this.paneStates.get(paneId);
     // herdr-adapter.md §3.3: a new Herdr status alone is classified again, even on an unchanged screen.
-    const classifyKey = `${createHash("sha256").update(rawScreen).digest("hex")}|${known.herdrStatus}|${this.seenPanes.has(paneId)}`;
+    const classifyKey = `${createHash("sha256").update(rawScreen).digest("hex")}|${known.herdrStatus}|${this.seenPanes.has(paneId)}|${this.transcriptInteractions.get(paneId)?.interactionId ?? ""}`;
     if (existing && this.paneClassifyKeys.get(paneId) === classifyKey) return existing;
 
     let { cards, pendingInteraction } = this.classifier.classifyScreen(rawScreen);
-    if (!pendingInteraction && known.herdrStatus === "blocked") {
-      pendingInteraction = buildUnrecognizedPrompt(rawScreen);
+    if (!pendingInteraction) {
+      const transcript = this.transcriptInteractions.get(paneId);
+      if (transcript) {
+        pendingInteraction = transcript;
+      } else if (known.herdrStatus === "blocked") {
+        pendingInteraction = buildUnrecognizedPrompt(rawScreen);
+      }
     }
 
     const payload: PaneStatePayload = {

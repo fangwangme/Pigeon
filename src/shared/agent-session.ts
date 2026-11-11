@@ -42,12 +42,15 @@ export type TurnItem =
   | { kind: "text"; markdown: string }
   | { kind: "tool"; call: NormalizedToolCall }
   | { kind: "todo"; done: number; total: number }
-  | { kind: "reasoning"; text?: string; hasText?: boolean; durationMs?: number; isStreaming?: boolean };
+  | { kind: "reasoning"; text?: string; hasText?: boolean; durationMs?: number; isStreaming?: boolean }
+  | { kind: "error"; errorKind: string; text: string };
 
 export interface NormalizedTurn {
   turnId: string;
   turnNumber: number;
   timestamp: number;
+  /** Time of the turn's latest record. */
+  updatedAt?: number;
   userPrompt?: { text: string; files?: string[] };
   reasoning?: { text: string; durationMs?: number; isStreaming?: boolean };
   /** Text and tool calls in the order the agent produced them. */

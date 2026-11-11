@@ -17,9 +17,17 @@ svg.i { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-widt
 svg.i.sm { width: 16px; height: 16px; }
 
 /* ---------- page frame ---------- */
+[data-mode="standalone"] html,
+[data-mode="standalone"] body,
+[data-mode="standalone"] #root,
+[data-mode="standalone"] .page {
+  height: 100%;
+  height: 100dvh;
+}
 .page { position: fixed; inset: 0; display: flex; flex-direction: column; background: var(--bg); }
 .scroll { flex: 1; overflow-y: auto; -webkit-overflow-scrolling: touch; overscroll-behavior: contain; }
 .hdr { position: relative; z-index: 20; display: flex; align-items: center; gap: 10px; padding: calc(8px + env(safe-area-inset-top)) 12px 10px; flex: none; }
+.hdr.home-hdr { padding: env(safe-area-inset-top) 12px 6px; }
 .hdr.float { position: absolute; top: 0; left: 0; right: 0; border-bottom: 1px solid var(--line); }
 .hdr.float::before {
   content: ""; position: absolute; inset: 0; z-index: -1; pointer-events: none;
@@ -138,6 +146,7 @@ svg.i.sm { width: 16px; height: 16px; }
 .gh { display: flex; align-items: center; gap: 8px; font-size: 13.5px; font-weight: 650; margin: 18px 0 4px; min-height: 36px; width: 100%; text-align: left; }
 .gh .c { color: var(--muted); font-weight: 600; font-size: 12px; line-height: 18px; background: rgba(127,127,127,.16); border-radius: 9px; padding: 0 7px; }
 .bottombar { position: fixed; left: 16px; right: 16px; bottom: calc(20px + env(safe-area-inset-bottom)); display: flex; justify-content: space-between; align-items: center; z-index: 15; pointer-events: none; }
+[data-mode="standalone"] .bottombar { bottom: calc(8px + env(safe-area-inset-bottom)); }
 .bottombar > * { pointer-events: auto; }
 .fab { height: 52px; border-radius: 26px; background: var(--fg); color: var(--bg); display: inline-flex; align-items: center; gap: 10px; padding: 0 22px 0 18px; font-weight: 600; font-size: 16px; box-shadow: 0 8px 24px rgba(0,0,0,.3); }
 .searchbar { display: flex; align-items: center; gap: 8px; height: 44px; border-radius: 14px; background: var(--surface); border: 1px solid var(--line); padding: 0 12px; color: var(--faint); margin: 8px 0 4px; }
@@ -427,3 +436,109 @@ svg.i.sm { width: 16px; height: 16px; }
 .newempty .logo { width: 64px; height: 64px; margin: 0 auto 12px; }
 .newempty .big { font-size: 22px; font-weight: 650; color: var(--fg); margin-bottom: 4px; }
 .reslist { padding: 0 16px; }
+
+/* ---------- image viewer lightbox ---------- */
+.img-viewer-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 70;
+  background: rgba(0, 0, 0, 0.92);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  touch-action: pan-x pan-y pinch-zoom;
+  animation: fade .18s ease-out;
+}
+.img-viewer-close {
+  position: absolute;
+  top: calc(16px + env(safe-area-inset-top));
+  right: 16px;
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.2);
+  color: #fff;
+  display: grid;
+  place-items: center;
+  z-index: 71;
+  cursor: pointer;
+}
+.img-viewer-content {
+  max-width: 100vw;
+  max-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+}
+.img-viewer-content img {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+  border-radius: 8px;
+  user-select: none;
+}
+
+/* ---------- model picker design c ---------- */
+.model-pinned-card {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  padding: 12px 14px;
+  margin-bottom: 8px;
+  flex: none;
+}
+.model-pinned-card .nm {
+  font-size: 16px;
+  font-weight: 650;
+  color: var(--fg);
+}
+.model-pinned-card .id {
+  font-size: 12.5px;
+  color: var(--muted);
+  margin-top: 2px;
+}
+.model-pinned-card .thinking-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+.model-pinned-card .unsupported {
+  font-size: 13px;
+  color: var(--faint);
+  padding: 4px 0;
+}
+
+/* ---------- tool sheet scroll indicator & jump ---------- */
+.scroll-track {
+  height: 2px;
+  background: var(--line);
+  margin-bottom: 8px;
+  border-radius: 1px;
+  overflow: hidden;
+  flex: none;
+}
+.scroll-thumb {
+  height: 100%;
+  background: var(--accent);
+  border-radius: 1px;
+  transition: width 0.1s;
+}
+.tool-jump {
+  position: absolute;
+  right: 20px;
+  bottom: calc(16px + env(safe-area-inset-bottom));
+  z-index: 50;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.3);
+}
+
+/* ---------- turn error item ---------- */
+.turn-error {
+  color: var(--danger);
+  margin: 8px 0;
+  font-size: 14px;
+  line-height: 1.5;
+}

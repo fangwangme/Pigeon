@@ -501,14 +501,9 @@ describe("session actions", () => {
     expect(herdr.callsOf("tab.close")).toHaveLength(0);
   });
 
-  test("claude switches model with its own /model command; a model the agent does not list is refused (protocol.md §4.9)", async () => {
+  test("agent_set_model is no longer accepted (protocol.md §4.9, issue #21)", async () => {
     const c = await viewer("p1");
     await send(c.ws, { type: "agent_set_model", id: "m1", payload: { targetPaneId: "p1", modelId: "sonnet" } });
-    // p1 is working, so the command waits in the queue like any prompt.
-    expect(c.ofType("prompt_queue").at(-1).payload.items.map((i: any) => i.text)).toEqual(["/model sonnet"]);
-    await send(c.ws, { type: "agent_set_model", id: "m2", payload: { targetPaneId: "p2", modelId: "gpt" } });
-    expect(lastError(c)).toBe("ERR_INVALID_PAYLOAD");
-    await send(c.ws, { type: "agent_set_model", id: "m3", payload: { targetPaneId: "p1", modelId: "no-such-model" } });
     expect(lastError(c)).toBe("ERR_INVALID_PAYLOAD");
   });
 

@@ -19,7 +19,7 @@ function computeCardId(kind: CardKind, anchor: string, occurrence: number): stri
   return `card_${kind}_${hash}`;
 }
 
-function computeInteractionFingerprint(question: string, payload = "", options: Array<{ id?: string; label: string }> = []): string {
+export function computeInteractionFingerprint(question: string, payload = "", options: Array<{ id?: string; label: string }> = []): string {
   const raw = `${question.trim()}|${payload.trim()}|${options.map((o) => o.id || o.label).join(",")}`;
   return "fp_" + createHash("sha256").update(raw).digest("hex").slice(0, 12);
 }
@@ -138,6 +138,7 @@ function buildInteraction(prompt: PromptParse, title = ""): InteractionCardData 
   return {
     id: computeCardId("interaction", prompt.question, 0),
     kind: "interaction",
+    source: "screen",
     interactionId,
     title,
     question: prompt.question,

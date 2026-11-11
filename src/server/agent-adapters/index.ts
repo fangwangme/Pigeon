@@ -1,5 +1,5 @@
 import { Database } from "bun:sqlite";
-import { existsSync, readdirSync, realpathSync, statSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, realpathSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { OpenCodeAdapter, type OpenCodeAdapterOptions } from "./opencode";
@@ -87,8 +87,76 @@ class AgySource implements SessionSource {
   public forget(id: string): void {
     this.adapter.resetCache(id);
   }
-  public list(): PastSession[] {
-    return [];
+  public list(folder: string): PastSession[] {
+    const dbPath = join(dirname(this.brainDir), "conversation_summaries.db");
+    if (!existsSync(dbPath)) return [];
+    try {
+      const db = new Database(dbPath, { readonly: true });
+      try {
+        db.run("PRAGMA query_only = ON;");
+        db.run("PRAGMA busy_timeout = 2000;");
+        const rows = db.query<{
+          conversation_id: string;
+          title: string;
+          preview: string;
+          last_modified_time: string;
+          workspace_uris: string;
+          nesting_depth: number;
+        }, []>(
+          "SELECT conversation_id, title, preview, last_modified_time, workspace_uris, nesting_depth FROM conversation_summaries WHERE nesting_depth = 0 ORDER BY last_modified_time DESC"
+        ).all();
+
+        const targetUri = "file://" + (folder.endsWith("/") ? folder.slice(0, -1) : folder);
+        const out: PastSession[] = [];
+        for (const r of rows) {
+          let uris: string[] = [];
+          try {
+            uris = JSON.parse(r.workspace_uris);
+          } catch {
+            continue;
+          }
+          if (!Array.isArray(uris)) continue;
+          const matches = uris.some((u) => typeof u === "string" && (u === targetUri || u.startsWith(targetUri + "/")));
+          if (!matches) continue;
+
+          let ts: number;
+          try {
+            ts = Date.parse(r.last_modified_time);
+            if (Number.isNaN(ts)) ts = Date.parse(r.last_modified_time.replace(" ", "T"));
+          } catch {
+            ts = 0;
+          }
+
+          let model: string | undefined = undefined;
+          const logPath = this.adapter.getSessionLogPath(r.conversation_id);
+          if (existsSync(logPath)) {
+            try {
+              const head = readFileSync(logPath, "utf-8").slice(0, 100_000);
+              const modelMatch = head.match(
+                /The user changed setting `Model Selection` from .*? to `?(.+?)`?\.(?:\s+No need|\s*<\/USER_SETTINGS_CHANGE>|$)/
+              );
+              if (modelMatch && modelMatch[1]) {
+                const raw = modelMatch[1].replace(/^`+|`+$/g, "").trim();
+                if (raw && raw !== "None") model = raw;
+              }
+            } catch {}
+          }
+
+          out.push({
+            id: r.conversation_id,
+            title: r.title ? r.title : r.preview,
+            updatedAt: ts,
+            ...(model ? { model } : {}),
+          });
+          if (out.length >= 50) break;
+        }
+        return out;
+      } finally {
+        db.close();
+      }
+    } catch {
+      return [];
+    }
   }
 }
 
@@ -170,7 +238,8 @@ class OpenCodeSource implements SessionSource {
     ).map((r) => {
       const isPlaceholder = r.title ? OPENCODE_PLACEHOLDER_TITLE.test(r.title) : false;
       const effectiveTitle = (!isPlaceholder && r.title) || this.firstPrompt(r.id) || r.id;
-      return { id: r.id, title: effectiveTitle.slice(0, 120), updatedAt: r.time_updated };
+      const m = this.model(r.id);
+      return { id: r.id, title: effectiveTitle.slice(0, 120), updatedAt: r.time_updated, ...(m ? { model: m } : {}) };
     });
   }
 }

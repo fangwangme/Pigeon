@@ -138,6 +138,7 @@ async function main() {
       publicBaseUrl: publicUrl,
       adminSocketPath,
       productionPort,
+      logPath: instancePaths.logPath,
     });
     await daemon.start();
     daemon.fillModelCatalog();

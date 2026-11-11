@@ -67,6 +67,7 @@ export interface AppState {
   paneSyncing: boolean;
   paneLoaded: boolean;
   queue: QueuedPrompt[];
+  queuePaused: boolean;
   skills: SkillEntry[];
   recipes: Record<string, AgentRecipeSummary>;
   themeMode: ThemeMode;
@@ -151,6 +152,7 @@ const [state, setState] = createStore<AppState>({
   paneSyncing: false,
   paneLoaded: false,
   queue: [],
+  queuePaused: false,
   skills: [],
   recipes: {},
   themeMode: (readPref("pigeon_mode") as ThemeMode | null) || "system",
@@ -254,6 +256,18 @@ export function navigate(route: Route): void {
   writePref("pigeon_route", JSON.stringify(route));
   if (route.name === "home") {
     writePref("pigeon_active_pane", null);
+  }
+}
+
+export function goBack(): void {
+  const r = state.route;
+  if (r.name === "home") return;
+  if (r.name === "session") {
+    navigate({ name: r.from === "agents" ? "agents" : "home" });
+  } else if (r.name === "quota" || r.name === "usage") {
+    navigate({ name: (r as { from?: "home" | "agents" | "settings" }).from || "home" });
+  } else {
+    navigate({ name: "home" });
   }
 }
 

@@ -278,6 +278,7 @@ export class AgyAdapter {
             turnId: `turn_${turnCounter}`,
             turnNumber: turnCounter,
             timestamp,
+            updatedAt: timestamp,
             userPrompt: {
               text: cleanText || promptText,
               ...(files.length > 0 ? { files } : {}),
@@ -293,11 +294,13 @@ export class AgyAdapter {
               turnId: `turn_${turnCounter}`,
               turnNumber: turnCounter,
               timestamp,
+              updatedAt: timestamp,
               toolCalls: [],
               items: [],
             };
             turns.push(currentTurn);
           }
+          currentTurn.updatedAt = Math.max(currentTurn.updatedAt ?? currentTurn.timestamp, timestamp);
 
           if (record.thinking) {
             currentTurn.reasoning = {

@@ -156,7 +156,7 @@ export function Home() {
   const focusedWs = () => (state.workspaces.find((w) => w.isFocused) ?? state.workspaces[0])?.id ?? null;
   return (
     <div class="page">
-      <div class="hdr">
+      <div class="hdr home-hdr">
         <div class="logo-mark" aria-label="Pigeon">
           <Logo />
         </div>

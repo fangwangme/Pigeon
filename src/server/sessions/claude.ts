@@ -2,7 +2,7 @@ import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import type { FileDiffSummary, TodoItem } from "../../shared/agent-session";
 import type { PastSession } from "../../types/protocol";
-import { claudeSlug, countPatch, isObj, JsonlTail, lineDiff, readHeadJsonLines, str, todoStatus, TurnBuilder, tsOf, type SessionRead } from "./common";
+import { claudeSlug, countPatch, isObj, JsonlTail, lineDiff, readHeadJsonLines, readTailJsonLines, str, todoStatus, TurnBuilder, tsOf, type SessionRead } from "./common";
 import type { PaneFacts, SessionSource } from "./source";
 
 /** Claude Code (`agent-session-normalization.md` §2.3). */
@@ -108,13 +108,29 @@ export class ClaudeSource implements SessionSource {
       if (cwd && cwd !== folder && !cwd.startsWith(folder + "/")) continue;
       let title: string | undefined;
       let firstPrompt: string | undefined;
+      let model: string | undefined;
       for (const r of head) {
         if (!isObj(r)) continue;
         if (r.type === "custom-title" || r.type === "ai-title") title = str(r.customTitle) ?? str(r.aiTitle) ?? title;
         if (!firstPrompt && r.type === "user") firstPrompt = promptText(r) ?? undefined;
+        if (r.type === "assistant" && isObj(r.message) && typeof r.message.model === "string" && r.message.model && r.message.model !== "<synthetic>") {
+          model = r.message.model;
+        }
+      }
+      if (s.path && statSync(s.path).size > 262_144) {
+        for (const r of readTailJsonLines(s.path)) {
+          if (isObj(r) && r.type === "assistant" && isObj(r.message) && typeof r.message.model === "string" && r.message.model && r.message.model !== "<synthetic>") {
+            model = r.message.model;
+          }
+        }
       }
       this.paths.set(s.id, s.path);
-      result.push({ id: s.id, title: (title ?? firstPrompt ?? s.id).slice(0, 120), updatedAt: s.updatedAt });
+      result.push({
+        id: s.id,
+        title: (title ?? firstPrompt ?? s.id).slice(0, 120),
+        updatedAt: s.updatedAt,
+        ...(model ? { model } : {}),
+      });
     }
     return result;
   }
@@ -232,6 +248,14 @@ function applyRecord(b: TurnBuilder, r: unknown): void {
   if (r.type === "assistant") {
     const msg = r.message;
     if (!isObj(msg)) return;
+    if (r.isApiErrorMessage === true) {
+      const errText = Array.isArray(msg.content)
+        ? msg.content.filter(isObj).map((b: any) => b.text || "").join("\n")
+        : typeof msg.content === "string" ? msg.content : "";
+      const errKind = str(r.error) || "unknown";
+      b.error(errKind, errText, ts);
+      return;
+    }
     if (str(msg.model) && msg.model !== "<synthetic>") b.model = msg.model;
     if (!Array.isArray(msg.content)) return;
     for (const block of msg.content) {
