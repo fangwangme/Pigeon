@@ -180,7 +180,14 @@ export { state, setState };
 
 /** Applies the language choice, following the browser's languages for 跟随系统 (§10.1). */
 function applyLocale(): void {
-  setLocale(resolveLocale(state.localePref, globalThis.navigator?.languages ?? []));
+  const currentLocale = resolveLocale(state.localePref, globalThis.navigator?.languages ?? []);
+  setLocale(currentLocale);
+  if (typeof window !== "undefined") {
+    if ("caches" in window) {
+      caches.open("pigeon-settings").then((cache) => cache.put("/__locale", new Response(currentLocale))).catch(() => {});
+    }
+    navigator.serviceWorker?.controller?.postMessage({ type: "SET_LOCALE", locale: currentLocale });
+  }
 }
 
 export function setLocalePref(pref: LocalePref): void {

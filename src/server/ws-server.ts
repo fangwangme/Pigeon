@@ -6,7 +6,7 @@ import { HerdrError, UNREACHABLE_CODES, type HerdrClient } from "./herdr-client"
 import type { DeviceSession, PairingManager } from "./pairing";
 import type { UploadStore } from "./uploads";
 import type { PushManager, PushMessage } from "./push";
-import type { ConfigManager } from "./config-manager";
+import { type ConfigManager, resolveProductionPort, DEFAULT_PORT } from "./config-manager";
 import { AgentAdapterManager } from "./agent-adapters/index";
 import { PaneStore } from "./pane-store";
 import { SkillScanner } from "./skill-scanner";
@@ -59,6 +59,7 @@ export interface WsServerOptions {
   queueFilePath?: string;
   queueSendTimeoutMs?: number;
   port?: number;
+  productionPort?: number;
   environmentKind?: "production" | "dev" | "test";
 }
 
@@ -144,10 +145,11 @@ export class WsServer {
     this.pairingManager = options.pairingManager;
     this.quotaService = options.quotaService;
     this.usageService = options.usageService;
-    const port = options.port ?? options.configManager?.getServerConfig().port ?? 4100;
+    const port = options.port ?? options.configManager?.getServerConfig().port ?? DEFAULT_PORT;
+    const prodPort = options.productionPort ?? resolveProductionPort(options.configManager?.env);
     const isCompiled = process.execPath.endsWith("/pigeon") || !process.argv[1]?.endsWith(".ts");
     const isDev = options.environmentKind === "dev" || (!isCompiled && options.environmentKind !== "production");
-    const isTest = options.environmentKind === "test" || (port !== 4100 && !isDev);
+    const isTest = options.environmentKind === "test" || (port !== prodPort && !isDev);
     const kind = options.environmentKind ?? (isDev ? "dev" : isTest ? "test" : "production");
     this.environment = { kind, port };
     // security-and-pairing.md §5: a revoked device (from the phone or `pigeon devices revoke`) is cut off at once.
@@ -232,6 +234,14 @@ export class WsServer {
           this.transitionQueue(paneId, { type: "remove_pane" });
         }
       }
+      for (const paneId of Array.from(this.lastStatus.keys())) {
+        if (!this.herdrClient.hasPane(paneId)) {
+          this.lastStatus.delete(paneId);
+          this.lastPaneTailAt.delete(paneId);
+          this.lastPushAt.delete(`${paneId}:blocked`);
+          this.lastPushAt.delete(`${paneId}:done`);
+        }
+      }
       this.saveQueues();
       this.broadcast({ type: "snapshot_update", payload: snapshot });
       this.rebindSessions();
@@ -260,16 +270,17 @@ export class WsServer {
         this.maybeSendPaneTail(paneId, true);
       }
 
-      // push.md §4: notify on transition into blocked or done (push.md §4.1), at most once per minute per pane.
       const isBlocked = status === "blocked" && previous !== "blocked";
-      const isDone = status === "done" && previous === "working";
+      const isDone = status === "done" && previous !== "done";
       if (!isBlocked && !isDone) return;
       const pushEvent = isBlocked ? "blocked" : "done";
       const dedupeKey = `${paneId}:${pushEvent}`;
       const now = Date.now();
       if (now - (this.lastPushAt.get(dedupeKey) || 0) < PUSH_DEDUPE_MS) return;
-      this.lastPushAt.set(dedupeKey, now);
-      this.pushManager.sendNotification(this.pushMessage(paneId, pushEvent));
+      const result = this.pushManager.sendNotification(this.pushMessage(paneId, pushEvent));
+      if (!result.suppressed && result.delivered) {
+        this.lastPushAt.set(dedupeKey, now);
+      }
     };
     this.herdrClient.on("pane_status_changed", this.onPaneStatusChanged);
   }
@@ -1074,6 +1085,10 @@ export class WsServer {
       if (queueState.timer) clearTimeout(queueState.timer);
       this.queueStates.delete(paneId);
       this.queues.delete(paneId);
+      this.lastPaneTailAt.delete(paneId);
+      this.lastStatus.delete(paneId);
+      this.lastPushAt.delete(`${paneId}:blocked`);
+      this.lastPushAt.delete(`${paneId}:done`);
       this.saveQueues();
       return;
     }

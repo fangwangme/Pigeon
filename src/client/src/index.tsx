@@ -107,6 +107,7 @@ function App() {
     if (targetPane) {
       window.history.replaceState(null, "", window.location.pathname || "/");
       await selectPane(targetPane);
+      navigate({ name: "session", from: "home" });
     } else if (state.activePaneId) {
       await selectPane(state.activePaneId);
     }

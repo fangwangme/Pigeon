@@ -1,7 +1,7 @@
 import { connect } from "node:net";
 import { existsSync } from "node:fs";
 import { PigeonDaemon } from "../server/daemon";
-import { ConfigManager, portScoped, resolveInstancePaths } from "../server/config-manager";
+import { ConfigManager, resolveInstancePaths, resolveProductionPort } from "../server/config-manager";
 import qrcode from "qrcode-terminal";
 
 export const ADMIN_TIMEOUT_MS = 5000;
@@ -89,11 +89,13 @@ async function main() {
     }
   }
 
-  // Load config from instance's state directory if --port was specified, else production
-  const configPath = cliPort ? resolveInstancePaths({ port: cliPort }).configPath : undefined;
-  const configManager = new ConfigManager(configPath ? { path: configPath, port: cliPort } : undefined);
-  const adminPort = cliPort ?? configManager.getServerConfig().port;
-  const adminSocketPath = resolveInstancePaths({ port: adminPort, env: configManager.env }).adminSocketPath;
+  const productionPort = resolveProductionPort();
+  const isProduction = cliPort === undefined || cliPort === productionPort;
+  const activePort = cliPort ?? productionPort;
+  const instancePaths = resolveInstancePaths({ port: activePort, productionPort });
+  const configPath = isProduction ? undefined : instancePaths.configPath;
+  const configManager = new ConfigManager(configPath ? { path: configPath, port: activePort, productionPort } : { productionPort });
+  const adminSocketPath = instancePaths.adminSocketPath;
 
   if (command === "start") {
     let port: number | undefined = cliPort;
@@ -127,7 +129,16 @@ async function main() {
       }
     }
 
-    const daemon = new PigeonDaemon({ configManager, port, insecureDev, herdrAppSocketPath, herdrCoreSocketPath, publicBaseUrl: publicUrl, adminSocketPath });
+    const daemon = new PigeonDaemon({
+      configManager,
+      port,
+      insecureDev,
+      herdrAppSocketPath,
+      herdrCoreSocketPath,
+      publicBaseUrl: publicUrl,
+      adminSocketPath,
+      productionPort,
+    });
     await daemon.start();
     daemon.fillModelCatalog();
     console.log(`Pigeon daemon listening on port ${daemon.config.port} (insecureDev=${daemon.config.insecureDev})`);
@@ -185,7 +196,7 @@ async function main() {
       }
     }
   } else if (command === "rebuild-cache") {
-    if (adminPort !== 4100 && !args.includes("--yes")) {
+    if (!isProduction && !args.includes("--yes")) {
       fail("Refusing to rebuild shared usage cache from test instance without --yes.");
     }
     console.log("Rebuilding usage database from all sources...");

@@ -159,7 +159,7 @@ A period is shown as a grid of days (`mobile-ui-and-themes.md` §11.3). Its orie
 ### 3.7 Freshness and Storage
 
 Usage scanning operates in one of two modes (`client.usageScanMode`):
-- **Scheduled** (`scheduled`, default): background scans run periodically at the configured interval (`1m`, `2m`, `5m` default, `10m`, `15m`). Client requests answer immediately from SQLite without blocking on filesystem reads, unless forced with `force: true`.
+- **Scheduled** (`scheduled`, default): background scans run periodically at the configured interval (`1m`, `2m`, `5m` default, `10m`, `15m`). Client requests answer immediately from SQLite without blocking on filesystem reads; forced refresh (`force: true`) rescans newly modified session files only in realtime mode, while scheduled mode answers from the background cache (user decision, 2026-11-11).
 - **Realtime** (`realtime`): every usage request checks and scans newly modified session files before answering; a scan that is already running is shared.
 
 Scans run off the daemon's event loop (in a Worker), so a first scan or a rebuild never delays WebSocket traffic. JSONL files are read from the byte offset where the previous scan stopped, unless the file shrank.

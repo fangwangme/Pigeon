@@ -149,7 +149,6 @@ export class PaneStore extends EventEmitter {
     const resolvedModel = result.model ? (this.modelResolver ? this.modelResolver(state.agent, result.model) : result.model) : undefined;
     state.model = resolvedModel;
     if (state.model && state.model !== oldModel) this.emit("session_model", state.agent, state.model);
-    state.seqWatermark += 1;
     const infoChanged = oldInfo !== JSON.stringify([state.todos, state.model]);
     const extra = {
       sessionStats: result.stats,
@@ -160,15 +159,18 @@ export class PaneStore extends EventEmitter {
     const oldLen = oldTurns.length;
     const newLen = turns.length;
     const same = (a: NormalizedTurn | undefined, b: NormalizedTurn | undefined) => JSON.stringify(a) === JSON.stringify(b);
-    let delta: TurnsDeltaPayload | null;
+    let delta: TurnsDeltaPayload | null = null;
     if (oldLen === 0 || newLen < oldLen) {
+      state.seqWatermark += 1;
       delta = { paneId, seq: state.seqWatermark, seqWatermark: state.seqWatermark, sinceTurnIndex: 0, appendTurns: turns, ...extra };
     } else if (newLen > oldLen) {
+      state.seqWatermark += 1;
       const patch = same(oldTurns[oldLen - 1], turns[oldLen - 1]) ? undefined : turns[oldLen - 1];
       delta = { paneId, seq: state.seqWatermark, seqWatermark: state.seqWatermark, sinceTurnIndex: oldLen, appendTurns: turns.slice(oldLen), ...(patch ? { patchLastTurn: patch } : {}), ...extra };
     } else if (!same(oldTurns[oldLen - 1], turns[newLen - 1]) || infoChanged) {
+      state.seqWatermark += 1;
       delta = { paneId, seq: state.seqWatermark, seqWatermark: state.seqWatermark, sinceTurnIndex: oldLen - 1, appendTurns: [], patchLastTurn: turns[newLen - 1], isStreaming: true, ...extra };
-    } else delta = null;
+    }
     if (delta) this.emit("turns_delta", delta);
   }
 

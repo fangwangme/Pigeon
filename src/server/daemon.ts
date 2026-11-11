@@ -7,7 +7,7 @@ import { PairingManager } from "./pairing";
 import { PushManager, type PushSubscriptionData } from "./push";
 import { WsServer, newConnectionId, SERVER_VERSION, type ClientConnectionData } from "./ws-server";
 import { EMBEDDED_HTML } from "./embedded-html";
-import { ConfigManager, portScoped, resolveInstancePaths, DEFAULT_PORT } from "./config-manager";
+import { ConfigManager, resolveInstancePaths, resolveProductionPort, DEFAULT_PORT } from "./config-manager";
 import { ModelCatalog } from "./model-catalog";
 import { MAX_UPLOAD_BYTES, UploadStore } from "./uploads";
 import { QuotaService } from "./quota/index";
@@ -29,6 +29,7 @@ export interface DaemonConfig {
   pushSubscriptionsPath?: string;
   uploadsDir?: string;
   embeddedHtml?: string;
+  productionPort?: number;
 }
 
 export interface ResolvedDaemonConfig {
@@ -97,9 +98,8 @@ function detectTailscaleHostname(): string | null {
   }
 }
 
-function tryAutoTailscaleServe(port: number): boolean {
-  // Never mutate host Tailscale serve during automated test runs, and only configure on production port 4100
-  if (process.argv.some((arg) => arg.includes("test")) || port !== DEFAULT_PORT) {
+function tryAutoTailscaleServe(port: number, isProduction: boolean = true): boolean {
+  if (process.argv.some((arg) => arg.includes("test")) || !isProduction) {
     return false;
   }
   try {
@@ -110,12 +110,10 @@ function tryAutoTailscaleServe(port: number): boolean {
   }
 }
 
-function detectTailscaleDns(port?: number): string | null {
+function detectTailscaleDns(port?: number, isProduction: boolean = true): string | null {
   const dns = detectTailscaleHostname();
   if (!dns) return null;
 
-  // When port is provided, verify tailscale serve is proxying to this port.
-  // If not yet serving, attempt auto-configuration only when serve is not active (architecture.md §4.2).
   if (port) {
     try {
       const serveProc = Bun.spawnSync(["tailscale", "serve", "status", "--json"], { timeout: 2000, stderr: "ignore" });
@@ -132,8 +130,7 @@ function detectTailscaleDns(port?: number): string | null {
           return null;
         }
       }
-      // Auto-configure only when tailscale serve status is empty ({})
-      if (serveEmpty && tryAutoTailscaleServe(port)) {
+      if (serveEmpty && isProduction && tryAutoTailscaleServe(port, isProduction)) {
         return dns;
       }
       return null;
@@ -180,10 +177,10 @@ export interface ResolvedAccess {
 }
 
 export function resolveAccess(
-  opts: { configured?: string; insecureDev?: boolean; port: number },
+  opts: { configured?: string; insecureDev?: boolean; port: number; isProduction?: boolean },
   probes: AccessProbes = {}
 ): ResolvedAccess {
-  const tailscaleServeDns = probes.tailscaleServeDns ?? (() => detectTailscaleDns(opts.port));
+  const tailscaleServeDns = probes.tailscaleServeDns ?? (() => detectTailscaleDns(opts.port, opts.isProduction ?? true));
   const tailscaleIp = probes.tailscaleIp ?? detectTailscaleIp;
   const lanIp = probes.lanIp ?? detectLocalIp;
 
@@ -285,10 +282,12 @@ export class PigeonDaemon {
     const serverCfg = this.configManager.getServerConfig();
     const port = opts.port ?? serverCfg.port;
     const insecureDev = opts.insecureDev ?? serverCfg.insecureDev;
-    const access = resolveAccess({ configured: opts.publicBaseUrl || serverCfg.publicBaseUrl, insecureDev, port });
+    const productionPort = opts.productionPort ?? resolveProductionPort(this.configManager.env);
+    const isProduction = port === productionPort;
+    const access = resolveAccess({ configured: opts.publicBaseUrl || serverCfg.publicBaseUrl, insecureDev, port, isProduction });
     this.access = access;
 
-    const instancePaths = resolveInstancePaths({ port, env: this.configManager.env });
+    const instancePaths = resolveInstancePaths({ port, productionPort, env: this.configManager.env });
 
     this.config = {
       port,
@@ -297,12 +296,12 @@ export class PigeonDaemon {
       publicBaseUrl: access.publicBaseUrl,
       herdrAppSocketPath: opts.herdrAppSocketPath || serverCfg.herdrAppSocketPath,
       herdrCoreSocketPath: opts.herdrCoreSocketPath || serverCfg.herdrCoreSocketPath,
-      adminSocketPath: opts.adminSocketPath || (port === DEFAULT_PORT ? serverCfg.adminSocketPath : instancePaths.adminSocketPath),
-      devicesFilePath: opts.devicesFilePath || (port === DEFAULT_PORT ? join(serverCfg.stateDir, "devices.json") : instancePaths.devicesPath),
-      queueFilePath: opts.queueFilePath || (port === DEFAULT_PORT ? join(serverCfg.stateDir, "queue.json") : instancePaths.queuePath),
-      vapidPath: opts.vapidPath || (port === DEFAULT_PORT ? join(serverCfg.stateDir, "vapid.json") : instancePaths.vapidPath),
-      pushSubscriptionsPath: opts.pushSubscriptionsPath || (port === DEFAULT_PORT ? join(serverCfg.stateDir, "push-subscriptions.json") : instancePaths.pushSubscriptionsPath),
-      uploadsDir: opts.uploadsDir || (port === DEFAULT_PORT ? join(serverCfg.stateDir, "uploads") : instancePaths.uploadsDir),
+      adminSocketPath: opts.adminSocketPath || (isProduction ? serverCfg.adminSocketPath : instancePaths.adminSocketPath),
+      devicesFilePath: opts.devicesFilePath || (isProduction ? join(serverCfg.stateDir, "devices.json") : instancePaths.devicesPath),
+      queueFilePath: opts.queueFilePath || (isProduction ? join(serverCfg.stateDir, "queue.json") : instancePaths.queuePath),
+      vapidPath: opts.vapidPath || (isProduction ? join(serverCfg.stateDir, "vapid.json") : instancePaths.vapidPath),
+      pushSubscriptionsPath: opts.pushSubscriptionsPath || (isProduction ? join(serverCfg.stateDir, "push-subscriptions.json") : instancePaths.pushSubscriptionsPath),
+      uploadsDir: opts.uploadsDir || (isProduction ? join(serverCfg.stateDir, "uploads") : instancePaths.uploadsDir),
     };
 
     // Only the HTML compiled into this build is served (never a file found via the cwd).
@@ -330,12 +329,12 @@ export class PigeonDaemon {
       this.allowedOrigins.add(`http://${tsHost}:${port}`);
       this.allowedOrigins.add(`https://${tsHost}`);
       this.allowedOrigins.add(`https://${tsHost}:${port}`);
-      if (insecureDev || port === 4101) {
+      if (insecureDev || !isProduction) {
         this.allowedOrigins.add(`http://${tsHost}:${VITE_DEV_PORT}`);
       }
     }
 
-    if (insecureDev || port === 4101) {
+    if (insecureDev || !isProduction) {
       for (const h of ["localhost", "127.0.0.1", "[::1]"]) {
         this.allowedOrigins.add(`http://${h}:${port}`);
         this.allowedOrigins.add(`http://${h}:${VITE_DEV_PORT}`); // vite dev server proxying /ws
@@ -386,7 +385,8 @@ export class PigeonDaemon {
       modelCatalog: new ModelCatalog(),
       queueFilePath: this.config.queueFilePath,
       port: this.config.port,
-      environmentKind: this.config.insecureDev ? "dev" : undefined,
+      productionPort,
+      environmentKind: this.config.insecureDev ? "dev" : (isProduction ? undefined : "test"),
       quotaService,
       usageService,
     });
@@ -513,11 +513,16 @@ export class PigeonDaemon {
           const info = self.uploadStore.get(uploadMatch[1]);
           if (!info) return new Response("Not found", { status: 404 });
           const file = Bun.file(info.path);
+          const mime = (info.mime || "application/octet-stream").toLowerCase();
+          const isRaster = ["image/png", "image/jpeg", "image/jpg", "image/gif", "image/webp", "image/heic"].includes(mime);
+          const disposition = isRaster ? "inline" : "attachment";
           return new Response(file, {
             headers: {
               "Content-Type": info.mime || "application/octet-stream",
-              "Content-Disposition": `inline; filename="${encodeURIComponent(info.name)}"`,
+              "Content-Disposition": `${disposition}; filename="${encodeURIComponent(info.name)}"`,
               "Cache-Control": "private, max-age=86400",
+              "X-Content-Type-Options": "nosniff",
+              "Content-Security-Policy": "default-src 'none'; sandbox",
             },
           });
         }

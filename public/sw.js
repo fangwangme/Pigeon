@@ -1,9 +1,10 @@
 const CACHE_NAME = "pigeon-cache-v2";
 
-// A new version waits until the page asks it to take over, so an update never reloads the app
-// while the user is typing; the page shows an "update available" prompt instead.
 self.addEventListener("message", (event) => {
   if (event.data && event.data.type === "SKIP_WAITING") self.skipWaiting();
+  if (event.data && event.data.type === "SET_LOCALE" && event.data.locale) {
+    caches.open("pigeon-settings").then((cache) => cache.put("/__locale", new Response(event.data.locale))).catch(() => {});
+  }
 });
 
 self.addEventListener("activate", (event) => {
@@ -60,39 +61,60 @@ self.addEventListener("fetch", (event) => {
   );
 });
 
-self.addEventListener("push", (event) => {
-  let data = {};
+async function getStoredLocale() {
   try {
-    data = event.data ? event.data.json() : {};
-  } catch {
-    data = {};
-  }
-  const agent = data.agent ? String(data.agent) : "";
-  const agentLabel =
-    agent === "claude"
-      ? "Claude Code"
-      : agent === "codex"
-        ? "Codex"
-        : agent === "opencode"
-          ? "OpenCode"
-          : agent === "pi"
-            ? "Pi"
-            : agent === "agy"
-              ? "Antigravity"
-              : agent || "Agent";
-  const title = data.event === "done" ? `${agentLabel} 已完成` : `${agentLabel} 等你确认`;
-  const parts = [];
-  if (data.workspace) parts.push(data.workspace);
-  if (data.tab) parts.push(data.tab);
-  const body = parts.join(" · ");
-  const options = {
-    body,
-    icon: "/icon-192.png",
-    badge: "/icon-192.png",
-    data: { paneId: data.paneId, url: data.paneId ? `/?pane=${encodeURIComponent(data.paneId)}` : "/" },
-    tag: data.paneId ? `pane:${data.paneId}` : undefined,
-  };
-  event.waitUntil(self.registration.showNotification(title, options));
+    const cache = await caches.open("pigeon-settings");
+    const res = await cache.match("/__locale");
+    if (res) {
+      const text = (await res.text()).trim();
+      if (text === "en" || text === "zh") return text;
+    }
+  } catch {}
+  return "zh";
+}
+
+self.addEventListener("push", (event) => {
+  event.waitUntil(
+    (async () => {
+      let data = {};
+      try {
+        data = event.data ? event.data.json() : {};
+      } catch {
+        data = {};
+      }
+      const locale = await getStoredLocale();
+      const isZh = locale === "zh";
+      const agent = data.agent ? String(data.agent) : "";
+      const agentLabel =
+        agent === "claude"
+          ? "Claude Code"
+          : agent === "codex"
+            ? "Codex"
+            : agent === "opencode"
+              ? "OpenCode"
+              : agent === "pi"
+                ? "Pi"
+                : agent === "agy"
+                  ? "Antigravity"
+                  : agent || "Agent";
+      const title =
+        data.event === "done"
+          ? (isZh ? `${agentLabel} 已完成` : `${agentLabel} completed`)
+          : (isZh ? `${agentLabel} 等你确认` : `${agentLabel} waiting for confirmation`);
+      const parts = [];
+      if (data.workspace) parts.push(data.workspace);
+      if (data.tab) parts.push(data.tab);
+      const body = parts.join(" · ");
+      const options = {
+        body,
+        icon: "/icon-192.png",
+        badge: "/icon-192.png",
+        data: { paneId: data.paneId, url: data.paneId ? `/?pane=${encodeURIComponent(data.paneId)}` : "/" },
+        tag: data.paneId ? `pane:${data.paneId}` : undefined,
+      };
+      await self.registration.showNotification(title, options);
+    })()
+  );
 });
 
 self.addEventListener("notificationclick", (event) => {
