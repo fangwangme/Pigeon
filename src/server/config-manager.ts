@@ -28,22 +28,75 @@ export function detectQuotaProviders(home: string, env: NodeJS.ProcessEnv = proc
   return { claude, codex, antigravity };
 }
 
-/** Server settings that do not depend on the environment, written into a fresh config file. */
-/** The production port; every other port runs an isolated instance (`architecture.md` §4.6). */
 export const DEFAULT_PORT = 4100;
+export const DEFAULT_TAILSCALE_HTTPS_PORT = 8443;
+export const DEFAULT_TEST_TAILSCALE_HTTPS_PORT = 18443;
 
-/**
- * `architecture.md` §4.6: a daemon on a port other than 4100 keeps its own admin socket, devices
- * and queue files, so a test daemon never touches the production one. `pigeon.sock` → `pigeon-4101.sock`.
- */
-export function portScoped(path: string, port: number): string {
-  if (port === DEFAULT_PORT) return path;
-  const dot = path.lastIndexOf(".");
-  const slash = path.lastIndexOf("/");
-  return dot > slash ? `${path.slice(0, dot)}-${port}${path.slice(dot)}` : `${path}-${port}`;
+export interface InstancePaths {
+  stateDir: string;
+  configPath: string;
+  adminSocketPath: string;
+  devicesPath: string;
+  queuePath: string;
+  vapidPath: string;
+  pushSubscriptionsPath: string;
+  uploadsDir: string;
+  usageDbPath: string;
+  pricingCachePath: string;
 }
 
-const STATIC_SERVER_DEFAULTS = { port: DEFAULT_PORT, host: "", insecureDev: false, publicBaseUrl: "" };
+export function resolveProductionPort(env: NodeJS.ProcessEnv = process.env): number {
+  try {
+    const prodConfigPath = resolveConfigPath(undefined, env);
+    if (existsSync(prodConfigPath)) {
+      const raw = JSON.parse(readFileSync(prodConfigPath, "utf-8"));
+      if (raw && typeof raw === "object" && raw.server && typeof raw.server.port === "number") {
+        return raw.server.port;
+      }
+    }
+  } catch {}
+  return DEFAULT_PORT;
+}
+
+export function resolveInstancePaths(options: {
+  env?: NodeJS.ProcessEnv | Record<string, string | undefined>;
+  port?: number;
+  productionPort?: number;
+} = {}): InstancePaths {
+  const env = options.env ?? process.env;
+  const home = env.HOME || "";
+  const dataHome = env.XDG_DATA_HOME ? env.XDG_DATA_HOME : join(home, ".local", "share");
+  const runDir = env.XDG_RUNTIME_DIR ? env.XDG_RUNTIME_DIR : join(dataHome, "pigeon");
+
+  const prodPort = options.productionPort ?? resolveProductionPort(env as NodeJS.ProcessEnv);
+  const port = options.port ?? prodPort;
+  const isProd = port === prodPort;
+
+  const instanceName = isProd ? "pigeon" : `pigeon-${port}`;
+  const stateDir = join(dataHome, instanceName);
+  const adminSocketPath = join(runDir, isProd ? "pigeon.sock" : `pigeon-${port}.sock`);
+
+  return {
+    stateDir,
+    configPath: join(stateDir, "config.json"),
+    adminSocketPath,
+    devicesPath: join(stateDir, "devices.json"),
+    queuePath: join(stateDir, "queue.json"),
+    vapidPath: join(stateDir, "vapid.json"),
+    pushSubscriptionsPath: join(stateDir, "push-subscriptions.json"),
+    uploadsDir: join(stateDir, "uploads"),
+    usageDbPath: join(dataHome, "pigeon", "usage.db"),
+    pricingCachePath: join(dataHome, "pigeon", "pricing-cache.json"),
+  };
+}
+
+const STATIC_SERVER_DEFAULTS = {
+  port: DEFAULT_PORT,
+  tailscaleHttpsPort: DEFAULT_TAILSCALE_HTTPS_PORT,
+  host: "",
+  insecureDev: false,
+  publicBaseUrl: "",
+};
 
 /**
  * Environment-derived defaults. Resolved on every start and never written to disk, so a later
@@ -109,8 +162,28 @@ export class ConfigManager {
   private config: PigeonConfig;
   /** The home directory the agents' files are found under (the environment's `HOME`). */
   public readonly home: string;
+  public readonly env: NodeJS.ProcessEnv;
+  public readonly port: number;
+  public readonly productionPort: number;
 
-  constructor(customPath?: string, env: NodeJS.ProcessEnv = process.env) {
+  constructor(customPathOrOptions?: string | { port?: number; path?: string; productionPort?: number }, env: NodeJS.ProcessEnv = process.env) {
+    this.env = env;
+    let customPath: string | undefined;
+    let explicitPort: number | undefined;
+    let productionPort: number | undefined;
+    if (typeof customPathOrOptions === "string") {
+      customPath = customPathOrOptions;
+    } else if (customPathOrOptions) {
+      customPath = customPathOrOptions.path;
+      explicitPort = customPathOrOptions.port;
+      productionPort = customPathOrOptions.productionPort;
+    }
+    const prodPort = productionPort ?? resolveProductionPort(env);
+    this.productionPort = prodPort;
+    if (!customPath && explicitPort) {
+      customPath = resolveInstancePaths({ port: explicitPort, productionPort: prodPort, env }).configPath;
+    }
+    this.port = explicitPort ?? prodPort;
     this.configPath = resolveConfigPath(customPath, env);
     this.home = env.HOME || "";
     this.stored = this.loadOrCreate();
@@ -119,15 +192,31 @@ export class ConfigManager {
       ...DEFAULT_CLIENT_CONFIG,
       quotaProviders: detectedProviders,
     };
+    const isTest = this.port !== prodPort;
+    const defaultTailscalePort = isTest ? DEFAULT_TEST_TAILSCALE_HTTPS_PORT : DEFAULT_TAILSCALE_HTTPS_PORT;
     this.config = {
-      server: { ...STATIC_SERVER_DEFAULTS, ...resolveRuntimeServerDefaults(env), ...(this.stored.server || {}) } as ServerConfig,
+      server: {
+        ...STATIC_SERVER_DEFAULTS,
+        tailscaleHttpsPort: defaultTailscalePort,
+        ...(explicitPort ? { port: explicitPort } : {}),
+        ...resolveRuntimeServerDefaults(env),
+        ...(this.stored.server || {}),
+      } as ServerConfig,
       client: deepMerge(clientDefaults, this.stored.client || {}),
     };
   }
 
   private loadOrCreate(): StoredConfig {
     if (!existsSync(this.configPath)) {
-      const initial: StoredConfig = { server: { ...STATIC_SERVER_DEFAULTS }, client: { ...DEFAULT_CLIENT_CONFIG } };
+      const isTest = this.port !== this.productionPort;
+      const initial: StoredConfig = {
+        server: {
+          ...STATIC_SERVER_DEFAULTS,
+          port: this.port,
+          tailscaleHttpsPort: isTest ? DEFAULT_TEST_TAILSCALE_HTTPS_PORT : DEFAULT_TAILSCALE_HTTPS_PORT,
+        },
+        client: { ...DEFAULT_CLIENT_CONFIG },
+      };
       this.write(initial);
       return initial;
     }

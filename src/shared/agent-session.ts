@@ -41,7 +41,8 @@ export interface NormalizedQuestion {
 export type TurnItem =
   | { kind: "text"; markdown: string }
   | { kind: "tool"; call: NormalizedToolCall }
-  | { kind: "todo"; done: number; total: number };
+  | { kind: "todo"; done: number; total: number }
+  | { kind: "reasoning"; text?: string; hasText?: boolean; durationMs?: number; isStreaming?: boolean };
 
 export interface NormalizedTurn {
   turnId: string;
@@ -67,4 +68,5 @@ export interface SessionStats {
   additions: number;
   deletions: number;
   diffs?: FileDiffSummary[];
+  files?: Array<{ filePath: string; status?: string; additions?: number; deletions?: number }>;
 }

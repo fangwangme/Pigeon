@@ -1,4 +1,4 @@
-import { createEffect, createSignal, For, on, Show } from "solid-js";
+import { createEffect, createSignal, For, on, onMount, Show } from "solid-js";
 import { navigate, setLocalePref, setReduceTransparency, setState, showToast, state, systemReducesTransparency } from "../state/store";
 import { initWebSocket, isInAppBrowser, request, sendConfigPatch } from "../state/ws";
 import { ACCENTS, resolveMode } from "../themes";
@@ -30,6 +30,17 @@ function installApp(): void {
   prompt.userChoice.finally(() => setState("canInstallPWA", false));
 }
 
+function urlB64ToUint8Array(base64String: string): Uint8Array {
+  const padding = "=".repeat((4 - (base64String.length % 4)) % 4);
+  const base64 = (base64String + padding).replace(/-/g, "+").replace(/_/g, "/");
+  const rawData = window.atob(base64);
+  const outputArray = new Uint8Array(rawData.length);
+  for (let i = 0; i < rawData.length; ++i) {
+    outputArray[i] = rawData.charCodeAt(i);
+  }
+  return outputArray;
+}
+
 /** §8.1 */
 export function Settings() {
   const [devices, setDevices] = createSignal<DeviceInfo[] | null>(null);
@@ -42,6 +53,125 @@ export function Settings() {
       .then((ack) => setDevices(ack.devices ?? []))
       .catch(() => setDevices(null));
   createEffect(on(() => state.connected, (c) => c && void load()));
+
+  const isPushSupported = () =>
+    typeof window !== "undefined" && "serviceWorker" in navigator && "PushManager" in window && window.isSecureContext;
+
+  const PUSH_WAITING_KEY = "pigeon_push_waiting";
+  const PUSH_DONE_KEY = "pigeon_push_done";
+
+  const [pushActive, setPushActive] = createSignal(false);
+  const [pushWaiting, setPushWaiting] = createSignal(
+    typeof localStorage !== "undefined" && localStorage.getItem(PUSH_WAITING_KEY) !== null
+      ? localStorage.getItem(PUSH_WAITING_KEY) === "true"
+      : true
+  );
+  const [pushDone, setPushDone] = createSignal(
+    typeof localStorage !== "undefined" && localStorage.getItem(PUSH_DONE_KEY) !== null
+      ? localStorage.getItem(PUSH_DONE_KEY) === "true"
+      : false
+  );
+  const [pushBusy, setPushBusy] = createSignal(false);
+
+  onMount(async () => {
+    if (isPushSupported()) {
+      try {
+        const reg = await navigator.serviceWorker.ready;
+        const sub = await reg.pushManager.getSubscription();
+        if (sub) {
+          setPushActive(true);
+        }
+      } catch {}
+    }
+  });
+
+  const togglePush = async () => {
+    if (!isPushSupported() || pushBusy()) return;
+    setPushBusy(true);
+    try {
+      const reg = await navigator.serviceWorker.ready;
+      if (pushActive()) {
+        const sub = await reg.pushManager.getSubscription();
+        if (sub) {
+          await sub.unsubscribe();
+          await fetch("/api/push/unsubscribe", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ endpoint: sub.endpoint }),
+          }).catch(() => {});
+        }
+        setPushActive(false);
+      } else {
+        const perm = await Notification.requestPermission();
+        if (perm !== "granted") {
+          setPushBusy(false);
+          return;
+        }
+        const keyRes = await fetch("/api/push/vapid-public-key");
+        if (!keyRes.ok) throw new Error("VAPID key unavailable");
+        const { publicKey } = await keyRes.json();
+        const sub = await reg.pushManager.subscribe({
+          userVisibleOnly: true,
+          applicationServerKey: urlB64ToUint8Array(publicKey) as any,
+        });
+        const subJson = sub.toJSON();
+        const subRes = await fetch("/api/push/subscribe", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            endpoint: sub.endpoint,
+            keys: subJson.keys,
+            events: { blocked: pushWaiting(), done: pushDone() },
+          }),
+        });
+        if (!subRes.ok) throw new Error(`Subscribe failed with HTTP ${subRes.status}`);
+        setPushActive(true);
+      }
+    } catch (err) {
+      console.error("Push toggle error:", err);
+      showToast(t("settings.pushError"));
+    } finally {
+      setPushBusy(false);
+    }
+  };
+
+  const updatePushEvents = async (waiting: boolean, done: boolean) => {
+    const prevWaiting = pushWaiting();
+    const prevDone = pushDone();
+    setPushWaiting(waiting);
+    setPushDone(done);
+    if (typeof localStorage !== "undefined") {
+      localStorage.setItem(PUSH_WAITING_KEY, String(waiting));
+      localStorage.setItem(PUSH_DONE_KEY, String(done));
+    }
+    if (!pushActive()) return;
+    try {
+      const reg = await navigator.serviceWorker.ready;
+      const sub = await reg.pushManager.getSubscription();
+      if (sub) {
+        const subJson = sub.toJSON();
+        const res = await fetch("/api/push/subscribe", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            endpoint: sub.endpoint,
+            keys: subJson.keys,
+            events: { blocked: waiting, done },
+          }),
+        });
+        if (!res.ok) throw new Error(`Update push events failed with HTTP ${res.status}`);
+      }
+    } catch (err) {
+      console.error("Failed to update push events:", err);
+      setPushWaiting(prevWaiting);
+      setPushDone(prevDone);
+      if (typeof localStorage !== "undefined") {
+        localStorage.setItem(PUSH_WAITING_KEY, String(prevWaiting));
+        localStorage.setItem(PUSH_DONE_KEY, String(prevDone));
+      }
+      showToast(t("settings.pushEventsError"));
+    }
+  };
 
   const [usageSummaryText, setUsageSummaryText] = createSignal<string>("—");
   createEffect(
@@ -320,20 +450,40 @@ export function Settings() {
 
           <div class="sec">{t("settings.notifications")}</div>
           <div class="card">
-            <div class="li off">
+            <div class="li" classList={{ off: !isPushSupported() }}>
               <div class="tx">{t("settings.push")}</div>
-              <button class="tg off" disabled aria-label={t("settings.push")} />
+              <button
+                class="tg"
+                classList={{ on: pushActive(), off: !pushActive() }}
+                disabled={!isPushSupported() || pushBusy()}
+                aria-label={t("settings.push")}
+                onClick={togglePush}
+              />
             </div>
-            <div class="li off">
+            <div class="li" classList={{ off: !pushActive() }}>
               <div class="tx">{t("settings.pushWaiting")}</div>
-              <button class="tg off" disabled aria-label={t("settings.pushWaiting")} />
+              <button
+                class="tg"
+                classList={{ on: pushWaiting(), off: !pushWaiting() }}
+                disabled={!pushActive()}
+                aria-label={t("settings.pushWaiting")}
+                onClick={() => updatePushEvents(!pushWaiting(), pushDone())}
+              />
             </div>
-            <div class="li off">
+            <div class="li" classList={{ off: !pushActive() }}>
               <div class="tx">{t("settings.pushDone")}</div>
-              <button class="tg off" disabled aria-label={t("settings.pushDone")} />
+              <button
+                class="tg"
+                classList={{ on: pushDone(), off: !pushDone() }}
+                disabled={!pushActive()}
+                aria-label={t("settings.pushDone")}
+                onClick={() => updatePushEvents(pushWaiting(), !pushDone())}
+              />
             </div>
           </div>
-          <p class="note">{t("settings.pushNotConnected")}</p>
+          <Show when={!isPushSupported()}>
+            <p class="note">{t("settings.pushNotConnected")}</p>
+          </Show>
 
           <div class="sec">{t("settings.devicesAndPairing")}</div>
           <div class="card">
@@ -384,7 +534,16 @@ export function Settings() {
           <div class="card">
             <div class="li">
               <div class="tx">{t("settings.version")}</div>
-              <span class="v mono">{state.serverVersion ?? "—"}</span>
+              <span class="v mono">
+                {(() => {
+                  const v = state.serverVersion ?? "—";
+                  const env = state.environment;
+                  if (!env || env.kind === "production") return v;
+                  if (env.kind === "dev") return `${v} (dev)`;
+                  if (env.kind === "test") return `${v} (test:${env.port})`;
+                  return v;
+                })()}
+              </span>
             </div>
             <Show
               when={state.canInstallPWA}

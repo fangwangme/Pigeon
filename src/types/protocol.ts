@@ -66,6 +66,8 @@ export interface PaneSummary {
   name?: string;
   /** The pane's foreground program (`protocol.md` §5.3). */
   program?: string;
+  /** The session's latest active model, or launch model (`protocol.md` §5.3). */
+  model?: string;
   summary?: string;
   /** How the phone shows `summary` (`protocol.md` §5.3). */
   summaryKind?: SummaryKind;
@@ -257,6 +259,7 @@ export interface UsageModelPayload {
 
 export interface ServerConfig {
   port: number;
+  tailscaleHttpsPort?: number;
   host: string;
   insecureDev: boolean;
   publicBaseUrl: string;
@@ -317,6 +320,7 @@ export interface SessionInfo {
 
 export interface NormalizedTurnsPayload {
   paneId: string;
+  seq?: number;
   turns: NormalizedTurn[];
   sessionStats?: SessionStats;
   sessionTitle?: string;
@@ -326,6 +330,7 @@ export interface NormalizedTurnsPayload {
 
 export interface TurnsDeltaPayload {
   paneId: string;
+  seq?: number;
   seqWatermark: number;
   sinceTurnIndex: number;
   appendTurns: NormalizedTurn[];
@@ -372,7 +377,57 @@ export interface PigeonConfig {
 export interface HaveInfo {
   sessionId: string;
   turnCount: number;
-  lastTurnHash: string;
+  anchorHash?: string;
+  lastTurnHash?: string;
+}
+
+export function toLightTurn(turn: NormalizedTurn): NormalizedTurn {
+  const lightItems = turn.items?.map((item: any) => {
+    if (item.kind === "tool" && item.call) {
+      const { input, output, ...restCall } = item.call;
+      let diff = restCall.diff;
+      if (diff) {
+        const { patch, ...restDiff } = diff;
+        diff = restDiff;
+      }
+      return {
+        ...item,
+        call: {
+          ...restCall,
+          ...(restCall.target !== undefined ? { target: String(restCall.target).slice(0, 200) } : {}),
+          ...(diff !== undefined ? { diff } : {}),
+        },
+      };
+    }
+    if (item.kind === "reasoning") {
+      const { text, ...restReasoning } = item;
+      return {
+        ...restReasoning,
+        ...(text ? { hasText: true } : {}),
+      };
+    }
+    return item;
+  });
+
+  const { toolCalls, ...restTurn } = turn;
+  return {
+    ...restTurn,
+    ...(lightItems ? { items: lightItems } : {}),
+  };
+}
+
+export function toLightStats(stats?: any): any {
+  if (!stats) return undefined;
+  const files = (stats.files || stats.diffs || []).map((d: any) => {
+    const { patch, ...rest } = d;
+    return rest;
+  });
+  return {
+    filesModified: stats.filesModified,
+    additions: stats.additions,
+    deletions: stats.deletions,
+    files,
+  };
 }
 
 export function fnv1a32(str: string): string {
@@ -385,7 +440,24 @@ export function fnv1a32(str: string): string {
 }
 
 export function hashTurn(turn: NormalizedTurn): string {
-  return fnv1a32(JSON.stringify(turn));
+  return fnv1a32(JSON.stringify(toLightTurn(turn)));
+}
+
+export interface PaneBootstrapPayload {
+  paneId: string;
+  turns: NormalizedTurnsPayload | null;
+  resume: TurnsDeltaPayload | null;
+  queue: QueuedPrompt[];
+  state: PaneStatePayload | null;
+  serverMs: number;
+}
+
+export interface PaneTailPayload {
+  paneId: string;
+  agentStatus: AgentStatus;
+  seq: number;
+  sessionId: string;
+  turns: NormalizedTurn[];
 }
 
 // Client -> Server messages
@@ -393,7 +465,7 @@ export type ClientMessage =
   | { type: "hello"; id: string; payload: { protocolVersion: string; subscribePaneId?: string; have?: HaveInfo } }
   | { type: "ping"; timestamp?: number }
   | { type: "presence_update"; isVisible: boolean; viewingPaneId: string | null }
-  | { type: "select_view"; id: string; payload: { paneId: string; have?: HaveInfo } }
+  | { type: "select_view"; id: string; payload: { paneId: string | null; have?: HaveInfo } }
   | { type: "interaction_respond"; id: string; payload: { targetPaneId: string; interactionId: string; optionId: string; fingerprint: string } }
   | { type: "agent_prompt"; id: string; payload: { targetPaneId: string; text: string; attachments?: string[] } }
   | { type: "agent_send_keys"; id: string; payload: { targetPaneId: string; keys: string[] } }
@@ -413,11 +485,13 @@ export type ClientMessage =
   | { type: "quota_get"; id: string; payload?: Record<string, never> }
   | { type: "usage_get"; id: string; payload: { preset: string; from?: string; to?: string; agents: string[]; force?: boolean } }
   | { type: "usage_day"; id: string; payload: { date: string; agents: string[] } }
-  | { type: "usage_model"; id: string; payload: { model: string; from: string; to: string; agents: string[] } };
+  | { type: "usage_model"; id: string; payload: { model: string; from: string; to: string; agents: string[] } }
+  | { type: "detail_get"; id: string; payload: { paneId: string; kind: "tool" | "reasoning" | "file"; turnId?: string; callId?: string; filePath?: string } }
+  | { type: "screen_watch"; id: string; payload: { paneId: string; on: boolean } };
 
 // Server -> Client messages
 export type ServerMessage =
-  | { type: "welcome"; replyTo: string; payload: { protocolVersion: string; serverVersion: string; buildId: string; deviceId: string; clientConfig: ClientConfig; recipes: Record<string, AgentRecipeSummary> } }
+  | { type: "welcome"; replyTo: string; payload: { protocolVersion: string; serverVersion: string; buildId: string; environment?: { kind: "production" | "dev" | "test"; port: number }; deviceId: string; clientConfig: ClientConfig; recipes: Record<string, AgentRecipeSummary> } }
   | { type: "pong"; timestamp: number }
   | { type: "ack"; replyTo: string; payload: { status: "ok"; [key: string]: any } }
   | { type: "error"; replyTo?: string; error: { code: string; message: string; details?: any } }
@@ -430,6 +504,8 @@ export type ServerMessage =
   | { type: "normalized_turns"; payload: NormalizedTurnsPayload }
   | { type: "turns_delta"; payload: TurnsDeltaPayload }
   | { type: "prompt_queue"; payload: PromptQueuePayload }
+  | { type: "pane_bootstrap"; payload: PaneBootstrapPayload }
+  | { type: "pane_tail"; payload: PaneTailPayload }
   | { type: "recipes_sync"; payload: { recipes: Record<string, AgentRecipeSummary> } };
 
 export const ProtocolErrors = {
@@ -441,5 +517,6 @@ export const ProtocolErrors = {
   ERR_AGENT_BLOCKED: "ERR_AGENT_BLOCKED",
   ERR_TIMEOUT: "ERR_TIMEOUT",
   ERR_INCOMPATIBLE_PROTOCOL: "ERR_INCOMPATIBLE_PROTOCOL",
+  ERR_UPSTREAM_OFFLINE: "ERR_UPSTREAM_OFFLINE",
   ERR_INTERNAL: "ERR_INTERNAL",
 } as const;

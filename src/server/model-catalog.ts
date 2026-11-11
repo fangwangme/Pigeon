@@ -57,6 +57,10 @@ export class ModelCatalog {
     const lower = idOrLabel.toLowerCase();
     const byLabel = list.find((m) => m.label.toLowerCase() === lower);
     if (byLabel) return byLabel.id;
+    const norm = (s: string) => s.toLowerCase().replace(/[-._]/g, "");
+    const target = norm(idOrLabel);
+    const byNorm = list.find((m) => norm(m.id) === target || norm(m.label) === target);
+    if (byNorm) return byNorm.id;
     return idOrLabel;
   }
 
@@ -144,13 +148,17 @@ export class ModelCatalog {
     return lines.filter((l) => /^[^\s/]+\/\S+$/.test(l)).map((id) => ({ id, label: id }));
   }
 
-  /** `agy models`: one `<id>\t<label>` per line; the label names the effort, e.g. `Gemini 3.8 Flash (High)`. */
+  /** `agy models`: one `<id>\t<label>` or `<id>   <label>` per line; the label names the effort, e.g. `Gemini 3.8 Flash (High)`. */
   private async agy(): Promise<ModelOption[]> {
     const lines = await this.run(["agy", "models"]);
     const out: ModelOption[] = [];
     for (const line of lines) {
-      const [id, label] = line.split("\t");
-      if (id && /^\S+$/.test(id)) out.push({ id, label: label?.trim() || id });
+      const match = line.match(/^(\S+)(?:\s+(.+))?$/);
+      if (match) {
+        const id = match[1];
+        const label = match[2]?.trim() || id;
+        out.push({ id, label });
+      }
     }
     return out;
   }

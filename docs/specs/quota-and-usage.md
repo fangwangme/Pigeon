@@ -7,7 +7,7 @@ The phone shows two dashboards about the agents on this computer:
 - **Quota** — how much of each subscription's rate-limit windows is used, for Claude Code, Codex and Antigravity.
 - **Usage** — tokens and estimated cost per day and per model, for every agent Pigeon drives: Claude Code, Codex, Antigravity, OpenCode and Pi.
 
-Both run inside the daemon. Pigeon never runs or reads the separate `tokenpulse` tool; its behavior is the reference this spec was written from. The pages are specified in `mobile-ui-and-themes.md` §11, the wire messages in `protocol.md` §4.15–§4.18, and the credential handling in `security-and-pairing.md` §6.
+Both run inside the daemon. Pigeon never runs or reads the separate `tokenpulse` tool; its behavior is the reference this spec was written from. The pages are specified in `mobile-ui-and-themes.md` §11, the wire messages in `protocol.md` §4.16–§4.19, and the credential handling in `security-and-pairing.md` §6.
 
 Not covered: API-key balances (Pi, OpenCode providers), quota history, quota push alerts, and usage of agents Pigeon does not drive.
 
@@ -44,20 +44,21 @@ A window has `id`, `label`, an optional model `family` (e.g. `Gemini`, `Claude`,
 
 Each provider reads the agent's own credentials (`security-and-pairing.md` §6) and calls the provider's usage endpoint.
 
-- **Claude Code.** Credentials: `~/.claude/.credentials.json` (`claudeAiOauth`), and on macOS also the login Keychain item `Claude Code-credentials`. Usage: `GET https://api.anthropic.com/api/oauth/usage` with the access token and the `anthropic-beta: oauth-2025-04-20` header. `five_hour` maps to a 5-hour window, `seven_day` to a 7-day window, `seven_day_<family>` to a 7-day window of that family. The plan is the credential's `subscriptionType`. Token refresh: `POST https://platform.claude.com/v1/oauth/token`.
-- **Codex.** Credentials: `$CODEX_HOME/auth.json`, then `~/.config/codex/auth.json`, then `~/.codex/auth.json`; the first readable one is used. Usage: `GET https://chatgpt.com/backend-api/wham/usage`; reset credits: `GET https://chatgpt.com/backend-api/wham/rate-limit-reset-credits`. Token refresh: `POST https://auth.openai.com/oauth/token`. The account is the email in the ID token.
+- **Claude Code.** Credentials: `~/.claude/.credentials.json` (`claudeAiOauth`), and on macOS also the login Keychain item `Claude Code-credentials`. Usage: `GET https://api.anthropic.com/api/oauth/usage` with the access token and the `anthropic-beta: oauth-2025-04-20` header. `five_hour` maps to a 5-hour window, `seven_day` to a 7-day window, `seven_day_<family>` to a 7-day window of that family. The plan is the credential's `subscriptionType`.
+- **Codex.** Credentials: `$CODEX_HOME/auth.json`, then `~/.config/codex/auth.json`, then `~/.codex/auth.json`; the first readable one is used. Usage: `GET https://chatgpt.com/backend-api/wham/usage`; reset credits: `GET https://chatgpt.com/backend-api/wham/rate-limit-reset-credits`. The account is the email in the ID token.
 - **Antigravity.** Three sources, tried in order; the first that answers wins:
   1. the running Antigravity language server (desktop app first, then the CLI's), over its local RPC. The language server is discovered by inspecting running processes for arguments (`--app_data_dir`) or process environment variables (`ANTIGRAVITY_LS_ADDRESS`, `ANTIGRAVITY_CSRF_TOKEN`). Connections are strictly restricted to local loopback addresses (`127.0.0.1` or `::1`) with a 10-second timeout; `ANTIGRAVITY_LS_ADDRESS` in daemon environment acts as a test override;
   2. `agy -p /usage` when the installed `agy` version supports it, parsing its JSON output;
-  3. the Cloud Code API, with the CLI's cached OAuth token (`~/.gemini/antigravity-cli/antigravity-oauth-token`), refreshed when expired.
+  3. the Cloud Code API, with the CLI's cached OAuth token (`~/.gemini/antigravity-cli/antigravity-oauth-token`) while it has not expired.
 
   Window labels come from the model group (`Gemini`, `Claude`, specialized models by name) and the window length.
 
-### 2.3 Credential refresh
+### 2.3 Expired credentials
 
-- A credential whose access token has expired is refreshed **once** before the usage call. A usage call rejected as unauthorized (401/403) with a token that was not just refreshed triggers one refresh and one retry. The same refresh token is never sent twice in one fetch.
-- **Write-conflict protection.** Before writing refreshed tokens back, the provider re-reads the credential source. If it no longer matches what was read before the refresh — the agent rotated it meanwhile — the refresh result is discarded, nothing is written, and the fetch continues with the newly stored credentials. Otherwise the new access token, the new refresh token (when one was returned) and the new expiry are written back, and every other field of the file is preserved.
-- A credential that cannot be refreshed (no refresh token, refresh rejected) is a provider error (§2.6); the file is left as it was.
+Pigeon never refreshes or writes an agent's credentials (user decision, 2026-11-11): a rotating refresh token used by both Pigeon and the agent can sign the agent out, and the gain is only a quota figure.
+
+- A credential whose access token has expired, or a usage call rejected as unauthorized (401/403), is a provider error (§2.6). Its message names the provider and says to open that agent so it refreshes its login (e.g. `Claude: login expired — open Claude Code to refresh it`). No token endpoint is called, and the credential source is left as it was.
+- The next fetch reads the source again, so the quota returns as soon as the agent has refreshed.
 
 ### 2.4 Pace and level
 
@@ -82,6 +83,7 @@ Both are computed on the phone from a window (`src/shared/quota.ts`) so that eve
 - The phone asks for quota when the quota page opens and when the user taps refresh (`protocol.md` §4.16). The daemon answers from a rate-limiting protection cache younger than 60 seconds. Providers are fetched in parallel; one slow or failing provider never delays the others' results past its own timeout.
 - **Expected errors**, reported per provider in the reply and never as a protocol error: credentials missing, credentials rejected or not refreshable, network unreachable or timed out, an unexpected HTTP status, a response that cannot be parsed. Each carries a short message naming the provider and the cause.
 - A provider that fails keeps its previous snapshot in the reply, next to the error; the phone shows both.
+- A provider that failed is not fetched again for 60 seconds, whether or not it has a previous snapshot; replies in that time carry its last error. This keeps a rate-limited (429) provider from being hit on every request.
 - The list-page dot (`mobile-ui-and-themes.md` §11.1) comes from the last snapshots the daemon holds; the home page asks with the cache allowed and never forces a fetch.
 
 ## 3. Usage
@@ -98,11 +100,13 @@ The daemon reads each agent's local session data. It only reads; it never change
 | OpenCode | its SQLite databases (`opencode.db`, and the `-next`/`-dev`/`-beta` variants) under its data directory, opened read-only. |
 | Pi | `~/.pi/agent/sessions/**/*.jsonl`. |
 
-A missing source means that agent has no usage; it is not an error. A record that cannot be parsed is skipped and counted in the scan's `skipped` total, which the daemon logs once per scan. A source database that cannot be opened or read (e.g. locked or corrupted) logs a warning and does not update `scan_file_state`, so subsequent scans retry it.
+A missing source means that agent has no usage; it is not an error. A record that cannot be parsed is skipped and counted in the scan's `skipped` total, which the daemon logs once per scan. A source database or file that cannot be opened or read (locked, corrupted, a read error, `zstd` missing or failing for a compressed file) logs a warning and does not update `scan_file_state`, so subsequent scans retry it. A missing `zstd` is logged once per daemon run.
 
 ### 3.2 Record model
 
 Every source is normalized to records of: local date (`YYYY-MM-DD`, the computer's time zone), timestamp, agent, session id, model id (normalized to its canonical name, so the same model from two agents is one model), the model's company (`anthropic`, `openai`, `google`, other), and the token counts `input`, `output`, `cacheRead`, `cacheWrite`. A record counts as one message.
+
+A record's key comes from the source's own ids and timestamp; a record whose source gives no timestamp is keyed by its file path and line number, so a rescan never stores it twice.
 
 **Total tokens** = `input + output + cacheRead + cacheWrite`. **Cache-hit ratio** = `cacheRead ÷ total tokens × 100`, 0 when the total is 0, shown with two decimals.
 
@@ -112,7 +116,7 @@ The daemon keeps an index of records under its state directory and reads only wh
 
 Cost is an estimate at public API prices; subscription users are not billed this way, and the pages say so.
 
-- Prices come from models.dev, then LiteLLM's price list, then OpenRouter's model list, for the first source that knows the model; they are cached on disk for a day.
+- Prices come from models.dev, then LiteLLM's price list, then OpenRouter's model list, for the first source that knows the model; they are cached on disk for a day. A running daemon loads them again once a day, and after every load re-prices the stored records that were unpriced, so a model released after the daemon started gets a cost.
 - Each day's cost uses that day's price snapshot once one has been recorded, so an old day's cost does not move when prices change.
 - Cache reads and writes use the model's cache prices when it has them, else its input price.
 - A model no source knows is **unpriced**: its tokens count, its cost is 0, and the reply marks it. When network sources cannot be reached, previously cached prices on disk (even if older than 24 hours) serve as an offline fallback; when no cache exists, every model is unpriced and the reply says prices are unavailable. A failed price initialization does not permanently mark pricing loaded; subsequent background scans continue to retry.
@@ -155,10 +159,12 @@ A period is shown as a grid of days (`mobile-ui-and-themes.md` §11.3). Its orie
 ### 3.7 Freshness and Storage
 
 Usage scanning operates in one of two modes (`client.usageScanMode`):
-- **Scheduled** (`scheduled`, default): background scans run periodically at the configured interval (`1m`, `2m`, `5m` default, `10m`, `15m`). Client requests answer immediately from SQLite without blocking on filesystem reads, unless forced with `force: true`.
+- **Scheduled** (`scheduled`, default): background scans run periodically at the configured interval (`1m`, `2m`, `5m` default, `10m`, `15m`). Client requests answer immediately from SQLite without blocking on filesystem reads; forced refresh (`force: true`) rescans newly modified session files only in realtime mode, while scheduled mode answers from the background cache (user decision, 2026-11-11).
 - **Realtime** (`realtime`): every usage request checks and scans newly modified session files before answering; a scan that is already running is shared.
 
-All aggregated usage data is stored in a single SQLite database at `$XDG_DATA_HOME/pigeon/usage.db` (falling back to `~/.local/share/pigeon/usage.db`). The cache can be rebuilt from scratch at any time using the CLI command `pigeon rebuild-cache`. Replies carry `scannedAt` reflecting the timestamp when the database scan was last completed.
+Scans run off the daemon's event loop (in a Worker), so a first scan or a rebuild never delays WebSocket traffic. JSONL files are read from the byte offset where the previous scan stopped, unless the file shrank.
+
+All aggregated usage data is stored in a single SQLite database at `$XDG_DATA_HOME/pigeon/usage.db` (falling back to `~/.local/share/pigeon/usage.db`), shared by every instance (`architecture.md` §4.6). The cache can be rebuilt from scratch at any time using the CLI command `pigeon rebuild-cache`. Replies carry `scannedAt` reflecting the timestamp when the database scan was last completed.
 
 ## 4. Interfaces
 
@@ -166,7 +172,7 @@ The rules of §2.4 and §3.4–§3.6 and the Claude provider are reachable as mo
 
 - `src/shared/quota.ts` — `quotaLevel(usedPercent) → "normal" | "warn" | "exhausted"`; `quotaPace(window, now) → { kind: "on_track" | "ahead" | "behind", expectedPercent, deficit, etaMs? } | null`, where `window` has `usedPercent`, `periodMs` and `resetsAt` (either may be null) and `etaMs` is present for `ahead`.
 - `src/shared/usage.ts` — `resolveRange(preset, today, { firstDay, from?, to? }) → { from, to }`; `comparisonRange(range, preset, today, firstDay, nowMinutes) → { from, to, untilMinutes } | null`, where `untilMinutes` (minutes after local midnight) is set only when comparing today; `heatmapLayout(range) → "strip" | "week-rows" | "week-columns"`; `cacheHitPercent(cacheRead, totalTokens)` rounded to two decimals. Dates are `YYYY-MM-DD` strings in local time.
-- `src/server/quota/claude.ts` — `new ClaudeQuotaProvider({ home, usageUrl?, tokenUrl?, keychain?, now? })` and `fetch() → Promise<QuotaSnapshot>`. `home` replaces the user's home directory, the URLs replace the endpoints of §2.2, `keychain: false` skips the macOS Keychain and a `{ read, write }` credential source replaces it, `now` replaces the clock. The Keychain item is used only when the credential file does not exist, and refreshed tokens go back to the source they were read from. A provider error rejects with an `Error` whose message follows §2.6.
+- `src/server/quota/claude.ts` — `new ClaudeQuotaProvider({ home, usageUrl?, keychain?, now? })` and `fetch() → Promise<QuotaSnapshot>`. `home` replaces the user's home directory, `usageUrl` the usage endpoint of §2.2, `keychain: false` skips the macOS Keychain and a `{ read }` credential source replaces it, `now` replaces the clock. The Keychain item is used only when the credential file does not exist. A provider error rejects with an `Error` whose message follows §2.3 and §2.6.
 - `QuotaSnapshot`, `QuotaWindow` and the usage reply types live in `src/types/protocol.ts`.
 
 ## 5. Decisions

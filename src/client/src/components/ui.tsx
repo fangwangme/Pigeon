@@ -66,33 +66,23 @@ export function Logo() {
 
 export type RowStatus = "blocked" | "working" | "done" | "idle" | "terminal";
 
-/** mobile-ui-and-themes.md §2.1: the row icon for a status. */
-export function StatusIcon(props: { status: RowStatus }) {
-  return (
-    <>
-      <Show when={props.status === "working"}>
-        <span class="si">
-          <span class="spin" />
-        </span>
-      </Show>
-      <Show when={props.status === "blocked"}>
-        <span class="si wait" />
-      </Show>
-      <Show when={props.status === "done"}>
-        <span class="si done">
-          <Icon name="check" sm />
-        </span>
-      </Show>
-      <Show when={props.status === "idle"}>
-        <span class="si idle" />
-      </Show>
-      <Show when={props.status === "terminal"}>
-        <span class="si">
-          <Icon name="term" sm />
-        </span>
-      </Show>
-    </>
-  );
+/** mobile-ui-and-themes.md §2.1: status indicator dot styled and colored by state. */
+export function StatusIcon(props: { status: RowStatus; class?: string }) {
+  return <span class={`sdot ${props.status}${props.class ? ` ${props.class}` : ""}`} aria-label={props.status} />;
+}
+
+export function modelLabel(model: string | null | undefined, agent?: string | null): string {
+  if (!model) return "";
+  if (agent && state.recipes[agent]?.models) {
+    const list = state.recipes[agent].models;
+    const exact = list.find((m) => m.id === model || m.label === model);
+    if (exact) return exact.label;
+    const norm = (s: string) => s.toLowerCase().replace(/[-._\s()]/g, "");
+    const target = norm(model);
+    const fuzzy = list.find((m) => norm(m.id) === target || norm(m.label) === target);
+    if (fuzzy) return fuzzy.label;
+  }
+  return model;
 }
 
 /** The pane the session page opens by default: the tab's first pane with an agent (§6.8). */

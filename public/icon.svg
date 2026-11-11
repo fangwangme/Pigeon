@@ -1,61 +1,61 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
   <style>
-    .bg-0 { stop-color: #24272B; }
-    .bg-1 { stop-color: #16181A; }
-    .bd-0 { stop-color: #7C746B; }
-    .bd-1 { stop-color: #44474C; }
+    .bg-0 { stop-color: #F7F4EC; }
+    .bg-1 { stop-color: #E6DFCF; }
+    .bd-0 { stop-color: #CFC5B2; }
+    .bd-1 { stop-color: #A69B86; }
     .w-back-1 { fill: #D65D0E; }
     .w-back-2 { fill: #A63A04; }
-    .tail-1 { fill: #6E6A63; }
-    .tail-2 { fill: #8A847B; }
-    .belly { fill: #B0A99D; }
-    .flank-rear { fill: #C5BEB2; }
-    .dorsal { fill: #DED8CD; }
-    .flank-mid { fill: #D2CBC0; }
-    .breast { fill: #E8E2D7; }
-    .throat { fill: #E2DCD0; }
-    .crown { fill: #F5F0E6; }
-    .seam { stroke: #24272B; }
+    .tail-1 { fill: #55514B; }
+    .tail-2 { fill: #6D6862; }
+    .belly { fill: #8C877F; }
+    .flank-rear { fill: #A19C94; }
+    .dorsal { fill: #C0BCB5; }
+    .flank-mid { fill: #B1ACA4; }
+    .breast { fill: #CDC9C2; }
+    .throat { fill: #C7C3BC; }
+    .crown { fill: #D8D5CF; }
+    .seam { stroke: #55514B; }
     .beak-1 { fill: #FABD2F; }
     .beak-2 { fill: #D79921; }
-    .w-front-1 { fill: #FF9838; }
-    .w-front-2 { fill: #E8600E; }
-    .env-base { fill: #8EC07C; }
-    .env-fold { fill: #78AD65; }
-    .env-flap { fill: #A9D697; }
-    @media (prefers-color-scheme: light) {
-      .bg-0 { stop-color: #F7F4EC; }
-      .bg-1 { stop-color: #E6DFCF; }
-      .bd-0 { stop-color: #CFC5B2; }
-      .bd-1 { stop-color: #A69B86; }
-      .tail-1 { fill: #55514B; }
-      .tail-2 { fill: #6D6862; }
-      .belly { fill: #8C877F; }
-      .flank-rear { fill: #A19C94; }
-      .dorsal { fill: #C0BCB5; }
-      .flank-mid { fill: #B1ACA4; }
-      .breast { fill: #CDC9C2; }
-      .throat { fill: #C7C3BC; }
-      .crown { fill: #D8D5CF; }
-      .seam { stroke: #55514B; }
-      .w-front-1 { fill: #FF8E2B; }
-      .w-front-2 { fill: #E05606; }
-      .env-base { fill: #68A85E; }
-      .env-fold { fill: #54944A; }
-      .env-flap { fill: #84C07A; }
+    .w-front-1 { fill: #FF8E2B; }
+    .w-front-2 { fill: #E05606; }
+    .env-base { fill: #68A85E; }
+    .env-fold { fill: #54944A; }
+    .env-flap { fill: #84C07A; }
+    @media (prefers-color-scheme: dark) {
+      .bg-0 { stop-color: #24272B; }
+      .bg-1 { stop-color: #16181A; }
+      .bd-0 { stop-color: #7C746B; }
+      .bd-1 { stop-color: #44474C; }
+      .tail-1 { fill: #6E6A63; }
+      .tail-2 { fill: #8A847B; }
+      .belly { fill: #B0A99D; }
+      .flank-rear { fill: #C5BEB2; }
+      .dorsal { fill: #DED8CD; }
+      .flank-mid { fill: #D2CBC0; }
+      .breast { fill: #E8E2D7; }
+      .throat { fill: #E2DCD0; }
+      .crown { fill: #F5F0E6; }
+      .seam { stroke: #24272B; }
+      .w-front-1 { fill: #FF9838; }
+      .w-front-2 { fill: #E8600E; }
+      .env-base { fill: #8EC07C; }
+      .env-fold { fill: #78AD65; }
+      .env-flap { fill: #A9D697; }
     }
   </style>
   <defs>
     <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
-      <stop class="bg-0" offset="0%" stop-color="#24272B" />
-      <stop class="bg-1" offset="100%" stop-color="#16181A" />
+      <stop class="bg-0" offset="0%" stop-color="#F7F4EC" />
+      <stop class="bg-1" offset="100%" stop-color="#E6DFCF" />
     </linearGradient>
     <linearGradient id="border" x1="0" y1="0" x2="1" y2="1">
-      <stop class="bd-0" offset="0%" stop-color="#7C746B" />
-      <stop class="bd-1" offset="100%" stop-color="#44474C" />
+      <stop class="bd-0" offset="0%" stop-color="#CFC5B2" />
+      <stop class="bd-1" offset="100%" stop-color="#A69B86" />
     </linearGradient>
     <filter id="drop" x="-10%" y="-10%" width="125%" height="125%">
-      <feDropShadow dx="0" dy="10" stdDeviation="11" flood-color="#16181A" flood-opacity="0.28" />
+      <feDropShadow dx="0" dy="10" stdDeviation="11" flood-color="#2E2922" flood-opacity="0.20" />
     </filter>
   </defs>
 

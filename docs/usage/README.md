@@ -5,7 +5,7 @@ How to set up Pigeon for daily use, manage paired phones, and ship changes to yo
 ## Prerequisites
 
 - The Herdr desktop app (`herdr-app`) running with its window open. Pigeon gets workspaces and tabs from the App socket (`$HERDR_APP_HOME/herdr-app.sock`, or `~/.config/herdr-app/herdr-app.sock` by default) and talks to terminals through Herdr Core (`$HC_TERMINAL_SOCKET`, or `$XDG_RUNTIME_DIR/herdr-core/default.sock` by default). Closing the Herdr window leaves Herdr Core's terminals alive, but Pigeon will show Herdr as offline until the window is open again. The older terminal-only `herdr` TUI is not supported.
-- Tailscale on both this machine and your phone, signed into the same tailnet. Tailscale gives Pigeon a trusted HTTPS origin, which browsers require for PWA installation, service workers, and Web Push.
+- Tailscale on both this machine and your phone, signed into the same tailnet. Tailscale gives Pigeon a trusted HTTPS origin, which browsers require for PWA installation, service workers, and Web Push. See the [Tailscale Setup Guide](tailscale.md) for step-by-step HTTPS certificate setup, firewall rules, and troubleshooting.
 - Chrome (or another modern Chromium browser) on Android.
 
 ## One-time setup

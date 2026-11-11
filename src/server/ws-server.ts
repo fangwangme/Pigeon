@@ -1,11 +1,12 @@
 import { randomBytes } from "node:crypto";
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync, renameSync, mkdirSync } from "node:fs";
+import { dirname } from "node:path";
 import type { ServerWebSocket } from "bun";
-import { HerdrError, type HerdrClient } from "./herdr-client";
+import { HerdrError, UNREACHABLE_CODES, type HerdrClient } from "./herdr-client";
 import type { DeviceSession, PairingManager } from "./pairing";
 import type { UploadStore } from "./uploads";
 import type { PushManager, PushMessage } from "./push";
-import type { ConfigManager } from "./config-manager";
+import { type ConfigManager, resolveProductionPort, DEFAULT_PORT } from "./config-manager";
 import { AgentAdapterManager } from "./agent-adapters/index";
 import { PaneStore } from "./pane-store";
 import { SkillScanner } from "./skill-scanner";
@@ -22,12 +23,18 @@ import {
   type QueuedPrompt,
   type HaveInfo,
   type TurnsDeltaPayload,
+  type NormalizedTurnsPayload,
   type NormalizedTurn,
+  type PaneTailPayload,
+  type AgentStatus,
+  toLightTurn,
+  toLightStats,
   hashTurn,
 } from "../types/protocol";
 
 const PROTOCOL_VERSION = "1.0.0";
-export const SERVER_VERSION = "0.1.8";
+import pkg from "../../package.json";
+export const SERVER_VERSION = pkg.version;
 const PUSH_DEDUPE_MS = 60_000;
 
 import { QuotaService } from "./quota/index";
@@ -50,12 +57,17 @@ export interface WsServerOptions {
   quotaService?: QuotaService;
   usageService?: UsageService;
   queueFilePath?: string;
+  queueSendTimeoutMs?: number;
+  port?: number;
+  productionPort?: number;
+  environmentKind?: "production" | "dev" | "test";
 }
 
 export interface ClientConnectionData {
   session: DeviceSession;
   connectionId: string;
   subscribedPaneId: string | null;
+  watchingScreenPaneId?: string;
   lastPingTime: number;
 }
 
@@ -69,6 +81,12 @@ const HERDR_ERROR_MAP: Record<string, string> = {
   not_found: ProtocolErrors.ERR_NOT_FOUND,
   finished: ProtocolErrors.ERR_NOT_FOUND,
   timeout: ProtocolErrors.ERR_TIMEOUT,
+  ECONNREFUSED: ProtocolErrors.ERR_UPSTREAM_OFFLINE,
+  ENOENT: ProtocolErrors.ERR_UPSTREAM_OFFLINE,
+  ECONNRESET: ProtocolErrors.ERR_UPSTREAM_OFFLINE,
+  EPIPE: ProtocolErrors.ERR_UPSTREAM_OFFLINE,
+  closed: ProtocolErrors.ERR_UPSTREAM_OFFLINE,
+  socket_error: ProtocolErrors.ERR_UPSTREAM_OFFLINE,
 };
 
 export function newConnectionId(): string {
@@ -97,17 +115,25 @@ export class WsServer {
   // protocol.md §4.2: prompts waiting for the pane's turn to end, oldest first.
   /** `item` is what the phone sees (its own text and upload ids, so **编辑** can restore them); `send` is the composed prompt. */
   private queueFilePath?: string;
-  private queues = new Map<string, Array<{ item: QueuedPrompt; send: string }>>();
-  private flushing = new Set<string>();
-  private sawWorkingAfterSend = new Map<string, boolean>();
-  private sendingTimers = new Map<string, ReturnType<typeof setTimeout>>();
-  private pendingRestoredPanes = new Set<string>();
+  private queueSendTimeoutMs: number;
+  private queues = new Map<string, Array<{ item: QueuedPrompt; send: string; created_ms: number }>>();
+  private queueStates = new Map<string, { state: "idle" | "sending"; sawWorking: boolean; unboundSent: boolean; timer?: ReturnType<typeof setTimeout> }>();
+  private restoredPaneIds = new Set<string>();
+  private firstSnapshotSeen = false;
+
+  private environment: { kind: "production" | "dev" | "test"; port: number };
+
+  private onHerdrConnected: () => void;
+  private onHerdrDisconnected: () => void;
+  private onSnapshotUpdated: (snapshot: any) => void;
+  private onCardsUpdated: (state: PaneStatePayload) => void;
+  private onPaneStatusChanged: (event: { paneId: string; status: string }) => void;
 
   constructor(options: WsServerOptions) {
     this.buildId = options.buildId;
     this.queueFilePath = options.queueFilePath;
+    this.queueSendTimeoutMs = options.queueSendTimeoutMs ?? 30_000;
     this.loadQueues();
-    queueMicrotask(() => this.dispatchPendingRestoredPanes());
     this.herdrClient = options.herdrClient;
     this.pushManager = options.pushManager;
     this.modelCatalog = options.modelCatalog ?? new ModelCatalog();
@@ -119,84 +145,144 @@ export class WsServer {
     this.pairingManager = options.pairingManager;
     this.quotaService = options.quotaService;
     this.usageService = options.usageService;
+    const port = options.port ?? options.configManager?.getServerConfig().port ?? DEFAULT_PORT;
+    const prodPort = options.productionPort ?? resolveProductionPort(options.configManager?.env);
+    const isCompiled = process.execPath.endsWith("/pigeon") || !process.argv[1]?.endsWith(".ts");
+    const isDev = options.environmentKind === "dev" || (!isCompiled && options.environmentKind !== "production");
+    const isTest = options.environmentKind === "test" || (port !== prodPort && !isDev);
+    const kind = options.environmentKind ?? (isDev ? "dev" : isTest ? "test" : "production");
+    this.environment = { kind, port };
     // security-and-pairing.md §5: a revoked device (from the phone or `pigeon devices revoke`) is cut off at once.
     this.pairingManager?.on("device_revoked", (deviceId: string) => this.closeDevice(deviceId));
 
-    this.herdrClient.on("connected", () => this.paneStore.setHerdrStatus(true));
-    this.herdrClient.on("disconnected", () => this.paneStore.setHerdrStatus(false));
+    this.onHerdrConnected = () => this.paneStore.setHerdrStatus(true);
+    this.onHerdrDisconnected = () => this.paneStore.setHerdrStatus(false);
+    this.herdrClient.on("connected", this.onHerdrConnected);
+    this.herdrClient.on("disconnected", this.onHerdrDisconnected);
+
     this.paneStore.on("upstream_status", (status) => this.broadcast({ type: "upstream_status", payload: status }));
     this.paneStore.on("turns_delta", (delta) => {
-      this.sendToSubscribers(delta.paneId, { type: "turns_delta", payload: delta });
+      const lightDelta: TurnsDeltaPayload = {
+        ...delta,
+        appendTurns: delta.appendTurns?.map(toLightTurn),
+        ...(delta.patchLastTurn ? { patchLastTurn: toLightTurn(delta.patchLastTurn) } : {}),
+        ...(delta.sessionStats ? { sessionStats: toLightStats(delta.sessionStats) } : {}),
+      };
+      this.sendToSubscribers(delta.paneId, { type: "turns_delta", payload: lightDelta });
       if (delta.appendTurns && delta.appendTurns.length > 0) {
-        const sending = this.queues.get(delta.paneId)?.find((q) => q.item.sending);
-        if (sending) {
-          const needle = sending.item.text || sending.send;
-          const matched = delta.appendTurns.some((t: NormalizedTurn) => {
-            if (!t.userPrompt) return false;
-            if (delta.sinceTurnIndex > 0) return true;
-            return needle ? t.userPrompt.text.includes(needle) : true;
-          });
-          if (matched) this.clearSendingPrompt(delta.paneId);
-        }
+        const hasUser = delta.appendTurns.some((t: NormalizedTurn) => !!t.userPrompt);
+        if (hasUser) this.transitionQueue(delta.paneId, { type: "user_turn" });
       }
+      this.maybeSendPaneTail(delta.paneId);
     });
     this.paneStore.on("session_changed", (paneId: string) => {
-      this.sendToSubscribers(paneId, { type: "normalized_turns", payload: this.paneStore.getPayload(paneId, this.herdrClient.getPaneAgentKind(paneId)) });
+      const payload = this.paneStore.getPayload(paneId, this.herdrClient.getPaneAgentKind(paneId));
+      const lightPayload: NormalizedTurnsPayload = {
+        ...payload,
+        turns: payload.turns.map(toLightTurn),
+        ...(payload.sessionStats ? { sessionStats: toLightStats(payload.sessionStats) } : {}),
+      };
+      this.sendToSubscribers(paneId, { type: "normalized_turns", payload: lightPayload });
+      this.maybeSendPaneTail(paneId);
     });
 
     // herdr-adapter.md §7.1: a model named in a session's records that the catalog lacks fills it again.
     this.paneStore.on("session_model", (agent: string, model: string) => {
       void this.modelCatalog.noteModel(agent, model).then((changed) => changed && this.broadcastRecipes());
+      queueMicrotask(() => this.herdrClient.relabelTabs());
     });
     this.paneStore.setModelResolver((agent, idOrLabel) => this.modelCatalog.resolve(agent, idOrLabel));
     this.herdrClient.setSessionTitleSource((paneId) => this.paneStore.sessionTitle(paneId));
+    this.herdrClient.setSessionModelSource((paneId) => this.paneStore.sessionInfo(paneId, null).model.value ?? undefined);
     // Titles change while a snapshot is being handled (binding reads the session), so relabel after it.
     this.paneStore.on("title_changed", () => queueMicrotask(() => this.herdrClient.relabelTabs()));
-    this.herdrClient.on("snapshot_updated", (snapshot) => {
+
+    this.onSnapshotUpdated = (snapshot) => {
+      if (!this.firstSnapshotSeen) {
+        this.firstSnapshotSeen = true;
+        for (const paneId of Array.from(this.restoredPaneIds)) {
+          const entries = this.queues.get(paneId);
+          if (!entries) continue;
+          const paneFacts = this.herdrClient.getPaneFacts(paneId);
+          const currentCreatedMs = paneFacts?.createdMs;
+          const kept: Array<{ item: QueuedPrompt; send: string; created_ms: number }> = [];
+          for (const entry of entries) {
+            if (paneFacts && currentCreatedMs === entry.created_ms) {
+              kept.push(entry);
+            } else {
+              console.log(`[Pigeon] Dropping restored queue item ${entry.item.queueId} for ${paneId}: terminal creation time mismatch (stored ${entry.created_ms}, current ${currentCreatedMs})`);
+            }
+          }
+          if (kept.length > 0) {
+            this.queues.set(paneId, kept);
+            const status = this.herdrClient.getPaneHerdrStatus(paneId);
+            if (status === "idle" || status === "done") {
+              this.kickQueue(paneId);
+            }
+          } else {
+            this.queues.delete(paneId);
+          }
+        }
+        this.restoredPaneIds.clear();
+      }
+
       for (const paneId of this.paneStore.trackedPaneIds()) {
         if (!this.herdrClient.hasPane(paneId)) this.paneStore.closePane(paneId);
       }
       for (const paneId of Array.from(this.queues.keys())) {
         if (!this.herdrClient.hasPane(paneId)) {
-          this.queues.delete(paneId);
-          this.flushing.delete(paneId);
-          this.sawWorkingAfterSend.delete(paneId);
-          this.pendingRestoredPanes.delete(paneId);
-          for (const [key, timer] of Array.from(this.sendingTimers.entries())) {
-            if (key.startsWith(`${paneId}:`)) {
-              clearTimeout(timer);
-              this.sendingTimers.delete(key);
-            }
-          }
+          this.transitionQueue(paneId, { type: "remove_pane" });
+        }
+      }
+      for (const paneId of Array.from(this.lastStatus.keys())) {
+        if (!this.herdrClient.hasPane(paneId)) {
+          this.lastStatus.delete(paneId);
+          this.lastPaneTailAt.delete(paneId);
+          this.lastPushAt.delete(`${paneId}:blocked`);
+          this.lastPushAt.delete(`${paneId}:done`);
         }
       }
       this.saveQueues();
-      this.rebindSessions();
       this.broadcast({ type: "snapshot_update", payload: snapshot });
-      this.dispatchPendingRestoredPanes();
-    });
+      this.rebindSessions();
+    };
+    this.herdrClient.on("snapshot_updated", this.onSnapshotUpdated);
     this.rebindSessions();
 
-    this.herdrClient.on("cards_updated", (state: PaneStatePayload) => {
+    this.onCardsUpdated = (state: PaneStatePayload) => {
       this.sendToSubscribers(state.paneId, { type: "pane_state", payload: state });
-    });
+    };
+    this.herdrClient.on("cards_updated", this.onCardsUpdated);
 
-    this.herdrClient.on("pane_status_changed", ({ paneId, status }: { paneId: string; status: string }) => {
+    this.onPaneStatusChanged = ({ paneId, status }: { paneId: string; status: string }) => {
       const previous = this.lastStatus.get(paneId);
       this.lastStatus.set(paneId, status);
-      if (status === "working") {
-        this.sawWorkingAfterSend.set(paneId, true);
-      }
-      if (status === "idle" || status === "done") void this.flushQueue(paneId);
+      this.transitionQueue(paneId, { type: "status", status });
       // herdr-adapter.md §4: finishing while a phone visibly watches it is finishing seen.
       if (status === "done" && this.pushManager.shouldSuppressPush(paneId)) this.herdrClient.markSeen(paneId);
-      // push.md §4: notify only on the transition into blocked, at most once per minute per pane.
-      if (status !== "blocked" || previous === "blocked") return;
+
+      // pane_tail §5.10: push to non-viewing connections when working or blocked, and once more when leaving.
+      const wasActive = previous === "working" || previous === "blocked";
+      const isActive = status === "working" || status === "blocked";
+      if (isActive) {
+        this.maybeSendPaneTail(paneId);
+      } else if (wasActive) {
+        this.maybeSendPaneTail(paneId, true);
+      }
+
+      const isBlocked = status === "blocked" && previous !== "blocked";
+      const isDone = status === "done" && previous !== "done";
+      if (!isBlocked && !isDone) return;
+      const pushEvent = isBlocked ? "blocked" : "done";
+      const dedupeKey = `${paneId}:${pushEvent}`;
       const now = Date.now();
-      if (now - (this.lastPushAt.get(paneId) || 0) < PUSH_DEDUPE_MS) return;
-      this.lastPushAt.set(paneId, now);
-      this.pushManager.sendNotification(this.pushMessage(paneId));
-    });
+      if (now - (this.lastPushAt.get(dedupeKey) || 0) < PUSH_DEDUPE_MS) return;
+      const result = this.pushManager.sendNotification(this.pushMessage(paneId, pushEvent));
+      if (!result.suppressed && result.delivered) {
+        this.lastPushAt.set(dedupeKey, now);
+      }
+    };
+    this.herdrClient.on("pane_status_changed", this.onPaneStatusChanged);
   }
 
   /** herdr-adapter.md §7.1: fill the model catalog again; every client hears of a changed list. */
@@ -208,15 +294,15 @@ export class WsServer {
     this.broadcast({ type: "recipes_sync", payload: { recipes: this.recipeSummaries() } });
   }
 
-  /** `push.md` §4: the blocked pane's agent, workspace and tab, as data. */
-  private pushMessage(paneId: string): PushMessage {
+  /** `push.md` §4: the blocked or done pane's agent, workspace and tab, as data. */
+  private pushMessage(paneId: string, event: "blocked" | "done" = "blocked"): PushMessage {
     for (const ws of this.herdrClient.getSnapshot().workspaces) {
       for (const tab of ws.tabs) {
         const pane = tab.panes.find((p) => p.id === paneId);
-        if (pane) return { event: "blocked", agent: pane.agent, workspace: ws.label, tab: tab.label, paneId };
+        if (pane) return { event, agent: pane.agent, workspace: ws.label, tab: tab.label, paneId };
       }
     }
-    return { event: "blocked", agent: null, workspace: "", tab: "", paneId };
+    return { event, agent: null, workspace: "", tab: "", paneId };
   }
 
   public handleOpen(ws: Ws): void {
@@ -236,6 +322,21 @@ export class WsServer {
   }
 
   private sendToSubscribers(paneId: string, msg: ServerMessage): void {
+    if (msg.type === "pane_state") {
+      const isBound = !!this.paneStore.getPaneState(paneId);
+      for (const ws of this.clients) {
+        if (ws.data.subscribedPaneId === paneId) {
+          const watching = ws.data.watchingScreenPaneId === paneId;
+          if (isBound && !watching) {
+            const { rawScreen, ...rest } = msg.payload;
+            ws.send(JSON.stringify({ ...msg, payload: { ...rest, cards: [] } }));
+          } else {
+            ws.send(JSON.stringify(msg));
+          }
+        }
+      }
+      return;
+    }
     const text = JSON.stringify(msg);
     for (const ws of this.clients) if (ws.data.subscribedPaneId === paneId) ws.send(text);
   }
@@ -278,10 +379,16 @@ export class WsServer {
     } catch (err) {
       const replyTo = "id" in msg ? msg.id : undefined;
       if (err instanceof HerdrError) {
-        this.sendError(ws, replyTo, HERDR_ERROR_MAP[err.code] || ProtocolErrors.ERR_INTERNAL, err.message);
+        const code = HERDR_ERROR_MAP[err.code] || (UNREACHABLE_CODES.has(err.code) ? ProtocolErrors.ERR_UPSTREAM_OFFLINE : ProtocolErrors.ERR_INTERNAL);
+        this.sendError(ws, replyTo, code, err.message);
       } else {
-        console.error(`[pigeon] handling '${msg.type}' failed:`, err);
-        this.sendError(ws, replyTo, ProtocolErrors.ERR_INTERNAL, err instanceof Error ? err.message : String(err));
+        const errCode = (err as any)?.code;
+        if (typeof errCode === "string" && (UNREACHABLE_CODES.has(errCode) || errCode === "ECONNREFUSED" || errCode === "ENOENT")) {
+          this.sendError(ws, replyTo, ProtocolErrors.ERR_UPSTREAM_OFFLINE, err instanceof Error ? err.message : String(err));
+        } else {
+          console.error(`[pigeon] handling '${msg.type}' failed:`, err);
+          this.sendError(ws, replyTo, ProtocolErrors.ERR_INTERNAL, err instanceof Error ? err.message : String(err));
+        }
       }
     }
   }
@@ -302,6 +409,7 @@ export class WsServer {
             protocolVersion: PROTOCOL_VERSION,
             serverVersion: SERVER_VERSION,
             buildId: this.buildId,
+            environment: this.environment,
             deviceId: data.session.deviceId,
             clientConfig: this.configManager.getClientConfig(),
             recipes: this.recipeSummaries(),
@@ -331,6 +439,13 @@ export class WsServer {
         return;
 
       case "select_view": {
+        ws.data.watchingScreenPaneId = undefined;
+        if (msg.payload.paneId === null) {
+          ws.data.subscribedPaneId = null;
+          this.syncMonitoredPanes();
+          this.sendAck(ws, msg.id);
+          return;
+        }
         if (!this.herdrClient.hasPane(msg.payload.paneId)) {
           this.sendError(ws, msg.id, ProtocolErrors.ERR_NOT_FOUND, `Unknown pane ${msg.payload.paneId}`);
           return;
@@ -369,7 +484,6 @@ export class WsServer {
             this.sendError(ws, msg.id, ProtocolErrors.ERR_INVALID_PAYLOAD, `This agent cannot switch to model '${modelId}' at runtime`);
             return;
           }
-          commands.push(recipe.runtimeModelCommand(modelId));
         }
         if (thinking) {
           const current = modelId ?? this.paneStore.sessionInfo(targetPaneId, kind).model.value;
@@ -378,7 +492,12 @@ export class WsServer {
             this.sendError(ws, msg.id, ProtocolErrors.ERR_INVALID_PAYLOAD, `This agent cannot switch effort to '${thinking}' at runtime`);
             return;
           }
-          commands.push(recipe.runtimeThinkingCommand(thinking));
+        }
+        if (modelId && thinking && recipe?.kind === "codex") {
+          commands.push(`/model ${modelId} --reasoning=${thinking}`);
+        } else {
+          if (modelId && recipe?.runtimeModelCommand) commands.push(recipe.runtimeModelCommand(modelId));
+          if (thinking && recipe?.runtimeThinkingCommand) commands.push(recipe.runtimeThinkingCommand(thinking));
         }
         for (const [i, text] of commands.entries()) await this.submitPrompt(ws, i === commands.length - 1 ? msg.id : null, targetPaneId, text, { text, attachments: [] });
         return;
@@ -579,6 +698,7 @@ export class WsServer {
       case "config_patch": {
         const client = this.configManager.patchClientConfig(msg.payload.client);
         this.usageService?.updateConfig();
+        this.quotaService?.updateConfig();
         this.configVersion++;
         this.sendAck(ws, msg.id, { version: this.configVersion, client });
         this.broadcastConfigUpdated(client, ws);
@@ -619,58 +739,205 @@ export class WsServer {
         }
         this.sendAck(ws, msg.id, (await this.usage().getModel(msg.payload)) as any);
         return;
+
+      case "detail_get": {
+        const { paneId, kind } = msg.payload;
+        const sessionState = this.paneStore.getPaneState(paneId);
+        if (!sessionState) {
+          this.sendError(ws, msg.id, ProtocolErrors.ERR_NOT_FOUND, `No bound session for pane ${paneId}`);
+          return;
+        }
+        if (kind === "tool") {
+          const { turnId, callId } = msg.payload;
+          const turn = sessionState.turns.find((t) => t.turnId === turnId);
+          if (!turn) {
+            this.sendError(ws, msg.id, ProtocolErrors.ERR_NOT_FOUND, `Turn ${turnId} not found`);
+            return;
+          }
+          let call = turn.toolCalls?.find((c) => c.id === callId);
+          if (!call && turn.items) {
+            const item = turn.items.find((i: any) => i.kind === "tool" && i.call?.id === callId);
+            if (item && item.kind === "tool") call = item.call;
+          }
+          if (!call) {
+            this.sendError(ws, msg.id, ProtocolErrors.ERR_NOT_FOUND, `Tool call ${callId} not found`);
+            return;
+          }
+          this.sendAck(ws, msg.id, { call });
+          return;
+        }
+        if (kind === "reasoning") {
+          const { turnId } = msg.payload;
+          const turn = sessionState.turns.find((t) => t.turnId === turnId);
+          if (!turn) {
+            this.sendError(ws, msg.id, ProtocolErrors.ERR_NOT_FOUND, `Turn ${turnId} not found`);
+            return;
+          }
+          const item = turn.items?.find((i: any) => i.kind === "reasoning" && i.text) as { kind: "reasoning"; text?: string } | undefined;
+          const reasoningText = item?.text || turn.reasoning?.text;
+          if (!reasoningText) {
+            this.sendError(ws, msg.id, ProtocolErrors.ERR_NOT_FOUND, `Reasoning text not found in turn ${turnId}`);
+            return;
+          }
+          this.sendAck(ws, msg.id, { text: reasoningText });
+          return;
+        }
+        if (kind === "file") {
+          const { filePath } = msg.payload;
+          const diff = ((sessionState.stats as any)?.files || sessionState.stats?.diffs || []).find((d: any) => d.filePath === filePath);
+          if (!diff) {
+            this.sendError(ws, msg.id, ProtocolErrors.ERR_NOT_FOUND, `Diff for ${filePath} not found`);
+            return;
+          }
+          this.sendAck(ws, msg.id, { diff });
+          return;
+        }
+        this.sendError(ws, msg.id, ProtocolErrors.ERR_INVALID_PAYLOAD, `Unknown detail kind ${kind}`);
+        return;
+      }
+
+      case "screen_watch": {
+        const { paneId, on } = msg.payload;
+        if (on) {
+          ws.data.watchingScreenPaneId = paneId;
+        } else if (ws.data.watchingScreenPaneId === paneId) {
+          ws.data.watchingScreenPaneId = undefined;
+        }
+        this.sendAck(ws, msg.id);
+        return;
+      }
     }
   }
 
   /** Subscribes the connection to one pane and sends everything the client needs to render it. */
   private async bootstrapPane(ws: Ws, paneId: string, have?: HaveInfo): Promise<void> {
+    const startMs = Date.now();
     ws.data.subscribedPaneId = paneId;
     this.syncMonitoredPanes();
 
     const agentKind = this.herdrClient.getPaneAgentKind(paneId);
     const sessionState = this.paneStore.getPaneState(paneId);
 
-    let sentDelta = false;
+    let turnsPayload: NormalizedTurnsPayload | null = null;
+    let resumePayload: TurnsDeltaPayload | null = null;
+
     if (
       have &&
       typeof have === "object" &&
       typeof have.sessionId === "string" &&
       typeof have.turnCount === "number" &&
       Number.isInteger(have.turnCount) &&
-      have.turnCount > 0 &&
-      typeof have.lastTurnHash === "string" &&
       sessionState &&
       sessionState.sessionId === have.sessionId &&
       sessionState.turns.length >= have.turnCount
     ) {
-      const turnToMatch = sessionState.turns[have.turnCount - 1];
-      if (turnToMatch && hashTurn(turnToMatch) === have.lastTurnHash) {
-        const payload: TurnsDeltaPayload = {
-          paneId,
-          seqWatermark: sessionState.seqWatermark,
-          sinceTurnIndex: have.turnCount,
-          appendTurns: sessionState.turns.slice(have.turnCount),
-          ...(sessionState.stats ? { sessionStats: sessionState.stats } : {}),
-          ...(sessionState.sessionTitle ? { sessionTitle: sessionState.sessionTitle } : {}),
-          ...(sessionState.todos ? { todos: sessionState.todos } : {}),
-          session: this.paneStore.sessionInfo(paneId, agentKind),
-        };
-        this.send(ws, { type: "turns_delta", payload });
-        sentDelta = true;
+      if (have.turnCount >= 2 && typeof have.anchorHash === "string") {
+        const anchorTurn = sessionState.turns[have.turnCount - 2];
+        if (anchorTurn && hashTurn(anchorTurn) === have.anchorHash) {
+          resumePayload = {
+            paneId,
+            seq: sessionState.seqWatermark,
+            seqWatermark: sessionState.seqWatermark,
+            sinceTurnIndex: have.turnCount - 1,
+            appendTurns: sessionState.turns.slice(have.turnCount - 1).map(toLightTurn),
+            ...(sessionState.stats ? { sessionStats: toLightStats(sessionState.stats) } : {}),
+            ...(sessionState.sessionTitle ? { sessionTitle: sessionState.sessionTitle } : {}),
+            ...(sessionState.todos ? { todos: sessionState.todos } : {}),
+            session: this.paneStore.sessionInfo(paneId, agentKind),
+          };
+        }
+      } else if (have.turnCount > 0 && typeof have.lastTurnHash === "string") {
+        const lastTurn = sessionState.turns[have.turnCount - 1];
+        if (lastTurn && hashTurn(lastTurn) === have.lastTurnHash) {
+          resumePayload = {
+            paneId,
+            seq: sessionState.seqWatermark,
+            seqWatermark: sessionState.seqWatermark,
+            sinceTurnIndex: have.turnCount,
+            appendTurns: sessionState.turns.slice(have.turnCount).map(toLightTurn),
+            ...(sessionState.stats ? { sessionStats: toLightStats(sessionState.stats) } : {}),
+            ...(sessionState.sessionTitle ? { sessionTitle: sessionState.sessionTitle } : {}),
+            ...(sessionState.todos ? { todos: sessionState.todos } : {}),
+            session: this.paneStore.sessionInfo(paneId, agentKind),
+          };
+        }
       }
     }
 
-    if (!sentDelta) {
-      this.send(ws, { type: "normalized_turns", payload: this.paneStore.getPayload(paneId, agentKind) });
+    if (!resumePayload) {
+      turnsPayload = this.paneStore.getPayload(paneId, agentKind);
     }
 
-    this.sendSkills(ws, paneId);
-    this.send(ws, { type: "prompt_queue", payload: { paneId, items: (this.queues.get(paneId) ?? []).map((q) => q.item) } });
-    // The cached state renders at once; the fresh read reaches this subscriber as a `cards_updated`
-    // pane_state only when the screen changed, so the client never gets the same state twice.
     const cached = this.herdrClient.getPaneState(paneId);
+    const queueItems = (this.queues.get(paneId) ?? []).map((q) => q.item);
+    const serverMs = Date.now() - startMs;
+
+    const lightTurns = turnsPayload
+      ? {
+          ...turnsPayload,
+          turns: turnsPayload.turns.map(toLightTurn),
+          ...(turnsPayload.sessionStats ? { sessionStats: toLightStats(turnsPayload.sessionStats) } : {}),
+        }
+      : null;
+    this.send(ws, {
+      type: "pane_bootstrap",
+      payload: {
+        paneId,
+        turns: lightTurns,
+        resume: resumePayload,
+        queue: queueItems,
+        state: cached ?? null,
+        serverMs,
+      },
+    });
     if (cached) this.send(ws, { type: "pane_state", payload: cached });
     await this.herdrClient.readAndClassifyPane(paneId);
+  }
+
+  private lastPaneTailAt = new Map<string, number>();
+
+  /**
+   * protocol.md §5.10: For every pane whose status is working or blocked and that has a bound session,
+   * push to connections not viewing that pane the last turns in light form fitting in 32 KB.
+   * At most one pane_tail per pane per second, and one more when leaving working or blocked.
+   */
+  private maybeSendPaneTail(paneId: string, force = false): void {
+    const sessionState = this.paneStore.getPaneState(paneId);
+    if (!sessionState) return;
+    const herdrStatus = this.herdrClient.getPaneHerdrStatus(paneId);
+    const inActiveState = herdrStatus === "working" || herdrStatus === "blocked";
+    if (!inActiveState && !force) return;
+
+    const now = Date.now();
+    const last = this.lastPaneTailAt.get(paneId) || 0;
+    if (!force && now - last < 1000) return;
+    this.lastPaneTailAt.set(paneId, now);
+
+    const rawTurns = sessionState.turns;
+    const lightTurns: NormalizedTurn[] = [];
+    let size = 0;
+    for (let i = rawTurns.length - 1; i >= 0; i--) {
+      const lt = toLightTurn(rawTurns[i]);
+      const turnSize = Buffer.byteLength(JSON.stringify(lt));
+      if (size + turnSize > 32 * 1024 && lightTurns.length > 0) break;
+      lightTurns.unshift(lt);
+      size += turnSize;
+    }
+
+    const payload: PaneTailPayload = {
+      paneId,
+      agentStatus: (herdrStatus as AgentStatus) || "idle",
+      seq: sessionState.seqWatermark,
+      sessionId: sessionState.sessionId,
+      turns: lightTurns,
+    };
+
+    const msg = JSON.stringify({ type: "pane_tail", payload });
+    for (const ws of this.clients) {
+      if (ws.data.subscribedPaneId !== paneId) {
+        ws.send(msg);
+      }
+    }
   }
 
   /** The daemon injects its usage service; tests without one get a service on first use. */
@@ -747,17 +1014,32 @@ export class WsServer {
   private composePrompt(paneId: string, text: string, paths: string[]): string {
     if (paths.length === 0) return text;
     const kind = this.herdrClient.getPaneAgentKind(paneId);
-    const prefix = (kind && getAgentRecipe(kind)?.mentionPrefix) || "";
-    const lines = paths.map((p) => prefix + p).join("\n");
-    return text.trim() ? `${text}\n\n${lines}` : lines;
+    const recipe = kind ? getAgentRecipe(kind) : undefined;
+    const prefix = recipe?.mentionPrefix ?? "";
+    const sep = recipe?.attachmentSeparator ?? "\n\n";
+    const lines = paths.map((p) => prefix + p).join(sep === " " ? " " : "\n");
+    return text.trim() ? `${text}${sep}${lines}` : lines;
+  }
+
+  private getQueueState(paneId: string): { state: "idle" | "sending"; sawWorking: boolean; unboundSent: boolean; timer?: ReturnType<typeof setTimeout> } {
+    let s = this.queueStates.get(paneId);
+    if (!s) {
+      s = { state: "idle", sawWorking: false, unboundSent: false };
+      this.queueStates.set(paneId, s);
+    }
+    return s;
   }
 
   /** Queues while the agent works or others wait; sends otherwise (protocol.md §4.2). */
   private async submitPrompt(ws: Ws, replyTo: string | null, paneId: string, send: string, shown: { text: string; attachments: string[] }): Promise<void> {
     const queue = this.queues.get(paneId) ?? [];
-    if (this.herdrClient.getPaneHerdrStatus(paneId) === "working" || queue.length > 0 || this.flushing.has(paneId)) {
+    const state = this.getQueueState(paneId);
+    const herdrStatus = this.herdrClient.getPaneHerdrStatus(paneId);
+    if (herdrStatus === "working" || queue.length > 0 || state.state === "sending") {
+      const facts = this.herdrClient.getPaneFacts(paneId);
+      const created_ms = facts?.createdMs ?? 0;
       const item: QueuedPrompt = { queueId: `q_${randomBytes(6).toString("hex")}`, ...shown, createdAt: Date.now() };
-      queue.push({ item, send });
+      queue.push({ item, send, created_ms });
       this.queues.set(paneId, queue);
       this.saveQueues();
       this.sendQueue(paneId);
@@ -768,124 +1050,229 @@ export class WsServer {
     if (replyTo) this.sendAck(ws, replyTo, { queued: false });
   }
 
-  /** Sends the oldest queued prompt once the turn ended; the next waits for the next idle. */
-  private async flushQueue(paneId: string): Promise<void> {
-    const queue = this.queues.get(paneId);
-    if (!queue?.length || this.flushing.has(paneId)) return;
-    const entry = queue[0];
-    if (entry.item.sending) return;
-    entry.item.sending = true;
-    this.flushing.add(paneId);
-    this.sawWorkingAfterSend.set(paneId, false);
-    this.saveQueues();
-    this.sendQueue(paneId);
-    try {
-      await this.herdrClient.sendPrompt(paneId, entry.send);
-      if (this.paneStore.boundSession(paneId)) {
-        this.armSendingCleanup(paneId, entry.item.queueId);
-      } else {
-        this.clearSendingPrompt(paneId, entry.item.queueId);
-      }
-    } catch (err) {
-      this.clearSendingPrompt(paneId, entry.item.queueId);
-      const code = err instanceof HerdrError ? HERDR_ERROR_MAP[err.code] || ProtocolErrors.ERR_INTERNAL : ProtocolErrors.ERR_INTERNAL;
-      if (!(err instanceof HerdrError)) console.error(`[pigeon] sending queued prompt to ${paneId} failed:`, err);
-      this.sendToSubscribers(paneId, {
-        type: "error",
-        error: { code, message: err instanceof Error ? err.message : String(err), details: { queueId: entry.item.queueId, paneId } },
-      });
+  public clearSendingPrompt(paneId: string, queueId?: string): void {
+    const head = this.queues.get(paneId)?.[0];
+    const qId = queueId ?? head?.item.queueId ?? "";
+    this.transitionQueue(paneId, { type: "timeout", queueId: qId });
+  }
+
+  public getQueueStatus(): Record<string, { length: number; state: "idle" | "sending" }> {
+    const result: Record<string, { length: number; state: "idle" | "sending" }> = {};
+    for (const [paneId, queue] of this.queues.entries()) {
+      const qs = this.queueStates.get(paneId);
+      result[paneId] = {
+        length: queue.length,
+        state: qs?.state ?? "idle",
+      };
     }
+    return result;
   }
 
-  private armSendingCleanup(paneId: string, queueId: string): void {
-    const key = `${paneId}:${queueId}`;
-    if (this.sendingTimers.has(key)) clearTimeout(this.sendingTimers.get(key)!);
-    const timer = setTimeout(() => {
-      this.sendingTimers.delete(key);
-      this.clearSendingPrompt(paneId, queueId);
-    }, 30000);
-    this.sendingTimers.set(key, timer);
-  }
+  private transitionQueue(
+    paneId: string,
+    event:
+      | { type: "status"; status: string }
+      | { type: "user_turn" }
+      | { type: "send_result"; success: boolean; error?: unknown; queueId: string }
+      | { type: "timeout"; queueId: string }
+      | { type: "remove_pane" }
+  ): void {
+    const queueState = this.getQueueState(paneId);
+    const queue = this.queues.get(paneId) ?? [];
 
-  private clearSendingPrompt(paneId: string, queueId?: string): void {
-    const queue = this.queues.get(paneId);
-    if (!queue) {
-      this.flushing.delete(paneId);
-      this.sawWorkingAfterSend.delete(paneId);
+
+    if (event.type === "remove_pane") {
+      if (queueState.timer) clearTimeout(queueState.timer);
+      this.queueStates.delete(paneId);
+      this.queues.delete(paneId);
+      this.lastPaneTailAt.delete(paneId);
+      this.lastStatus.delete(paneId);
+      this.lastPushAt.delete(`${paneId}:blocked`);
+      this.lastPushAt.delete(`${paneId}:done`);
+      this.saveQueues();
       return;
     }
-    const idx = queueId ? queue.findIndex((q) => q.item.queueId === queueId) : queue.findIndex((q) => q.item.sending);
-    if (idx !== -1) {
-      const foundQueueId = queue[idx].item.queueId;
-      const key = `${paneId}:${foundQueueId}`;
-      if (this.sendingTimers.has(key)) {
-        clearTimeout(this.sendingTimers.get(key)!);
-        this.sendingTimers.delete(key);
+
+    if (queueState.state === "sending") {
+      let settled = false;
+      const head = queue[0];
+
+      if (event.type === "user_turn") {
+        const canFlushImmediately =
+          queueState.sawWorking &&
+          (this.herdrClient.getPaneHerdrStatus(paneId) === "idle" || this.herdrClient.getPaneHerdrStatus(paneId) === "done");
+        if (queueState.timer) {
+          clearTimeout(queueState.timer);
+          queueState.timer = undefined;
+        }
+        if (!queueState.unboundSent && head) {
+          queue.shift();
+        }
+        queueState.state = "idle";
+        queueState.sawWorking = false;
+        queueState.unboundSent = false;
+        this.saveQueues();
+        this.sendQueue(paneId);
+
+        if (canFlushImmediately) {
+          this.kickQueue(paneId);
+        }
+        return;
+      } else if (event.type === "timeout") {
+        if (!event.queueId || event.queueId === head?.item.queueId) {
+          settled = true;
+        }
+      } else if (event.type === "status") {
+        if (event.status === "working") {
+          queueState.sawWorking = true;
+        } else if ((event.status === "idle" || event.status === "done")) {
+          // Idle after working settles the head prompt for all panes (protocol §4.2).
+          if (queueState.sawWorking) {
+            settled = true;
+          }
+        }
+      } else if (event.type === "send_result") {
+        if (!event.success) {
+          if (queueState.timer) {
+            clearTimeout(queueState.timer);
+            queueState.timer = undefined;
+          }
+          if (head && head.item.queueId === event.queueId) {
+            queue.shift();
+          }
+          queueState.state = "idle";
+          queueState.sawWorking = false;
+          queueState.unboundSent = false;
+          this.saveQueues();
+          this.sendQueue(paneId);
+
+          const err = event.error;
+          const isOffline =
+            err instanceof HerdrError && (UNREACHABLE_CODES.has(err.code) || err.code === "closed" || err.code === "ERR_UPSTREAM_OFFLINE");
+          const code = isOffline
+            ? ProtocolErrors.ERR_UPSTREAM_OFFLINE
+            : err instanceof HerdrError
+              ? HERDR_ERROR_MAP[err.code] || ProtocolErrors.ERR_INTERNAL
+              : ProtocolErrors.ERR_INTERNAL;
+          this.sendToSubscribers(paneId, {
+            type: "error",
+            error: { code, message: err instanceof Error ? err.message : String(err), details: { queueId: event.queueId, paneId } },
+          });
+
+          this.kickQueue(paneId);
+          return;
+        } else {
+          // Success
+          if (!this.paneStore.boundSession(paneId)) {
+            // Unbound pane: leaves the queue right after successful send, but queue still waits for it to settle
+            if (head && head.item.queueId === event.queueId && !queueState.unboundSent) {
+              queue.shift();
+              queueState.unboundSent = true;
+              this.saveQueues();
+              this.sendQueue(paneId);
+            }
+          }
+        }
       }
-      queue.splice(idx, 1);
-      this.saveQueues();
-      this.sendQueue(paneId);
-    }
-    this.flushing.delete(paneId);
-    if (this.sawWorkingAfterSend.get(paneId)) {
-      this.sawWorkingAfterSend.delete(paneId);
-      const status = this.herdrClient.getPaneHerdrStatus(paneId);
-      if (status === "idle" || status === "done") {
-        void this.flushQueue(paneId);
+
+      if (settled) {
+        if (queueState.timer) {
+          clearTimeout(queueState.timer);
+          queueState.timer = undefined;
+        }
+        if (!queueState.unboundSent && head) {
+          queue.shift();
+        }
+        queueState.state = "idle";
+        queueState.sawWorking = false;
+        queueState.unboundSent = false;
+        this.saveQueues();
+        this.sendQueue(paneId);
+
+        this.kickQueue(paneId);
+        return;
       }
     }
+
+    if (queueState.state === "idle") {
+      this.kickQueue(paneId);
+    }
+  }
+
+  private kickQueue(paneId: string): void {
+    const queueState = this.getQueueState(paneId);
+    if (queueState.state !== "idle") return;
+    const queue = this.queues.get(paneId);
+    if (!queue || queue.length === 0) return;
+
+    const herdrStatus = this.herdrClient.getPaneHerdrStatus(paneId);
+    if (herdrStatus !== "idle" && herdrStatus !== "done") return;
+
+    const entry = queue[0];
+    if (entry.item.sending) return;
+
+    entry.item.sending = true;
+    queueState.state = "sending";
+    queueState.sawWorking = false;
+    queueState.unboundSent = false;
+
+    const queueId = entry.item.queueId;
+    queueState.timer = setTimeout(() => {
+      this.transitionQueue(paneId, { type: "timeout", queueId });
+    }, this.queueSendTimeoutMs);
+
+    this.saveQueues();
+    this.sendQueue(paneId);
+
+    void (async () => {
+      try {
+        await this.herdrClient.sendPrompt(paneId, entry.send);
+        this.transitionQueue(paneId, { type: "send_result", success: true, queueId });
+      } catch (err) {
+        this.transitionQueue(paneId, { type: "send_result", success: false, error: err, queueId });
+      }
+    })();
   }
 
   private sendQueue(paneId: string): void {
     this.sendToSubscribers(paneId, { type: "prompt_queue", payload: { paneId, items: (this.queues.get(paneId) ?? []).map((q) => q.item) } });
   }
 
-  private dispatchPendingRestoredPanes(): void {
-    if (this.pendingRestoredPanes.size === 0) return;
-    for (const paneId of Array.from(this.pendingRestoredPanes)) {
-      if (this.herdrClient.hasPane(paneId)) {
-        this.pendingRestoredPanes.delete(paneId);
-        const queue = this.queues.get(paneId);
-        if (queue && queue.length > 0 && !this.flushing.has(paneId)) {
-          const status = this.herdrClient.getPaneHerdrStatus(paneId);
-          if (status === "idle" || status === "done") {
-            void this.flushQueue(paneId);
-          }
-        }
-      }
-    }
-  }
-
   private loadQueues(): void {
     if (!this.queueFilePath || !existsSync(this.queueFilePath)) return;
+    let data: any;
     try {
       const raw = readFileSync(this.queueFilePath, "utf8");
-      const data = JSON.parse(raw);
-      if (typeof data === "object" && data !== null) {
-        for (const [paneId, items] of Object.entries(data)) {
-          if (Array.isArray(items)) {
-            // protocol.md §4.2: a prompt in sending state was already dispatched; it is not restored on daemon restart
-            const pending = (items as Array<{ item: QueuedPrompt; send: string }>).filter((entry) => !entry?.item?.sending);
-            if (pending.length > 0) {
-              this.queues.set(paneId, pending);
-              this.pendingRestoredPanes.add(paneId);
-            }
+      data = JSON.parse(raw);
+    } catch (e) {
+      throw new Error(`Failed to parse queue file '${this.queueFilePath}': ${e instanceof Error ? e.message : String(e)}`);
+    }
+    if (typeof data === "object" && data !== null) {
+      for (const [paneId, items] of Object.entries(data)) {
+        if (Array.isArray(items)) {
+          const pending = (items as Array<{ item: QueuedPrompt; send: string; created_ms: number }>).filter((entry) => !entry?.item?.sending);
+          if (pending.length > 0) {
+            this.queues.set(paneId, pending);
+            this.restoredPaneIds.add(paneId);
           }
         }
       }
-    } catch (e) {
-      console.error("[Pigeon] failed to load queues from disk:", e);
     }
   }
 
   private saveQueues(): void {
     if (!this.queueFilePath) return;
     try {
-      const obj: Record<string, Array<{ item: QueuedPrompt; send: string }>> = {};
+      const obj: Record<string, Array<{ item: QueuedPrompt; send: string; created_ms: number }>> = {};
       for (const [paneId, list] of this.queues.entries()) {
-        if (list.length > 0) obj[paneId] = list;
+        const notSending = list.filter((e) => !e.item.sending);
+        if (notSending.length > 0) obj[paneId] = notSending;
       }
-      writeFileSync(this.queueFilePath, JSON.stringify(obj, null, 2), "utf8");
+      const dir = dirname(this.queueFilePath);
+      mkdirSync(dir, { recursive: true });
+      const tmp = `${this.queueFilePath}.${randomBytes(4).toString("hex")}.tmp`;
+      writeFileSync(tmp, JSON.stringify(obj, null, 2), "utf8");
+      renameSync(tmp, this.queueFilePath);
     } catch (e) {
       console.error("[Pigeon] failed to save queues to disk:", e);
     }
@@ -930,9 +1317,17 @@ export class WsServer {
   }
 
   public destroy(): void {
-    for (const timer of this.sendingTimers.values()) clearTimeout(timer);
-    this.sendingTimers.clear();
+    for (const state of this.queueStates.values()) {
+      if (state.timer) clearTimeout(state.timer);
+    }
+    this.queueStates.clear();
+    this.herdrClient.off("connected", this.onHerdrConnected);
+    this.herdrClient.off("disconnected", this.onHerdrDisconnected);
+    this.herdrClient.off("snapshot_updated", this.onSnapshotUpdated);
+    this.herdrClient.off("cards_updated", this.onCardsUpdated);
+    this.herdrClient.off("pane_status_changed", this.onPaneStatusChanged);
     this.usageService?.destroy();
+    this.quotaService?.destroy();
     this.paneStore.destroy();
   }
 }

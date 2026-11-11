@@ -5,6 +5,27 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.9] - 2026-11-11
+
+### Added
+- **Pane data bundling**: `pane_bootstrap` bundles pane state, queue, and lightweight turns (`toLightTurn`, `toLightStats`) into a single turnaround message on pane switch and resume (#19).
+- **On-demand detail loading**: `detail_get` lazily loads full tool call arguments, outputs, reasoning text, and file diffs on demand (#19).
+- **Push notification delivery**: RFC 8291 aes128gcm payload encryption and RFC 8292 VAPID authorization for Web Push with service worker background notification handling and window focus/navigation (#19).
+- **Composer clipboard paste**: image paste support in Composer with automatic attachment upload and preview thumbnails (#19).
+- **Transcript attachment thumbnails**: chat turns render uploaded attachments as clickable image thumbnails linking to `GET /api/uploads/:id` for full-size viewing (#19).
+- **Unified quota & usage control model**: unified scheduled vs realtime scan modes across quota and usage, with scheduled background timer caches and 60-second cooldown protection on realtime queries (#19).
+- **Environment indication**: daemon reports runtime environment (production, dev, test) in welcome handshake and displays environment in Settings (#19).
+
+### Fixed
+- **Herdr fault isolation**: write commands cleanly fail with `ERR_UPSTREAM_OFFLINE` when Herdr is offline instead of timing out; status events of unknown shapes log warnings and schedule background snapshot reconciliation (#19).
+- **Tailscale and multi-interface access**: whitelist all detected network interfaces (Tailscale IP, LAN IP, MagicDNS) in `allowedHosts` and `allowedOrigins` to allow WebSocket connections across VPN and local interfaces in all modes (#19).
+- **CLI prompt submission**: Antigravity prompts use single-line space separation for attachment paths and drop `@` mention prefix to prevent TUI autocomplete and multiline editor stalls (#19).
+- **Usage scan timestamp format**: display scan completion times with full second precision (`HH:mm:ss`) (#19).
+- **Queue robustness**: terminal creation timestamp matching prevents stale restored queue items from executing on reused pane IDs across reboots (#19).
+- **Screen card classification**: plain text and input prompt lines are no longer falsely classified as cursor menus (#19).
+- **Partial character reads**: multi-byte characters split across chunk boundaries in session JSONL transcripts are decoded intact (#19).
+- **Markdown DOMPurify sanitization**: strictly forbid form, input, button, textarea, select, and style elements to prevent script and styling injection (#19).
+
 ## [0.1.8] - 2026-11-10
 
 ### Added

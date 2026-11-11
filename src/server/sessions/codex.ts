@@ -1,4 +1,4 @@
-import { existsSync, readdirSync, statSync } from "node:fs";
+import { existsSync, readdirSync, realpathSync, statSync } from "node:fs";
 import { join } from "node:path";
 import type { FileDiffSummary, TodoItem } from "../../shared/agent-session";
 import type { PastSession } from "../../types/protocol";
@@ -16,11 +16,17 @@ function mtimeOf(path: string | undefined): number | null {
 export class CodexSource implements SessionSource {
   public readonly agent = "codex";
   private root: string;
+  private realRoot: string;
   private paths = new Map<string, string>();
   private readers = new Map<string, { tail: JsonlTail; builder: TurnBuilder }>();
 
   constructor(home: string) {
     this.root = join(home, ".codex", "sessions");
+    try {
+      this.realRoot = realpathSync(this.root);
+    } catch {
+      this.realRoot = this.root;
+    }
   }
 
   /** Rollout files, newest day first; with `sinceMs`, only days whose folder changed since then. */
@@ -57,7 +63,8 @@ export class CodexSource implements SessionSource {
 
   public sessionOfFile(path: string): string | null {
     const name = path.slice(path.lastIndexOf("/") + 1);
-    if (!path.startsWith(this.root + "/") || !name.startsWith("rollout-") || !name.endsWith(".jsonl")) return null;
+    const inRoot = path.startsWith(this.root + "/") || path.startsWith(this.realRoot + "/");
+    if (!inRoot || !name.startsWith("rollout-") || !name.endsWith(".jsonl")) return null;
     const meta = this.meta(path);
     if (meta) this.paths.set(meta.id, path);
     return meta?.id ?? null;

@@ -112,11 +112,15 @@ function parseTailPrompt(lines: string[], start: number): PromptParse | null {
   }
 
   if (options.length === 0) {
-    // Without numbered options a prompt is pending only as an arrow menu ("❯ Yes") or when
-    // nothing but key hints follows the question.
-    const hasCursorMenu = payloadLines.some((l) => CURSOR_RE.test(l));
-    const content = payloadLines.filter((l) => !PROMPT_HINT_RE.test(l));
-    if (!hasCursorMenu && content.length > 0) return null;
+    if (isYesNo) {
+      const content = payloadLines.filter((l) => !PROMPT_HINT_RE.test(l));
+      if (content.length > 0) return null;
+    } else {
+      // herdr-adapter.md §8.2: an arrow-cursor list needs at least two consecutive option lines,
+      // one carrying the cursor. A single cursor line (e.g. the agent's input prompt) is never a menu.
+      const content = payloadLines.filter((l) => !PROMPT_HINT_RE.test(l));
+      if (content.length < 2 || !content.some((l) => CURSOR_RE.test(l))) return null;
+    }
   }
 
   return {

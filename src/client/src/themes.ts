@@ -261,5 +261,9 @@ export function applyTheme(mode: ThemeMode, accent: AccentName): void {
   root.style.setProperty("--accent", a);
   root.style.setProperty("--accentbg", `rgba(${r},${g},${b},${resolved === "dark" ? 0.16 : 0.1})`);
   root.style.setProperty("--onaccent", resolved === "dark" ? "#0B0B0C" : "#FFFFFF");
-  document.querySelector('meta[name="theme-color"]')?.setAttribute("content", p.bg);
+  if (typeof document.querySelectorAll === "function") {
+    document.querySelectorAll('meta[name="theme-color"]').forEach((m) => m.setAttribute("content", p.bg));
+  } else {
+    document.querySelector?.('meta[name="theme-color"]')?.setAttribute("content", p.bg);
+  }
 }

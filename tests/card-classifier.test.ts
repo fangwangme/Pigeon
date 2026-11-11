@@ -94,3 +94,19 @@ describe("pending prompts (protocol.md §4.1)", () => {
     expect(b.interactionId).not.toBe(a.interactionId);
   });
 });
+
+describe("what is a prompt (herdr-adapter.md §8.2)", () => {
+  test("plain text and the input line are not a cursor menu (B5)", () => {
+    const idle = [
+      "● I updated the parser and the tests pass.",
+      "",
+      "Select a file to review next, or ask me to continue.",
+      "",
+      "╭──────────────────────────────────────────╮",
+      "│ >                                        │",
+      "╰──────────────────────────────────────────╯",
+      "",
+    ].join("\n");
+    expect(classify(idle).pendingInteraction).toBeNull();
+  });
+});

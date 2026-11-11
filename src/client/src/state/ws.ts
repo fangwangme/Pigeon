@@ -1,5 +1,5 @@
 import { state, setState, applySyncedClientConfig, openTerminal, setUnread, showToast, writePref } from "./store";
-import { load, save, remove, clearAll, sweep, meta, migrateLocalStorageCache, type PaneCacheEntry } from "./pane-cache";
+import { load, save, remove, clearAll, sweep, meta, migrateLocalStorageCache, getMemoryPaneView, applyPaneTail, type PaneCacheEntry } from "./pane-cache";
 import type { ClientMessage, ServerMessage, SnapshotPayload, PaneStatePayload, ClientConfig, AgentStatus, HaveInfo, QuotaProviderState } from "../../../types/protocol";
 import { hashTurn } from "../../../types/protocol";
 import { t } from "../i18n";
@@ -23,6 +23,7 @@ const pending = new Map<string, { resolve: (p: any) => void; reject: (e: { code:
 let freshDataArrivedPaneId: string | null = null;
 let lastAlivePanesKey = "";
 let pendingSelectViewId: string | null = null;
+const paneSeqs = new Map<string, number>();
 
 function toPlain<T>(obj: T): T {
   if (obj === null || typeof obj !== "object") return obj;
@@ -142,10 +143,13 @@ export async function initWebSocket(): Promise<void> {
     lastPongTime = Date.now();
     let have: HaveInfo | undefined;
     if (state.activePaneId && state.session?.bound && state.session.sessionId && state.normalizedTurns.length > 0) {
+      const turnCount = state.normalizedTurns.length;
       have = {
         sessionId: state.session.sessionId,
-        turnCount: state.normalizedTurns.length,
-        lastTurnHash: hashTurn(state.normalizedTurns[state.normalizedTurns.length - 1]),
+        turnCount,
+        ...(turnCount >= 2
+          ? { anchorHash: hashTurn(state.normalizedTurns[turnCount - 2]) }
+          : { lastTurnHash: hashTurn(state.normalizedTurns[turnCount - 1]) }),
       };
       setState("paneSyncing", true);
     }
@@ -249,6 +253,9 @@ export function handleServerMessage(msg: ServerMessage): void {
       setState("configReady", true);
       setState("recipes", msg.payload.recipes);
       setState("serverVersion", msg.payload.serverVersion);
+      if (msg.payload.environment) {
+        setState("environment", msg.payload.environment);
+      }
       if (state.quotaUsageEnabled !== false) {
         void fetchQuota();
       }
@@ -288,6 +295,56 @@ export function handleServerMessage(msg: ServerMessage): void {
       }
       return;
 
+    case "pane_bootstrap": {
+      if (msg.payload.paneId !== state.activePaneId) return;
+      freshDataArrivedPaneId = msg.payload.paneId;
+      if (typeof msg.payload.turns?.seq === "number") {
+        paneSeqs.set(msg.payload.paneId, msg.payload.turns.seq);
+      } else if (typeof msg.payload.resume?.seq === "number") {
+        paneSeqs.set(msg.payload.paneId, msg.payload.resume.seq);
+      }
+      if (msg.payload.state) {
+        applyPaneState(msg.payload.state);
+        setState("paneLoaded", true);
+      }
+      if (msg.payload.queue) {
+        setState("queue", msg.payload.queue);
+      }
+      if (msg.payload.turns) {
+        setState({
+          normalizedTurns: msg.payload.turns.turns,
+          sessionStats: msg.payload.turns.sessionStats || null,
+          sessionTitle: msg.payload.turns.sessionTitle || null,
+          todos: msg.payload.turns.todos || null,
+          session: msg.payload.turns.session,
+          paneSyncing: false,
+        });
+        const metaInfo = meta(msg.payload.paneId);
+        if (!msg.payload.turns.session?.bound || (metaInfo && metaInfo.sessionId !== msg.payload.turns.session?.sessionId)) {
+          void remove(msg.payload.paneId);
+        } else if (msg.payload.turns.session?.sessionId && msg.payload.turns.turns?.length) {
+          saveActivePaneSnapshot(msg.payload.paneId);
+        }
+      } else if (msg.payload.resume) {
+        setState("paneSyncing", false);
+        const { sinceTurnIndex, appendTurns, patchLastTurn, sessionStats, sessionTitle, todos, session } = msg.payload.resume;
+        let current = [...state.normalizedTurns];
+        if (sinceTurnIndex === 0 && !patchLastTurn) {
+          current = appendTurns;
+        } else {
+          if (patchLastTurn) current[Math.max(0, sinceTurnIndex - (appendTurns.length > 0 ? 1 : 0))] = patchLastTurn;
+          if (appendTurns.length > 0) current = [...current.slice(0, sinceTurnIndex), ...appendTurns];
+        }
+        setState("normalizedTurns", current);
+        if (sessionStats) setState("sessionStats", sessionStats);
+        if (sessionTitle) setState("sessionTitle", sessionTitle);
+        if (todos) setState("todos", todos);
+        if (session) setState("session", session);
+        debouncedSaveActivePaneSnapshot(msg.payload.paneId);
+      }
+      return;
+    }
+
     case "pane_state":
       applyPaneState(msg.payload);
       if (msg.payload.paneId === state.activePaneId) setState("paneLoaded", true);
@@ -296,6 +353,9 @@ export function handleServerMessage(msg: ServerMessage): void {
     case "normalized_turns": {
       if (msg.payload.paneId !== state.activePaneId) return;
       freshDataArrivedPaneId = msg.payload.paneId;
+      if (typeof msg.payload.seq === "number") {
+        paneSeqs.set(msg.payload.paneId, msg.payload.seq);
+      }
       setState({
         normalizedTurns: msg.payload.turns,
         sessionStats: msg.payload.sessionStats || null,
@@ -316,6 +376,15 @@ export function handleServerMessage(msg: ServerMessage): void {
     case "turns_delta": {
       if (msg.payload.paneId !== state.activePaneId) return;
       freshDataArrivedPaneId = msg.payload.paneId;
+      if (typeof msg.payload.seq === "number") {
+        const lastSeq = paneSeqs.get(msg.payload.paneId);
+        if (lastSeq !== undefined && msg.payload.seq !== lastSeq + 1) {
+          console.warn(`[Pigeon] seq gap on pane ${msg.payload.paneId}: expected ${lastSeq + 1}, got ${msg.payload.seq}. Resyncing.`);
+          void selectPane(msg.payload.paneId);
+          return;
+        }
+        paneSeqs.set(msg.payload.paneId, msg.payload.seq);
+      }
       setState("paneSyncing", false);
       const { sinceTurnIndex, appendTurns, patchLastTurn, sessionStats, sessionTitle, todos, session } = msg.payload;
       let current = [...state.normalizedTurns];
@@ -331,6 +400,14 @@ export function handleServerMessage(msg: ServerMessage): void {
       if (todos) setState("todos", todos);
       if (session) setState("session", session);
       debouncedSaveActivePaneSnapshot(msg.payload.paneId);
+      return;
+    }
+
+    case "pane_tail": {
+      if (msg.payload.paneId !== state.activePaneId) {
+        paneSeqs.set(msg.payload.paneId, msg.payload.seq);
+        applyPaneTail(msg.payload);
+      }
       return;
     }
 
@@ -437,6 +514,19 @@ export function sendKeys(keys: string[]): void {
   sendMessage({ type: "agent_send_keys", id: nextId(), payload: { targetPaneId: state.activePaneId, keys } });
 }
 
+export function setScreenWatch(paneId: string, on: boolean): void {
+  if (!paneId) return;
+  sendMessage({ type: "screen_watch", id: nextId(), payload: { paneId, on } });
+}
+
+export function getDetail(payload: { paneId: string; kind: "tool" | "reasoning" | "file"; turnId?: string; callId?: string; filePath?: string }): Promise<any> {
+  return request({ type: "detail_get", payload });
+}
+
+export function requestSkills(): void {
+  sendMessage({ type: "skills_get", id: nextId() });
+}
+
 export function respondInteraction(interactionId: string, optionId: string, fingerprint: string): Promise<any> {
   if (!state.activePaneId) return Promise.reject({ code: "ERR_NOT_FOUND", message: "no pane" });
   return request({ type: "interaction_respond", payload: { targetPaneId: state.activePaneId, interactionId, optionId, fingerprint } });
@@ -452,21 +542,23 @@ export async function selectPane(paneId: string): Promise<void> {
 
   freshDataArrivedPaneId = null;
   paneRevisions.delete(paneId);
+
+  const memoryView = getMemoryPaneView(paneId);
   setState({
     activePaneId: paneId,
     cards: [],
-    normalizedTurns: [],
-    sessionStats: null,
-    sessionTitle: null,
-    todos: null,
-    session: null,
-    queue: [],
+    normalizedTurns: memoryView ? memoryView.turns : [],
+    sessionStats: memoryView?.sessionStats || null,
+    sessionTitle: memoryView?.sessionTitle || null,
+    todos: memoryView?.todos || null,
+    session: memoryView?.session || null,
+    queue: memoryView?.queue || [],
     pendingInteraction: null,
     rawScreen: "",
     skills: [],
     terminalOpen: false,
-    paneSyncing: false,
-    paneLoaded: false,
+    paneSyncing: !!memoryView,
+    paneLoaded: !!memoryView,
   });
 
   for (const w of state.workspaces) {
@@ -478,11 +570,13 @@ export async function selectPane(paneId: string): Promise<void> {
   }
   setUnread(paneId, false);
 
-  let cached: PaneCacheEntry | null = null;
-  try {
-    cached = await load(paneId);
-  } catch (err) {
-    console.error("[Pigeon] Failed to load pane cache, continuing with network view:", err);
+  let cached: PaneCacheEntry | null = memoryView || null;
+  if (!cached) {
+    try {
+      cached = await load(paneId);
+    } catch (err) {
+      console.error("[Pigeon] Failed to load pane cache, continuing with network view:", err);
+    }
   }
   if (state.activePaneId !== paneId) return;
 
@@ -498,10 +592,13 @@ export async function selectPane(paneId: string): Promise<void> {
       paneSyncing: true,
     });
     if (cached.sessionId && cached.turns.length > 0) {
+      const turnCount = cached.turns.length;
       have = {
         sessionId: cached.sessionId,
-        turnCount: cached.turns.length,
-        lastTurnHash: hashTurn(cached.turns[cached.turns.length - 1]),
+        turnCount,
+        ...(turnCount >= 2
+          ? { anchorHash: hashTurn(cached.turns[turnCount - 2]) }
+          : { lastTurnHash: hashTurn(cached.turns[turnCount - 1]) }),
       };
     }
   }

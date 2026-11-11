@@ -1,7 +1,7 @@
 import { connect } from "node:net";
 import { existsSync } from "node:fs";
 import { PigeonDaemon } from "../server/daemon";
-import { ConfigManager, portScoped } from "../server/config-manager";
+import { ConfigManager, resolveInstancePaths, resolveProductionPort } from "../server/config-manager";
 import qrcode from "qrcode-terminal";
 
 export const ADMIN_TIMEOUT_MS = 5000;
@@ -65,7 +65,7 @@ Usage:
   pigeon pair [--ephemeral] [--json] [--port <n>]
   pigeon devices [revoke <id>] [--port <n>]
   pigeon status [--port <n>]
-  pigeon rebuild-cache [--json] [--port <n>]
+  pigeon rebuild-cache [--json] [--port <n>] [--yes]
 
 The admin commands reach the daemon on the configured port, or on --port.
 `;
@@ -78,15 +78,27 @@ function fail(message: string): never {
 async function main() {
   const args = process.argv.slice(2);
   const command = args[0] || "start";
-  const configManager = new ConfigManager();
-  // architecture.md §4.6: the admin commands reach the daemon of the configured port, or of --port.
-  const portIdx = command === "start" ? -1 : args.indexOf("--port");
-  const adminPort = portIdx > 0 ? Number(args[portIdx + 1]) : configManager.getServerConfig().port;
-  if (!Number.isInteger(adminPort) || adminPort <= 0 || adminPort > 65535) fail(`Invalid --port '${args[portIdx + 1]}'`);
-  const adminSocketPath = portScoped(configManager.getServerConfig().adminSocketPath, adminPort);
+
+  const portIdx = args.indexOf("--port");
+  let cliPort: number | undefined;
+  if (portIdx !== -1) {
+    const val = args[portIdx + 1];
+    cliPort = Number(val);
+    if (!Number.isInteger(cliPort) || cliPort < 1 || cliPort > 65535) {
+      fail(`Invalid --port '${val}'`);
+    }
+  }
+
+  const productionPort = resolveProductionPort();
+  const isProduction = cliPort === undefined || cliPort === productionPort;
+  const activePort = cliPort ?? productionPort;
+  const instancePaths = resolveInstancePaths({ port: activePort, productionPort });
+  const configPath = isProduction ? undefined : instancePaths.configPath;
+  const configManager = new ConfigManager(configPath ? { path: configPath, port: activePort, productionPort } : { productionPort });
+  const adminSocketPath = instancePaths.adminSocketPath;
 
   if (command === "start") {
-    let port: number | undefined;
+    let port: number | undefined = cliPort;
     let insecureDev: boolean | undefined;
     let herdrAppSocketPath: string | undefined;
     let herdrCoreSocketPath: string | undefined;
@@ -96,8 +108,7 @@ async function main() {
     for (let i = 1; i < args.length; i++) {
       const value = args[i + 1];
       if (args[i] === "--port" && value) {
-        port = Number(value);
-        if (!Number.isInteger(port) || port < 1 || port > 65535) fail(`Invalid --port '${value}'`);
+        port = cliPort;
         i++;
       } else if (args[i] === "--insecure-dev") {
         insecureDev = true;
@@ -118,7 +129,16 @@ async function main() {
       }
     }
 
-    const daemon = new PigeonDaemon({ configManager, port, insecureDev, herdrAppSocketPath, herdrCoreSocketPath, publicBaseUrl: publicUrl, adminSocketPath });
+    const daemon = new PigeonDaemon({
+      configManager,
+      port,
+      insecureDev,
+      herdrAppSocketPath,
+      herdrCoreSocketPath,
+      publicBaseUrl: publicUrl,
+      adminSocketPath,
+      productionPort,
+    });
     await daemon.start();
     daemon.fillModelCatalog();
     console.log(`Pigeon daemon listening on port ${daemon.config.port} (insecureDev=${daemon.config.insecureDev})`);
@@ -150,8 +170,35 @@ async function main() {
       console.log("Paired devices:", list);
     }
   } else if (command === "status") {
-    console.log("Pigeon status:", await sendAdminCommand(adminSocketPath, "status"));
+    const status: any = await sendAdminCommand(adminSocketPath, "status");
+    if (args.includes("--json")) {
+      console.log(JSON.stringify(status, null, 2));
+    } else {
+      console.log("Pigeon status:");
+      console.log(`  Herdr connected:   ${status.herdrConnected ? "yes" : "no"}`);
+      console.log(`  Public URL:        ${status.publicBaseUrl}`);
+      console.log(`  Active sessions:   ${status.activeSessions}`);
+      if (status.queues && Object.keys(status.queues).length > 0) {
+        console.log("  Queues:");
+        for (const [pane, q] of Object.entries(status.queues as Record<string, any>)) {
+          console.log(`    Pane ${pane}: length=${q.length}, state=${q.state}`);
+        }
+      }
+      if (status.lastUsageScan) {
+        const timeStr = status.lastUsageScan.time ? new Date(status.lastUsageScan.time).toISOString() : "never";
+        console.log(`  Last usage scan:   ${timeStr} (${status.lastUsageScan.durationMs || 0}ms)`);
+      }
+      if (status.sourceErrors) {
+        console.log("  Source errors:");
+        for (const [src, err] of Object.entries(status.sourceErrors)) {
+          console.log(`    ${src}: ${err || "none"}`);
+        }
+      }
+    }
   } else if (command === "rebuild-cache") {
+    if (!isProduction && !args.includes("--yes")) {
+      fail("Refusing to rebuild shared usage cache from test instance without --yes.");
+    }
     console.log("Rebuilding usage database from all sources...");
     let res: any;
     try {

@@ -7,7 +7,7 @@ import { ModelCatalog } from "../src/server/model-catalog";
 import { PushManager } from "../src/server/push";
 import { SkillScanner } from "../src/server/skill-scanner";
 import { WsServer } from "../src/server/ws-server";
-import { ProtocolErrors, hashTurn, fnv1a32, type NormalizedTurn } from "../src/types/protocol";
+import { ProtocolErrors, hashTurn, fnv1a32, type NormalizedTurn, toLightTurn } from "../src/types/protocol";
 import { FakeHerdr, fakeWs, tempDir, topologyOf } from "./helpers/fixtures";
 
 // protocol.md: §3 handshake, §4 client commands, §6 configuration sync, §7 error codes.
@@ -44,16 +44,18 @@ const send = (ws: any, msg: object) => server.handleMessage(ws, JSON.stringify(m
 const lastError = (sent: any[]) => sent.filter((m) => m.type === "error").at(-1)?.error.code;
 
 describe("handshake (protocol.md §3)", () => {
-  test("hello is answered with welcome, health, topology, then the pane's turns, skills and state", async () => {
+  test("hello is answered with welcome, health, topology, then the pane's bootstrap", async () => {
     const c = fakeWs();
     server.handleOpen(c.ws);
     await send(c.ws, { type: "hello", id: "h1", payload: { protocolVersion: "1.0.0", subscribePaneId: "p1" } });
     const types = c.sent.map((m) => m.type);
     expect(types.slice(0, 3)).toEqual(["welcome", "upstream_status", "snapshot_update"]);
     expect(c.ofType("welcome")[0].payload.buildId).toBe("build_test");
-    // Health may be re-broadcast once the pane read reaches Herdr; the pane data comes exactly once each.
-    expect(types.slice(3).filter((t) => t !== "upstream_status")).toEqual(["normalized_turns", "skills_sync", "prompt_queue", "pane_state"]);
-    expect(c.ofType("normalized_turns")[0].payload).toMatchObject({ paneId: "p1", turns: [] });
+    // Health may be re-broadcast once the pane read reaches Herdr; pane_bootstrap comes exactly once.
+    expect(types.slice(3).filter((t) => t !== "upstream_status")).toEqual(["pane_bootstrap", "pane_state"]);
+    const boot = c.ofType("pane_bootstrap")[0].payload;
+    expect(boot.paneId).toBe("p1");
+    expect(boot.turns).toMatchObject({ paneId: "p1", turns: [] });
     expect(c.ofType("pane_state")[0].payload.paneId).toBe("p1");
   });
 
@@ -268,18 +270,17 @@ describe("incremental resume with have (protocol.md §3.1, §3.3, §4.4)", () =>
         },
       },
     });
-    const deltas = c.ofType("turns_delta");
-    expect(deltas.length).toBe(1);
-    expect(c.ofType("normalized_turns").length).toBe(0);
-    expect(deltas[0].payload).toMatchObject({
+    const boot = c.ofType("pane_bootstrap");
+    expect(boot.length).toBe(1);
+    expect(boot[0].payload.resume).toMatchObject({
       paneId: "p1",
       sinceTurnIndex: 2,
-      appendTurns: [turn3],
+      appendTurns: [toLightTurn(turn3)],
       sessionTitle: "My Session",
     });
   });
 
-  test("a mismatched hash gets a full normalized_turns", async () => {
+  test("a mismatched hash gets a full bootstrap", async () => {
     const c = fakeWs();
     server.handleOpen(c.ws);
     await send(c.ws, {
@@ -294,13 +295,13 @@ describe("incremental resume with have (protocol.md §3.1, §3.3, §4.4)", () =>
         },
       },
     });
-    expect(c.ofType("turns_delta").length).toBe(0);
-    const full = c.ofType("normalized_turns");
-    expect(full.length).toBe(1);
-    expect(full[0].payload.turns).toHaveLength(3);
+    const boot = c.ofType("pane_bootstrap");
+    expect(boot.length).toBe(1);
+    expect(boot[0].payload.resume).toBeNull();
+    expect(boot[0].payload.turns.turns).toHaveLength(3);
   });
 
-  test("a mismatched sessionId gets a full normalized_turns", async () => {
+  test("a mismatched sessionId gets a full bootstrap", async () => {
     const c = fakeWs();
     server.handleOpen(c.ws);
     await send(c.ws, {
@@ -315,13 +316,13 @@ describe("incremental resume with have (protocol.md §3.1, §3.3, §4.4)", () =>
         },
       },
     });
-    expect(c.ofType("turns_delta").length).toBe(0);
-    const full = c.ofType("normalized_turns");
-    expect(full.length).toBe(1);
-    expect(full[0].payload.turns).toHaveLength(3);
+    const boot = c.ofType("pane_bootstrap");
+    expect(boot.length).toBe(1);
+    expect(boot[0].payload.resume).toBeNull();
+    expect(boot[0].payload.turns.turns).toHaveLength(3);
   });
 
-  test("an unbound pane gets normalized_turns with bound: false", async () => {
+  test("an unbound pane gets bootstrap with bound: false", async () => {
     const c = fakeWs();
     server.handleOpen(c.ws);
     await send(c.ws, {
@@ -336,13 +337,13 @@ describe("incremental resume with have (protocol.md §3.1, §3.3, §4.4)", () =>
         },
       },
     });
-    expect(c.ofType("turns_delta").length).toBe(0);
-    const full = c.ofType("normalized_turns");
-    expect(full.length).toBe(1);
-    expect(full[0].payload.session.bound).toBe(false);
+    const boot = c.ofType("pane_bootstrap");
+    expect(boot.length).toBe(1);
+    expect(boot[0].payload.resume).toBeNull();
+    expect(boot[0].payload.turns.session.bound).toBe(false);
   });
 
-  test("a malformed have gets a full normalized_turns", async () => {
+  test("a malformed have gets a full bootstrap", async () => {
     const c = fakeWs();
     server.handleOpen(c.ws);
     await send(c.ws, {
@@ -357,9 +358,87 @@ describe("incremental resume with have (protocol.md §3.1, §3.3, §4.4)", () =>
         } as any,
       },
     });
-    expect(c.ofType("turns_delta").length).toBe(0);
-    const full = c.ofType("normalized_turns");
-    expect(full.length).toBe(1);
-    expect(full[0].payload.turns).toHaveLength(3);
+    const boot = c.ofType("pane_bootstrap");
+    expect(boot.length).toBe(1);
+    expect(boot[0].payload.resume).toBeNull();
+    expect(boot[0].payload.turns.turns).toHaveLength(3);
+  });
+});
+
+// Issue #19 acceptance: protocol.md §3.3 (resume anchor), §4.20 and §5.6 (light turns, details),
+// §4.2 and §8 (ERR_UPSTREAM_OFFLINE), §4.5 (recipe lookup); herdr-adapter.md §3.2 (event shapes).
+describe("pane data, Herdr faults and recipe lookup (issue #19)", () => {
+  const plain = (n: number, text: string): NormalizedTurn => ({ turnId: `t${n}`, turnNumber: n, timestamp: n * 1000, userPrompt: { text } });
+  const until = async (cond: () => boolean, ms = 2000) => {
+    const end = Date.now() + ms;
+    while (!cond()) {
+      if (Date.now() > end) throw new Error("timed out");
+      await Bun.sleep(10);
+    }
+  };
+
+  test("resume anchors on the second-to-last turn (P1)", async () => {
+    const third: NormalizedTurn = { ...plain(3, "step 3"), assistantResponse: { markdown: "still writing, now done" } };
+    (server.paneStore as any).paneStates.set("p1", { paneId: "p1", agent: "claude", sessionId: "ses_1", turns: [plain(1, "a"), plain(2, "b"), third], seqWatermark: 3 });
+    const c = fakeWs();
+    server.handleOpen(c.ws);
+    // The phone holds three turns; its third is stale because the agent kept writing it.
+    await send(c.ws, { type: "select_view", id: "s1", payload: { paneId: "p1", have: { sessionId: "ses_1", turnCount: 3, anchorHash: hashTurn(plain(2, "b")) } } });
+    const boot = c.ofType("pane_bootstrap").at(-1)?.payload;
+    expect(boot?.turns).toBeNull();
+    expect(boot?.resume).toMatchObject({ paneId: "p1", sinceTurnIndex: 2, appendTurns: [third] });
+  });
+
+  test("turns travel light and detail_get returns the full tool call (§5.6, §4.20)", async () => {
+    const run = { id: "c1", name: "Bash", verb: "run", target: "bun test", input: { command: "bun test" }, output: "x".repeat(5000), status: "completed" };
+    const diff = { filePath: "src/a.ts", status: "modified", additions: 1, deletions: 1, patch: "@@ -1 +1 @@\n-a\n+b\n" };
+    const edit = { id: "c2", name: "Edit", verb: "edit", target: "src/a.ts", input: { file_path: "src/a.ts" }, status: "completed", diff };
+    const turn = { ...plain(1, "go"), items: [{ kind: "tool", call: run }, { kind: "tool", call: edit }], toolCalls: [run, edit] };
+    const stats = { filesModified: 1, additions: 1, deletions: 1, diffs: [diff] };
+    (server.paneStore as any).paneStates.set("p1", { paneId: "p1", agent: "claude", sessionId: "ses_1", turns: [turn], seqWatermark: 1, stats });
+    const c = fakeWs();
+    server.handleOpen(c.ws);
+    await send(c.ws, { type: "select_view", id: "s1", payload: { paneId: "p1" } });
+    const sent = c.ofType("pane_bootstrap").at(-1)?.payload.turns;
+    const light = sent?.turns[0];
+    expect(light?.toolCalls).toBeUndefined();
+    expect(light?.items[0].call).toMatchObject({ id: "c1", verb: "run", target: "bun test", status: "completed" });
+    expect(light?.items[0].call.input).toBeUndefined();
+    expect(light?.items[0].call.output).toBeUndefined();
+    expect(light?.items[1].call.diff).toMatchObject({ filePath: "src/a.ts", additions: 1, deletions: 1 });
+    expect(light?.items[1].call.diff.patch).toBeUndefined();
+    expect(sent?.sessionStats).toMatchObject({ filesModified: 1, files: [{ filePath: "src/a.ts", additions: 1, deletions: 1 }] });
+    expect(sent?.sessionStats.diffs).toBeUndefined();
+
+    await send(c.ws, { type: "detail_get", id: "d1", payload: { paneId: "p1", kind: "tool", turnId: "t1", callId: "c1" } });
+    expect(c.ofType("ack").at(-1)?.payload.call?.output).toBe("x".repeat(5000));
+  });
+
+  test("a write command while Herdr is offline is ERR_UPSTREAM_OFFLINE (D13)", async () => {
+    await herdr.close();
+    const c = fakeWs();
+    await send(c.ws, { type: "agent_prompt", id: "o1", payload: { targetPaneId: "p1", text: "hi" } });
+    expect(lastError(c.sent)).toBe("ERR_UPSTREAM_OFFLINE");
+  });
+
+  test("a status event of unknown shape is logged and reconciled by a snapshot (B17)", async () => {
+    herdr.serve([{ paneId: "p1", app: "claude-code" }, { paneId: "p2", app: "codex" }]);
+    await client.connect();
+    await until(() => herdr.callsOf("ls").length > 0);
+    await Bun.sleep(100); // let the snapshots of the connect settle
+    const snapshotsBefore = herdr.callsOf("ls").length;
+    herdr.emitEvent("status", "p1", undefined as any); // no `data` at all
+    await until(() => herdr.callsOf("ls").length > snapshotsBefore);
+    // The daemon is still processing events.
+    herdr.serve([{ paneId: "p1", app: "claude-code", state: "working" }, { paneId: "p2", app: "codex" }]);
+    herdr.emitEvent("status", "p1", { status: { state: "working", app: "claude-code" } });
+    await until(() => client.getPaneHerdrStatus("p1") === "working");
+  });
+
+  test("an inherited object key is not a recipe (B16)", async () => {
+    const c = fakeWs();
+    await send(c.ws, { type: "create_tab_and_agent", id: "k1", payload: { workspaceId: "w1", agentKind: "constructor" } });
+    expect(lastError(c.sent)).toBe(ProtocolErrors.ERR_INVALID_PAYLOAD);
+    expect(herdr.callsOf("tab.new")).toHaveLength(0);
   });
 });

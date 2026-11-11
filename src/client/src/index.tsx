@@ -15,17 +15,30 @@ import { t } from "./i18n";
 
 applyTheme(state.themeMode, state.accent);
 
+if (typeof window !== "undefined") {
+  const isStandalone = window.matchMedia("(display-mode: standalone)").matches || Boolean((navigator as any).standalone);
+  if (isStandalone) {
+    document.documentElement.setAttribute("data-mode", "standalone");
+  }
+}
+
 let waitingWorker: ServiceWorker | null = null;
+let updateRequested = false;
 
 function applyUpdate() {
   // A waiting service worker takes over and `controllerchange` reloads once. Without one, the
   // daemon was rebuilt with an unchanged sw.js: reload, and the network-first shell is the new one.
-  if (waitingWorker) waitingWorker.postMessage({ type: "SKIP_WAITING" });
-  else window.location.reload();
+  if (waitingWorker) {
+    updateRequested = true;
+    waitingWorker.postMessage({ type: "SKIP_WAITING" });
+  } else {
+    window.location.reload();
+  }
 }
 
 function registerServiceWorker() {
   if (!("serviceWorker" in navigator)) return;
+  const hadController = Boolean(navigator.serviceWorker.controller);
   navigator.serviceWorker.register("/sw.js").then((registration) => {
     const offerUpdate = (worker: ServiceWorker | null) => {
       if (worker && navigator.serviceWorker.controller) {
@@ -46,6 +59,9 @@ function registerServiceWorker() {
   });
   let refreshing = false;
   navigator.serviceWorker.addEventListener("controllerchange", () => {
+    // Only reload when an explicit update was requested or an existing controller was replaced.
+    // Avoids redundant reloads when a newly installed service worker claims clients on first visit.
+    if (!updateRequested && !hadController) return;
     if (refreshing) return;
     refreshing = true;
     window.location.reload();
@@ -75,7 +91,9 @@ function Toast() {
 function App() {
   const [systemReduce, setSystemReduce] = createSignal(systemReducesTransparency());
   onMount(async () => {
-    (window as any).__pigeon = { state, setState, navigate, applyTheme };
+    if (import.meta.env.DEV) {
+      (window as any).__pigeon = { state, setState, navigate, applyTheme };
+    }
     window.matchMedia("(prefers-color-scheme: light)").addEventListener("change", () => applyTheme(state.themeMode, state.accent));
     window.matchMedia("(prefers-reduced-transparency: reduce)").addEventListener?.("change", (e) => setSystemReduce(e.matches));
     window.addEventListener("beforeinstallprompt", (e) => {
@@ -84,7 +102,13 @@ function App() {
       setState("canInstallPWA", true);
     });
     await checkPairingFromUrlHash();
-    if (state.activePaneId) {
+    const urlParams = new URLSearchParams(window.location.search);
+    const targetPane = urlParams.get("pane");
+    if (targetPane) {
+      window.history.replaceState(null, "", window.location.pathname || "/");
+      await selectPane(targetPane);
+      navigate({ name: "session", from: "home" });
+    } else if (state.activePaneId) {
       await selectPane(state.activePaneId);
     }
     await initWebSocket();

@@ -1,6 +1,6 @@
-import { createMemo, createSignal, For, onCleanup, Show, type JSX } from "solid-js";
+import { createEffect, createMemo, createSignal, For, onCleanup, onMount, Show, type JSX } from "solid-js";
 import { draftKey, readPref, showToast, state, writePref } from "../state/store";
-import { refreshModels, uploadFile } from "../state/ws";
+import { refreshModels, requestSkills, uploadFile } from "../state/ws";
 import type { AgentRecipeSummary, SkillEntry } from "../../../types/protocol";
 import { Icon, Sheet } from "./ui";
 import { t, type MessageId } from "../i18n";
@@ -46,6 +46,7 @@ const GROUP_ORDER = ["project", "user", "plugin", "command"] as const;
 
 /** §6.3 */
 export function SkillsSheet(props: { onPick: (e: SkillEntry) => void; onClose: () => void }) {
+  onMount(() => requestSkills());
   const [seg, setSeg] = createSignal<"all" | (typeof GROUP_ORDER)[number]>("all");
   const present = () => GROUP_ORDER.filter((g) => state.skills.some((s) => groupOf(s) === g));
   return (
@@ -282,6 +283,7 @@ export function Composer(props: ComposerProps) {
   const [atts, setAtts] = createSignal<Attachment[]>([]);
   const [sending, setSending] = createSignal<boolean>(false);
   const [editingQueueId, setEditingQueueId] = createSignal<string | null>(null);
+  let savedDraftBeforeEdit: { text: string; atts: Attachment[] } | null = null;
   let keySeq = 0;
   let ta: HTMLTextAreaElement | undefined;
 
@@ -325,15 +327,19 @@ export function Composer(props: ComposerProps) {
     return state.skills.filter((s) => s.invocation.toLowerCase().includes(q.query) || s.name.toLowerCase().includes(q.query)).slice(0, 40);
   });
 
-  const addFiles = async (files: FileList | null) => {
+  createEffect(() => {
+    if (slash()) requestSkills();
+  });
+
+  const addFiles = async (files: FileList | null | File[]) => {
     if (!files) return;
     for (const f of Array.from(files)) {
       const key = ++keySeq;
-      const preview = f.type.startsWith("image/") ? URL.createObjectURL(f) : undefined;
+      const preview = f.type.startsWith("image/") || /\.(png|jpe?g|webp|gif|svg)$/i.test(f.name || "") ? URL.createObjectURL(f) : undefined;
       setAtts([...atts(), { key, name: f.name || t("plus.photo"), preview }]);
       try {
         const res = await uploadFile(f);
-        setAtts(atts().map((a) => (a.key === key ? { ...a, id: res.id } : a)));
+        setAtts(atts().map((a) => (a.key === key ? { ...a, id: res.id, preview: a.preview || `/api/uploads/${res.id}` } : a)));
       } catch (e) {
         setAtts(atts().filter((a) => a.key !== key));
         if (preview) URL.revokeObjectURL(preview);
@@ -343,13 +349,46 @@ export function Composer(props: ComposerProps) {
   };
   addFilesHook = addFiles;
 
+  const handlePaste = (e: ClipboardEvent) => {
+    const items = e.clipboardData?.items;
+    if (items) {
+      const files: File[] = [];
+      for (let i = 0; i < items.length; i++) {
+        const item = items[i];
+        if (item.type.startsWith("image/")) {
+          const file = item.getAsFile();
+          if (file) files.push(file);
+        }
+      }
+      if (files.length > 0) {
+        e.preventDefault();
+        void addFiles(files);
+        return;
+      }
+    }
+
+    const textData = e.clipboardData?.getData("text/plain")?.trim();
+    if (textData) {
+      const uploadMatch = textData.match(/(?:^|\/)(up_[0-9a-f]{16})(?:-([^\s]+))?(\.(?:png|jpe?g|webp|gif|svg))?$/i);
+      if (uploadMatch) {
+        const uploadId = uploadMatch[1];
+        const rawName = uploadMatch[2] ? `${uploadMatch[2]}${uploadMatch[3] || ""}` : (uploadMatch[3] ? `image${uploadMatch[3]}` : "image.png");
+        const fileName = rawName.replace(/^-/, "");
+        e.preventDefault();
+        const key = ++keySeq;
+        setAtts([...atts(), { key, name: fileName, id: uploadId, preview: `/api/uploads/${uploadId}` }]);
+        return;
+      }
+    }
+  };
+
   const restore = (s: string, uploadIds: string[]) => {
     const v = text();
     const at = ta ? ta.selectionStart : v.length;
     const before = v.slice(0, at);
     const gap = before && !before.endsWith("\n") && s ? "\n" : "";
     save(`${before}${gap}${s}${v.slice(at)}`);
-    setAtts([...atts(), ...uploadIds.map((id) => ({ key: ++keySeq, name: t("composer.attachment"), id }))]);
+    setAtts([...atts(), ...uploadIds.map((id) => ({ key: ++keySeq, name: t("composer.attachment"), id, preview: `/api/uploads/${id}` }))]);
     setTimeout(() => {
       if (!ta) return;
       ta.focus();
@@ -362,9 +401,10 @@ export function Composer(props: ComposerProps) {
   restoreHook = restore;
 
   const startEditQueue = (queueId: string, s: string, uploadIds: string[]) => {
+    savedDraftBeforeEdit = { text: text(), atts: atts() };
     setEditingQueueId(queueId);
     save(s);
-    setAtts(uploadIds.map((id) => ({ key: ++keySeq, name: t("composer.attachment"), id })));
+    setAtts(uploadIds.map((id) => ({ key: ++keySeq, name: t("composer.attachment"), id, preview: `/api/uploads/${id}` })));
     setTimeout(() => {
       if (!ta) return;
       ta.focus();
@@ -378,9 +418,17 @@ export function Composer(props: ComposerProps) {
   const cancelEdit = (qId?: string) => {
     if (qId && editingQueueId() !== qId) return;
     setEditingQueueId(null);
-    save("");
-    for (const a of atts()) if (a.preview) URL.revokeObjectURL(a.preview);
-    setAtts([]);
+    if (!qId) {
+      if (savedDraftBeforeEdit) {
+        save(savedDraftBeforeEdit.text);
+        setAtts(savedDraftBeforeEdit.atts);
+      } else {
+        save("");
+        for (const a of atts()) if (a.preview) URL.revokeObjectURL(a.preview);
+        setAtts([]);
+      }
+    }
+    savedDraftBeforeEdit = null;
     setTimeout(grow, 0);
   };
   cancelEditQueueHook = cancelEdit;
@@ -401,6 +449,7 @@ export function Composer(props: ComposerProps) {
     props
       .onSend(text().trim(), ids, qId ?? undefined)
       .then(() => {
+        savedDraftBeforeEdit = null;
         setEditingQueueId(null);
         save("");
         for (const a of atts()) if (a.preview) URL.revokeObjectURL(a.preview);
@@ -445,26 +494,30 @@ export function Composer(props: ComposerProps) {
         <Show when={atts().length}>
           <div class="thumbs">
             <For each={atts()}>
-              {(a) => (
-                <div class="thumb">
-                  <Show when={a.preview} fallback={<span>{a.name}</span>}>
-                    <img src={a.preview} alt={a.name} />
-                  </Show>
-                  <Show when={!a.id}>
-                    <span class="spin" style={{ position: "absolute" }} />
-                  </Show>
-                  <button
-                    class="rm"
-                    aria-label={t("common.remove")}
-                    onClick={() => {
-                      if (a.preview) URL.revokeObjectURL(a.preview);
-                      setAtts(atts().filter((x) => x.key !== a.key));
-                    }}
-                  >
-                    ×
-                  </button>
-                </div>
-              )}
+              {(a) => {
+                const previewUrl = () => a.preview || (a.id ? `/api/uploads/${a.id}` : undefined);
+                const isImg = () => Boolean(previewUrl()) || /\.(png|jpe?g|webp|gif|svg)$/i.test(a.name || "");
+                return (
+                  <div class={`thumb${isImg() ? "" : " file"}`}>
+                    <Show when={previewUrl()} fallback={<span>{a.name}</span>}>
+                      <img src={previewUrl()!} alt={a.name} onError={(e) => { (e.currentTarget as HTMLElement).style.display = "none"; }} />
+                    </Show>
+                    <Show when={!a.id}>
+                      <span class="spin" style={{ position: "absolute" }} />
+                    </Show>
+                    <button
+                      class="rm"
+                      aria-label={t("common.remove")}
+                      onClick={() => {
+                        if (a.preview && a.preview.startsWith("blob:")) URL.revokeObjectURL(a.preview);
+                        setAtts(atts().filter((x) => x.key !== a.key));
+                      }}
+                    >
+                      ×
+                    </button>
+                  </div>
+                );
+              }}
             </For>
           </div>
         </Show>
@@ -480,8 +533,13 @@ export function Composer(props: ComposerProps) {
           enterkeyhint={isTouch() ? "enter" : "send"}
           // mobile-ui-and-themes.md §1.2: no password, address or card suggestions above the keyboard.
           autocomplete="off"
+          autocorrect="off"
+          autocapitalize="sentences"
+          spellcheck={false}
+          inputmode="text"
           aria-autocomplete="none"
           data-form-type="other"
+          onPaste={handlePaste}
           onFocus={() => {
             setFocused(true);
             setTimeout(grow, 0);

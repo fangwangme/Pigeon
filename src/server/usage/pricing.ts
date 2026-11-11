@@ -134,77 +134,101 @@ export class PricingManager {
 
   private async refreshFromNetwork(): Promise<boolean> {
     const newCatalog = new Map<string, ModelPrice>();
+    const modelsDevCatalog = new Map<string, ModelPrice>();
+    const litellmCatalog = new Map<string, ModelPrice>();
+    const openrouterCatalog = new Map<string, ModelPrice>();
+    const TIMEOUT_MS = 2500;
 
-    // Source 1: models.dev
-    try {
-      const res = await this.fetchFn(MODELSDEV_URL, { signal: AbortSignal.timeout(10000) });
-      if (res.ok) {
-        const providers = (await res.json()) as any;
-        for (const [provider, providerData] of Object.entries(providers)) {
-          const models = (providerData as any)?.models || {};
-          for (const m of Object.values(models)) {
-            const cost = (m as any)?.cost;
-            if (!cost || typeof cost.input !== "number" || typeof cost.output !== "number") continue;
-            const price: ModelPrice = {
-              inputCostPerToken: cost.input / 1_000_000,
-              outputCostPerToken: cost.output / 1_000_000,
-              cacheReadCostPerToken: typeof cost.cache_read === "number" ? cost.cache_read / 1_000_000 : undefined,
-              cacheWriteCostPerToken: typeof cost.cache_write === "number" ? cost.cache_write / 1_000_000 : undefined,
-              source: "models.dev",
-            };
-            const id = (m as any).id || "";
-            const key1 = canonical(`${provider}/${id}`);
-            const key2 = canonical(id);
-            if (!newCatalog.has(key1)) newCatalog.set(key1, price);
-            if (!newCatalog.has(key2)) newCatalog.set(key2, price);
+    // Fetch sources concurrently with bounded timeout so slow network endpoints do not stall scans
+    await Promise.allSettled([
+      // Source 1: models.dev
+      (async () => {
+        try {
+          const res = await this.fetchFn(MODELSDEV_URL, { signal: AbortSignal.timeout(TIMEOUT_MS) });
+          if (res.ok) {
+            const providers = (await res.json()) as any;
+            for (const [provider, providerData] of Object.entries(providers)) {
+              const models = (providerData as any)?.models || {};
+              for (const m of Object.values(models)) {
+                const cost = (m as any)?.cost;
+                if (!cost || typeof cost.input !== "number" || typeof cost.output !== "number") continue;
+                const price: ModelPrice = {
+                  inputCostPerToken: cost.input / 1_000_000,
+                  outputCostPerToken: cost.output / 1_000_000,
+                  cacheReadCostPerToken: typeof cost.cache_read === "number" ? cost.cache_read / 1_000_000 : undefined,
+                  cacheWriteCostPerToken: typeof cost.cache_write === "number" ? cost.cache_write / 1_000_000 : undefined,
+                  source: "models.dev",
+                };
+                const id = (m as any).id || "";
+                const key1 = canonical(`${provider}/${id}`);
+                const key2 = canonical(id);
+                if (!modelsDevCatalog.has(key1)) modelsDevCatalog.set(key1, price);
+                if (!modelsDevCatalog.has(key2)) modelsDevCatalog.set(key2, price);
+              }
+            }
           }
-        }
-      }
-    } catch {}
+        } catch {}
+      })(),
 
-    // Source 2: litellm
-    try {
-      const res = await this.fetchFn(LITELLM_URL, { signal: AbortSignal.timeout(10000) });
-      if (res.ok) {
-        const data = (await res.json()) as any;
-        for (const [id, m] of Object.entries(data)) {
-          const cost = m as any;
-          if (!cost || typeof cost.input_cost_per_token !== "number") continue;
-          const price: ModelPrice = {
-            inputCostPerToken: cost.input_cost_per_token,
-            outputCostPerToken: cost.output_cost_per_token || 0,
-            cacheReadCostPerToken: cost.cache_read_input_token_cost,
-            cacheWriteCostPerToken: cost.cache_creation_input_token_cost,
-            source: "litellm",
-          };
-          const key = canonical(id);
-          if (!newCatalog.has(key)) newCatalog.set(key, price);
-        }
-      }
-    } catch {}
+      // Source 2: litellm
+      (async () => {
+        try {
+          const res = await this.fetchFn(LITELLM_URL, { signal: AbortSignal.timeout(TIMEOUT_MS) });
+          if (res.ok) {
+            const data = (await res.json()) as any;
+            for (const [id, m] of Object.entries(data)) {
+              const cost = m as any;
+              if (!cost || typeof cost.input_cost_per_token !== "number") continue;
+              const price: ModelPrice = {
+                inputCostPerToken: cost.input_cost_per_token,
+                outputCostPerToken: cost.output_cost_per_token || 0,
+                cacheReadCostPerToken: cost.cache_read_input_token_cost,
+                cacheWriteCostPerToken: cost.cache_creation_input_token_cost,
+                source: "litellm",
+              };
+              const key = canonical(id);
+              if (!litellmCatalog.has(key)) litellmCatalog.set(key, price);
+            }
+          }
+        } catch {}
+      })(),
 
-    // Source 3: openrouter
-    try {
-      const res = await this.fetchFn(OPENROUTER_URL, { signal: AbortSignal.timeout(10000) });
-      if (res.ok) {
-        const data = (await res.json()) as any;
-        const models = data?.data || [];
-        for (const m of models) {
-          const p = m.pricing;
-          if (!p) continue;
-          const inp = typeof p.prompt === "string" ? parseFloat(p.prompt) : Number(p.prompt);
-          const out = typeof p.completion === "string" ? parseFloat(p.completion) : Number(p.completion);
-          if (isNaN(inp) || isNaN(out)) continue;
-          const price: ModelPrice = {
-            inputCostPerToken: inp,
-            outputCostPerToken: out,
-            source: "openrouter",
-          };
-          const key = canonical(m.id);
-          if (!newCatalog.has(key)) newCatalog.set(key, price);
-        }
-      }
-    } catch {}
+      // Source 3: openrouter
+      (async () => {
+        try {
+          const res = await this.fetchFn(OPENROUTER_URL, { signal: AbortSignal.timeout(TIMEOUT_MS) });
+          if (res.ok) {
+            const data = (await res.json()) as any;
+            const models = data?.data || [];
+            for (const m of models) {
+              const p = m.pricing;
+              if (!p) continue;
+              const inp = typeof p.prompt === "string" ? parseFloat(p.prompt) : Number(p.prompt);
+              const out = typeof p.completion === "string" ? parseFloat(p.completion) : Number(p.completion);
+              if (isNaN(inp) || isNaN(out)) continue;
+              const price: ModelPrice = {
+                inputCostPerToken: inp,
+                outputCostPerToken: out,
+                source: "openrouter",
+              };
+              const key = canonical(m.id);
+              if (!openrouterCatalog.has(key)) openrouterCatalog.set(key, price);
+            }
+          }
+        } catch {}
+      })(),
+    ]);
+
+    // Merge in strict deterministic priority order: models.dev -> litellm -> openrouter
+    for (const [k, v] of modelsDevCatalog) {
+      newCatalog.set(k, v);
+    }
+    for (const [k, v] of litellmCatalog) {
+      if (!newCatalog.has(k)) newCatalog.set(k, v);
+    }
+    for (const [k, v] of openrouterCatalog) {
+      if (!newCatalog.has(k)) newCatalog.set(k, v);
+    }
 
     if (newCatalog.size > 0) {
       this.catalog = newCatalog;

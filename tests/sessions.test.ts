@@ -1,7 +1,8 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdirSync, readlinkSync, utimesSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdirSync, readlinkSync, realpathSync, utimesSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { AgentAdapterManager } from "../src/server/agent-adapters/index";
+import { JsonlTail } from "../src/server/sessions/common";
 import { ConfigManager } from "../src/server/config-manager";
 import { HerdrClient } from "../src/server/herdr-client";
 import { PushManager } from "../src/server/push";
@@ -43,12 +44,42 @@ async function setup(home: string, panes: FakePane[], folder = "/work") {
     const c = fakeWs();
     server.handleOpen(c.ws);
     await server.handleMessage(c.ws, JSON.stringify({ type: "hello", id: "h", payload: { protocolVersion: "1.0.0", subscribePaneId: paneId } }));
+    const boot = c.ofType("pane_bootstrap").at(-1)?.payload;
+    if (boot?.turns?.turns) {
+      for (const turn of boot.turns.turns) {
+        const calls: any[] = [];
+        for (const item of turn.items ?? []) {
+          if (item.kind === "tool" && item.call?.id) {
+            const reqId = `d_${item.call.id}`;
+            await server.handleMessage(c.ws, JSON.stringify({ type: "detail_get", id: reqId, payload: { paneId, kind: "tool", turnId: turn.turnId, callId: item.call.id } }));
+            const ack = c.ofType("ack").find((a) => a.replyTo === reqId)?.payload;
+            if (ack?.call) calls.push(ack.call);
+          } else if (item.kind === "reasoning") {
+            const reqId = `dr_${turn.turnId}`;
+            await server.handleMessage(c.ws, JSON.stringify({ type: "detail_get", id: reqId, payload: { paneId, kind: "reasoning", turnId: turn.turnId } }));
+            const ack = c.ofType("ack").find((a) => a.replyTo === reqId)?.payload;
+            if (ack?.text) turn.reasoning = { text: ack.text };
+          }
+        }
+        if (calls.length) turn.toolCalls = calls;
+      }
+      if (boot.turns.sessionStats?.files) {
+        const diffs: any[] = [];
+        for (const f of boot.turns.sessionStats.files) {
+          const reqId = `df_${f.filePath}`;
+          await server.handleMessage(c.ws, JSON.stringify({ type: "detail_get", id: reqId, payload: { paneId, kind: "file", filePath: f.filePath } }));
+          const ack = c.ofType("ack").find((a) => a.replyTo === reqId)?.payload;
+          if (ack?.diff) diffs.push(ack.diff);
+        }
+        if (diffs.length) boot.turns.sessionStats.diffs = diffs;
+      }
+    }
     return c;
   };
   return { herdr, client, server, open };
 }
 
-const turnsOf = (c: ReturnType<typeof fakeWs>) => c.ofType("normalized_turns").at(-1).payload;
+const turnsOf = (c: ReturnType<typeof fakeWs>) => c.ofType("pane_bootstrap").at(-1)?.payload.turns;
 
 function claudeTranscript(proj: string) {
   const at = (s: number) => new Date(Date.UTC(2026, 10, 6, 10, 0, s)).toISOString();
@@ -180,9 +211,25 @@ describe("following the session the agent writes (agent-session-normalization.md
     cleanup.push(() => proc.kill());
     const holds = async (path: string) => {
       const end = Date.now() + 2000;
+      let target = path;
+      try {
+        target = realpathSync(path);
+      } catch {}
       while (Date.now() < end) {
         try {
-          if (readlinkSync(`/proc/${proc.pid}/fd/3`) === path) return;
+          if (process.platform === "darwin") {
+            const res = Bun.spawnSync(["lsof", "-p", String(proc.pid), "-Fn"], { timeout: 500, stderr: "ignore" });
+            if (res.exitCode === 0 && res.stdout) {
+              for (const line of res.stdout.toString().split("\n")) {
+                if (line.startsWith("n/")) {
+                  const p = line.slice(1);
+                  if (p === target || p === path) return;
+                }
+              }
+            }
+          } else {
+            if (readlinkSync(`/proc/${proc.pid}/fd/3`) === path) return;
+          }
         } catch {}
         await Bun.sleep(10);
       }
@@ -504,5 +551,18 @@ describe("listing past sessions (protocol.md §4.10, agent-session-normalization
       ["new", "Named one"],
       ["old", "First prompt"],
     ]);
+  });
+});
+
+describe("partial lines (agent-session-normalization.md §4.2)", () => {
+  test("a multi-byte character split between two reads is decoded intact (B6)", () => {
+    const path = join(tempDir("tail"), "session.jsonl");
+    const line = Buffer.from(JSON.stringify({ text: "修复队列" }) + "\n", "utf-8");
+    const cut = line.indexOf(Buffer.from("复", "utf-8")) + 1; // inside the three bytes of 复
+    writeFileSync(path, line.subarray(0, cut));
+    const tail = new JsonlTail(path);
+    expect(tail.read().records).toEqual([]);
+    appendFileSync(path, line.subarray(cut));
+    expect(tail.read().records).toEqual([{ text: "修复队列" }]);
   });
 });

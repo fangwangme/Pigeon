@@ -263,12 +263,24 @@ export class AgyAdapter {
           }
 
           turnCounter++;
+          // Extract attachment files from promptText if any
+          const files: string[] = [];
+          const uploadRegex = /(?:^|\s)(@?(\/[^\s]+?\.(?:png|jpg|jpeg|webp|gif|svg|pdf|txt|md|json)|@?\/[^\s]+?\/up_[0-9a-f]{16}[^\s]*))/gi;
+          let cleanText = promptText;
+          let m: RegExpExecArray | null;
+          while ((m = uploadRegex.exec(promptText)) !== null) {
+            const rawPath = m[1].replace(/^@/, "");
+            files.push(rawPath);
+            cleanText = cleanText.replace(m[0], " ").trim();
+          }
+
           currentTurn = {
             turnId: `turn_${turnCounter}`,
             turnNumber: turnCounter,
             timestamp,
             userPrompt: {
-              text: promptText,
+              text: cleanText || promptText,
+              ...(files.length > 0 ? { files } : {}),
             },
             toolCalls: [],
             items: [],

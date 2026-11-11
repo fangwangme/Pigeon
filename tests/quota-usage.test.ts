@@ -162,6 +162,7 @@ describe("claude quota provider (quota-and-usage.md §2.2, §2.3)", () => {
 
   afterEach(() => server.stop(true));
 
+  // `tokenUrl` points any refresh attempt at this fake server; quota-and-usage.md §2.3 says none happens.
   const provider = () =>
     new ClaudeQuotaProvider({
       home,
@@ -169,7 +170,7 @@ describe("claude quota provider (quota-and-usage.md §2.2, §2.3)", () => {
       tokenUrl: `http://127.0.0.1:${server.port}/token`,
       keychain: false,
       now: () => NOW,
-    });
+    } as ConstructorParameters<typeof ClaudeQuotaProvider>[0]);
 
   test("claude usage windows: only the reported windows, with period, share and reset time; plan from the credential", async () => {
     writeCreds("live", "rt", NOW + HOUR);
@@ -183,40 +184,16 @@ describe("claude quota provider (quota-and-usage.md §2.2, §2.3)", () => {
     expect(tokenCalls).toBe(0);
   });
 
-  test("claude credential refresh: an expired token is refreshed once and written back with every other field kept", async () => {
-    writeCreds("old", "rt-old", NOW - MIN);
-    acceptedToken = "pigeon-new";
-    onToken = () => Response.json({ access_token: "pigeon-new", refresh_token: "rt-pigeon", expires_in: 3600 });
-    const snap = await provider().fetch();
-    expect(snap.windows).toHaveLength(2);
-    expect(tokenCalls).toBe(1);
-    const stored = readCreds();
-    expect(stored.claudeAiOauth).toMatchObject({ accessToken: "pigeon-new", refreshToken: "rt-pigeon", expiresAt: NOW + 3600 * 1000, subscriptionType: "pro", scopes: ["user:inference"] });
-    expect(stored.mcpOAuth).toEqual({ keep: "me" });
-  });
-
-  test("claude credential refresh: when the agent rotated the file during the refresh, Pigeon keeps it and uses the agent's token", async () => {
-    writeCreds("old", "rt-old", NOW - MIN);
-    acceptedToken = "agent-new";
-    onToken = () => {
-      // Claude Code refreshed at the same moment and wrote its own tokens.
-      writeCreds("agent-new", "rt-agent", NOW + HOUR);
-      return Response.json({ access_token: "pigeon-new", refresh_token: "rt-pigeon", expires_in: 3600 });
-    };
-    const snap = await provider().fetch();
-    expect(snap.windows).toHaveLength(2);
-    expect(tokenCalls).toBe(1);
-    expect(readCreds().claudeAiOauth).toMatchObject({ accessToken: "agent-new", refreshToken: "rt-agent" });
-  });
-
-  test("claude credential refresh: a rejected refresh leaves the file untouched and names the provider", async () => {
+  test("claude credentials are read-only (D7)", async () => {
     writeCreds("old", "rt-old", NOW - MIN);
     const before = readFileSync(credPath, "utf-8");
-    acceptedToken = "never";
-    onToken = () => new Response(JSON.stringify({ error: "invalid_grant" }), { status: 400 });
-    await expect(provider().fetch()).rejects.toThrow(/claude/i);
+    acceptedToken = "old";
+    onToken = () => Response.json({ access_token: "pigeon-new", refresh_token: "rt-pigeon", expires_in: 3600 });
+    const error = await provider().fetch().then(() => null, (e: Error) => e);
+    expect(error?.message).toMatch(/claude/i);
+    expect(error?.message).toMatch(/refresh/i);
+    expect(tokenCalls).toBe(0);
     expect(readFileSync(credPath, "utf-8")).toBe(before);
-    expect(tokenCalls).toBe(1);
   });
 });
 

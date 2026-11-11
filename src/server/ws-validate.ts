@@ -42,7 +42,7 @@ export function validateClientMessage(raw: unknown): ValidationResult {
       }
       return ok();
     case "select_view":
-      if (!isObj(p) || !isStr(p.paneId)) return fail(id, "select_view needs payload.paneId");
+      if (!isObj(p) || !(p.paneId === null || isStr(p.paneId))) return fail(id, "select_view needs payload.paneId");
       return ok();
     case "agent_prompt": {
       if (!isObj(p) || !isStr(p.targetPaneId) || typeof p.text !== "string" || p.text.length > MAX_TEXT) {
@@ -96,14 +96,17 @@ export function validateClientMessage(raw: unknown): ValidationResult {
     case "queue_cancel":
       if (!isObj(p) || !isStr(p.targetPaneId) || !isStr(p.queueId, 64)) return fail(id, "queue_cancel needs targetPaneId and queueId");
       return ok();
-    case "queue_update":
-      if (!isObj(p) || !isStr(p.targetPaneId) || !isStr(p.queueId, 64) || typeof p.text !== "string") {
+    case "queue_update": {
+      if (!isObj(p) || !isStr(p.targetPaneId) || !isStr(p.queueId, 64) || typeof p.text !== "string" || p.text.length > MAX_TEXT) {
         return fail(id, "queue_update needs targetPaneId, queueId and text");
       }
-      if (p.attachments !== undefined && (!Array.isArray(p.attachments) || !p.attachments.every((a: unknown) => isStr(a, 64)))) {
-        return fail(id, "queue_update attachments must be string[]");
+      const att = p.attachments;
+      if (att !== undefined && !(Array.isArray(att) && att.length <= MAX_ATTACHMENTS && att.every((a: unknown) => isStr(a, 64)))) {
+        return fail(id, "attachments must be at most 10 upload ids");
       }
+      if (!p.text.trim() && !(Array.isArray(att) && att.length > 0)) return fail(id, "queue_update needs text or attachments");
       return ok();
+    }
     case "models_refresh":
       if (!isObj(p)) return fail(id, "models_refresh needs a payload object");
       return ok();
@@ -150,6 +153,25 @@ export function validateClientMessage(raw: unknown): ValidationResult {
     case "usage_model":
       if (!isObj(p) || !isStr(p.model) || !isDateStr(p.from) || !isDateStr(p.to) || !isValidAgentList(p.agents)) {
         return fail(id, "usage_model needs model, from, to (YYYY-MM-DD) and non-empty distinct valid agents");
+      }
+      return ok();
+    case "detail_get":
+      if (!isObj(p) || !isStr(p.paneId) || !isStr(p.kind)) {
+        return fail(id, "detail_get needs paneId and kind");
+      }
+      if (p.kind === "tool") {
+        if (!isStr(p.turnId) || !isStr(p.callId)) return fail(id, "detail_get tool needs turnId and callId");
+      } else if (p.kind === "reasoning") {
+        if (!isStr(p.turnId)) return fail(id, "detail_get reasoning needs turnId");
+      } else if (p.kind === "file") {
+        if (!isStr(p.filePath)) return fail(id, "detail_get file needs filePath");
+      } else {
+        return fail(id, `Unsupported detail kind '${p.kind}'`);
+      }
+      return ok();
+    case "screen_watch":
+      if (!isObj(p) || !isStr(p.paneId) || typeof p.on !== "boolean") {
+        return fail(id, "screen_watch needs paneId and on");
       }
       return ok();
     default:

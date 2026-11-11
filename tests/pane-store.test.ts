@@ -31,8 +31,12 @@ describe("session log streaming (agent-session-normalization.md §4)", () => {
     store.on("turns_delta", (d) => deltas.push(d));
 
     store.registerPaneSession("p1", "agy", "s1");
+    await Bun.sleep(50);
     appendFileSync(log, line({ step_index: 1, type: "USER_INPUT", content: "<USER_REQUEST>second</USER_REQUEST>", created_at: new Date(2000).toISOString() }));
-    await Bun.sleep(400); // fs.watch plus the store's debounce
+    const deadline = Date.now() + 1500;
+    while (modes.length < 2 && Date.now() < deadline) {
+      await Bun.sleep(25);
+    }
 
     expect(modes[0]).toBe(false);
     expect(modes.slice(1).length).toBeGreaterThan(0);
@@ -53,9 +57,43 @@ describe("session log streaming (agent-session-normalization.md §4)", () => {
     mkdirSync(logs, { recursive: true });
     writeFileSync(log, line({ step_index: 0, type: "USER_INPUT", content: "<USER_REQUEST>first</USER_REQUEST>", created_at: new Date(1000).toISOString() }));
     store.registerPaneSession("p1", "agy", "s1"); // the next snapshot's binding
+    await Bun.sleep(50);
     appendFileSync(log, line({ step_index: 1, type: "USER_INPUT", content: "<USER_REQUEST>second</USER_REQUEST>", created_at: new Date(2000).toISOString() }));
-    await Bun.sleep(400); // fs.watch plus the store's debounce
+    const deadline = Date.now() + 1500;
+    while (store.getPayload("p1", "agy").turns.length < 2 && Date.now() < deadline) {
+      await Bun.sleep(25);
+    }
 
     expect(store.getPayload("p1", "agy").turns.map((t) => t.userPrompt?.text)).toEqual(["first", "second"]);
+  });
+
+  test("seqWatermark only increments when delta is emitted (protocol.md §5.6)", async () => {
+    const brain = tempDir("brain");
+    const logs = join(brain, "s1", ".system_generated", "logs");
+    mkdirSync(logs, { recursive: true });
+    const log = join(logs, "transcript.jsonl");
+    writeFileSync(log, line({ step_index: 0, type: "USER_INPUT", content: "<USER_REQUEST>first</USER_REQUEST>", created_at: new Date(1000).toISOString() }));
+
+    const adapters = new AgentAdapterManager({ agy: { baseBrainDir: brain } });
+    store = new PaneStore(adapters);
+    const deltas: TurnsDeltaPayload[] = [];
+    store.on("turns_delta", (d) => deltas.push(d));
+
+    store.registerPaneSession("p1", "agy", "s1");
+    expect(deltas.length).toBe(1);
+    expect(deltas[0].seq).toBe(1);
+    expect(store.getPaneState("p1")?.seqWatermark).toBe(1);
+
+    // Re-reading with no changes must not increment seqWatermark or emit delta
+    (store as any).refreshPaneTurns("p1", true);
+    expect(deltas.length).toBe(1);
+    expect(store.getPaneState("p1")?.seqWatermark).toBe(1);
+
+    // Appending a turn increments seqWatermark and emits delta
+    appendFileSync(log, line({ step_index: 1, type: "USER_INPUT", content: "<USER_REQUEST>second</USER_REQUEST>", created_at: new Date(2000).toISOString() }));
+    (store as any).refreshPaneTurns("p1", true);
+    expect(deltas.length).toBe(2);
+    expect(deltas[1].seq).toBe(2);
+    expect(store.getPaneState("p1")?.seqWatermark).toBe(2);
   });
 });

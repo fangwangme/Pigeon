@@ -1,6 +1,6 @@
 import { createSignal, For, Match, Show, Switch } from "solid-js";
 import { state } from "../state/store";
-import { copyText } from "../state/ws";
+import { copyText, getDetail } from "../state/ws";
 import { renderMarkdown } from "../utils/markdown";
 import type { Card, FileDiffSummary, NormalizedToolCall, NormalizedTurn, ToolVerb, TurnItem } from "../../../types/protocol";
 import type { IconName } from "../icons";
@@ -84,14 +84,44 @@ function groupSummary(calls: NormalizedToolCall[]): string {
 
 const [toolSheet, setToolSheet] = createSignal<{ calls: NormalizedToolCall[]; title: string; detail: NormalizedToolCall | null; direct: boolean } | null>(null);
 
+function findTurnForCall(callId: string): string | undefined {
+  for (const turn of state.normalizedTurns) {
+    if (turn.toolCalls?.some((c) => c.id === callId)) return turn.turnId;
+    if (turn.items?.some((i: any) => i.kind === "tool" && i.call?.id === callId)) return turn.turnId;
+  }
+  return undefined;
+}
+
+function loadCallDetailIfNeeded(call: NormalizedToolCall) {
+  if (!state.activePaneId || !call.id) return;
+  if (call.input !== undefined && call.output !== undefined && (!call.diff || call.diff.patch !== undefined)) return;
+  const turnId = findTurnForCall(call.id);
+  if (!turnId) return;
+  void getDetail({ paneId: state.activePaneId, kind: "tool", turnId, callId: call.id })
+    .then((res) => {
+      if (res?.call) {
+        setToolSheet((cur) => (cur && cur.detail?.id === call.id ? { ...cur, detail: res.call } : cur));
+      }
+    })
+    .catch(() => {});
+}
+
 export function openToolDetail(call: NormalizedToolCall): void {
   setToolSheet({ calls: [call], title: callLine(call), detail: call, direct: true });
+  loadCallDetailIfNeeded(call);
 }
 
 export function openDiffs(path: string, diffs: FileDiffSummary[]): void {
   const call: NormalizedToolCall = { id: `file:${path}`, name: "edit", verb: "edit", target: path, input: {}, status: "completed", diff: undefined };
   setToolSheet({ calls: [call], title: path.split("/").pop() || path, detail: call, direct: true });
   setFileDiffs(diffs);
+  if (state.activePaneId && (!diffs.length || !diffs[0].patch)) {
+    void getDetail({ paneId: state.activePaneId, kind: "file", filePath: path })
+      .then((res) => {
+        if (res?.diff) setFileDiffs([res.diff]);
+      })
+      .catch(() => {});
+  }
 }
 
 const [fileDiffs, setFileDiffs] = createSignal<FileDiffSummary[] | null>(null);
@@ -253,7 +283,7 @@ export function ToolSheet() {
               fallback={
                 <For each={s.calls}>
                   {(c) => (
-                    <button class="tli" onClick={() => setToolSheet({ ...s, detail: c })}>
+                    <button class="tli" onClick={() => { setToolSheet({ ...s, detail: c }); loadCallDetailIfNeeded(c); }}>
                       <Show when={c.status !== "running"} fallback={<span class="spin" style={{ margin: "2px" }} />}>
                         <Icon name={VERB_ICON[c.verb]} />
                       </Show>
@@ -352,7 +382,11 @@ function blocksOf(turn: NormalizedTurn): Block[] {
       const last = out[out.length - 1];
       if (last?.kind === "tools") last.calls.push(it.call);
       else out.push({ kind: "tools", calls: [it.call] });
-    } else out.push(it.kind === "text" ? { kind: "text", markdown: it.markdown } : it);
+    } else if (it.kind === "text") {
+      out.push({ kind: "text", markdown: it.markdown });
+    } else if (it.kind === "todo") {
+      out.push(it);
+    }
   }
   return out;
 }
@@ -425,12 +459,23 @@ export function Turn(props: { turn: NormalizedTurn; last: boolean; working: bool
             <Show when={p().files?.length}>
               <div class="att">
                 <For each={p().files}>
-                  {(f) => (
-                    <span>
-                      <Icon name="image" sm />
-                      {f.split("/").pop()}
-                    </span>
-                  )}
+                  {(f) => {
+                    const uploadMatch = f.match(/up_[0-9a-f]{16}/);
+                    const uploadId = uploadMatch ? uploadMatch[0] : null;
+                    const fileName = f.split("/").pop() || f;
+                    const isImg = /\.(png|jpe?g|webp|gif|svg)$/i.test(f) || !!uploadId;
+                    return uploadId ? (
+                      <a href={`/api/uploads/${uploadId}`} target="_blank" rel="noopener noreferrer" class="att-thumb-link">
+                        <img src={`/api/uploads/${uploadId}`} alt={fileName} class="att-thumb" />
+                        <span class="att-name">{fileName.replace(/^up_[0-9a-f]{16}-/, "")}</span>
+                      </a>
+                    ) : (
+                      <span>
+                        <Icon name={isImg ? "image" : "folder"} sm />
+                        {fileName}
+                      </span>
+                    );
+                  }}
                 </For>
               </div>
             </Show>

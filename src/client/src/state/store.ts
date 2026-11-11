@@ -37,9 +37,10 @@ export interface FilterState {
   agents: string[];
   showTerminals: boolean;
   showIdle: boolean;
+  groupBy?: "status" | "workspace";
 }
 
-export const EMPTY_FILTER: FilterState = { statuses: [], agents: [], showTerminals: true, showIdle: true };
+export const EMPTY_FILTER: FilterState = { statuses: [], agents: [], showTerminals: true, showIdle: true, groupBy: "status" };
 
 export interface AppState {
   connected: boolean;
@@ -49,6 +50,7 @@ export interface AppState {
   toast: { message: string; at: number } | null;
   updateAvailable: boolean;
   serverVersion: string | null;
+  environment?: { kind: "production" | "dev" | "test"; port: number } | null;
   herdrConnected: boolean;
   workspaces: WorkspaceSummary[];
   activeTabId: string | null;
@@ -132,6 +134,7 @@ const [state, setState] = createStore<AppState>({
   toast: null,
   updateAvailable: false,
   serverVersion: null,
+  environment: null,
   herdrConnected: true,
   workspaces: [],
   activeTabId: null,
@@ -177,7 +180,14 @@ export { state, setState };
 
 /** Applies the language choice, following the browser's languages for 跟随系统 (§10.1). */
 function applyLocale(): void {
-  setLocale(resolveLocale(state.localePref, globalThis.navigator?.languages ?? []));
+  const currentLocale = resolveLocale(state.localePref, globalThis.navigator?.languages ?? []);
+  setLocale(currentLocale);
+  if (typeof window !== "undefined") {
+    if ("caches" in window) {
+      caches.open("pigeon-settings").then((cache) => cache.put("/__locale", new Response(currentLocale))).catch(() => {});
+    }
+    navigator.serviceWorker?.controller?.postMessage({ type: "SET_LOCALE", locale: currentLocale });
+  }
 }
 
 export function setLocalePref(pref: LocalePref): void {
@@ -224,7 +234,7 @@ export function setFilter(filter: FilterState): void {
 }
 
 export function filterActive(f: FilterState = state.filter): boolean {
-  return f.statuses.length > 0 || f.agents.length > 0 || !f.showTerminals || !f.showIdle;
+  return f.statuses.length > 0 || f.agents.length > 0 || !f.showTerminals || !f.showIdle || (Boolean(f.groupBy) && f.groupBy !== "status");
 }
 
 export function toggleCollapsed(workspaceId: string): void {

@@ -1,6 +1,6 @@
 import { createEffect, createMemo, createSignal, For, on, onCleanup, onMount, Show } from "solid-js";
 import { navigate, openTerminal, setState, showToast, state } from "../state/store";
-import { copyText, request, selectPane, sendKeys, sendPrompt } from "../state/ws";
+import { copyText, getDetail, request, requestSkills, selectPane, sendKeys, sendPrompt, setScreenWatch } from "../state/ws";
 import type { FileDiffSummary, QueuedPrompt } from "../../../types/protocol";
 import {
   cancelQueuedPromptEdit,
@@ -199,6 +199,20 @@ export function SessionPage() {
   });
   createEffect(on(() => state.pendingInteraction?.interactionId, () => setCardCollapsed(false)));
 
+  createEffect(() => {
+    const paneId = state.activePaneId;
+    const isWatch = state.terminalOpen;
+    if (paneId) {
+      setScreenWatch(paneId, isWatch);
+    }
+  });
+
+  onCleanup(() => {
+    if (state.activePaneId) {
+      setScreenWatch(state.activePaneId, false);
+    }
+  });
+
   const toBottom = (smooth = false) => {
     if (scroller) scroller.scrollTo({ top: scroller.scrollHeight, behavior: smooth ? "smooth" : "auto" });
   };
@@ -244,7 +258,6 @@ export function SessionPage() {
   );
 
   const showCard = () => !!state.pendingInteraction && !isTerminal();
-  const composerVisible = () => !showCard() || (cardCollapsed() && !!state.normalizedTurns[state.normalizedTurns.length - 1]?.pendingQuestion);
 
   return (
     <div class="page">
@@ -344,9 +357,7 @@ export function SessionPage() {
                   <div class="ubm">
                     {q.sending ? t("common.sending") : t("session.queued")}
                     <Show when={!q.sending}>
-                      <Show when={composerVisible()}>
-                        <button onClick={() => editQueued(q)}>{t("session.edit")}</button>
-                      </Show>
+                      <button onClick={() => editQueued(q)}>{t("session.edit")}</button>
                       <button
                         onClick={() => {
                           cancelQueuedPromptEdit(q.queueId);
@@ -379,7 +390,7 @@ export function SessionPage() {
         <Show when={showCard()}>
           <PromptCard collapsed={cardCollapsed()} onCollapse={() => setCardCollapsed(true)} onExpand={() => setCardCollapsed(false)} />
         </Show>
-        <Show when={composerVisible() && state.activePaneId} keyed>
+        <Show when={state.activePaneId} keyed>
           {(paneId) => (
             <Composer
               draftId={paneId}
@@ -477,7 +488,10 @@ export function SessionPage() {
       <Show when={panel() === "plus"}>
         <PlusSheet
           onClose={() => setPanel(null)}
-          onSkills={() => setPanel("skills")}
+          onSkills={() => {
+            requestSkills();
+            setPanel("skills");
+          }}
           onResume={
             recipe()?.resumable
               ? () => {

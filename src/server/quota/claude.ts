@@ -3,7 +3,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { userInfo } from "node:os";
 import { join } from "node:path";
 import type { QuotaSnapshot, QuotaWindow } from "../../types/protocol";
-import { fileCredentialSource, storeRefreshed, type CredentialSource } from "./credentials";
+import { fileCredentialSource, type CredentialSource } from "./credentials";
 
 export interface ClaudeQuotaProviderOptions {
   home?: string;
@@ -82,32 +82,6 @@ export class ClaudeQuotaProvider {
     }
   }
 
-  private async refreshToken(refreshToken: string, scopes?: string[]): Promise<{ accessToken: string; refreshToken?: string; expiresIn: number }> {
-    const body: Record<string, string> = { grant_type: "refresh_token", refresh_token: refreshToken, client_id: CLAUDE_CLIENT_ID };
-    if (Array.isArray(scopes) && scopes.length > 0) body.scope = scopes.join(" ");
-
-    let res: Response;
-    try {
-      res = await fetch(this.tokenUrl, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-        signal: AbortSignal.timeout(10000),
-      });
-    } catch (err) {
-      throw new Error(`Claude token refresh failed: ${(err as Error).message}`);
-    }
-    if (!res.ok) throw new Error(`Claude token refresh rejected with status ${res.status}`);
-
-    const data = (await res.json()) as any;
-    if (!data.access_token) throw new Error("Claude token refresh returned no access token");
-    return {
-      accessToken: data.access_token,
-      refreshToken: data.refresh_token,
-      expiresIn: typeof data.expires_in === "number" ? data.expires_in : 3600,
-    };
-  }
-
   private parseOauth(raw: string): any {
     let creds: any;
     try {
@@ -121,30 +95,16 @@ export class ClaudeQuotaProvider {
 
   public async fetch(): Promise<QuotaSnapshot> {
     const credential = this.credentialSource();
-    const source = credential.source;
-    let raw = credential.raw;
-    let oauth = this.parseOauth(raw);
-    let refreshed = false;
+    const raw = credential.raw;
+    const oauth = this.parseOauth(raw);
 
-    // §2.3: at most one refresh per fetch, so the same refresh token is never sent twice.
-    const refresh = async () => {
-      refreshed = true;
-      const tokens = await this.refreshToken(oauth.refreshToken, oauth.scopes);
-      raw = storeRefreshed(source, raw, (creds) => {
-        creds.claudeAiOauth = creds.claudeAiOauth || {};
-        creds.claudeAiOauth.accessToken = tokens.accessToken;
-        if (tokens.refreshToken) creds.claudeAiOauth.refreshToken = tokens.refreshToken;
-        creds.claudeAiOauth.expiresAt = this.now() + tokens.expiresIn * 1000;
-      });
-      oauth = this.parseOauth(raw);
-    };
+    if (typeof oauth.expiresAt === "number" && this.now() >= oauth.expiresAt) {
+      throw new Error("Claude login expired — open Claude Code to refresh it");
+    }
 
-    if (typeof oauth.expiresAt === "number" && this.now() >= oauth.expiresAt && oauth.refreshToken) await refresh();
-
-    let usageRes = await this.callUsage(oauth.accessToken);
-    if ((usageRes.status === 401 || usageRes.status === 403) && !refreshed && oauth.refreshToken) {
-      await refresh();
-      usageRes = await this.callUsage(oauth.accessToken);
+    const usageRes = await this.callUsage(oauth.accessToken);
+    if (usageRes.status === 401 || usageRes.status === 403) {
+      throw new Error("Claude login expired — open Claude Code to refresh it");
     }
     if (!usageRes.ok) throw new Error(`Claude usage request failed with HTTP ${usageRes.status}`);
 

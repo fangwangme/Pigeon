@@ -3,7 +3,8 @@ import { filterActive, navigate, quotaButtonShown, state, toggleCollapsed, type 
 import { selectPane } from "../state/ws";
 import type { PaneSummary, TabSummary, WorkspaceSummary } from "../../../types/protocol";
 import { openOverlay } from "./overlays";
-import { agentLabel, Icon, Logo, paneStatus, paneSummary, primaryPane, StatusIcon, tabStatus, type RowStatus } from "./ui";
+import { agentLabel, Icon, Logo, modelLabel, paneStatus, paneSummary, primaryPane, StatusIcon, tabStatus, type RowStatus } from "./ui";
+import { AgentIcon } from "./AgentIcon";
 import { t, type MessageId } from "../i18n";
 import { quotaDot } from "../../../shared/quota";
 
@@ -43,7 +44,7 @@ function TabRow(props: { ws: WorkspaceSummary; tab: TabSummary }) {
   const status = () => tabStatus(props.tab);
   const sub = () => {
     const p = pane();
-    const parts = [p?.agent ? agentLabel(p.agent) : p?.program || t("agent.terminal")];
+    const parts = [p?.agent ? (modelLabel(p.model, p.agent) || agentLabel(p.agent)) : p?.program || t("agent.terminal")];
     if (props.tab.panes.length > 1) parts.push(t("home.paneCount", { count: props.tab.panes.length }));
     return parts.join(" · ");
   };
@@ -92,7 +93,7 @@ function TabRow(props: { ws: WorkspaceSummary; tab: TabSummary }) {
           if (p) openPane(p.id, "home");
         }}
       >
-        <StatusIcon status={status()} />
+        <AgentIcon kind={pane()?.agent} />
         <div class="tx">
           <div class="t">{props.tab.label}</div>
           <div class="s">{sub()}</div>
@@ -100,9 +101,9 @@ function TabRow(props: { ws: WorkspaceSummary; tab: TabSummary }) {
             <div class="p">{paneSummary(pane())}</div>
           </Show>
         </div>
-        <Show when={pane() && state.unread[pane()!.id]}>
-          <span class="udot" aria-label={t("home.unread")} />
-        </Show>
+        <div class="srow-end">
+          <StatusIcon status={status()} />
+        </div>
       </button>
     </div>
   );
@@ -262,11 +263,46 @@ const GROUPS: Array<[RowStatus, MessageId]> = [
   ["idle", "status.idle"],
 ];
 
+const STATUS_ORDER: Record<string, number> = {
+  blocked: 0,
+  working: 1,
+  done: 2,
+  idle: 3,
+  terminal: 4,
+};
+
+function statusRank(st: RowStatus): number {
+  return STATUS_ORDER[st] ?? 99;
+}
+
 /** §2.2 */
 export function AgentsPage() {
   // §2.2: every group starts expanded each time the page opens.
   const [shut, setShut] = createSignal<Record<string, boolean>>({});
+  const groupBy = () => state.filter.groupBy || "status";
   const rows = createMemo(() => agentPanes().filter((a) => passes(paneStatus(a.pane), a.pane.agent, state.filter)));
+
+  const wsGroups = createMemo(() => {
+    const map = new Map<string, { ws: WorkspaceSummary; items: Array<{ ws: WorkspaceSummary; tab: TabSummary; pane: PaneSummary }> }>();
+    for (const r of rows()) {
+      let g = map.get(r.ws.id);
+      if (!g) {
+        g = { ws: r.ws, items: [] };
+        map.set(r.ws.id, g);
+      }
+      g.items.push(r);
+    }
+    const list = Array.from(map.values()).map((g) => ({
+      ...g,
+      items: g.items.slice().sort((a, b) => statusRank(paneStatus(a.pane)) - statusRank(paneStatus(b.pane))),
+    }));
+    return list.sort((a, b) => {
+      const rankA = a.items.reduce((m, item) => Math.min(m, statusRank(paneStatus(item.pane))), 99);
+      const rankB = b.items.reduce((m, item) => Math.min(m, statusRank(paneStatus(item.pane))), 99);
+      return rankA - rankB;
+    });
+  });
+
   return (
     <div class="page">
       <div class="hdr">
@@ -302,47 +338,92 @@ export function AgentsPage() {
               {filterActive() ? t("agents.emptyFiltered") : t("agents.emptyHint")}
             </div>
           </Show>
-          <For each={GROUPS}>
-            {([status, label]) => {
-              const items = () => rows().filter((r) => paneStatus(r.pane) === status);
-              return (
-                <Show when={items().length}>
-                  <button class="gh" onClick={() => setShut({ ...shut(), [status]: !shut()[status] })} aria-expanded={!shut()[status]}>
-                    <span class={`chev${shut()[status] ? " shut" : ""}`}>
-                      <Icon name="chevD" sm />
-                    </span>
-                    {t(label)}
-                    <span class="c">{items().length}</span>
-                  </button>
-                  <Show when={!shut()[status]}>
-                    <For each={items()}>
-                      {(r) => (
-                        <button class="srow" onClick={() => openPane(r.pane.id, "agents")}>
-                          <StatusIcon status={status} />
-                          <div class="tx">
-                            <div class="t">{r.tab.label}</div>
-                            <div class="s who">
-                              <span class="ag">{agentLabel(r.pane.agent)}</span>
-                              <span class="wsn">
-                                <Icon name="folder" sm />
-                                {r.ws.label}
-                              </span>
+          <Show when={groupBy() === "status"}>
+            <For each={GROUPS}>
+              {([status, label]) => {
+                const items = () => rows().filter((r) => paneStatus(r.pane) === status);
+                return (
+                  <Show when={items().length}>
+                    <button class="gh" onClick={() => setShut({ ...shut(), [status]: !shut()[status] })} aria-expanded={!shut()[status]}>
+                      <span class={`chev${shut()[status] ? " shut" : ""}`}>
+                        <Icon name="chevD" sm />
+                      </span>
+                      {t(label)}
+                      <span class="c">{items().length}</span>
+                    </button>
+                    <Show when={!shut()[status]}>
+                      <For each={items()}>
+                        {(r) => (
+                          <button class="srow" onClick={() => openPane(r.pane.id, "agents")}>
+                            <AgentIcon kind={r.pane.agent} />
+                            <div class="tx">
+                              <div class="t">{r.tab.label}</div>
+                              <div class="s who">
+                                <span class="wsn">
+                                  <Icon name="folder" sm />
+                                  {r.ws.label}
+                                </span>
+                                <span class="ag">{modelLabel(r.pane.model, r.pane.agent) || agentLabel(r.pane.agent)}</span>
+                              </div>
+                              <Show when={status === "blocked" && paneSummary(r.pane)}>
+                                <div class="p">{paneSummary(r.pane)}</div>
+                              </Show>
                             </div>
-                            <Show when={status === "blocked" && paneSummary(r.pane)}>
-                              <div class="p">{paneSummary(r.pane)}</div>
-                            </Show>
-                          </div>
-                          <Show when={state.unread[r.pane.id]}>
-                            <span class="udot" />
-                          </Show>
-                        </button>
-                      )}
-                    </For>
+                            <div class="srow-end">
+                              <StatusIcon status={status} />
+                            </div>
+                          </button>
+                        )}
+                      </For>
+                    </Show>
                   </Show>
-                </Show>
-              );
-            }}
-          </For>
+                );
+              }}
+            </For>
+          </Show>
+          <Show when={groupBy() === "workspace"}>
+            <For each={wsGroups()}>
+              {(g) => {
+                const wsId = g.ws.id;
+                return (
+                  <Show when={g.items.length}>
+                    <button class="gh" onClick={() => setShut({ ...shut(), [wsId]: !shut()[wsId] })} aria-expanded={!shut()[wsId]}>
+                      <span class={`chev${shut()[wsId] ? " shut" : ""}`}>
+                        <Icon name="chevD" sm />
+                      </span>
+                      <Icon name="folder" sm />
+                      {g.ws.label}
+                      <span class="c">{g.items.length}</span>
+                    </button>
+                    <Show when={!shut()[wsId]}>
+                      <For each={g.items}>
+                        {(r) => {
+                          const st = () => paneStatus(r.pane);
+                          return (
+                            <button class="srow" onClick={() => openPane(r.pane.id, "agents")}>
+                              <AgentIcon kind={r.pane.agent} />
+                              <div class="tx">
+                                <div class="t">{r.tab.label}</div>
+                                <div class="s who">
+                                  <span class="ag">{modelLabel(r.pane.model, r.pane.agent) || agentLabel(r.pane.agent)}</span>
+                                </div>
+                                <Show when={st() === "blocked" && paneSummary(r.pane)}>
+                                  <div class="p">{paneSummary(r.pane)}</div>
+                                </Show>
+                              </div>
+                              <div class="srow-end">
+                                <StatusIcon status={st()} />
+                              </div>
+                            </button>
+                          );
+                        }}
+                      </For>
+                    </Show>
+                  </Show>
+                );
+              }}
+            </For>
+          </Show>
         </div>
       </div>
     </div>

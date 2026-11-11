@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { createServer } from "node:net";
 import { sendAdminCommand } from "../src/cli/index";
@@ -79,7 +79,7 @@ describe("prompt queue (protocol.md §4.2, §4.13, §5.8)", () => {
   test("a prompt to a working agent is queued, shown to viewers, and sent when the agent goes idle", async () => {
     await client.connect();
     const c = await viewer("p1");
-    expect(c.ofType("prompt_queue").at(-1).payload).toEqual({ paneId: "p1", items: [] });
+    expect(c.ofType("pane_bootstrap").at(-1)!.payload.queue).toEqual([]);
     await send(c.ws, { type: "agent_prompt", id: "a1", payload: { targetPaneId: "p1", text: "also run lint" } });
     expect(lastAck(c)).toMatchObject({ queued: true });
     expect(herdr.callsOf("terminal.send")).toHaveLength(0);
@@ -373,35 +373,6 @@ describe("prompt queue (protocol.md §4.2, §4.13, §5.8)", () => {
     newServer.destroy();
   });
 
-  test("restored queue on an already idle pane is dispatched on initial snapshot", async () => {
-    const queueFile = join(dir, "queue_idle.json");
-    writeFileSync(
-      queueFile,
-      JSON.stringify({
-        p1: [{ item: { queueId: "q_init", text: "dispatched on snapshot", createdAt: Date.now() }, send: "dispatched on snapshot" }],
-      })
-    );
-
-    const callsBefore = herdr.callsOf("terminal.send").length;
-    const newServer = new WsServer({
-      buildId: "b",
-      herdrClient: client,
-      pushManager: new PushManager(join(dir, "vapid_snap.json")),
-      configManager: new ConfigManager(join(dir, "config.json"), { HOME: dir }),
-      skillScanner: new SkillScanner(dir),
-      uploadStore: uploads,
-      pairingManager: pairing,
-      queueFilePath: queueFile,
-    });
-
-    // p1 is already idle in herdrClient
-    client.applySnapshot(topologyOf(PANES.map((p) => ({ ...p, cwd: dir, ...(p.paneId === "p1" ? { state: "idle" } : {}) })), { folder: "/start" }));
-
-    await until(() => herdr.callsOf("terminal.send").length > callsBefore);
-    expect(herdr.callsOf("terminal.send").at(-1)!.params.text).toBe("dispatched on snapshot");
-    newServer.destroy();
-  });
-
   test("a prompt in sending state is not restored on daemon restart and never sent twice", async () => {
     await client.connect();
     server.paneStore.registerPaneSession("p1", "claude", "ses_b1");
@@ -503,7 +474,7 @@ describe("creating sessions (protocol.md §4.5, herdr-adapter.md §5)", () => {
     herdr.handlers["tab.new"] = () => ({ result: { terminal: "p1" } });
     await send(c.ws, { type: "create_tab_and_agent", id: "n1", payload: { workspaceId: "w1", agentKind: "claude", modelId: "opus", thinking: "high" } });
     await send(c.ws, { type: "select_view", id: "s", payload: { paneId: "p1" } });
-    expect(c.ofType("normalized_turns").at(-1).payload.session).toMatchObject({ model: { value: "opus", source: "launch" }, thinking: { value: "high", source: "launch" } });
+    expect(c.ofType("pane_bootstrap").at(-1)!.payload.turns.session).toMatchObject({ model: { value: "opus", source: "launch" }, thinking: { value: "high", source: "launch" } });
   });
 });
 
@@ -688,5 +659,91 @@ describe("seen panes (herdr-adapter.md §4, protocol.md §5.3, issue #3)", () =>
       clearTimeout(replyTimer);
       srv.close();
     }
+  });
+});
+
+// Issue #19 acceptance: protocol.md §4.2 (queue state machine, restore), §4.14 (queue_update validation).
+describe("queue state machine (protocol.md §4.2, §4.14)", () => {
+  const T0 = Date.parse("2026-11-11T08:00:00Z");
+  const serverWith = (extra: Partial<ConstructorParameters<typeof WsServer>[0]>) =>
+    new WsServer({
+      buildId: "b",
+      herdrClient: client,
+      pushManager: new PushManager(join(dir, "vapid.json")),
+      configManager: new ConfigManager(join(dir, "config.json"), { HOME: dir }),
+      skillScanner: new SkillScanner(dir),
+      agentAdapters: new AgentAdapterManager({ home: dir }),
+      uploadStore: uploads,
+      pairingManager: pairing,
+      queueFilePath: join(dir, "queue.json"),
+      ...extra,
+    });
+  const p1At = (createdMs: number, state: string) =>
+    topologyOf(PANES.map((p) => ({ ...p, cwd: dir, ...(p.paneId === "p1" ? { state, createdMs } : {}) })), { folder: "/start" });
+
+  test("a head prompt that never starts work settles at the timeout and the next one goes out (B1)", async () => {
+    server.destroy();
+    server = serverWith({ queueSendTimeoutMs: 100 });
+    await client.connect();
+    server.paneStore.registerPaneSession("p1", "claude", "ses_stall");
+    const c = await viewer("p1");
+    await send(c.ws, { type: "agent_prompt", id: "a1", payload: { targetPaneId: "p1", text: "/model sonnet" } });
+    await send(c.ws, { type: "agent_prompt", id: "a2", payload: { targetPaneId: "p1", text: "next prompt" } });
+    herdr.emitEvent("status", "p1", { status: { state: "idle", app: "claude-code" } });
+    await until(() => herdr.callsOf("terminal.send").length === 1);
+    // The slash command neither makes the pane work nor adds a user turn; the pane stays idle.
+    await until(() => herdr.callsOf("terminal.send").length === 2);
+    expect(herdr.callsOf("terminal.send").map((x) => x.params.text)).toEqual(["/model sonnet", "next prompt"]);
+  });
+
+  test("an idle seen only through a snapshot sends the queued prompt (B2)", async () => {
+    await client.connect();
+    const c = await viewer("p1");
+    await send(c.ws, { type: "agent_prompt", id: "s1", payload: { targetPaneId: "p1", text: "after reconnect" } });
+    expect(lastAck(c)).toMatchObject({ queued: true });
+    // No status event: the subscription missed it, and only the reconciliation snapshot shows idle.
+    client.applySnapshot(p1At(T0, "idle"));
+    await until(() => herdr.callsOf("terminal.send").length === 1);
+    expect(herdr.callsOf("terminal.send")[0].params.text).toBe("after reconnect");
+  });
+
+  test("a restored prompt goes out only to the same terminal (B3)", async () => {
+    client.applySnapshot(p1At(T0, "working"));
+    const c = await viewer("p1");
+    await send(c.ws, { type: "agent_prompt", id: "r1", payload: { targetPaneId: "p1", text: "restore me" } });
+    expect(lastAck(c)).toMatchObject({ queued: true });
+    const saved = readFileSync(join(dir, "queue.json"), "utf8");
+    // A daemon restart: a new Herdr client and a new server reading the saved queue.
+    const restart = () => {
+      server.destroy();
+      client.disconnect();
+      client = new HerdrClient({ appSocketPath: herdr.appSocketPath, coreSocketPath: herdr.coreSocketPath, debounceMs: 5, panePollMs: 60_000 });
+      server = serverWith({});
+    };
+    const sends = () => herdr.callsOf("terminal.send").filter((x) => x.params.text === "restore me").length;
+
+    // The same terminal: the prompt goes out once the pane is idle.
+    restart();
+    client.applySnapshot(p1At(T0, "idle"));
+    await until(() => sends() === 1);
+
+    // Herdr reused the address for a new terminal: the prompt is dropped, not sent.
+    writeFileSync(join(dir, "queue.json"), saved);
+    restart();
+    client.applySnapshot(p1At(T0 + 60_000, "idle"));
+    await Bun.sleep(150);
+    expect(sends()).toBe(1);
+  });
+
+  test("queue_update is validated like agent_prompt (B16)", async () => {
+    await client.connect();
+    const c = await viewer("p1");
+    await send(c.ws, { type: "agent_prompt", id: "v1", payload: { targetPaneId: "p1", text: "queued" } });
+    const queueId = lastAck(c).queueId;
+    const eleven = Array.from({ length: 11 }, (_, i) => `up_${i.toString(16).padStart(16, "0")}`);
+    await send(c.ws, { type: "queue_update", id: "v2", payload: { targetPaneId: "p1", queueId, text: "x", attachments: eleven } });
+    await send(c.ws, { type: "queue_update", id: "v3", payload: { targetPaneId: "p1", queueId, text: "", attachments: [] } });
+    expect(c.ofType("error").map((m: any) => m.error.code)).toEqual(["ERR_INVALID_PAYLOAD", "ERR_INVALID_PAYLOAD"]);
+    expect(c.ofType("prompt_queue").at(-1).payload.items[0].text).toBe("queued");
   });
 });
