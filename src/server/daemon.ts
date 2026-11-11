@@ -7,7 +7,7 @@ import { PairingManager } from "./pairing";
 import { PushManager, type PushSubscriptionData } from "./push";
 import { WsServer, newConnectionId, SERVER_VERSION, type ClientConnectionData } from "./ws-server";
 import { EMBEDDED_HTML } from "./embedded-html";
-import { ConfigManager, portScoped } from "./config-manager";
+import { ConfigManager, portScoped, resolveInstancePaths, DEFAULT_PORT } from "./config-manager";
 import { ModelCatalog } from "./model-catalog";
 import { MAX_UPLOAD_BYTES, UploadStore } from "./uploads";
 import { QuotaService } from "./quota/index";
@@ -98,8 +98,8 @@ function detectTailscaleHostname(): string | null {
 }
 
 function tryAutoTailscaleServe(port: number): boolean {
-  // Never mutate host Tailscale serve during automated test runs or for random ephemeral test ports
-  if (process.argv.some((arg) => arg.includes("test")) || (port !== 4100 && port !== 4101)) {
+  // Never mutate host Tailscale serve during automated test runs, and only configure on production port 4100
+  if (process.argv.some((arg) => arg.includes("test")) || port !== DEFAULT_PORT) {
     return false;
   }
   try {
@@ -282,6 +282,8 @@ export class PigeonDaemon {
     const access = resolveAccess({ configured: opts.publicBaseUrl || serverCfg.publicBaseUrl, insecureDev, port });
     this.access = access;
 
+    const instancePaths = resolveInstancePaths({ port, env: this.configManager.env });
+
     this.config = {
       port,
       host: serverCfg.host || access.bindHost || "",
@@ -289,12 +291,12 @@ export class PigeonDaemon {
       publicBaseUrl: access.publicBaseUrl,
       herdrAppSocketPath: opts.herdrAppSocketPath || serverCfg.herdrAppSocketPath,
       herdrCoreSocketPath: opts.herdrCoreSocketPath || serverCfg.herdrCoreSocketPath,
-      adminSocketPath: opts.adminSocketPath || portScoped(serverCfg.adminSocketPath, port),
-      devicesFilePath: opts.devicesFilePath || portScoped(join(serverCfg.stateDir, "devices.json"), port),
-      queueFilePath: opts.queueFilePath || portScoped(join(serverCfg.stateDir, "queue.json"), port),
-      vapidPath: opts.vapidPath || join(serverCfg.stateDir, "vapid.json"),
-      pushSubscriptionsPath: opts.pushSubscriptionsPath || join(serverCfg.stateDir, "push-subscriptions.json"),
-      uploadsDir: opts.uploadsDir || join(serverCfg.stateDir, "uploads"),
+      adminSocketPath: opts.adminSocketPath || (port === DEFAULT_PORT ? serverCfg.adminSocketPath : instancePaths.adminSocketPath),
+      devicesFilePath: opts.devicesFilePath || (port === DEFAULT_PORT ? join(serverCfg.stateDir, "devices.json") : instancePaths.devicesPath),
+      queueFilePath: opts.queueFilePath || (port === DEFAULT_PORT ? join(serverCfg.stateDir, "queue.json") : instancePaths.queuePath),
+      vapidPath: opts.vapidPath || (port === DEFAULT_PORT ? join(serverCfg.stateDir, "vapid.json") : instancePaths.vapidPath),
+      pushSubscriptionsPath: opts.pushSubscriptionsPath || (port === DEFAULT_PORT ? join(serverCfg.stateDir, "push-subscriptions.json") : instancePaths.pushSubscriptionsPath),
+      uploadsDir: opts.uploadsDir || (port === DEFAULT_PORT ? join(serverCfg.stateDir, "uploads") : instancePaths.uploadsDir),
     };
 
     // Only the HTML compiled into this build is served (never a file found via the cwd).
@@ -378,7 +380,7 @@ export class PigeonDaemon {
       modelCatalog: new ModelCatalog(),
       queueFilePath: this.config.queueFilePath,
       port: this.config.port,
-      environmentKind: this.config.insecureDev ? "dev" : (this.config.port !== 4100 ? "test" : undefined),
+      environmentKind: this.config.insecureDev ? "dev" : undefined,
       quotaService,
       usageService,
     });
@@ -578,6 +580,7 @@ export class PigeonDaemon {
       },
 
       websocket: {
+        perMessageDeflate: true,
         open(ws) {
           self.wsServer.handleOpen(ws);
         },

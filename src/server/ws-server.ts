@@ -31,7 +31,8 @@ import {
 } from "../types/protocol";
 
 const PROTOCOL_VERSION = "1.0.0";
-export const SERVER_VERSION = "0.1.9";
+import pkg from "../../package.json";
+export const SERVER_VERSION = pkg.version;
 const PUSH_DEDUPE_MS = 60_000;
 
 import { QuotaService } from "./quota/index";
@@ -233,12 +234,15 @@ export class WsServer {
       this.transitionQueue(paneId, { type: "status", status });
       // herdr-adapter.md §4: finishing while a phone visibly watches it is finishing seen.
       if (status === "done" && this.pushManager.shouldSuppressPush(paneId)) this.herdrClient.markSeen(paneId);
-      // push.md §4: notify only on the transition into blocked, at most once per minute per pane.
-      if (status !== "blocked" || previous === "blocked") return;
+      // push.md §4: notify on transition into blocked or done (push.md §4.1), at most once per minute per pane.
+      const isBlocked = status === "blocked" && previous !== "blocked";
+      const isDone = status === "done" && previous === "working";
+      if (!isBlocked && !isDone) return;
       const now = Date.now();
       if (now - (this.lastPushAt.get(paneId) || 0) < PUSH_DEDUPE_MS) return;
       this.lastPushAt.set(paneId, now);
-      this.pushManager.sendNotification(this.pushMessage(paneId));
+      const pushEvent = isBlocked ? "blocked" : "done";
+      this.pushManager.sendNotification(this.pushMessage(paneId, pushEvent));
     };
     this.herdrClient.on("pane_status_changed", this.onPaneStatusChanged);
   }
@@ -252,15 +256,15 @@ export class WsServer {
     this.broadcast({ type: "recipes_sync", payload: { recipes: this.recipeSummaries() } });
   }
 
-  /** `push.md` §4: the blocked pane's agent, workspace and tab, as data. */
-  private pushMessage(paneId: string): PushMessage {
+  /** `push.md` §4: the blocked or done pane's agent, workspace and tab, as data. */
+  private pushMessage(paneId: string, event: "blocked" | "done" = "blocked"): PushMessage {
     for (const ws of this.herdrClient.getSnapshot().workspaces) {
       for (const tab of ws.tabs) {
         const pane = tab.panes.find((p) => p.id === paneId);
-        if (pane) return { event: "blocked", agent: pane.agent, workspace: ws.label, tab: tab.label, paneId };
+        if (pane) return { event, agent: pane.agent, workspace: ws.label, tab: tab.label, paneId };
       }
     }
-    return { event: "blocked", agent: null, workspace: "", tab: "", paneId };
+    return { event, agent: null, workspace: "", tab: "", paneId };
   }
 
   public handleOpen(ws: Ws): void {
@@ -962,7 +966,7 @@ export class WsServer {
     const herdrStatus = this.herdrClient.getPaneHerdrStatus(paneId);
     if (herdrStatus === "working" || queue.length > 0 || state.state === "sending") {
       const facts = this.herdrClient.getPaneFacts(paneId);
-      const created_ms = facts?.createdMs ?? Date.now();
+      const created_ms = facts?.createdMs ?? 0;
       const item: QueuedPrompt = { queueId: `q_${randomBytes(6).toString("hex")}`, ...shown, createdAt: Date.now() };
       queue.push({ item, send, created_ms });
       this.queues.set(paneId, queue);
@@ -1047,8 +1051,8 @@ export class WsServer {
         if (event.status === "working") {
           queueState.sawWorking = true;
         } else if ((event.status === "idle" || event.status === "done")) {
-          // An unbound pane has no transcript turns; idle after working settles it.
-          if (!this.paneStore.boundSession(paneId) && queueState.sawWorking) {
+          // Idle after working settles the head prompt for all panes (protocol §4.2).
+          if (queueState.sawWorking) {
             settled = true;
           }
         }

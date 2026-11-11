@@ -1,7 +1,7 @@
 import { connect } from "node:net";
 import { existsSync } from "node:fs";
 import { PigeonDaemon } from "../server/daemon";
-import { ConfigManager, portScoped } from "../server/config-manager";
+import { ConfigManager, portScoped, resolveInstancePaths } from "../server/config-manager";
 import qrcode from "qrcode-terminal";
 
 export const ADMIN_TIMEOUT_MS = 5000;
@@ -83,7 +83,7 @@ async function main() {
   const portIdx = command === "start" ? -1 : args.indexOf("--port");
   const adminPort = portIdx > 0 ? Number(args[portIdx + 1]) : configManager.getServerConfig().port;
   if (!Number.isInteger(adminPort) || adminPort <= 0 || adminPort > 65535) fail(`Invalid --port '${args[portIdx + 1]}'`);
-  const adminSocketPath = portScoped(configManager.getServerConfig().adminSocketPath, adminPort);
+  const adminSocketPath = resolveInstancePaths({ port: adminPort, env: configManager.env }).adminSocketPath;
 
   if (command === "start") {
     let port: number | undefined;

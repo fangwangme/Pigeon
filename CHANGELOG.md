@@ -18,7 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - **Herdr fault isolation**: write commands cleanly fail with `ERR_UPSTREAM_OFFLINE` when Herdr is offline instead of timing out; status events of unknown shapes log warnings and schedule background snapshot reconciliation (#19).
-- **Tailscale and multi-interface access**: whitelist all detected network interfaces (Tailscale IP, LAN IP) in `allowedHosts` and `allowedOrigins` to allow WebSocket connections across VPNs in `--insecure-dev` mode (#19).
+- **Tailscale and multi-interface access**: whitelist all detected network interfaces (Tailscale IP, LAN IP, MagicDNS) in `allowedHosts` and `allowedOrigins` to allow WebSocket connections across VPN and local interfaces in all modes (#19).
 - **CLI prompt submission**: Antigravity prompts use single-line space separation for attachment paths and drop `@` mention prefix to prevent TUI autocomplete and multiline editor stalls (#19).
 - **Usage scan timestamp format**: display scan completion times with full second precision (`HH:mm:ss`) (#19).
 - **Queue robustness**: terminal creation timestamp matching prevents stale restored queue items from executing on reused pane IDs across reboots (#19).

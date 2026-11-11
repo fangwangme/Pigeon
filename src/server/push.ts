@@ -285,11 +285,19 @@ export class PushManager {
             },
             body: new Uint8Array(body),
           });
+          const host = new URL(sub.endpoint).host;
           if (res.status === 404 || res.status === 410) {
             this.removeSubscription(sub.endpoint);
+          } else if (!res.ok) {
+            console.error(`[pigeon] push delivery to ${host} failed: ${res.status}`);
           }
         } catch (err) {
-          console.error(`[pigeon] push delivery to ${sub.endpoint} failed:`, err);
+          try {
+            const host = new URL(sub.endpoint).host;
+            console.error(`[pigeon] push delivery to ${host} failed:`, err);
+          } catch {
+            console.error("[pigeon] push delivery failed:", err);
+          }
         }
       })();
     }

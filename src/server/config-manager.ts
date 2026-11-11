@@ -154,8 +154,10 @@ export class ConfigManager {
   private config: PigeonConfig;
   /** The home directory the agents' files are found under (the environment's `HOME`). */
   public readonly home: string;
+  public readonly env: NodeJS.ProcessEnv;
 
   constructor(customPath?: string, env: NodeJS.ProcessEnv = process.env) {
+    this.env = env;
     this.configPath = resolveConfigPath(customPath, env);
     this.home = env.HOME || "";
     this.stored = this.loadOrCreate();

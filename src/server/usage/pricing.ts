@@ -134,6 +134,9 @@ export class PricingManager {
 
   private async refreshFromNetwork(): Promise<boolean> {
     const newCatalog = new Map<string, ModelPrice>();
+    const modelsDevCatalog = new Map<string, ModelPrice>();
+    const litellmCatalog = new Map<string, ModelPrice>();
+    const openrouterCatalog = new Map<string, ModelPrice>();
     const TIMEOUT_MS = 2500;
 
     // Fetch sources concurrently with bounded timeout so slow network endpoints do not stall scans
@@ -159,8 +162,8 @@ export class PricingManager {
                 const id = (m as any).id || "";
                 const key1 = canonical(`${provider}/${id}`);
                 const key2 = canonical(id);
-                if (!newCatalog.has(key1)) newCatalog.set(key1, price);
-                if (!newCatalog.has(key2)) newCatalog.set(key2, price);
+                if (!modelsDevCatalog.has(key1)) modelsDevCatalog.set(key1, price);
+                if (!modelsDevCatalog.has(key2)) modelsDevCatalog.set(key2, price);
               }
             }
           }
@@ -184,7 +187,7 @@ export class PricingManager {
                 source: "litellm",
               };
               const key = canonical(id);
-              if (!newCatalog.has(key)) newCatalog.set(key, price);
+              if (!litellmCatalog.has(key)) litellmCatalog.set(key, price);
             }
           }
         } catch {}
@@ -209,12 +212,23 @@ export class PricingManager {
                 source: "openrouter",
               };
               const key = canonical(m.id);
-              if (!newCatalog.has(key)) newCatalog.set(key, price);
+              if (!openrouterCatalog.has(key)) openrouterCatalog.set(key, price);
             }
           }
         } catch {}
       })(),
     ]);
+
+    // Merge in strict deterministic priority order: models.dev -> litellm -> openrouter
+    for (const [k, v] of modelsDevCatalog) {
+      newCatalog.set(k, v);
+    }
+    for (const [k, v] of litellmCatalog) {
+      if (!newCatalog.has(k)) newCatalog.set(k, v);
+    }
+    for (const [k, v] of openrouterCatalog) {
+      if (!newCatalog.has(k)) newCatalog.set(k, v);
+    }
 
     if (newCatalog.size > 0) {
       this.catalog = newCatalog;

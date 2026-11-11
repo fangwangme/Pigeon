@@ -102,7 +102,11 @@ function App() {
       setState("canInstallPWA", true);
     });
     await checkPairingFromUrlHash();
-    if (state.activePaneId) {
+    const urlParams = new URLSearchParams(window.location.search);
+    const targetPane = urlParams.get("pane");
+    if (targetPane) {
+      await selectPane(targetPane);
+    } else if (state.activePaneId) {
       await selectPane(state.activePaneId);
     }
     await initWebSocket();

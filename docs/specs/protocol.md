@@ -92,7 +92,7 @@ When Herdr cannot be reached (its socket is missing or refuses the connection, `
 { "type": "agent_prompt", "id": "cli_8", "payload": { "targetPaneId": "w1:p2", "text": "Fix the unit tests in auth.test.ts", "attachments": ["up_3f9a0c21d7e4b5a6"] } }
 ```
 - `text` may be empty only when `attachments` is not. `attachments` holds at most 10 upload ids from §7. An id the daemon does not know is `ERR_INVALID_PAYLOAD`, and nothing is sent.
-- **Attachments**: the daemon appends one line per attachment after a blank line: the file's absolute path, prefixed with the recipe's file-mention prefix (`@` for claude, opencode, pi and agy; none for codex and a plain terminal).
+- **Attachments**: the daemon appends attachment file paths: the file's absolute path, prefixed with the recipe's file-mention prefix (`@` for claude, opencode, and pi; none for codex, agy, and a plain terminal; agy uses space separation without `@` to prevent CLI autocomplete popups and multiline mode stalls).
 - **Queue**: when the pane's Herdr status is `working`, or the pane already has queued prompts, the prompt is queued instead of sent (user decision, 2026-11-06). The ack carries `{ "queued": true, "queueId": "q_…" }`, and every viewer of the pane gets `prompt_queue` (§5.8).
 - **Queue state machine**: each pane's queue is either `idle` (nothing out) or `sending` (its oldest prompt is out and not yet settled). One transition function takes every input: the pane's Herdr status (from a status event or from a snapshot, `herdr-adapter.md` §3.1), a new user turn in the pane's transcript (including the first turn of a fresh session), a send result, the send timeout, a queue edit, and the pane's removal.
   - In `idle`, when the pane's status is `idle` or `done` and the queue is not empty, the oldest prompt is sent and marked `sending: true`, and the queue enters `sending`.
@@ -423,6 +423,7 @@ Attachments are uploaded before the prompt that uses them.
 - **Validation** (trust boundary): a body over 20 MiB is HTTP 413; an empty body, a missing or bad file name is HTTP 400. The stored name keeps only `[A-Za-z0-9._-]` of the original (others become `_`, a leading dot is dropped).
 - **Storage**: `<stateDir>/uploads/<id>-<name>`, mode `0600`, where `id` is `up_` + 16 random hex digits. Uploads older than 7 days are deleted when the daemon starts.
 - **Reply**: `{ "id", "name", "size", "mime" }`. The phone then names `id` in `agent_prompt.attachments` (§4.2).
+- **Retrieval (`GET /api/uploads/:id`)**: returns the uploaded file bytes with its stored `Content-Type` for paired clients with a valid session cookie, enabling mobile clients to render inline thumbnail cards and images in transcripts.
 
 ## 8. Error Code Registry
 

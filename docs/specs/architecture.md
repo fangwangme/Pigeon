@@ -69,6 +69,7 @@ The entire application (daemon + embedded PWA static assets) compiles into a sin
 | Localhost | `http://localhost:<port>` | no | every interface |
 
 - A configured URL (`--public-url`, `server.publicBaseUrl`) wins over every mode; it is secure when its scheme is `https`, and the daemon then listens on every interface.
+- On the production port (4100), when Tailscale operator permission exists and serve is not active, `pigeon start` automatically configures `tailscale serve --bg 4100`. On test instances (port 4101) or under `--insecure-dev`, the daemon also accepts the Vite dev server's origins (`security-and-pairing.md` §4) for frontend debugging.
 - `--insecure-dev` skips the two Tailscale modes, starts in LAN mode, and also accepts the Vite dev server's origins (`security-and-pairing.md` §4).
 - **Secure mode** satisfies the browser's Secure Context (`window.isSecureContext`): Service Worker registration, PWA installation and Web Push work. Tailscale Serve provides the trusted `.ts.net` certificate and reaches the phone on Wi-Fi and cellular alike.
 - **Plain HTTP modes** print a prominent warning at start: the phone gets no Service Worker, no PWA installation and no Web Push, and in LAN mode the traffic is not encrypted. Session cookies drop `Secure` and the `__Host-` prefix (`security-and-pairing.md` §5).
