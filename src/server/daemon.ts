@@ -98,6 +98,10 @@ function detectTailscaleHostname(): string | null {
 }
 
 function tryAutoTailscaleServe(port: number): boolean {
+  // Never mutate host Tailscale serve during automated test runs or for random ephemeral test ports
+  if (process.argv.some((arg) => arg.includes("test")) || (port !== 4100 && port !== 4101)) {
+    return false;
+  }
   try {
     const res = Bun.spawnSync(["tailscale", "serve", "--bg", String(port)], { timeout: 3000, stderr: "ignore" });
     return res.exitCode === 0;
