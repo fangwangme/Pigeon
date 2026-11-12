@@ -407,6 +407,7 @@ export class PigeonDaemon {
       appSocketPath: this.config.herdrAppSocketPath,
       coreSocketPath: this.config.herdrCoreSocketPath,
       logger: (msg) => this.log(msg),
+      seenPanesFilePath: join(instancePaths.stateDir, "seen-panes.json"),
     });
     const quotaService = new QuotaService({ configManager: this.configManager });
     const usageService = new UsageService({ configManager: this.configManager });

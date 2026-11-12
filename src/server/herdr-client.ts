@@ -1,7 +1,8 @@
 import { connect, type Socket } from "node:net";
 import { EventEmitter } from "node:events";
 import { createHash } from "node:crypto";
-import { basename } from "node:path";
+import { basename, dirname } from "node:path";
+import { readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
 import { readGitBranch } from "./git-branch";
 import { CardClassifier, buildUnrecognizedPrompt } from "./card-classifier";
 import { getAgentRecipe } from "./agent-recipes";
@@ -35,6 +36,7 @@ export interface HerdrClientOptions {
   panePollMs?: number;
   requestTimeoutMs?: number;
   logger?: (msg: string) => void;
+  seenPanesFilePath?: string;
 }
 
 /**
@@ -120,6 +122,7 @@ export class HerdrClient extends EventEmitter {
   private focusedPaneId: string | null = null;
   /** herdr-adapter.md §4: `done` panes a phone has looked at, reported as `idle`. */
   private seenPanes = new Set<string>();
+  private seenPanesFilePath?: string;
   private transcriptInteractions = new Map<string, InteractionCardData>();
   /** protocol.md §5.3: the title of the session bound to a pane, for tabs without a name of their own. */
   private sessionTitleOf: (paneId: string) => string | undefined = () => undefined;
@@ -141,6 +144,29 @@ export class HerdrClient extends EventEmitter {
     this.panePollMs = options.panePollMs ?? 1000;
     this.requestTimeoutMs = options.requestTimeoutMs ?? REQUEST_TIMEOUT_MS;
     this.logger = options.logger;
+    this.seenPanesFilePath = options.seenPanesFilePath;
+    this.loadSeenPanes();
+  }
+
+  private loadSeenPanes(): void {
+    if (!this.seenPanesFilePath) return;
+    try {
+      if (existsSync(this.seenPanesFilePath)) {
+        const raw = readFileSync(this.seenPanesFilePath, "utf-8");
+        const list = JSON.parse(raw);
+        if (Array.isArray(list)) {
+          this.seenPanes = new Set(list.filter((x): x is string => typeof x === "string"));
+        }
+      }
+    } catch {}
+  }
+
+  private saveSeenPanes(): void {
+    if (!this.seenPanesFilePath) return;
+    try {
+      mkdirSync(dirname(this.seenPanesFilePath), { recursive: true });
+      writeFileSync(this.seenPanesFilePath, JSON.stringify(Array.from(this.seenPanes)), "utf-8");
+    } catch {}
   }
 
   public async connect(): Promise<void> {
@@ -420,7 +446,9 @@ export class HerdrClient extends EventEmitter {
       const known = this.knownPanes.get(paneId);
       if (!known) return; // a terminal the window does not show
       const status = this.normalizeStatus(params.data.status);
-      if (status !== "done") this.seenPanes.delete(paneId);
+      if (status !== "done") {
+        if (this.seenPanes.delete(paneId)) this.saveSeenPanes();
+      }
       known.herdrStatus = status;
       // relabelTabs() re-applies the last topology before the next snapshot arrives: keep it current.
       const term = this.lastTopology?.terminals.find((t) => t.address === paneId);
@@ -503,7 +531,14 @@ export class HerdrClient extends EventEmitter {
     }
     for (const id of Array.from(this.stitchedPanes)) if (!nextKnown.has(id)) this.stitchedPanes.delete(id);
     for (const id of Array.from(this.timeoutDemotedAt.keys())) if (!nextKnown.has(id)) this.timeoutDemotedAt.delete(id);
-    for (const id of Array.from(this.seenPanes)) if (nextKnown.get(id)?.herdrStatus !== "done") this.seenPanes.delete(id);
+    let seenChanged = false;
+    for (const id of Array.from(this.seenPanes)) {
+      if (nextKnown.get(id)?.herdrStatus !== "done") {
+        this.seenPanes.delete(id);
+        seenChanged = true;
+      }
+    }
+    if (seenChanged) this.saveSeenPanes();
     const prevKnown = this.knownPanes;
     this.knownPanes = nextKnown;
     this.focusedPaneId = focusedPaneId;
@@ -691,6 +726,7 @@ export class HerdrClient extends EventEmitter {
   public markSeen(paneId: string): void {
     if (this.knownPanes.get(paneId)?.herdrStatus !== "done" || this.seenPanes.has(paneId)) return;
     this.seenPanes.add(paneId);
+    this.saveSeenPanes();
     this.checkReportedStatusChange(paneId, true);
     const state = this.paneStates.get(paneId);
     if (state) this.applyScreen(paneId, state.rawScreen);
