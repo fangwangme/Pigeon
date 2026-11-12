@@ -56,14 +56,14 @@ export class QuotaService {
   }
 
   public getScanIntervalMs(): number {
-    const interval = this.configManager?.getClientConfig().usageScanInterval ?? "5m";
+    const interval = this.configManager?.getClientConfig().usageScanInterval ?? "15m";
     switch (interval) {
       case "1m": return 60_000;
       case "2m": return 120_000;
       case "5m": return 300_000;
       case "10m": return 600_000;
       case "15m": return 900_000;
-      default: return 300_000;
+      default: return 900_000;
     }
   }
 

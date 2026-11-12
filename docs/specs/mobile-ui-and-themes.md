@@ -268,5 +268,5 @@ Behavior and numbers come from `quota-and-usage.md`; this section is the present
 - **额度显示**: 剩余 / 已用 (`client.quotaDisplay`).
 - **列表页显示额度按钮** (`client.quotaButton`).
 - **显示账号信息** (`client.quotaShowAccount`, 默认开启；关闭时额度卡片不显示套餐级别与账号邮箱).
-- **用量统计模式**: 定时扫描 / 实时扫描 (`client.usageScanMode`, 默认 `scheduled`)；在定时扫描模式下提供扫描间隔选择 (**1m**, **2m**, **5m**, **10m**, **15m**，`client.usageScanInterval`，默认 `5m`)。
+- **用量统计模式**: 定时扫描 / 实时扫描 (`client.usageScanMode`, 默认 `scheduled`)；在定时扫描模式下提供扫描间隔选择 (**1m**, **2m**, **5m**, **10m**, **15m**，`client.usageScanInterval`，默认 `15m`)。
 - **查询额度的服务**: Claude Code, Codex, Antigravity, each a switch (`client.quotaProviders`) with a subtitle (**已登录 · <plan>**, or **不查询** when off).
