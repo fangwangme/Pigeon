@@ -7,13 +7,6 @@ import { fileCredentialSource, type CredentialSource } from "./quota/credentials
 const KEYCHAIN_SERVICE = "Claude Code-credentials";
 const DEFAULT_ANTHROPIC_MODELS_URL = "https://api.anthropic.com/v1/models";
 
-const EFFORT_LADDER = ["low", "medium", "high", "xhigh", "max"];
-/** The CLI's own aliases; the CLI resolves them to its current models, so no version is named here. */
-const CLAUDE_MODELS: ModelOption[] = [
-  { id: "opus", label: "Opus", thinkingLevels: EFFORT_LADDER },
-  { id: "sonnet", label: "Sonnet", thinkingLevels: EFFORT_LADDER },
-  { id: "haiku", label: "Haiku" },
-];
 
 /** `pi --help`: the levels `--thinking` takes. */
 const PI_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
@@ -59,7 +52,7 @@ export class ModelCatalog {
   private cachePath?: string;
   private now: () => number;
 
-  private lists = new Map<string, ModelOption[]>([["claude", CLAUDE_MODELS]]);
+  private lists = new Map<string, ModelOption[]>();
   private fetchedAt = new Map<string, number>();
   private filling: Promise<boolean> | null = null;
   /** Log model names that already caused a fill, so a model no source lists cannot loop. */
@@ -79,35 +72,19 @@ export class ModelCatalog {
 
   private loadCache(): void {
     if (!this.cachePath || !existsSync(this.cachePath)) return;
-    try {
-      const raw = readFileSync(this.cachePath, "utf-8");
-      const data = JSON.parse(raw);
-      if (isObj(data)) {
-        for (const [agent, entry] of Object.entries(data)) {
-          if (isObj(entry) && Array.isArray(entry.models)) {
-            this.lists.set(agent, entry.models);
-            if (typeof entry.fetchedAt === "number") {
-              this.fetchedAt.set(agent, entry.fetchedAt);
-            }
-          }
-        }
-      }
-    } catch {}
+    const data: Record<string, { models: ModelOption[]; fetchedAt?: number }> = JSON.parse(readFileSync(this.cachePath, "utf-8"));
+    for (const [agent, entry] of Object.entries(data)) {
+      this.lists.set(agent, entry.models);
+      if (entry.fetchedAt !== undefined) this.fetchedAt.set(agent, entry.fetchedAt);
+    }
   }
 
   private saveCache(): void {
     if (!this.cachePath) return;
-    try {
-      mkdirSync(dirname(this.cachePath), { recursive: true });
-      const data: Record<string, any> = {};
-      for (const [agent, models] of this.lists.entries()) {
-        data[agent] = {
-          models,
-          fetchedAt: this.fetchedAt.get(agent),
-        };
-      }
-      writeFileSync(this.cachePath, JSON.stringify(data, null, 2), "utf-8");
-    } catch {}
+    mkdirSync(dirname(this.cachePath), { recursive: true });
+    const data: Record<string, { models: ModelOption[]; fetchedAt?: number }> = {};
+    for (const [agent, models] of this.lists) data[agent] = { models, fetchedAt: this.fetchedAt.get(agent) };
+    writeFileSync(this.cachePath, JSON.stringify(data, null, 2), "utf-8");
   }
 
   public models(agent: string): ModelOption[] {
@@ -169,13 +146,14 @@ export class ModelCatalog {
         }
       })
     );
+    const fetchedBefore = this.fetchedAt.get("claude");
     let changed = false;
     for (const [agent, list] of results) {
       if (!list || JSON.stringify(list) === JSON.stringify(this.lists.get(agent) ?? [])) continue;
       this.lists.set(agent, list);
       changed = true;
     }
-    if (changed) this.saveCache();
+    if (changed || this.fetchedAt.get("claude") !== fetchedBefore) this.saveCache();
     return changed;
   }
 
@@ -290,43 +268,26 @@ export class ModelCatalog {
     return out;
   }
 
+  /**
+   * Ids from `opencode models`, one `<provider>/<model>` per line; label and effort levels from
+   * OpenCode's models cache, which lists every provider, not only the ones OpenCode offers.
+   */
   private async opencode(): Promise<ModelOption[]> {
-    const cachePath = join(this.home, ".cache", "opencode", "models.json");
-    if (existsSync(cachePath)) {
-      try {
-        const raw = readFileSync(cachePath, "utf-8");
-        const data = JSON.parse(raw);
-        if (isObj(data)) {
-          const out: ModelOption[] = [];
-          for (const [provider, provEntry] of Object.entries(data)) {
-            if (!isObj(provEntry) || !isObj(provEntry.models)) continue;
-            for (const [modelKey, modelEntry] of Object.entries(provEntry.models)) {
-              if (!isObj(modelEntry)) continue;
-              const id = `${provider}/${modelKey}`;
-              const label = typeof modelEntry.name === "string" && modelEntry.name ? modelEntry.name : id;
-              let thinkingLevels: string[] | undefined = undefined;
-              if (Array.isArray(modelEntry.reasoning_options)) {
-                const effortOpt = modelEntry.reasoning_options.find((o: any) => isObj(o) && o.type === "effort");
-                if (effortOpt && Array.isArray(effortOpt.values)) {
-                  thinkingLevels = effortOpt.values.filter((v: unknown): v is string => typeof v === "string");
-                }
-              }
-              out.push({
-                id,
-                label,
-                ...(thinkingLevels !== undefined ? { thinkingLevels } : {}),
-              });
-            }
-          }
-          if (out.length > 0) return out;
-        }
-      } catch {}
-    }
     const lines = await this.run(["opencode", "models"]);
-    return lines.filter((l) => /^[^\s/]+\/\S+$/.test(l)).map((id) => ({ id, label: id }));
+    const ids = lines.filter((l) => /^[^\s/]+\/\S+$/.test(l));
+    const cachePath = join(this.home, ".cache", "opencode", "models.json");
+    const cache = existsSync(cachePath) ? this.readJson(cachePath) : null;
+    return ids.map((id) => {
+      const slash = id.indexOf("/");
+      const entry = isObj(cache) && isObj(cache[id.slice(0, slash)]?.models) ? cache[id.slice(0, slash)].models[id.slice(slash + 1)] : undefined;
+      if (!isObj(entry)) return { id, label: id };
+      const label = typeof entry.name === "string" && entry.name ? entry.name : id;
+      const effort = Array.isArray(entry.reasoning_options) ? entry.reasoning_options.find((o: unknown) => isObj(o) && o.type === "effort") : undefined;
+      const levels = isObj(effort) && Array.isArray(effort.values) ? effort.values.filter((v: unknown): v is string => typeof v === "string") : undefined;
+      return { id, label, ...(levels ? { thinkingLevels: levels } : {}) };
+    });
   }
 
-  /** `agy models`: one `<id>\t<label>` or `<id>   <label>` per line; the label names the effort, e.g. `Gemini 3.8 Flash (High)`. */
   private async agy(): Promise<ModelOption[]> {
     const lines = await this.run(["agy", "models"]);
     const out: ModelOption[] = [];

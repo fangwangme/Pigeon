@@ -281,4 +281,29 @@ describe("Claude and OpenCode model sources (herdr-adapter.md §7.1, issue #21)"
       ["openai/gpt-y", "GPT Y", []],
     ]);
   });
+
+  test("without Claude credentials no Claude model is listed, not even the CLI's aliases (herdr-adapter.md §7.1)", async () => {
+    const { home, env } = agentHome();
+    const catalog = new ModelCatalog({ home, env, keychain: false, cachePath: join(home, "state", "models.json") });
+    await catalog.refresh();
+    expect(catalog.models("claude")).toEqual([]);
+  });
+
+  test("opencode lists only the models `opencode models` offers (herdr-adapter.md §7.1)", async () => {
+    const { home, env } = agentHome();
+    mkdirSync(join(home, ".cache", "opencode"), { recursive: true });
+    writeFileSync(
+      join(home, ".cache", "opencode", "models.json"),
+      JSON.stringify({
+        anthropic: { id: "anthropic", models: { "claude-x": { id: "claude-x", name: "Claude X" }, "claude-unused": { id: "claude-unused", name: "Unused" } } },
+        mistral: { id: "mistral", models: { "m-z": { id: "m-z", name: "M Z" } } },
+      })
+    );
+    const catalog = new ModelCatalog({ home, env, keychain: false, cachePath: join(home, "state", "models.json") });
+    await catalog.refresh();
+    expect(catalog.models("opencode").map((m) => [m.id, m.label])).toEqual([
+      ["anthropic/claude-x", "Claude X"],
+      ["openai/gpt-y", "openai/gpt-y"],
+    ]);
+  });
 });

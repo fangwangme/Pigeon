@@ -6,6 +6,7 @@ import { sendAdminCommand } from "../src/cli/index";
 import { AgentAdapterManager } from "../src/server/agent-adapters/index";
 import { ConfigManager } from "../src/server/config-manager";
 import { HerdrClient } from "../src/server/herdr-client";
+import { ModelCatalog } from "../src/server/model-catalog";
 import { PairingManager } from "../src/server/pairing";
 import { PushManager } from "../src/server/push";
 import { SkillScanner } from "../src/server/skill-scanner";
@@ -49,8 +50,17 @@ beforeEach(async () => {
     uploadStore: uploads,
     pairingManager: pairing,
     queueFilePath: join(dir, "queue.json"),
+    modelCatalog: new ModelCatalog({ home: dir, env: { PATH: "" }, keychain: false, cachePath: modelsCache(dir) }),
   });
 });
+
+/** A catalog file with one Claude model, fetched just now, so no source is asked. */
+function modelsCache(home: string): string {
+  const path = join(home, "models.json");
+  const claude = [{ id: "claude-opus-test", label: "Opus Test", thinkingLevels: ["high"] }];
+  writeFileSync(path, JSON.stringify({ claude: { models: claude, fetchedAt: Date.now() } }));
+  return path;
+}
 
 afterEach(async () => {
   server.destroy();
@@ -478,9 +488,9 @@ describe("creating sessions (protocol.md §4.5, herdr-adapter.md §5)", () => {
     const c = fakeWs();
     server.handleOpen(c.ws);
     herdr.handlers["tab.new"] = () => ({ result: { terminal: "p1" } });
-    await send(c.ws, { type: "create_tab_and_agent", id: "n1", payload: { workspaceId: "w1", agentKind: "claude", modelId: "opus", thinking: "high" } });
+    await send(c.ws, { type: "create_tab_and_agent", id: "n1", payload: { workspaceId: "w1", agentKind: "claude", modelId: "claude-opus-test", thinking: "high" } });
     await send(c.ws, { type: "select_view", id: "s", payload: { paneId: "p1" } });
-    expect(c.ofType("pane_bootstrap").at(-1)!.payload.turns.session).toMatchObject({ model: { value: "opus", source: "launch" }, thinking: { value: "high", source: "launch" } });
+    expect(c.ofType("pane_bootstrap").at(-1)!.payload.turns.session).toMatchObject({ model: { value: "claude-opus-test", source: "launch" }, thinking: { value: "high", source: "launch" } });
   });
 });
 
@@ -499,12 +509,6 @@ describe("session actions", () => {
     await send(c.ws, { type: "close_tab", id: "c1", payload: { tabId: "nope" } });
     expect(lastError(c)).toBe("ERR_NOT_FOUND");
     expect(herdr.callsOf("tab.close")).toHaveLength(0);
-  });
-
-  test("agent_set_model is no longer accepted (protocol.md §4.9, issue #21)", async () => {
-    const c = await viewer("p1");
-    await send(c.ws, { type: "agent_set_model", id: "m1", payload: { targetPaneId: "p1", modelId: "sonnet" } });
-    expect(lastError(c)).toBe("ERR_INVALID_PAYLOAD");
   });
 
   test("devices can be listed and revoked from the phone (protocol.md §4.12)", async () => {
