@@ -548,6 +548,66 @@ html[data-mode="standalone"],
   line-height: 1.5;
 }
 
+/* ---------- alert dialog & box ---------- */
+.alert-dialog-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px 16px;
+  animation: fade .18s ease-out;
+}
+.alert-dialog-card {
+  position: relative;
+  z-index: 61;
+  background: var(--surface);
+  border: 1px solid var(--line2);
+  border-radius: 24px;
+  width: 100%;
+  max-width: 400px;
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.45);
+  padding: 20px 20px 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  animation: pop .18s ease-out;
+}
+.alert-dialog-hdr {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.alert-dialog-title {
+  font-size: 17px;
+  font-weight: 700;
+  color: var(--fg);
+  line-height: 1.35;
+  margin-top: 4px;
+}
+.alert-box {
+  background: var(--warnbg);
+  color: var(--warn);
+  border: 1px solid rgba(242, 180, 92, 0.32);
+  border-radius: 14px;
+  padding: 12px 14px;
+  font-size: 13.5px;
+  line-height: 1.5;
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  word-break: break-word;
+  white-space: pre-wrap;
+  max-height: 240px;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+}
+.alert-dialog-foot {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 4px;
+}
+
 /* ---------- temporary metrics overlay ---------- */
 .metrics-overlay {
   position: fixed;

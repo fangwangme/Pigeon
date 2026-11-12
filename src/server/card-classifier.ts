@@ -37,6 +37,8 @@ const NUMBERED_OPTION_RE = /^(?:\[(\d+)\]|\((\d+)\)|(\d+)[.)])\s+(.+)$/;
 const PROMPT_HINT_RE = /(esc|enter|tab|↑|↓|to cancel|to select|to confirm|to navigate|ctrl\+)/i;
 const BORDER_ONLY_RE = /^[\s─━│┃╭╮╰╯┌┐└┘├┤═║╔╗╚╝-]*$/;
 const TOOL_CALL_RE = /^([A-Za-z_][A-Za-z0-9_.-]*)\((.*)\)$/;
+const STATUS_LINE_RE = /(ctx:\d+%|token:\d+|mode:(?:auto|plan|bypass))\b/i;
+const BARE_PROMPT_RE = /^[>❯›▶$]\s*$/;
 
 /** Removes TUI box-drawing side borders so `│ Do you want to proceed? │` reads as plain text. */
 function unbox(line: string): string {
@@ -154,13 +156,32 @@ function buildInteraction(prompt: PromptParse, title = ""): InteractionCardData 
  * still needs something to act on: a card with the screen tail and the raw key pad, no choices.
  */
 export function buildUnrecognizedPrompt(rawScreen: string): InteractionCardData {
-  const tail = stripAnsi(rawScreen)
+  const allLines = stripAnsi(rawScreen)
     .split("\n")
     .map((l) => l.trimEnd())
-    .filter((l) => l.trim() && !BORDER_ONLY_RE.test(l.trim()))
-    .slice(-6);
-  const question = tail.length > 0 ? unbox(tail[tail.length - 1]).trim() : "";
-  return buildInteraction({ question, payload: tail.slice(0, -1).map((l) => unbox(l)).join("\n"), options: [], fallbackKeys: DEFAULT_FALLBACK_KEYS });
+    .filter((l) => {
+      const trimmed = l.trim();
+      if (!trimmed || BORDER_ONLY_RE.test(trimmed)) return false;
+      if (BARE_PROMPT_RE.test(trimmed)) return false;
+      if (STATUS_LINE_RE.test(trimmed)) return false;
+      if (/^Pigeon\s+main/i.test(trimmed)) return false;
+      return true;
+    });
+
+  const tail = allLines.slice(-8);
+  const text = tail.join("\n").toLowerCase();
+  const isError = /error|fail|capacity|limit|quota|exception|unavailable/i.test(text);
+
+  let title = "";
+  let question = "";
+  if (isError) {
+    title = "Agent Error";
+    question = tail[0] ? unbox(tail[0]).trim() : "Agent Error";
+  } else {
+    question = tail.length > 0 ? unbox(tail[tail.length - 1]).trim() : "";
+  }
+  const payload = tail.map((l) => unbox(l)).join("\n");
+  return buildInteraction({ question, payload, options: [], fallbackKeys: DEFAULT_FALLBACK_KEYS }, title);
 }
 
 export class CardClassifier {

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { CardClassifier } from "../src/server/card-classifier";
+import { CardClassifier, buildUnrecognizedPrompt } from "../src/server/card-classifier";
 
 // herdr-adapter.md §8 (screen parse rules) and protocol.md §4.1 (answering prompts).
 const classifier = new CardClassifier();
@@ -108,5 +108,24 @@ describe("what is a prompt (herdr-adapter.md §8.2)", () => {
       "",
     ].join("\n");
     expect(classify(idle).pendingInteraction).toBeNull();
+  });
+
+  test("buildUnrecognizedPrompt filters status lines and extracts error dialog cleanly", () => {
+    const screen = [
+      "╭───────────────────────────────────────────╮",
+      "│ No capacity available for model gemini-3. │",
+      "│ 8-flash-medium on the server)             │",
+      "│ Error ID: 56ffdbc0-8965-4219-8736-d0eb    │",
+      "╰───────────────────────────────────────────╯",
+      ">",
+      "Pigeon main ctx:14%/1M token:672k Gemini 3.8 Flash (Medium) mode:auto",
+    ].join("\n");
+    const prompt = buildUnrecognizedPrompt(screen);
+    expect(prompt.title).toBe("Agent Error");
+    expect(prompt.question).toContain("No capacity available");
+    expect(prompt.question).not.toContain("mode:auto");
+    expect(prompt.payload).toContain("Error ID: 56ffdbc0");
+    expect(prompt.payload).not.toContain("mode:auto");
+    expect(prompt.options).toHaveLength(0);
   });
 });

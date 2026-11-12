@@ -165,8 +165,13 @@ export const en = {
 
   "prompt.notSent": "Not sent",
   "prompt.inTerminal": "Handle in terminal",
+  "prompt.viewTerminal": "View in terminal",
   "prompt.permission": "Needs permission",
   "prompt.waiting": "Agent is waiting",
+  "prompt.error": "Agent Error",
+  "prompt.alert": "Notice",
+  "prompt.dismiss": "Close",
+  "prompt.openDialog": "Open dialog",
   "prompt.mismatch": "The options on screen don't match this question; handle it in the terminal",
   "prompt.prev": "Previous question",
   "prompt.next": "Next question",

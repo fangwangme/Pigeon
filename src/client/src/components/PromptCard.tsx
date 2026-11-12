@@ -1,6 +1,6 @@
 import { createMemo, createSignal, For, Show } from "solid-js";
 import { openTerminal, showToast, state } from "../state/store";
-import { respondInteraction } from "../state/ws";
+import { request, respondInteraction } from "../state/ws";
 import type { InteractionCardData, NormalizedQuestion, NormalizedToolCall } from "../../../types/protocol";
 import { focusComposer } from "./Composer";
 import { Markdown, openToolDetail } from "./Transcript";
@@ -242,11 +242,131 @@ function PlanCard(props: { p: InteractionCardData; markdown: string }) {
   );
 }
 
+function isAlertPrompt(p: InteractionCardData): boolean {
+  if (p.options.length > 0) return false;
+  return !pendingCall();
+}
+
+function cleanAlertInfo(p: InteractionCardData) {
+  const raw = [p.question, p.payload].filter(Boolean).join("\n");
+  const lines = raw
+    .split("\n")
+    .map((l) => l.trim())
+    .filter((l) => {
+      if (!l) return false;
+      if (/^[>❯›▶$]\s*$/.test(l)) return false;
+      if (/(mode:auto|mode:plan|mode:bypass|ctx:\d+%|token:\d+)/i.test(l)) return false;
+      if (/^Pigeon\s+main/i.test(l)) return false;
+      return true;
+    });
+
+  const fullText = lines.join("\n");
+  const isError = /error|fail|capacity|limit|quota|exception|unavailable/i.test(fullText);
+
+  let title = p.title && !/(mode:auto|ctx:|token:)/i.test(p.title) ? p.title : "";
+  if (!title) {
+    title = isError ? t("prompt.error") : t("prompt.alert");
+  }
+
+  const message = lines.length > 0 ? lines.join("\n") : (p.payload || p.question || t("prompt.waiting"));
+  return { title, message, isError };
+}
+
+function useDismissAlert() {
+  const dismiss = () => {
+    if (state.activePaneId) {
+      request({
+        type: "agent_send_keys",
+        payload: { targetPaneId: state.activePaneId, keys: ["escape"] },
+      }).catch((e) => showToast(e.message || t("prompt.notSent")));
+    }
+  };
+  return dismiss;
+}
+
+function AlertDialogCard(props: { p: InteractionCardData }) {
+  const [showModal, setShowModal] = createSignal(true);
+  const info = () => cleanAlertInfo(props.p);
+  const dismiss = useDismissAlert();
+
+  const handleClose = () => {
+    setShowModal(false);
+    dismiss();
+  };
+
+  return (
+    <>
+      <Show when={showModal()}>
+        <div class="alert-dialog-overlay" role="dialog" aria-modal="true">
+          <div class="scrim" onClick={handleClose} />
+          <div class="alert-dialog-card">
+            <div class="alert-dialog-hdr">
+              <span class="wbadge">
+                <span class="wd" />
+                {info().isError ? t("prompt.error") : t("prompt.alert")}
+              </span>
+              <button class="cbtn" aria-label={t("common.close")} onClick={handleClose}>
+                <Icon name="x" />
+              </button>
+            </div>
+            <div class="alert-dialog-body">
+              <div class="alert-dialog-title">{info().title}</div>
+              <div class="alert-box">
+                {info().message}
+              </div>
+            </div>
+            <div class="alert-dialog-foot">
+              <button class="btn acc blk" onClick={handleClose}>
+                {t("prompt.dismiss")}
+              </button>
+              <button class="btn ghost blk" onClick={() => { setShowModal(false); openTerminal(); }}>
+                <Icon name="term" sm />
+                {t("prompt.viewTerminal")}
+              </button>
+            </div>
+          </div>
+        </div>
+      </Show>
+
+      <div class="qcard">
+        <div class="qtop">
+          <span class="wbadge">
+            <span class="wd" />
+            {info().isError ? t("prompt.error") : t("prompt.alert")}
+          </span>
+          <span style={{ flex: 1 }} />
+          <Show when={!showModal()}>
+            <button class="lnk" onClick={() => setShowModal(true)}>
+              {t("prompt.openDialog")}
+            </button>
+          </Show>
+        </div>
+        <div class="qbody">
+          <div class="qtitle">{info().title}</div>
+          <div class="alert-box">
+            {info().message}
+          </div>
+        </div>
+        <div class="optbtns" style={{ "margin-top": "12px" }}>
+          <button class="btn acc blk" onClick={handleClose}>
+            {t("prompt.dismiss")}
+          </button>
+          <button class="btn ghost blk" onClick={openTerminal}>
+            <Icon name="term" sm />
+            {t("prompt.viewTerminal")}
+          </button>
+        </div>
+      </div>
+    </>
+  );
+}
+
 /** §4: replaces the composer while the pane has a pending interaction. Returns null when collapsed. */
 export function PromptCard(props: { collapsed: boolean; onCollapse: () => void; onExpand: () => void }) {
   const p = () => state.pendingInteraction!;
   const question = () => lastTurn()?.pendingQuestion;
   const plan = () => lastTurn()?.pendingPlan;
+  const isAlert = () => isAlertPrompt(p());
   return (
     <Show
       when={!props.collapsed || !question()}
@@ -257,7 +377,23 @@ export function PromptCard(props: { collapsed: boolean; onCollapse: () => void; 
         </button>
       }
     >
-      <Show when={question()} keyed fallback={<Show when={plan()} keyed fallback={<PermissionCard p={p()} />}>{(pl) => <PlanCard p={p()} markdown={pl.markdown} />}</Show>}>
+      <Show
+        when={question()}
+        keyed
+        fallback={
+          <Show
+            when={plan()}
+            keyed
+            fallback={
+              <Show when={isAlert()} fallback={<PermissionCard p={p()} />}>
+                <AlertDialogCard p={p()} />
+              </Show>
+            }
+          >
+            {(pl) => <PlanCard p={p()} markdown={pl.markdown} />}
+          </Show>
+        }
+      >
         {(q) => <QuestionCard p={p()} q={q} onCollapse={props.onCollapse} />}
       </Show>
     </Show>
