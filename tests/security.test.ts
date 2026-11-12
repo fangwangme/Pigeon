@@ -525,4 +525,55 @@ describe("daemon log file (architecture.md §4.6, issue #21)", () => {
       await daemon.stop();
     }
   });
+
+  test("core events and requests are recorded in the log file (architecture.md §4.6)", async () => {
+    const dir = tempDir("daemon-log-events");
+    const logPath = join(dir, "pigeon.log");
+    const port = 43000 + Math.floor(Math.random() * 2000);
+    const origin = `http://127.0.0.1:${port}`;
+    const daemon = new PigeonDaemon({
+      configManager: new ConfigManager(join(dir, "config.json"), { HOME: dir }),
+      port,
+      publicBaseUrl: "https://pigeon.example.ts.net",
+      herdrAppSocketPath: join(dir, "no-app.sock"),
+      herdrCoreSocketPath: join(dir, "no-core.sock"),
+      adminSocketPath: join(dir, "admin.sock"),
+      devicesFilePath: join(dir, "devices.json"),
+      vapidPath: join(dir, "vapid.json"),
+      embeddedHtml: "<!doctype html><title>Pigeon</title><link rel=\"apple-touch-icon\" href=\"/icon-192.png\" /><link rel=\"icon\" type=\"image/svg+xml\" href=\"/icon.svg\" />",
+      logPath,
+    });
+    await daemon.start();
+    try {
+      // 1. Pairing token exchange
+      const { token } = daemon.pairingManager.createPairingToken();
+      const pairRes = await daemon.fetch(new Request(`${origin}/api/pair`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Host: `127.0.0.1:${port}` },
+        body: JSON.stringify({ code: token, deviceName: "Test Phone" }),
+      }));
+      expect(pairRes.status).toBe(200);
+
+      // 2. Upload file
+      const uploadRes = await daemon.fetch(new Request(`${origin}/api/uploads`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "text/plain",
+          "X-Pigeon-Filename": "notes.txt",
+          Host: `127.0.0.1:${port}`,
+          Origin: origin,
+          Cookie: pairRes.headers.get("Set-Cookie")!.split(";")[0],
+        },
+        body: "Hello log test",
+      }));
+      expect(uploadRes.status).toBe(200);
+
+      const logContent = readFileSync(logPath, "utf-8");
+      expect(logContent).toContain('pairing success: device "Test Phone"');
+      expect(logContent).toContain("upload received:");
+      expect(logContent).toContain("notes.txt");
+    } finally {
+      await daemon.stop();
+    }
+  });
 });

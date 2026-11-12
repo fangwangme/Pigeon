@@ -406,6 +406,7 @@ export class PigeonDaemon {
     this.herdrClient = new HerdrClient({
       appSocketPath: this.config.herdrAppSocketPath,
       coreSocketPath: this.config.herdrCoreSocketPath,
+      logger: (msg) => this.log(msg),
     });
     const quotaService = new QuotaService({ configManager: this.configManager });
     const usageService = new UsageService({ configManager: this.configManager });
@@ -431,7 +432,10 @@ export class PigeonDaemon {
       },
     });
     this.pushManager = new PushManager(this.config.vapidPath, this.config.pushSubscriptionsPath, this.config.publicBaseUrl);
-    this.pairingManager.on("device_revoked", (deviceId: string) => this.pushManager.removeSubscriptionByDevice(deviceId));
+    this.pairingManager.on("device_revoked", (deviceId: string) => {
+      this.log(`device revoked: ${deviceId}`);
+      this.pushManager.removeSubscriptionByDevice(deviceId);
+    });
     this.uploadStore = new UploadStore(this.config.uploadsDir);
     this.wsServer = new WsServer({
       buildId: createHash("sha256").update(this.html).digest("hex").slice(0, 12),
@@ -447,6 +451,7 @@ export class PigeonDaemon {
       environmentKind: this.config.insecureDev ? "dev" : (isProduction ? undefined : "test"),
       quotaService,
       usageService,
+      logger: (msg) => this.log(msg),
     });
   }
 
@@ -609,7 +614,11 @@ export class PigeonDaemon {
         return Response.json({ success: false, error: "Expected { code: string, deviceName?: string }" }, { status: 400 });
       }
       const res = this.pairingManager.exchangeToken(code, deviceName || "Mobile Chrome", this.parseCookie(req)[cookieName]);
-      if (!res.success) return Response.json({ success: false, error: res.error }, { status: 400 });
+      if (!res.success) {
+        this.log(`pairing failed: ${res.error}`);
+        return Response.json({ success: false, error: res.error }, { status: 400 });
+      }
+      this.log(`pairing success: device "${deviceName || "Mobile Chrome"}" (id=${res.deviceId})`);
       const secureFlag = isHttps ? "; Secure" : "";
       return Response.json(
         { success: true, deviceId: res.deviceId },
@@ -635,6 +644,7 @@ export class PigeonDaemon {
       if (bytes.length === 0) return Response.json({ error: "Empty file" }, { status: 400 });
       const mime = (req.headers.get("content-type") || "application/octet-stream").split(";")[0].trim();
       const info = this.uploadStore.save({ name, mime, bytes });
+      this.log(`upload received: ${info.id} (${info.name}, ${info.size} bytes, mime=${info.mime})`);
       return Response.json({ id: info.id, name: info.name, size: info.size, mime: info.mime });
     }
 
@@ -680,6 +690,7 @@ export class PigeonDaemon {
       }
       if (!isPushSubscription(sub)) return Response.json({ success: false, error: "Invalid push subscription" }, { status: 400 });
       this.pushManager.addSubscription({ ...sub, deviceId: session.deviceId });
+      this.log(`push subscribed: device ${session.deviceId}`);
       return Response.json({ success: true });
     }
 
@@ -696,6 +707,7 @@ export class PigeonDaemon {
         return Response.json({ success: false, error: "Invalid endpoint" }, { status: 400 });
       }
       this.pushManager.removeSubscription(body.endpoint);
+      this.log(`push unsubscribed: device ${session.deviceId}`);
       return Response.json({ success: true });
     }
 

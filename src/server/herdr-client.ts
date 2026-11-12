@@ -34,6 +34,7 @@ export interface HerdrClientOptions {
   debounceMs?: number;
   panePollMs?: number;
   requestTimeoutMs?: number;
+  logger?: (msg: string) => void;
 }
 
 /**
@@ -128,6 +129,9 @@ export class HerdrClient extends EventEmitter {
   private monitoredPaneIds = new Set<string>();
   private workspaceFolders = new Map<string, string>();
   private tabIds = new Set<string>();
+  private logger?: (msg: string) => void;
+  private lastReportedStatus = new Map<string, AgentStatus>();
+  private lastHadPrompt = new Map<string, boolean>();
 
   constructor(options: HerdrClientOptions) {
     super();
@@ -136,6 +140,7 @@ export class HerdrClient extends EventEmitter {
     this.debounceMs = options.debounceMs ?? 200;
     this.panePollMs = options.panePollMs ?? 1000;
     this.requestTimeoutMs = options.requestTimeoutMs ?? REQUEST_TIMEOUT_MS;
+    this.logger = options.logger;
   }
 
   public async connect(): Promise<void> {
@@ -192,6 +197,7 @@ export class HerdrClient extends EventEmitter {
     const connected = this.reachable.app && this.reachable.core;
     if (this.connected === connected) return;
     this.connected = connected;
+    this.logger?.(`herdr connection ${connected ? "up" : "down"}`);
     this.emit(connected ? "connected" : "disconnected");
   }
 
@@ -256,6 +262,7 @@ export class HerdrClient extends EventEmitter {
     this.reachable = { app: false, core: false };
     if (this.connected) {
       this.connected = false;
+      this.logger?.("herdr connection down");
       this.emit("disconnected");
     }
     this.stopped = true;
@@ -419,6 +426,7 @@ export class HerdrClient extends EventEmitter {
       const term = this.lastTopology?.terminals.find((t) => t.address === paneId);
       if (term) term.status = params.data.status;
       this.emit("pane_status_changed", { paneId, status });
+      this.checkReportedStatusChange(paneId);
       // The read re-classifies under the new status, which reaches viewers as a new pane_state.
       if (status === "blocked" || this.paneStates.has(paneId)) this.scheduleDebouncedRead(paneId);
       if (this.lastTopology) this.applySnapshot(this.lastTopology);
@@ -506,6 +514,7 @@ export class HerdrClient extends EventEmitter {
       if (prev && prev.herdrStatus !== next.herdrStatus) {
         this.emit("pane_status_changed", { paneId, status: next.herdrStatus });
       }
+      this.checkReportedStatusChange(paneId);
     }
     // herdr-adapter.md §3.1: the App's space folder is where the space was started, not the project.
     const folderOf = (space: (typeof topology.ls.spaces)[number]): string => {
@@ -647,8 +656,26 @@ export class HerdrClient extends EventEmitter {
       revision: (existing?.revision || 0) + 1,
     };
     this.paneStates.set(paneId, payload);
+    this.checkPromptChange(paneId, Boolean(pendingInteraction));
     this.emit("cards_updated", payload);
     if (this.lastTopology) this.applySnapshot(this.lastTopology);
+  }
+
+  private checkReportedStatusChange(paneId: string, seen = false): void {
+    const current = this.reportedStatus(paneId);
+    const prev = this.lastReportedStatus.get(paneId);
+    if (prev !== undefined && prev !== current) {
+      this.logger?.(`pane ${paneId} status change: ${prev} -> ${current}${seen ? " (seen)" : ""}`);
+    }
+    this.lastReportedStatus.set(paneId, current);
+  }
+
+  private checkPromptChange(paneId: string, hasPrompt: boolean): void {
+    const prev = this.lastHadPrompt.get(paneId) ?? false;
+    if (hasPrompt !== prev) {
+      this.lastHadPrompt.set(paneId, hasPrompt);
+      this.logger?.(`pane ${paneId} prompt: ${hasPrompt ? "recognized" : "gone"}`);
+    }
   }
 
   /** Herdr's status, with a seen `done` reported as `idle` (herdr-adapter.md §4). */
@@ -664,6 +691,7 @@ export class HerdrClient extends EventEmitter {
   public markSeen(paneId: string): void {
     if (this.knownPanes.get(paneId)?.herdrStatus !== "done" || this.seenPanes.has(paneId)) return;
     this.seenPanes.add(paneId);
+    this.checkReportedStatusChange(paneId, true);
     const state = this.paneStates.get(paneId);
     if (state) this.applyScreen(paneId, state.rawScreen);
     this.scheduleSnapshot();
@@ -776,6 +804,7 @@ export class HerdrClient extends EventEmitter {
     };
     this.paneClassifyKeys.set(paneId, classifyKey);
     this.paneStates.set(paneId, payload);
+    this.checkPromptChange(paneId, Boolean(pendingInteraction));
     this.emit("cards_updated", payload);
     return payload;
   }
