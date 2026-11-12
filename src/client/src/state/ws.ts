@@ -1,4 +1,4 @@
-import { state, setState, applySyncedClientConfig, openTerminal, setUnread, showToast, writePref } from "./store";
+import { state, setState, applySyncedClientConfig, setUnread, showToast, writePref } from "./store";
 import { load, save, remove, clearAll, sweep, meta, migrateLocalStorageCache, getMemoryPaneView, applyPaneTail, type PaneCacheEntry } from "./pane-cache";
 import type { ClientMessage, ServerMessage, SnapshotPayload, PaneStatePayload, ClientConfig, AgentStatus, HaveInfo, QuotaProviderState } from "../../../types/protocol";
 import { hashTurn } from "../../../types/protocol";
@@ -430,8 +430,8 @@ export function handleServerMessage(msg: ServerMessage): void {
         waiter.resolve(p);
       }
       if (p.approved === false && p.interactionId === state.pendingInteraction?.interactionId) {
-        // The prompt is still on screen after the key was sent: hand over to the terminal view.
-        openTerminal();
+        // mobile-ui-and-themes.md §4.1: the card stays; the user can answer in the composer.
+        showToast(t("prompt.stillWaiting"));
       }
       if (typeof p.version === "number") configVersion = Math.max(configVersion, p.version);
       return;

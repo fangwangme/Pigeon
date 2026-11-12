@@ -165,3 +165,13 @@ describe("pane loading and screen card fallback (mobile-ui-and-themes.md §3.6)"
     expect(state.paneLoaded).toBe(true);
   });
 });
+
+describe("prompt answers (mobile-ui-and-themes.md §4.1)", () => {
+  test("an ack with approved: false keeps the card and never opens the terminal view", () => {
+    setState("pendingInteraction", { id: "c1", kind: "interaction", interactionId: "int_1", title: "", question: "Proceed?", payload: "", fingerprint: "fp_1", options: [], fallbackKeys: [] } as any);
+    setState("terminalOpen", false);
+    handleServerMessage({ type: "ack", replyTo: "x1", payload: { approved: false, interactionId: "int_1" } } as any);
+    expect(state.terminalOpen).toBe(false);
+    expect(state.pendingInteraction?.interactionId).toBe("int_1");
+  });
+});

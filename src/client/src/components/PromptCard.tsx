@@ -1,5 +1,5 @@
 import { createMemo, createSignal, For, Show } from "solid-js";
-import { openTerminal, showToast, state } from "../state/store";
+import { showToast, state } from "../state/store";
 import { respondInteraction, respondTranscriptQuestions } from "../state/ws";
 import type { InteractionCardData, NormalizedQuestion, NormalizedToolCall } from "../../../types/protocol";
 import { focusComposer } from "./Composer";
@@ -40,13 +40,9 @@ function useAnswer(p: () => InteractionCardData) {
   return { sending, answer };
 }
 
-function TerminalLink() {
-  return (
-    <button class="btn ghost blk" onClick={openTerminal}>
-      <Icon name="term" sm />
-      {t("prompt.inTerminal")}
-    </button>
-  );
+/** §4.1: what a tap cannot answer is answered by typing in the composer. */
+function ReplyBelow() {
+  return <p class="note" style={{ margin: "4px 2px 0" }}>{t("prompt.replyBelow")}</p>;
 }
 
 function Options(props: { p: InteractionCardData }) {
@@ -60,7 +56,6 @@ function Options(props: { p: InteractionCardData }) {
           </button>
         )}
       </For>
-      <TerminalLink />
     </div>
   );
 }
@@ -91,7 +86,7 @@ function PermissionCard(props: { p: InteractionCardData }) {
           </button>
         </Show>
       </div>
-      <Show when={props.p.options.length} fallback={<TerminalLink />}>
+      <Show when={props.p.options.length} fallback={<ReplyBelow />}>
         <Options p={props.p} />
       </Show>
     </div>
@@ -201,7 +196,6 @@ function QuestionCard(props: { p: InteractionCardData; q: NormalizedQuestion; on
     const opt = label ? matchScreenOption(props.p.options, label) : undefined;
     if (!opt) {
       showToast(t("prompt.mismatch"));
-      openTerminal();
       return;
     }
     setPage(null);
@@ -257,18 +251,8 @@ function QuestionCard(props: { p: InteractionCardData; q: NormalizedQuestion; on
         </Show>
       </div>
       <div class="qfoot">
-        <button class="lnk" onClick={openTerminal}>
-          <Icon name="term" sm />
-          {t("agent.terminal")}
-        </button>
-        <Show
-          when={!q()?.multiSelect}
-          fallback={
-            <button class="btn acc" onClick={openTerminal}>
-              {t("prompt.inTerminal")}
-            </button>
-          }
-        >
+        <span style={{ flex: 1 }} />
+        <Show when={!q()?.multiSelect} fallback={<ReplyBelow />}>
           <button class="btn acc" disabled={!picked()[cur()] || !!sending() || cur() !== onScreen()} onClick={submit}>
             {sending() ? t("common.sending") : cur() === qs().length - 1 ? t("prompt.submit") : t("prompt.nextShort")}
           </button>
@@ -299,7 +283,7 @@ function PlanCard(props: { p: InteractionCardData; markdown: string }) {
         </div>
       </div>
       <div style={{ "margin-top": "10px" }}>
-        <Show when={props.p.options.length} fallback={<TerminalLink />}>
+        <Show when={props.p.options.length} fallback={<ReplyBelow />}>
           <Options p={props.p} />
         </Show>
       </div>
