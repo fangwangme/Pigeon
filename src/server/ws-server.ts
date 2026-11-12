@@ -180,17 +180,7 @@ export class WsServer {
         if (hasUser) this.transitionQueue(delta.paneId, { type: "user_turn" });
       }
       this.syncTranscriptInteraction(delta.paneId);
-      const wasPaused = this.wasQueuePaused.get(delta.paneId) ?? false;
-      const nowPaused = this.isQueuePaused(delta.paneId);
-      this.wasQueuePaused.set(delta.paneId, nowPaused);
-      if (!wasPaused && nowPaused) {
-        this.logger?.(`${this.paneLogLabel(delta.paneId)} queue: paused (error in transcript)`);
-      }
-      if (wasPaused && !nowPaused) {
-        this.logger?.(`${this.paneLogLabel(delta.paneId)} queue: unpaused`);
-        this.sendQueue(delta.paneId);
-        this.kickQueue(delta.paneId);
-      }
+      this.updateQueuePause(delta.paneId);
       this.maybeSendPaneTail(delta.paneId);
     });
     this.paneStore.on("session_changed", (paneId: string) => {
@@ -204,17 +194,7 @@ export class WsServer {
       };
       this.sendToSubscribers(paneId, { type: "normalized_turns", payload: lightPayload });
       this.syncTranscriptInteraction(paneId);
-      const wasPaused = this.wasQueuePaused.get(paneId) ?? false;
-      const nowPaused = this.isQueuePaused(paneId);
-      this.wasQueuePaused.set(paneId, nowPaused);
-      if (!wasPaused && nowPaused) {
-        this.logger?.(`${this.paneLogLabel(paneId)} queue: paused (error in transcript)`);
-      }
-      if (wasPaused && !nowPaused) {
-        this.logger?.(`${this.paneLogLabel(paneId)} queue: unpaused`);
-        this.sendQueue(paneId);
-        this.kickQueue(paneId);
-      }
+      this.updateQueuePause(paneId);
       this.maybeSendPaneTail(paneId);
     });
 
@@ -513,14 +493,10 @@ export class WsServer {
       case "queue_resume": {
         const { paneId } = msg.payload;
         if (!this.requireKnownPane(ws, msg.id, paneId)) return;
-        const currentFp = this.getErrorFingerprint(paneId);
-        if (currentFp) {
-          this.resumedErrorKey.set(paneId, currentFp);
-        }
+        this.releaseQueuePause(paneId);
         this.logger?.(`${this.paneLogLabel(paneId)} queue: resumed`);
         this.sendAck(ws, msg.id, { paneId });
-        this.sendQueue(paneId);
-        this.kickQueue(paneId);
+        this.updateQueuePause(paneId);
         return;
       }
 
@@ -905,6 +881,8 @@ export class WsServer {
     this.syncTranscriptInteraction(paneId);
     const cached = this.herdrClient.getPaneState(paneId);
     const queueItems = (this.queues.get(paneId) ?? []).map((q) => q.item);
+    const queuePaused = this.isQueuePaused(paneId);
+    this.wasQueuePaused.set(paneId, queuePaused);
     const serverMs = Date.now() - startMs;
 
     const lightTurns = turnsPayload
@@ -921,7 +899,7 @@ export class WsServer {
         turns: lightTurns,
         resume: resumePayload,
         queue: queueItems,
-        queuePaused: this.isQueuePaused(paneId),
+        queuePaused,
         state: cached ?? null,
         serverMs,
       },
@@ -1058,6 +1036,7 @@ export class WsServer {
   }
 
   private resumedErrorKey = new Map<string, string>();
+  /** The `paused` viewers last heard in `prompt_queue`. */
   private wasQueuePaused = new Map<string, boolean>();
 
   private getErrorFingerprint(paneId: string): string | null {
@@ -1074,6 +1053,21 @@ export class WsServer {
     const fp = this.getErrorFingerprint(paneId);
     if (!fp) return false;
     return this.resumedErrorKey.get(paneId) !== fp;
+  }
+
+  /** protocol.md §4.2: the current agent error no longer holds the queue. */
+  private releaseQueuePause(paneId: string): void {
+    const fp = this.getErrorFingerprint(paneId);
+    if (fp) this.resumedErrorKey.set(paneId, fp);
+  }
+
+  /** protocol.md §4.2: viewers hear every change of `paused`; a released queue sends its head. */
+  private updateQueuePause(paneId: string): void {
+    const now = this.isQueuePaused(paneId);
+    if ((this.wasQueuePaused.get(paneId) ?? false) === now) return;
+    this.logger?.(`${this.paneLogLabel(paneId)} queue: ${now ? "paused (error in transcript)" : "unpaused"}`);
+    this.sendQueue(paneId);
+    if (!now) this.kickQueue(paneId);
   }
 
   private syncTranscriptInteraction(paneId: string): void {
@@ -1189,6 +1183,12 @@ export class WsServer {
     const queue = this.queues.get(paneId) ?? [];
 
 
+    // protocol.md §4.2: a pane turning `working` releases a paused queue.
+    if (event.type === "status" && event.status === "working") {
+      this.releaseQueuePause(paneId);
+      this.updateQueuePause(paneId);
+    }
+
     if (event.type === "remove_pane") {
       if (queueState.timer) clearTimeout(queueState.timer);
       for (const entry of queue) {
@@ -1242,8 +1242,6 @@ export class WsServer {
       } else if (event.type === "status") {
         if (event.status === "working") {
           queueState.sawWorking = true;
-          const currentFp = this.getErrorFingerprint(paneId);
-          if (currentFp) this.resumedErrorKey.set(paneId, currentFp);
         } else if ((event.status === "idle" || event.status === "done")) {
           // Idle after working settles the head prompt for all panes (protocol §4.2).
           if (queueState.sawWorking) {
@@ -1362,11 +1360,13 @@ export class WsServer {
   }
 
   private sendQueue(paneId: string): void {
+    const paused = this.isQueuePaused(paneId);
+    this.wasQueuePaused.set(paneId, paused);
     this.sendToSubscribers(paneId, {
       type: "prompt_queue",
       payload: {
         paneId,
-        paused: this.isQueuePaused(paneId),
+        paused,
         items: (this.queues.get(paneId) ?? []).map((q) => q.item),
       },
     });

@@ -651,6 +651,22 @@ describe("transcript questions, agent errors and turn times (issue #21)", () => 
     expect(JSON.stringify(sent.params)).toContain("retry please");
   });
 
+  test("a paused queue is released when the pane turns working (protocol.md §4.2)", async () => {
+    const { home, proj } = claudeHome(rateLimited);
+    const pane = { paneId: "p1", app: "claude-code", cwd: proj, pid: 4242 };
+    const { herdr, client, server, open } = await setup(home, [{ ...pane, state: "idle" }]);
+    herdr.handlers["terminal.send"] = () => ({ result: {} });
+    const c = await open("p1");
+    await server.handleMessage(c.ws, JSON.stringify({ type: "agent_prompt", id: "a1", payload: { targetPaneId: "p1", text: "retry please" } }));
+    expect(c.ofType("prompt_queue").at(-1)?.payload).toMatchObject({ paused: true });
+
+    client.applySnapshot(topologyOf([{ ...pane, state: "working" }], { folder: "/work" }));
+    expect(c.ofType("prompt_queue").at(-1)?.payload).toMatchObject({ paused: false });
+    client.applySnapshot(topologyOf([{ ...pane, state: "idle" }], { folder: "/work" }));
+    const sent = await until(() => herdr.calls.find((call) => call.method === "terminal.send"));
+    expect(JSON.stringify(sent.params)).toContain("retry please");
+  });
+
   test("agent_set_model is no longer accepted", async () => {
     const { home, proj } = claudeHome(claudeTranscript);
     const { server, open } = await setup(home, [{ paneId: "p1", app: "claude-code", cwd: proj, pid: 4242 }]);
