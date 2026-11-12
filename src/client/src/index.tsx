@@ -30,16 +30,41 @@ function resetWindowScroll() {
   }
 }
 
+function updateViewportMetrics() {
+  if (typeof window === "undefined") return;
+  const vv = window.visualViewport;
+  if (!vv) return;
+
+  const keyboardHeight = Math.max(0, window.innerHeight - vv.height - (vv.offsetTop || 0));
+
+  if (keyboardHeight > 100) {
+    document.documentElement.style.setProperty("--keyboard-height", `${Math.round(keyboardHeight)}px`);
+    document.documentElement.setAttribute("data-keyboard", "open");
+  } else {
+    document.documentElement.style.setProperty("--keyboard-height", "0px");
+    document.documentElement.removeAttribute("data-keyboard");
+    resetWindowScroll();
+  }
+}
+
 if (typeof window !== "undefined") {
   const isStandalone = window.matchMedia("(display-mode: standalone)").matches || Boolean((navigator as any).standalone);
   if (isStandalone) {
     document.documentElement.setAttribute("data-mode", "standalone");
   }
 
+  window.addEventListener("focusin", (e) => {
+    const target = e.target as HTMLElement | null;
+    if (target?.matches?.("input, textarea, [contenteditable]")) {
+      setTimeout(updateViewportMetrics, 60);
+      setTimeout(updateViewportMetrics, 200);
+      setTimeout(updateViewportMetrics, 400);
+    }
+  });
+
   window.addEventListener("focusout", () => {
-    resetWindowScroll();
-    requestAnimationFrame(resetWindowScroll);
-    setTimeout(resetWindowScroll, 100);
+    setTimeout(updateViewportMetrics, 50);
+    setTimeout(updateViewportMetrics, 200);
     setTimeout(resetWindowScroll, 350);
   });
 
@@ -63,8 +88,14 @@ if (typeof window !== "undefined") {
   }, { passive: false });
 
   if (window.visualViewport) {
-    window.visualViewport.addEventListener("resize", resetWindowScroll);
-    window.visualViewport.addEventListener("scroll", resetWindowScroll);
+    window.visualViewport.addEventListener("resize", () => {
+      updateViewportMetrics();
+      resetWindowScroll();
+    });
+    window.visualViewport.addEventListener("scroll", () => {
+      updateViewportMetrics();
+      resetWindowScroll();
+    });
   }
 }
 
@@ -205,11 +236,16 @@ function Toast() {
 function MetricsOverlay() {
   const [scrollY, setScrollY] = createSignal(typeof window !== "undefined" ? window.scrollY : 0);
   const [vvTop, setVvTop] = createSignal(typeof window !== "undefined" && window.visualViewport ? window.visualViewport.offsetTop : 0);
+  const [kb, setKb] = createSignal(0);
 
   onMount(() => {
     const update = () => {
       setScrollY(window.scrollY);
       setVvTop(window.visualViewport ? window.visualViewport.offsetTop : 0);
+      if (window.visualViewport) {
+        const h = Math.max(0, window.innerHeight - window.visualViewport.height - (window.visualViewport.offsetTop || 0));
+        setKb(Math.round(h));
+      }
     };
     window.addEventListener("scroll", update, { passive: true });
     window.visualViewport?.addEventListener("scroll", update, { passive: true });
@@ -232,7 +268,7 @@ function MetricsOverlay() {
 
   return (
     <div class="metrics-overlay">
-      scrollY: {scrollY()} | vvTop: {vvTop()}
+      scrollY: {scrollY()} | vvTop: {vvTop()} | kb: {kb()}
     </div>
   );
 }

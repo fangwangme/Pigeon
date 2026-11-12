@@ -241,21 +241,17 @@ export function SessionPage() {
     sendKeys(keys);
   };
 
-  const modelValue = () => state.session?.model.value ?? null;
+  const modelValue = () => state.session?.model.value ?? pane()?.model ?? null;
   const thinkingValue = () => state.session?.thinking.value ?? null;
   const subText = () => {
     const parts: string[] = [];
-    if ((tab()?.panes.length ?? 0) > 1 && pane()) {
+    if (pane()) {
       parts.push(paneLabel(pane()!));
     }
     const m = modelValue() ? formatModelName(pane()?.agent, modelValue()) : null;
     const th = thinkingValue();
-    const modelThinking = [m, th].filter(Boolean).join(" · ");
-    if (modelThinking) {
-      parts.push(modelThinking);
-    } else if ((tab()?.panes.length ?? 0) <= 1 && pane()) {
-      parts.push(paneLabel(pane()!));
-    }
+    if (m) parts.push(m);
+    if (th) parts.push(th);
     return parts.join(" · ");
   };
 
