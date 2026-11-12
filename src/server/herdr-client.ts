@@ -665,7 +665,7 @@ export class HerdrClient extends EventEmitter {
     const current = this.reportedStatus(paneId);
     const prev = this.lastReportedStatus.get(paneId);
     if (prev !== undefined && prev !== current) {
-      this.logger?.(`pane ${paneId} status change: ${prev} -> ${current}${seen ? " (seen)" : ""}`);
+      this.logger?.(`${this.paneLogLabel(paneId)} status change: ${prev} -> ${current}${seen ? " (seen)" : ""}`);
     }
     this.lastReportedStatus.set(paneId, current);
   }
@@ -674,7 +674,7 @@ export class HerdrClient extends EventEmitter {
     const prev = this.lastHadPrompt.get(paneId) ?? false;
     if (hasPrompt !== prev) {
       this.lastHadPrompt.set(paneId, hasPrompt);
-      this.logger?.(`pane ${paneId} prompt: ${hasPrompt ? "recognized" : "gone"}`);
+      this.logger?.(`${this.paneLogLabel(paneId)} prompt: ${hasPrompt ? "recognized" : "gone"}`);
     }
   }
 
@@ -708,6 +708,35 @@ export class HerdrClient extends EventEmitter {
 
   public getSnapshot(): SnapshotPayload {
     return this.currentSnapshot;
+  }
+
+  public getTabLabelForPane(paneId: string): string | null {
+    if (!this.currentSnapshot?.workspaces) return null;
+    for (const ws of this.currentSnapshot.workspaces) {
+      for (const tab of ws.tabs) {
+        if (tab.panes.some((p) => p.id === paneId)) {
+          return tab.label;
+        }
+      }
+    }
+    return null;
+  }
+
+  public getTabLabel(tabId: string): string | null {
+    if (!this.currentSnapshot?.workspaces) return null;
+    for (const ws of this.currentSnapshot.workspaces) {
+      for (const tab of ws.tabs) {
+        if (tab.id === tabId) {
+          return tab.label;
+        }
+      }
+    }
+    return null;
+  }
+
+  public paneLogLabel(paneId: string): string {
+    const label = this.getTabLabelForPane(paneId);
+    return label ? `pane ${paneId} (${label})` : `pane ${paneId}`;
   }
 
   public getFocusedPaneId(): string | null {

@@ -184,10 +184,10 @@ export class WsServer {
       const nowPaused = this.isQueuePaused(delta.paneId);
       this.wasQueuePaused.set(delta.paneId, nowPaused);
       if (!wasPaused && nowPaused) {
-        this.logger?.(`pane ${delta.paneId} queue: paused (error in transcript)`);
+        this.logger?.(`${this.paneLogLabel(delta.paneId)} queue: paused (error in transcript)`);
       }
       if (wasPaused && !nowPaused) {
-        this.logger?.(`pane ${delta.paneId} queue: unpaused`);
+        this.logger?.(`${this.paneLogLabel(delta.paneId)} queue: unpaused`);
         this.sendQueue(delta.paneId);
         this.kickQueue(delta.paneId);
       }
@@ -195,7 +195,7 @@ export class WsServer {
     });
     this.paneStore.on("session_changed", (paneId: string) => {
       const bound = this.paneStore.boundSession(paneId);
-      this.logger?.(`pane ${paneId} session binding: ${bound ? `bound ${bound.sessionId} (${bound.agent})` : "unbound"}`);
+      this.logger?.(`${this.paneLogLabel(paneId)} session binding: ${bound ? `bound ${bound.sessionId} (${bound.agent})` : "unbound"}`);
       const payload = this.paneStore.getPayload(paneId, this.herdrClient.getPaneAgentKind(paneId));
       const lightPayload: NormalizedTurnsPayload = {
         ...payload,
@@ -208,10 +208,10 @@ export class WsServer {
       const nowPaused = this.isQueuePaused(paneId);
       this.wasQueuePaused.set(paneId, nowPaused);
       if (!wasPaused && nowPaused) {
-        this.logger?.(`pane ${paneId} queue: paused (error in transcript)`);
+        this.logger?.(`${this.paneLogLabel(paneId)} queue: paused (error in transcript)`);
       }
       if (wasPaused && !nowPaused) {
-        this.logger?.(`pane ${paneId} queue: unpaused`);
+        this.logger?.(`${this.paneLogLabel(paneId)} queue: unpaused`);
         this.sendQueue(paneId);
         this.kickQueue(paneId);
       }
@@ -242,7 +242,7 @@ export class WsServer {
             if (paneFacts && currentCreatedMs === entry.created_ms) {
               kept.push(entry);
             } else {
-              this.logger?.(`pane ${paneId} queue: dropped restored ${entry.item.queueId} (terminal creation time mismatch)`);
+              this.logger?.(`${this.paneLogLabel(paneId)} queue: dropped restored ${entry.item.queueId} (terminal creation time mismatch)`);
               console.log(`[Pigeon] Dropping restored queue item ${entry.item.queueId} for ${paneId}: terminal creation time mismatch (stored ${entry.created_ms}, current ${currentCreatedMs})`);
             }
           }
@@ -336,6 +336,10 @@ export class WsServer {
       }
     }
     return { event, agent: null, workspace: "", tab: "", paneId };
+  }
+
+  private paneLogLabel(paneId: string): string {
+    return this.herdrClient.paneLogLabel(paneId);
   }
 
   public handleOpen(ws: Ws): void {
@@ -513,7 +517,7 @@ export class WsServer {
         if (currentFp) {
           this.resumedErrorKey.set(paneId, currentFp);
         }
-        this.logger?.(`pane ${paneId} queue: resumed`);
+        this.logger?.(`${this.paneLogLabel(paneId)} queue: resumed`);
         this.sendAck(ws, msg.id, { paneId });
         this.sendQueue(paneId);
         this.kickQueue(paneId);
@@ -531,7 +535,7 @@ export class WsServer {
         queue.splice(idx, 1);
         this.saveQueues();
         this.sendQueue(targetPaneId);
-        this.logger?.(`pane ${targetPaneId} queue: canceled ${queueId}`);
+        this.logger?.(`${this.paneLogLabel(targetPaneId)} queue: canceled ${queueId}`);
         this.sendAck(ws, msg.id, { queueId });
         return;
       }
@@ -560,7 +564,7 @@ export class WsServer {
         entry.send = full;
         this.saveQueues();
         this.sendQueue(targetPaneId);
-        this.logger?.(`pane ${targetPaneId} queue: updated ${queueId}`);
+        this.logger?.(`${this.paneLogLabel(targetPaneId)} queue: updated ${queueId}`);
         this.sendAck(ws, msg.id, { queueId, updated: true });
         return;
       }
@@ -590,7 +594,8 @@ export class WsServer {
           this.sendError(ws, msg.id, ProtocolErrors.ERR_NOT_FOUND, `Unknown tab ${msg.payload.tabId}`);
           return;
         }
-        this.logger?.(`tab renamed: ${msg.payload.tabId} -> "${name}"`);
+        const oldLabel = this.herdrClient.getTabLabel(msg.payload.tabId);
+        this.logger?.(`tab renamed: ${msg.payload.tabId}${oldLabel ? ` ("${oldLabel}")` : ""} -> "${name}"`);
         await this.herdrClient.renameTab(msg.payload.tabId, name);
         this.sendAck(ws, msg.id, { tabId: msg.payload.tabId, name });
         return;
@@ -623,7 +628,7 @@ export class WsServer {
       case "agent_send_keys": {
         const { targetPaneId, keys } = msg.payload;
         if (!this.requireKnownPane(ws, msg.id, targetPaneId)) return;
-        this.logger?.(`pane ${targetPaneId} keys dispatched: ${keys.join(",")}`);
+        this.logger?.(`${this.paneLogLabel(targetPaneId)} keys dispatched: ${keys.join(",")}`);
         await this.herdrClient.sendKeys(targetPaneId, keys);
         this.sendAck(ws, msg.id);
         return;
@@ -655,7 +660,7 @@ export class WsServer {
         } finally {
           this.answeringPanes.delete(targetPaneId);
         }
-        this.logger?.(`pane ${targetPaneId} interaction respond: ${optionId} (approved=${approved})`);
+        this.logger?.(`${this.paneLogLabel(targetPaneId)} interaction respond: ${optionId} (approved=${approved})`);
         this.sendAck(ws, msg.id, { approved, interactionId });
         return;
       }
@@ -693,21 +698,23 @@ export class WsServer {
         }
         const res = await this.herdrClient.createTabAndAgent(workspaceId, recipe.kind, { modelId, thinking, cwd, firstMessage, resume });
         this.paneStore.setLaunch(res.paneId, { agent: recipe.kind, modelId, thinking, resumeSessionId });
-        this.logger?.(`tab created: ${res.tabId} (pane=${res.paneId}, agent=${recipe.kind})`);
+        this.logger?.(`tab created: ${res.tabId} (${this.paneLogLabel(res.paneId)}, agent=${recipe.kind})`);
         this.rebindSessions();
         this.sendAck(ws, msg.id, { workspaceId, tabId: res.tabId, paneId: res.paneId });
         return;
       }
 
-      case "close_tab":
+      case "close_tab": {
         if (!this.herdrClient.hasTab(msg.payload.tabId)) {
           this.sendError(ws, msg.id, ProtocolErrors.ERR_NOT_FOUND, `Unknown tab ${msg.payload.tabId}`);
           return;
         }
-        this.logger?.(`tab closed: ${msg.payload.tabId}`);
+        const tabLabel = this.herdrClient.getTabLabel(msg.payload.tabId);
+        this.logger?.(`tab closed: ${msg.payload.tabId}${tabLabel ? ` ("${tabLabel}")` : ""}`);
         await this.herdrClient.closeTab(msg.payload.tabId);
         this.sendAck(ws, msg.id, { closedTabId: msg.payload.tabId });
         return;
+      }
 
       case "skills_get":
         this.sendSkills(ws, data.subscribedPaneId, msg.id);
@@ -1142,11 +1149,11 @@ export class WsServer {
       this.queues.set(paneId, queue);
       this.saveQueues();
       this.sendQueue(paneId);
-      this.logger?.(`pane ${paneId} queue: enqueued ${item.queueId}`);
+      this.logger?.(`${this.paneLogLabel(paneId)} queue: enqueued ${item.queueId}`);
       if (replyTo) this.sendAck(ws, replyTo, { queued: true, queueId: item.queueId });
       return;
     }
-    this.logger?.(`pane ${paneId} prompt: sent immediate`);
+    this.logger?.(`${this.paneLogLabel(paneId)} prompt: sent immediate`);
     await this.herdrClient.sendPrompt(paneId, send);
     if (replyTo) this.sendAck(ws, replyTo, { queued: false });
   }
@@ -1185,7 +1192,7 @@ export class WsServer {
     if (event.type === "remove_pane") {
       if (queueState.timer) clearTimeout(queueState.timer);
       for (const entry of queue) {
-        this.logger?.(`pane ${paneId} queue: dropped ${entry.item.queueId} (pane removed)`);
+        this.logger?.(`${this.paneLogLabel(paneId)} queue: dropped ${entry.item.queueId} (pane removed)`);
       }
       this.queueStates.delete(paneId);
       this.queues.delete(paneId);
@@ -1220,7 +1227,7 @@ export class WsServer {
         this.saveQueues();
         this.sendQueue(paneId);
         if (settledId) {
-          this.logger?.(`pane ${paneId} queue: settled ${settledId} (user_turn)`);
+          this.logger?.(`${this.paneLogLabel(paneId)} queue: settled ${settledId} (user_turn)`);
         }
 
         if (canFlushImmediately) {
@@ -1258,7 +1265,7 @@ export class WsServer {
           queueState.unboundSent = false;
           this.saveQueues();
           this.sendQueue(paneId);
-          this.logger?.(`pane ${paneId} queue: send failed ${event.queueId}`);
+          this.logger?.(`${this.paneLogLabel(paneId)} queue: send failed ${event.queueId}`);
 
           const err = event.error;
           const isOffline =
@@ -1304,7 +1311,7 @@ export class WsServer {
         this.saveQueues();
         this.sendQueue(paneId);
         if (settledId) {
-          this.logger?.(`pane ${paneId} queue: settled ${settledId} (${settleReason})`);
+          this.logger?.(`${this.paneLogLabel(paneId)} queue: settled ${settledId} (${settleReason})`);
         }
 
         this.kickQueue(paneId);
@@ -1336,7 +1343,7 @@ export class WsServer {
     queueState.unboundSent = false;
 
     const queueId = entry.item.queueId;
-    this.logger?.(`pane ${paneId} queue: sending ${queueId}`);
+    this.logger?.(`${this.paneLogLabel(paneId)} queue: sending ${queueId}`);
     queueState.timer = setTimeout(() => {
       this.transitionQueue(paneId, { type: "timeout", queueId });
     }, this.queueSendTimeoutMs);
