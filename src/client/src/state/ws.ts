@@ -531,6 +531,12 @@ export function requestSkills(): void {
   sendMessage({ type: "skills_get", id: nextId() });
 }
 
+/** protocol.md §4.1: a transcript interaction's picks for every question, sent at once. */
+export function respondTranscriptQuestions(interactionId: string, optionIds: string[], fingerprint: string): Promise<any> {
+  if (!state.activePaneId) return Promise.reject({ code: "ERR_NOT_FOUND", message: "no pane" });
+  return request({ type: "interaction_respond", payload: { targetPaneId: state.activePaneId, interactionId, optionIds, fingerprint } });
+}
+
 export function respondInteraction(interactionId: string, optionId: string, fingerprint: string): Promise<any> {
   if (!state.activePaneId) return Promise.reject({ code: "ERR_NOT_FOUND", message: "no pane" });
   return request({ type: "interaction_respond", payload: { targetPaneId: state.activePaneId, interactionId, optionId, fingerprint } });

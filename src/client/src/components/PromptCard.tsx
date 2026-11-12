@@ -1,6 +1,6 @@
 import { createMemo, createSignal, For, Show } from "solid-js";
 import { openTerminal, showToast, state } from "../state/store";
-import { respondInteraction } from "../state/ws";
+import { respondInteraction, respondTranscriptQuestions } from "../state/ws";
 import type { InteractionCardData, NormalizedQuestion, NormalizedToolCall } from "../../../types/protocol";
 import { focusComposer } from "./Composer";
 import { Markdown, openToolDetail } from "./Transcript";
@@ -98,11 +98,94 @@ function PermissionCard(props: { p: InteractionCardData }) {
   );
 }
 
-/** §4.2: the transcript question drives the card; answers go as the screen's digits. */
+/** §4.2: a transcript question is answered entirely in the card, all questions at once. */
+function TranscriptQuestionCard(props: { p: InteractionCardData; q: NormalizedQuestion; onCollapse: () => void }) {
+  const qs = () => props.q.questions;
+  const [cur, setCur] = createSignal(0);
+  const [picked, setPicked] = createSignal<Record<number, number[]>>({});
+  const [sending, setSending] = createSignal(false);
+  const q = () => qs()[cur()];
+  const picksOf = (k: number) => picked()[k] ?? [];
+  const toggle = (n: number) => {
+    const k = cur();
+    const now = picksOf(k);
+    const next = q()?.multiSelect ? (now.includes(n) ? now.filter((x) => x !== n) : [...now, n].sort((a, b) => a - b)) : [n];
+    setPicked({ ...picked(), [k]: next });
+  };
+  const last = () => cur() === qs().length - 1;
+  const allPicked = () => qs().every((_, k) => picksOf(k).length > 0);
+  const submit = () => {
+    if (sending()) return;
+    const ids = qs().flatMap((_, k) => picksOf(k).map((n) => `q${k + 1}_opt_${n}`));
+    setSending(true);
+    respondTranscriptQuestions(props.p.interactionId, ids, props.p.fingerprint)
+      .catch((e) => showToast(e.message || t("prompt.notSent")))
+      .finally(() => setSending(false));
+  };
+  return (
+    <div class="qcard">
+      <div class="qtop">
+        <div class="pg">
+          <Show when={qs().length > 1}>
+            <button aria-label={t("prompt.prev")} disabled={cur() === 0} onClick={() => setCur(Math.max(0, cur() - 1))}>
+              <Icon name="chevL" sm />
+            </button>
+            <span>
+              {cur() + 1}/{qs().length}
+            </span>
+            <button aria-label={t("prompt.next")} disabled={last()} onClick={() => setCur(Math.min(qs().length - 1, cur() + 1))}>
+              <Icon name="chevR" sm />
+            </button>
+          </Show>
+          <Show when={q()?.header}>
+            <span class="wbadge" style={{ "margin-left": "6px" }}>
+              {q()!.header}
+            </span>
+          </Show>
+        </div>
+        <button class="x" aria-label={t("common.collapse")} onClick={props.onCollapse}>
+          <Icon name="x" sm />
+        </button>
+      </div>
+      <div class="qbody">
+        <div class="qtitle">{q()?.question}</div>
+        <For each={q()?.options ?? []}>
+          {(o, i) => (
+            <button class={`opt${q()?.multiSelect ? " multi" : ""}${picksOf(cur()).includes(i() + 1) ? " sel" : ""}`} onClick={() => toggle(i() + 1)}>
+              <span class="rd" />
+              <div class="tx">
+                <b>{o.label}</b>
+                <Show when={o.description}>
+                  <span>{o.description}</span>
+                </Show>
+              </div>
+            </button>
+          )}
+        </For>
+      </div>
+      <div class="qfoot">
+        <span style={{ flex: 1 }} />
+        <Show
+          when={last()}
+          fallback={
+            <button class="btn acc" disabled={picksOf(cur()).length === 0} onClick={() => setCur(cur() + 1)}>
+              {t("prompt.nextShort")}
+            </button>
+          }
+        >
+          <button class="btn acc" disabled={!allPicked() || sending()} onClick={submit}>
+            {sending() ? t("common.sending") : t("prompt.submit")}
+          </button>
+        </Show>
+      </div>
+    </div>
+  );
+}
+
+/** §4.2: a question recognized on screen; answers go as the screen's digits. */
 function QuestionCard(props: { p: InteractionCardData; q: NormalizedQuestion; onCollapse: () => void }) {
   const qs = () => props.q.questions;
   const onScreen = createMemo(() => {
-    if (props.p.source === "transcript") return 0;
     const text = norm(props.p.question + " " + (props.p.payload ?? ""));
     const i = qs().findIndex((q) => text.includes(norm(q.question)) || norm(q.question).includes(norm(props.p.question)));
     return i === -1 ? 0 : i;
@@ -112,22 +195,9 @@ function QuestionCard(props: { p: InteractionCardData; q: NormalizedQuestion; on
   const [picked, setPicked] = createSignal<Record<number, string>>({});
   const { sending, answer } = useAnswer(() => props.p);
   const q = () => qs()[cur()];
-  const other = () => (props.p.source === "transcript" ? undefined : props.p.options.find((o) => OTHER_RE.test(o.label)));
+  const other = () => props.p.options.find((o) => OTHER_RE.test(o.label));
   const submit = () => {
     const label = picked()[cur()];
-    if (props.p.source === "transcript") {
-      const optIdx = q()?.options.findIndex((o) => o.label === label) ?? -1;
-      const targetId = optIdx >= 0 ? `q${cur() + 1}_opt_${optIdx + 1}` : null;
-      const opt = props.p.options.find((o) => o.id === targetId || o.label === label);
-      if (!opt) {
-        showToast(t("prompt.mismatch"));
-        openTerminal();
-        return;
-      }
-      setPage(null);
-      answer(opt.id, opt.label);
-      return;
-    }
     const opt = label ? matchScreenOption(props.p.options, label) : undefined;
     if (!opt) {
       showToast(t("prompt.mismatch"));
@@ -192,14 +262,14 @@ function QuestionCard(props: { p: InteractionCardData; q: NormalizedQuestion; on
           {t("agent.terminal")}
         </button>
         <Show
-          when={!q()?.multiSelect && (props.p.source !== "transcript" || props.p.options.some((o) => o.keyShortcut))}
+          when={!q()?.multiSelect}
           fallback={
             <button class="btn acc" onClick={openTerminal}>
               {t("prompt.inTerminal")}
             </button>
           }
         >
-          <button class="btn acc" disabled={!picked()[cur()] || !!sending() || (props.p.source !== "transcript" && cur() !== onScreen())} onClick={submit}>
+          <button class="btn acc" disabled={!picked()[cur()] || !!sending() || cur() !== onScreen()} onClick={submit}>
             {sending() ? t("common.sending") : cur() === qs().length - 1 ? t("prompt.submit") : t("prompt.nextShort")}
           </button>
         </Show>
@@ -344,7 +414,13 @@ export function PromptCard(props: { collapsed: boolean; onCollapse: () => void; 
           </Show>
         }
       >
-        {(q) => <QuestionCard p={p()} q={q} onCollapse={props.onCollapse} />}
+        {(q) =>
+          p().source === "transcript" ? (
+            <TranscriptQuestionCard p={p()} q={q} onCollapse={props.onCollapse} />
+          ) : (
+            <QuestionCard p={p()} q={q} onCollapse={props.onCollapse} />
+          )
+        }
       </Show>
     </Show>
   );

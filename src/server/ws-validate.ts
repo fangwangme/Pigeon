@@ -61,8 +61,13 @@ export function validateClientMessage(raw: unknown): ValidationResult {
       }
       return ok();
     case "interaction_respond":
-      if (!isObj(p) || !isStr(p.targetPaneId) || !isStr(p.interactionId) || !isStr(p.optionId) || !isStr(p.fingerprint)) {
-        return fail(id, "interaction_respond needs targetPaneId, interactionId, optionId and fingerprint");
+      if (
+        !isObj(p) || !isStr(p.targetPaneId) || !isStr(p.interactionId) || !isStr(p.fingerprint) ||
+        (p.optionId === undefined) === (p.optionIds === undefined) ||
+        (p.optionId !== undefined && !isStr(p.optionId)) ||
+        (p.optionIds !== undefined && (!Array.isArray(p.optionIds) || p.optionIds.length === 0 || p.optionIds.length > 64 || !p.optionIds.every((o: unknown) => isStr(o, 32))))
+      ) {
+        return fail(id, "interaction_respond needs targetPaneId, interactionId, fingerprint and optionId or optionIds");
       }
       return ok();
     case "create_tab_and_agent":

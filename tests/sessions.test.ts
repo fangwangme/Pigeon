@@ -2,6 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
 import { appendFileSync, mkdirSync, readlinkSync, realpathSync, utimesSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { getAgentRecipe } from "../src/server/agent-recipes";
 import { AgentAdapterManager } from "../src/server/agent-adapters/index";
 import { JsonlTail } from "../src/server/sessions/common";
 import { ConfigManager } from "../src/server/config-manager";
@@ -634,6 +635,42 @@ describe("transcript questions, agent errors and turn times (issue #21)", () => 
     ]);
     expect(c.ofType("pane_state").at(-1)?.payload.agentStatus).toBe("blocked");
     expect(client.getSnapshot().workspaces[0].tabs[0].panes[0].agentStatus).toBe("blocked");
+  });
+
+  test("a transcript question is answered with every pick at once (protocol.md §4.1, herdr-adapter.md §7.2)", async () => {
+    const { home, proj } = claudeHome(claudeTranscript);
+    const { herdr, server, open } = await setup(home, [{ paneId: "p1", app: "claude-code", cwd: proj, pid: 4242, state: "working" }]);
+    herdr.handlers["terminal.keys"] = () => ({ result: {} });
+    const c = await open("p1");
+    const interaction = await until(() => c.ofType("pane_state").map((m) => m.payload).find((p) => p.pendingInteraction)?.pendingInteraction);
+    const respond = (id: string, optionIds: string[]) =>
+      server.handleMessage(c.ws, JSON.stringify({ type: "interaction_respond", id, payload: { targetPaneId: "p1", interactionId: interaction.interactionId, fingerprint: interaction.fingerprint, optionIds } }));
+
+    await respond("r0", ["q1_opt_1", "q1_opt_2"]);
+    expect(c.ofType("error").find((e) => e.replyTo === "r0")?.error.code).toBe("ERR_INVALID_PAYLOAD");
+    expect(herdr.calls.some((call) => call.method === "terminal.keys")).toBe(false);
+
+    await respond("r1", ["q1_opt_2"]);
+    expect(c.ofType("ack").find((a) => a.replyTo === "r1")?.payload).toMatchObject({ approved: true });
+    expect(herdr.calls.find((call) => call.method === "terminal.keys")?.params.keys).toEqual(["2"]);
+  });
+
+  test("a transcript question with checked keys wins over the prompt on screen (protocol.md §5.4)", async () => {
+    const { home, proj } = claudeHome(claudeTranscript);
+    const { herdr, open } = await setup(home, [{ paneId: "p1", app: "claude-code", cwd: proj, pid: 4242, state: "blocked" }]);
+    herdr.handlers["terminal.read"] = () => ({ result: { text: "Which database?\n❯ 1. SQLite\n  2. Postgres\nEnter to select · ↑/↓ to navigate · Esc to cancel", how: "screen" } });
+    const c = await open("p1");
+    await until(() => herdr.calls.some((call) => call.method === "terminal.read"));
+    await Bun.sleep(100);
+    expect(c.ofType("pane_state").at(-1)?.payload.pendingInteraction?.source).toBe("transcript");
+  });
+
+  test("Claude's question keys: digits per question, → after a multi-select one, 1 to submit (herdr-adapter.md §7.2)", () => {
+    const keys = getAgentRecipe("claude")!.questionKeys!;
+    expect(keys([{ multiSelect: false, picks: [2] }])).toEqual(["2"]);
+    expect(keys([{ multiSelect: true, picks: [1, 3] }])).toEqual(["1", "3", "right", "1"]);
+    expect(keys([{ multiSelect: true, picks: [2] }, { multiSelect: false, picks: [1] }])).toEqual(["2", "right", "1", "1"]);
+    expect(keys([{ multiSelect: false, picks: [3] }, { multiSelect: false, picks: [2] }])).toEqual(["3", "2", "1"]);
   });
 
   test("the queue pauses after an agent error and queue_resume releases it", async () => {

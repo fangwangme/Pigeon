@@ -611,7 +611,7 @@ export class WsServer {
       }
 
       case "interaction_respond": {
-        const { targetPaneId, interactionId, fingerprint, optionId } = msg.payload;
+        const { targetPaneId, interactionId, fingerprint, optionId, optionIds } = msg.payload;
         if (!this.requireKnownPane(ws, msg.id, targetPaneId)) return;
         if (this.answeringPanes.has(targetPaneId)) {
           this.sendError(ws, msg.id, ProtocolErrors.ERR_INTERACTION_STALE, "This prompt is already being answered.");
@@ -620,6 +620,27 @@ export class WsServer {
         const pending = this.herdrClient.getPaneState(targetPaneId)?.pendingInteraction;
         if (!pending || pending.interactionId !== interactionId || pending.fingerprint !== fingerprint) {
           this.sendError(ws, msg.id, ProtocolErrors.ERR_INTERACTION_STALE, "The prompt changed or was already answered.");
+          return;
+        }
+        if (pending.source === "transcript") {
+          // protocol.md §4.1: every question's picks at once; the agent's checked keys (herdr-adapter.md §7.2).
+          const keys = optionIds ? this.transcriptAnswerKeys(targetPaneId, optionIds) : null;
+          if (!keys) {
+            this.sendError(ws, msg.id, ProtocolErrors.ERR_INVALID_PAYLOAD, "optionIds must pick every question, and the agent needs checked keys");
+            return;
+          }
+          this.answeringPanes.add(targetPaneId);
+          try {
+            await this.herdrClient.sendKeys(targetPaneId, keys);
+          } finally {
+            this.answeringPanes.delete(targetPaneId);
+          }
+          this.logger?.(`${this.paneLogLabel(targetPaneId)} interaction respond: ${optionIds!.join(",")} (transcript)`);
+          this.sendAck(ws, msg.id, { approved: true, interactionId });
+          return;
+        }
+        if (optionId === undefined) {
+          this.sendError(ws, msg.id, ProtocolErrors.ERR_INVALID_PAYLOAD, "A screen prompt is answered with optionId");
           return;
         }
         const option = pending.options.find((o) => o.id === optionId);
@@ -1070,7 +1091,30 @@ export class WsServer {
     if (!now) this.kickQueue(paneId);
   }
 
+  /** herdr-adapter.md §7.2: the keys for a transcript question's picks; null when they do not pick every question. */
+  private transcriptAnswerKeys(paneId: string, optionIds: string[]): string[] | null {
+    const turns = this.paneStore.getPaneState(paneId)?.turns ?? [];
+    const pq = turns[turns.length - 1]?.pendingQuestion;
+    const kind = this.herdrClient.getPaneAgentKind(paneId);
+    const questionKeys = kind ? getAgentRecipe(kind)?.questionKeys : undefined;
+    if (!pq || !questionKeys) return null;
+    const picks: number[][] = pq.questions.map(() => []);
+    for (const id of optionIds) {
+      const m = /^q(\d+)_opt_(\d+)$/.exec(id);
+      const k = m ? Number(m[1]) - 1 : -1;
+      const n = m ? Number(m[2]) : 0;
+      if (k < 0 || k >= pq.questions.length || n < 1 || n > pq.questions[k].options.length || picks[k].includes(n)) return null;
+      if (k < picks.length - 1 && picks.slice(k + 1).some((p) => p.length > 0)) return null;
+      picks[k].push(n);
+    }
+    const questions = pq.questions.map((q, k) => ({ multiSelect: !!q.multiSelect, picks: picks[k] }));
+    if (questions.some((q) => q.picks.length === 0 || (!q.multiSelect && q.picks.length > 1))) return null;
+    return questionKeys(questions);
+  }
+
   private syncTranscriptInteraction(paneId: string): void {
+    const kind = this.herdrClient.getPaneAgentKind(paneId);
+    const keysChecked = !!(kind && getAgentRecipe(kind)?.questionKeys);
     const sessionState = this.paneStore.getPaneState(paneId);
     const lastTurn = sessionState?.turns[sessionState.turns.length - 1];
     let interaction: InteractionCardData | null = null;
@@ -1085,7 +1129,7 @@ export class WsServer {
           options.push({
             id: `q${k + 1}_opt_${n + 1}`,
             label: opt.label,
-            keyShortcut: "",
+            keyShortcut: keysChecked ? String(n + 1) : "",
           });
         }
       }
@@ -1117,7 +1161,7 @@ export class WsServer {
         fallbackKeys: ["enter", "esc", "up", "down"],
       };
     }
-    this.herdrClient.setTranscriptInteraction(paneId, interaction);
+    this.herdrClient.setTranscriptInteraction(paneId, interaction, !!lastTurn?.pendingQuestion && keysChecked);
   }
 
   private getQueueState(paneId: string): { state: "idle" | "sending"; sawWorking: boolean; unboundSent: boolean; timer?: ReturnType<typeof setTimeout> } {

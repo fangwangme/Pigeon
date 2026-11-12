@@ -124,6 +124,7 @@ export class HerdrClient extends EventEmitter {
   private seenPanes = new Set<string>();
   private seenPanesFilePath?: string;
   private transcriptInteractions = new Map<string, InteractionCardData>();
+  private transcriptOverrides = new Set<string>();
   /** protocol.md §5.3: the title of the session bound to a pane, for tabs without a name of their own. */
   private sessionTitleOf: (paneId: string) => string | undefined = () => undefined;
   /** protocol.md §5.3: the active/latest model of the session bound to a pane. */
@@ -656,20 +657,27 @@ export class HerdrClient extends EventEmitter {
     return this.reportedStatus(paneId);
   }
 
-  public setTranscriptInteraction(paneId: string, interaction: InteractionCardData | null): void {
+  /**
+   * protocol.md §5.4: the bound session's pending question or plan. `overridesScreen` (a question
+   * whose keys are checked) wins over a prompt recognized on screen.
+   */
+  public setTranscriptInteraction(paneId: string, interaction: InteractionCardData | null, overridesScreen = false): void {
     const previous = this.transcriptInteractions.get(paneId);
     if (!interaction && !previous) return;
     if (interaction && previous && interaction.interactionId === previous.interactionId) return;
     if (interaction) {
       this.transcriptInteractions.set(paneId, interaction);
+      if (overridesScreen) this.transcriptOverrides.add(paneId);
+      else this.transcriptOverrides.delete(paneId);
     } else {
       this.transcriptInteractions.delete(paneId);
+      this.transcriptOverrides.delete(paneId);
     }
     const known = this.knownPanes.get(paneId);
     if (!known) return;
     const existing = this.paneStates.get(paneId);
     const screenPrompt = existing?.rawScreen ? this.classifier.classifyScreen(existing.rawScreen).pendingInteraction : null;
-    const pendingInteraction = screenPrompt ?? interaction ?? (known.herdrStatus === "blocked" && existing ? buildUnrecognizedPrompt(existing.rawScreen) : null);
+    const pendingInteraction = this.pickInteraction(paneId, screenPrompt, known.herdrStatus === "blocked" && existing ? existing.rawScreen : null);
     const agentStatus = pendingInteraction ? "blocked" : this.reportedStatus(paneId);
     const payload: PaneStatePayload = {
       paneId,
@@ -685,6 +693,13 @@ export class HerdrClient extends EventEmitter {
     this.checkPromptChange(paneId, Boolean(pendingInteraction));
     this.emit("cards_updated", payload);
     if (this.lastTopology) this.applySnapshot(this.lastTopology);
+  }
+
+  /** protocol.md §5.4: which pending interaction a pane reports. `blockedScreen` is the screen when Herdr says `blocked`. */
+  private pickInteraction(paneId: string, screenPrompt: InteractionCardData | null, blockedScreen: string | null): InteractionCardData | null {
+    const transcript = this.transcriptInteractions.get(paneId) ?? null;
+    if (transcript && this.transcriptOverrides.has(paneId)) return transcript;
+    return screenPrompt ?? transcript ?? (blockedScreen !== null ? buildUnrecognizedPrompt(blockedScreen) : null);
   }
 
   private checkReportedStatusChange(paneId: string, seen = false): void {
@@ -838,15 +853,9 @@ export class HerdrClient extends EventEmitter {
     const classifyKey = `${createHash("sha256").update(rawScreen).digest("hex")}|${known.herdrStatus}|${this.seenPanes.has(paneId)}|${this.transcriptInteractions.get(paneId)?.interactionId ?? ""}`;
     if (existing && this.paneClassifyKeys.get(paneId) === classifyKey) return existing;
 
-    let { cards, pendingInteraction } = this.classifier.classifyScreen(rawScreen);
-    if (!pendingInteraction) {
-      const transcript = this.transcriptInteractions.get(paneId);
-      if (transcript) {
-        pendingInteraction = transcript;
-      } else if (known.herdrStatus === "blocked") {
-        pendingInteraction = buildUnrecognizedPrompt(rawScreen);
-      }
-    }
+    const classified = this.classifier.classifyScreen(rawScreen);
+    const cards = classified.cards;
+    const pendingInteraction = this.pickInteraction(paneId, classified.pendingInteraction, known.herdrStatus === "blocked" ? rawScreen : null);
 
     const payload: PaneStatePayload = {
       paneId,

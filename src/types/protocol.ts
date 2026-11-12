@@ -472,7 +472,7 @@ export type ClientMessage =
   | { type: "ping"; timestamp?: number }
   | { type: "presence_update"; isVisible: boolean; viewingPaneId: string | null }
   | { type: "select_view"; id: string; payload: { paneId: string | null; have?: HaveInfo } }
-  | { type: "interaction_respond"; id: string; payload: { targetPaneId: string; interactionId: string; optionId: string; fingerprint: string } }
+  | { type: "interaction_respond"; id: string; payload: { targetPaneId: string; interactionId: string; optionId?: string; optionIds?: string[]; fingerprint: string } }
   | { type: "agent_prompt"; id: string; payload: { targetPaneId: string; text: string; attachments?: string[] } }
   | { type: "agent_send_keys"; id: string; payload: { targetPaneId: string; keys: string[] } }
   | { type: "create_tab_and_agent"; id: string; payload: { workspaceId: string; agentKind: string; modelId?: string; thinking?: string; cwd?: string; firstMessage?: string; resumeSessionId?: string } }

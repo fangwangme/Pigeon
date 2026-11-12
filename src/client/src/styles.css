@@ -602,3 +602,5 @@ svg.i.sm { width: 16px; height: 16px; }
 
 
 
+.opt.multi .rd { border-radius: 6px; }
+.opt.multi.sel .rd { border: 2px solid var(--accent); background: var(--accent); }
