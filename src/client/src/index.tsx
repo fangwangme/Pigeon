@@ -18,7 +18,7 @@ applyTheme(state.themeMode, state.accent);
 function resetWindowScroll() {
   if (typeof window === "undefined") return;
   if (window.scrollY !== 0 || window.scrollX !== 0) {
-    window.scrollTo(0, 0);
+    window.scrollTo({ top: 0, left: 0, behavior: "instant" as ScrollBehavior });
   }
   if (document.documentElement && (document.documentElement.scrollTop !== 0 || document.documentElement.scrollLeft !== 0)) {
     document.documentElement.scrollTop = 0;
@@ -48,6 +48,19 @@ if (typeof window !== "undefined") {
       resetWindowScroll();
     }
   });
+
+  window.addEventListener("touchend", () => {
+    if (window.scrollY !== 0 || window.scrollX !== 0) {
+      resetWindowScroll();
+    }
+  }, { passive: true });
+
+  document.addEventListener("touchmove", (e) => {
+    const target = e.target as HTMLElement | null;
+    if (target?.closest(".hdr, .bottombar")) {
+      if (e.cancelable) e.preventDefault();
+    }
+  }, { passive: false });
 
   if (window.visualViewport) {
     window.visualViewport.addEventListener("resize", resetWindowScroll);
@@ -202,7 +215,12 @@ function MetricsOverlay() {
     window.visualViewport?.addEventListener("scroll", update, { passive: true });
     window.visualViewport?.addEventListener("resize", update, { passive: true });
     window.addEventListener("resize", update, { passive: true });
-    const timer = setInterval(update, 500);
+    const timer = setInterval(() => {
+      update();
+      if (typeof window !== "undefined" && (window.scrollY !== 0 || window.scrollX !== 0)) {
+        resetWindowScroll();
+      }
+    }, 500);
     onCleanup(() => {
       window.removeEventListener("scroll", update);
       window.visualViewport?.removeEventListener("scroll", update);
@@ -214,7 +232,7 @@ function MetricsOverlay() {
 
   return (
     <div class="metrics-overlay">
-      sY: {scrollY()} | vvTop: {vvTop()}
+      scrollY: {scrollY()} | vvTop: {vvTop()}
     </div>
   );
 }
