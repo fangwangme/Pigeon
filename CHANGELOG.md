@@ -8,10 +8,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.1.10] - 2026-11-12
 
 ### Added
-- **Mobile PWA layout**: Standalone full-height layout (`100dvh`), bottom bar safe-area offset, compact home header, and edge swipe-back gesture across sub-pages (#21).
+- **Mobile PWA layout**: Opaque status bar so the home-screen app reaches the screen's bottom edge, bottom bar safe-area offset, compact home header, and edge swipe-back gesture across sub-pages (#21).
 - **In-app image viewer**: Full-screen lightbox viewer for uploaded image thumbnails in transcript and composer previews without navigating away from the PWA (#21).
 - **Launch-time model picker**: Pinned model card displaying model details, thinking level chips or fallback indicator, search filtering when over five models, and manual per-agent catalog refresh (#21).
-- **Dynamic model catalog**: Claude Models API dynamic integration with 24-hour rate limiting and OpenCode cache integration; removed runtime `agent_set_model` command (#21).
+- **Dynamic model catalog**: Claude models from the Models API, fetched at most once a day automatically and persisted; OpenCode labels and effort levels from its models cache; removed runtime `agent_set_model` command (#21).
 - **Transcript questions**: Structured questions (`AskUserQuestion`) directly source from session transcript, block pane status, and allow terminal handling (#21).
 - **Queue error pause**: Automatic queue pausing upon agent error items with manual `queue_resume` continuation (#21).
 - **Antigravity resume & history**: Support resuming AGY sessions via `--conversation <id>` and list workspace conversations from conversation summaries (#21).
@@ -20,7 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Daemon logging**: Persistent daemon logging to `pigeon.log` with truncation on startup (#21).
 
 ### Fixed
-- **Mobile PWA window scroll lock**: Fix `html[data-mode="standalone"]` selector, constrain `html` and `body` height to prevent WebKit outer window vertical scrolling, and auto-reset window scroll on input focusout, visual viewport resize/scroll, and route navigation (#21).
+- **Mobile PWA layout on iOS 26**: The home-screen app no longer asks for a translucent status bar, which shortened the page and blurred its top; while a text field has focus the page follows the visual viewport, so the composer sits directly above the keyboard (#21).
 
 ## [0.1.9] - 2026-11-11
 

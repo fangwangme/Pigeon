@@ -164,7 +164,6 @@ export function buildUnrecognizedPrompt(rawScreen: string): InteractionCardData 
       if (!trimmed || BORDER_ONLY_RE.test(trimmed)) return false;
       if (BARE_PROMPT_RE.test(trimmed)) return false;
       if (STATUS_LINE_RE.test(trimmed)) return false;
-      if (/^Pigeon\s+main/i.test(trimmed)) return false;
       return true;
     });
 

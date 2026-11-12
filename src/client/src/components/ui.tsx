@@ -89,23 +89,9 @@ export function modelLabel(model: string | null | undefined, agent?: string | nu
   return model;
 }
 
-export function formatModelName(agentOrModel: string | null | undefined, modelOrAgent?: string | null): string {
-  if (!agentOrModel && !modelOrAgent) return "";
-  const KNOWN_AGENTS = ["claude", "codex", "agy", "antigravity", "opencode", "pi"];
-  let agent: string | null | undefined = null;
-  let model: string | null | undefined = null;
-
-  if (agentOrModel && KNOWN_AGENTS.includes(agentOrModel.toLowerCase())) {
-    agent = agentOrModel;
-    model = modelOrAgent;
-  } else if (modelOrAgent && KNOWN_AGENTS.includes(modelOrAgent.toLowerCase())) {
-    agent = modelOrAgent;
-    model = agentOrModel;
-  } else {
-    model = agentOrModel;
-    agent = modelOrAgent;
-  }
-  return modelLabel(model, agent);
+/** mobile-ui-and-themes.md §6.4 "Model names": the one rule for every place a model is shown. */
+export function formatModelName(agent: string | null | undefined, model: string | null | undefined): string {
+  return model ? modelLabel(model, agent) : "";
 }
 
 /** The pane the session page opens by default: the tab's first pane with an agent (§6.8). */

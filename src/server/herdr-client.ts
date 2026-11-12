@@ -149,24 +149,15 @@ export class HerdrClient extends EventEmitter {
   }
 
   private loadSeenPanes(): void {
-    if (!this.seenPanesFilePath) return;
-    try {
-      if (existsSync(this.seenPanesFilePath)) {
-        const raw = readFileSync(this.seenPanesFilePath, "utf-8");
-        const list = JSON.parse(raw);
-        if (Array.isArray(list)) {
-          this.seenPanes = new Set(list.filter((x): x is string => typeof x === "string"));
-        }
-      }
-    } catch {}
+    if (!this.seenPanesFilePath || !existsSync(this.seenPanesFilePath)) return;
+    const list: string[] = JSON.parse(readFileSync(this.seenPanesFilePath, "utf-8"));
+    this.seenPanes = new Set(list);
   }
 
   private saveSeenPanes(): void {
     if (!this.seenPanesFilePath) return;
-    try {
-      mkdirSync(dirname(this.seenPanesFilePath), { recursive: true });
-      writeFileSync(this.seenPanesFilePath, JSON.stringify(Array.from(this.seenPanes)), "utf-8");
-    } catch {}
+    mkdirSync(dirname(this.seenPanesFilePath), { recursive: true });
+    writeFileSync(this.seenPanesFilePath, JSON.stringify(Array.from(this.seenPanes)), "utf-8");
   }
 
   public async connect(): Promise<void> {

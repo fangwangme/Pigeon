@@ -344,6 +344,7 @@ export class PigeonDaemon {
     this.access = access;
 
     const instancePaths = resolveInstancePaths({ port, productionPort, env: this.configManager.env });
+    const stateDir = isProduction ? serverCfg.stateDir : instancePaths.stateDir;
 
     this.config = {
       port,
@@ -407,7 +408,7 @@ export class PigeonDaemon {
       appSocketPath: this.config.herdrAppSocketPath,
       coreSocketPath: this.config.herdrCoreSocketPath,
       logger: (msg) => this.log(msg),
-      seenPanesFilePath: join(instancePaths.stateDir, "seen-panes.json"),
+      seenPanesFilePath: join(stateDir, "seen-panes.json"),
     });
     const quotaService = new QuotaService({ configManager: this.configManager });
     const usageService = new UsageService({ configManager: this.configManager });
@@ -445,7 +446,7 @@ export class PigeonDaemon {
       configManager: this.configManager,
       uploadStore: this.uploadStore,
       pairingManager: this.pairingManager,
-      modelCatalog: new ModelCatalog({ cachePath: join(instancePaths.stateDir, "models.json") }),
+      modelCatalog: new ModelCatalog({ cachePath: join(stateDir, "models.json") }),
       queueFilePath: this.config.queueFilePath,
       port: this.config.port,
       productionPort,
@@ -481,11 +482,7 @@ export class PigeonDaemon {
   public log(msg: string): void {
     const timestamp = new Date().toISOString();
     const line = `[${timestamp}] ${msg}`;
-    if (this.config.logPath) {
-      try {
-        appendFileSync(this.config.logPath, line + "\n", "utf-8");
-      } catch {}
-    }
+    if (this.config.logPath) appendFileSync(this.config.logPath, line + "\n", "utf-8");
   }
 
   /** herdr-adapter.md §7.1: fill the agents' model lists in the background; `welcome` never waits for it. */
@@ -495,10 +492,8 @@ export class PigeonDaemon {
 
   public async start(): Promise<void> {
     if (this.config.logPath) {
-      try {
-        mkdirSync(dirname(this.config.logPath), { recursive: true });
-        writeFileSync(this.config.logPath, `[${new Date().toISOString()}] Pigeon daemon ${SERVER_VERSION} on port ${this.config.port}\n`, "utf-8");
-      } catch {}
+      mkdirSync(dirname(this.config.logPath), { recursive: true });
+      writeFileSync(this.config.logPath, `[${new Date().toISOString()}] Pigeon daemon ${SERVER_VERSION} on port ${this.config.port}\n`, "utf-8");
     }
     await this.pairingManager.startAdminSocket();
     await this.herdrClient.connect();

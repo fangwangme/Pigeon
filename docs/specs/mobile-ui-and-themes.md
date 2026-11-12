@@ -33,7 +33,7 @@ Pigeon is a phone app for Herdr, written as a PWA. It follows the interaction mo
 ## 2. Home
 
 ### 2.1 Workspaces (the start screen)
-- The header's top padding is the top safe area alone (§1.1), and the gaps below it are kept tight.
+- The header's top padding is the same as every page header's (§1.1), and the gaps below it are kept tight.
 - Top left, the bionic pigeon logo mark (a compact 34×34px SVG `<Logo />` with subtle rounded border and gradient backdrop). Top right, one glass capsule with **filter** (§2.3), **quota** (§11.1) and **settings** (§8.1). There is no ☰, no device row, no tab bar, no pane row and no drawer.
 - An **所有 Agent** summary row (count of agents, and of those waiting) opens §2.2.
 - One collapsible group per Herdr workspace, in Herdr's order. The group header shows the workspace name, its git branch when it has one, and its tab count; its `+` opens a new session (§7.1) in that workspace. Collapsed state is kept in this browser.
