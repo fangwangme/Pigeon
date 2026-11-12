@@ -590,8 +590,9 @@ export class PigeonDaemon {
     const getHtml = () => {
       if (this.isProduction) return this.html;
       return this.html
-        .replaceAll('href="/icon-192.png"', 'href="/icon-dark-192.png"')
-        .replaceAll('href="/icon.svg"', 'href="/icon-dark.svg"');
+        .replaceAll(/href="\.?\/?icon-192\.png"/g, 'href="/icon-dark-192.png"')
+        .replaceAll(/href="\.?\/?icon-512\.png"/g, 'href="/icon-dark-512.png"')
+        .replaceAll(/href="\.?\/?icon\.svg"/g, 'href="/icon-dark.svg"');
     };
     const htmlResponse = () =>
       new Response(getHtml(), { headers: { "Content-Type": "text/html; charset=utf-8", "Content-Security-Policy": csp } });
@@ -708,54 +709,55 @@ export class PigeonDaemon {
         headers: { "Content-Type": "application/javascript; charset=utf-8", "Cache-Control": "no-cache, no-store, must-revalidate" },
       });
     }
+    const iconCache = this.isProduction ? "public, max-age=86400" : "no-cache, must-revalidate";
     if (url.pathname === "/icon.svg") {
       return new Response(this.isProduction ? PWA_ICON_SVG : PWA_ICON_DARK_SVG, {
-        headers: { "Content-Type": "image/svg+xml; charset=utf-8", "Cache-Control": "public, max-age=86400" },
+        headers: { "Content-Type": "image/svg+xml; charset=utf-8", "Cache-Control": iconCache },
       });
     }
     if (url.pathname === "/icon-192.png") {
       return new Response(this.isProduction ? this.icon192 : this.iconDark192, {
-        headers: { "Content-Type": "image/png", "Cache-Control": "public, max-age=86400" },
+        headers: { "Content-Type": "image/png", "Cache-Control": iconCache },
       });
     }
     if (url.pathname === "/icon-512.png") {
       return new Response(this.isProduction ? this.icon512 : this.iconDark512, {
-        headers: { "Content-Type": "image/png", "Cache-Control": "public, max-age=86400" },
+        headers: { "Content-Type": "image/png", "Cache-Control": iconCache },
       });
     }
     if (url.pathname === "/icon-dark.svg") {
       return new Response(PWA_ICON_DARK_SVG, {
-        headers: { "Content-Type": "image/svg+xml; charset=utf-8", "Cache-Control": "public, max-age=86400" },
+        headers: { "Content-Type": "image/svg+xml; charset=utf-8", "Cache-Control": iconCache },
       });
     }
     if (url.pathname === "/icon-dark-192.png") {
       return new Response(this.iconDark192, {
-        headers: { "Content-Type": "image/png", "Cache-Control": "public, max-age=86400" },
+        headers: { "Content-Type": "image/png", "Cache-Control": iconCache },
       });
     }
     if (url.pathname === "/icon-dark-512.png") {
       return new Response(this.iconDark512, {
-        headers: { "Content-Type": "image/png", "Cache-Control": "public, max-age=86400" },
+        headers: { "Content-Type": "image/png", "Cache-Control": iconCache },
       });
     }
     if (url.pathname === "/icon-light.svg") {
       return new Response(PWA_ICON_SVG, {
-        headers: { "Content-Type": "image/svg+xml; charset=utf-8", "Cache-Control": "public, max-age=86400" },
+        headers: { "Content-Type": "image/svg+xml; charset=utf-8", "Cache-Control": iconCache },
       });
     }
     if (url.pathname === "/icon-light-192.png") {
       return new Response(this.icon192, {
-        headers: { "Content-Type": "image/png", "Cache-Control": "public, max-age=86400" },
+        headers: { "Content-Type": "image/png", "Cache-Control": iconCache },
       });
     }
     if (url.pathname === "/icon-light-512.png") {
       return new Response(this.icon512, {
-        headers: { "Content-Type": "image/png", "Cache-Control": "public, max-age=86400" },
+        headers: { "Content-Type": "image/png", "Cache-Control": iconCache },
       });
     }
-    if (url.pathname === "/apple-touch-icon.png" || url.pathname === "/apple-touch-icon-precomposed.png") {
+    if (url.pathname.startsWith("/apple-touch-icon")) {
       return new Response(this.isProduction ? this.icon192 : this.iconDark192, {
-        headers: { "Content-Type": "image/png", "Cache-Control": "public, max-age=86400" },
+        headers: { "Content-Type": "image/png", "Cache-Control": iconCache },
       });
     }
     if (url.pathname === "/" || url.pathname === "/index.html" || url.pathname === "/pair") return htmlResponse();
