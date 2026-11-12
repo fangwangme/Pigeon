@@ -45,6 +45,9 @@ The HTTP server answers only the routes below. Every other path is 404, and noth
 - **Permitted Unauthenticated** (no user or terminal data):
   - `GET /`, `/index.html` and `/pair`: the same single-file app shell. It holds no data until a paired WebSocket is open, and it must load in order to run the pairing exchange.
   - `GET /manifest.webmanifest`, `/sw.js`, `/icon.svg`, `/icon-192.png`, `/icon-512.png`: PWA install assets.
+    - **PWA Icons by Instance** (issue #21): To allow distinguishing production and test PWAs installed on the same mobile device, icon assets are served based on the instance port (`architecture.md` §4.6):
+      - **Production instance (port 4100)**: returns light icons (`/icon.svg`, `/icon-192.png`, `/icon-512.png`). Manifest icons and HTML `apple-touch-icon` link to these light icons.
+      - **Test instances (any non-4100 port)**: returns dark icons (`/icon-dark.svg`, `/icon-dark-192.png`, `/icon-dark-512.png` generated from `public/icon-dark.svg`). The generic routes `/icon.svg`, `/icon-192.png`, `/icon-512.png` return the dark icon assets on non-4100 ports, and the manifest and HTML `apple-touch-icon` link to the dark icon assets.
   - `POST /api/pair`: the rate-limited token exchange.
   - `GET /api/auth/status`: whether this browser's cookie is a valid session.
   - `GET /api/version` and `GET /api/push/vapid-public-key`: public constants.

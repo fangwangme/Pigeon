@@ -16,6 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Queue error pause**: Automatic queue pausing upon agent error items with manual `queue_resume` continuation (#21).
 - **Antigravity resume & history**: Support resuming AGY sessions via `--conversation <id>` and list workspace conversations from conversation summaries (#21).
 - **Past session model tags**: Sessions list carries last-used model and displays model tags in resume list (#21).
+- **Instance-isolated PWA icons**: Formal/production instance (port 4100) serves light icons while test instances (non-4100) serve dark icons for visual distinction on mobile home screen (#21).
 - **Daemon logging**: Persistent daemon logging to `pigeon.log` with truncation on startup (#21).
 
 ## [0.1.9] - 2026-11-11

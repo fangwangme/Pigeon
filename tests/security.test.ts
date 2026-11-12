@@ -3,6 +3,7 @@ import { mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { ConfigManager, resolveInstancePaths, resolveProductionPort } from "../src/server/config-manager";
 import { PigeonDaemon, resolveAccess } from "../src/server/daemon";
+import { PWA_ICON_192_BASE64, PWA_ICON_DARK_192_BASE64 } from "../src/server/pwa-assets";
 import { PairingManager, generateBase32Token } from "../src/server/pairing";
 import { PushManager } from "../src/server/push";
 import { tempDir } from "./helpers/fixtures";
@@ -298,7 +299,7 @@ describe("HTTP and WebSocket gate (security-and-pairing.md §3, §4)", () => {
       adminSocketPath: join(dir, "admin.sock"),
       devicesFilePath: join(dir, "devices.json"),
       vapidPath: join(dir, "vapid.json"),
-      embeddedHtml: "<!doctype html><title>Pigeon</title>",
+      embeddedHtml: "<!doctype html><title>Pigeon</title><link rel=\"apple-touch-icon\" href=\"/icon-192.png\" /><link rel=\"icon\" type=\"image/svg+xml\" href=\"/icon.svg\" />",
     });
     await daemon.start();
   });
@@ -436,6 +437,65 @@ describe("HTTP and WebSocket gate (security-and-pairing.md §3, §4)", () => {
       .find((d) => d.startsWith("img-src"));
     expect(imgSrc?.split(/\s+/)).toContain("blob:");
   });
+
+  test("non-4100 daemon returns dark icon, 4100 returns light icon (security-and-pairing.md §3, issue #21)", async () => {
+    // 1. Non-4100 daemon (the active test daemon on `base` uses an ephemeral non-4100 port)
+    const testSvgRes = await fetch(`${base}/icon.svg`);
+    expect(testSvgRes.status).toBe(200);
+    const testSvg = await testSvgRes.text();
+    expect(testSvg).toContain('<stop offset="0%" stop-color="#24272B" />');
+    expect(testSvg).not.toContain("#F7F4EC");
+
+    const testPngRes = await fetch(`${base}/icon-192.png`);
+    expect(testPngRes.status).toBe(200);
+    const testPngBytes = new Uint8Array(await testPngRes.arrayBuffer());
+    expect(testPngBytes).toEqual(new Uint8Array(Buffer.from(PWA_ICON_DARK_192_BASE64, "base64")));
+
+    const testManifestRes = await fetch(`${base}/manifest.webmanifest`);
+    expect(testManifestRes.status).toBe(200);
+    const testManifest = await testManifestRes.json();
+    expect(testManifest.icons.some((i: any) => i.src === "/icon-dark-192.png")).toBe(true);
+
+    const testHtmlRes = await fetch(`${base}/`);
+    expect(testHtmlRes.status).toBe(200);
+    const testHtml = await testHtmlRes.text();
+    expect(testHtml).toContain('href="/icon-dark-192.png"');
+
+    // 2. Production daemon on port 4100
+    const dir = tempDir("prod-daemon");
+    const prodDaemon = new PigeonDaemon({
+      configManager: new ConfigManager(join(dir, "config.json"), { HOME: dir }),
+      port: 4100,
+      publicBaseUrl: "https://pigeon.example.ts.net",
+      herdrAppSocketPath: join(dir, "no-app.sock"),
+      herdrCoreSocketPath: join(dir, "no-core.sock"),
+      adminSocketPath: join(dir, "admin.sock"),
+      devicesFilePath: join(dir, "devices.json"),
+      vapidPath: join(dir, "vapid.json"),
+      embeddedHtml: "<!doctype html><title>Pigeon</title><link rel=\"apple-touch-icon\" href=\"/icon-192.png\" /><link rel=\"icon\" type=\"image/svg+xml\" href=\"/icon.svg\" />",
+    });
+
+    const prodSvgRes = await prodDaemon.fetch(new Request("http://127.0.0.1:4100/icon.svg"));
+    expect(prodSvgRes.status).toBe(200);
+    const prodSvg = await prodSvgRes.text();
+    expect(prodSvg).toContain(".bg-0 { stop-color: #F7F4EC; }");
+    expect(prodSvg).not.toContain('<stop offset="0%" stop-color="#24272B" />');
+
+    const prodPngRes = await prodDaemon.fetch(new Request("http://127.0.0.1:4100/icon-192.png"));
+    expect(prodPngRes.status).toBe(200);
+    const prodPngBytes = new Uint8Array(await prodPngRes.arrayBuffer());
+    expect(prodPngBytes).toEqual(new Uint8Array(Buffer.from(PWA_ICON_192_BASE64, "base64")));
+
+    const prodManifestRes = await prodDaemon.fetch(new Request("http://127.0.0.1:4100/manifest.webmanifest"));
+    expect(prodManifestRes.status).toBe(200);
+    const prodManifest = await prodManifestRes.json();
+    expect(prodManifest.icons.some((i: any) => i.src === "/icon-192.png")).toBe(true);
+
+    const prodHtmlRes = await prodDaemon.fetch(new Request("http://127.0.0.1:4100/"));
+    expect(prodHtmlRes.status).toBe(200);
+    const prodHtml = await prodHtmlRes.text();
+    expect(prodHtml).toContain('href="/icon-192.png"');
+  });
 });
 
 describe("daemon log file (architecture.md §4.6, issue #21)", () => {
@@ -453,7 +513,7 @@ describe("daemon log file (architecture.md §4.6, issue #21)", () => {
       adminSocketPath: join(dir, "admin.sock"),
       devicesFilePath: join(dir, "devices.json"),
       vapidPath: join(dir, "vapid.json"),
-      embeddedHtml: "<!doctype html><title>Pigeon</title>",
+      embeddedHtml: "<!doctype html><title>Pigeon</title><link rel=\"apple-touch-icon\" href=\"/icon-192.png\" /><link rel=\"icon\" type=\"image/svg+xml\" href=\"/icon.svg\" />",
       logPath,
     });
     await daemon.start();
