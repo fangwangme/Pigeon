@@ -1,6 +1,6 @@
 import { createMemo, createSignal, For, Show } from "solid-js";
 import { openTerminal, showToast, state } from "../state/store";
-import { request, respondInteraction } from "../state/ws";
+import { respondInteraction } from "../state/ws";
 import type { InteractionCardData, NormalizedQuestion, NormalizedToolCall } from "../../../types/protocol";
 import { focusComposer } from "./Composer";
 import { Markdown, openToolDetail } from "./Transcript";
@@ -256,7 +256,6 @@ function cleanAlertInfo(p: InteractionCardData) {
       if (!l) return false;
       if (/^[>❯›▶$]\s*$/.test(l)) return false;
       if (/(mode:auto|mode:plan|mode:bypass|ctx:\d+%|token:\d+)/i.test(l)) return false;
-      if (/^Pigeon\s+main/i.test(l)) return false;
       return true;
     });
 
@@ -272,92 +271,43 @@ function cleanAlertInfo(p: InteractionCardData) {
   return { title, message, isError };
 }
 
-function useDismissAlert() {
-  const dismiss = () => {
-    if (state.activePaneId) {
-      request({
-        type: "agent_send_keys",
-        payload: { targetPaneId: state.activePaneId, keys: ["escape"] },
-      }).catch((e) => showToast(e.message || t("prompt.notSent")));
-    }
-  };
-  return dismiss;
-}
+/** §4.4: alerts closed on this page, by interaction id; a new prompt shows again. */
+const closedAlerts = new Set<string>();
 
 function AlertDialogCard(props: { p: InteractionCardData }) {
-  const [showModal, setShowModal] = createSignal(true);
+  const [closed, setClosed] = createSignal(closedAlerts.has(props.p.interactionId));
   const info = () => cleanAlertInfo(props.p);
-  const dismiss = useDismissAlert();
-
-  const handleClose = () => {
-    setShowModal(false);
-    dismiss();
+  const close = () => {
+    closedAlerts.add(props.p.interactionId);
+    setClosed(true);
   };
 
   return (
-    <>
-      <Show when={showModal()}>
-        <div class="alert-dialog-overlay" role="dialog" aria-modal="true">
-          <div class="scrim" onClick={handleClose} />
-          <div class="alert-dialog-card">
-            <div class="alert-dialog-hdr">
-              <span class="wbadge">
-                <span class="wd" />
-                {info().isError ? t("prompt.error") : t("prompt.alert")}
-              </span>
-              <button class="cbtn" aria-label={t("common.close")} onClick={handleClose}>
-                <Icon name="x" />
-              </button>
-            </div>
-            <div class="alert-dialog-body">
-              <div class="alert-dialog-title">{info().title}</div>
-              <div class="alert-box">
-                {info().message}
-              </div>
-            </div>
-            <div class="alert-dialog-foot">
-              <button class="btn acc blk" onClick={handleClose}>
-                {t("prompt.dismiss")}
-              </button>
-              <button class="btn ghost blk" onClick={() => { setShowModal(false); openTerminal(); }}>
-                <Icon name="term" sm />
-                {t("prompt.viewTerminal")}
-              </button>
-            </div>
-          </div>
-        </div>
-      </Show>
-
-      <div class="qcard">
-        <div class="qtop">
-          <span class="wbadge">
-            <span class="wd" />
-            {info().isError ? t("prompt.error") : t("prompt.alert")}
-          </span>
-          <span style={{ flex: 1 }} />
-          <Show when={!showModal()}>
-            <button class="lnk" onClick={() => setShowModal(true)}>
-              {t("prompt.openDialog")}
+    <Show when={!closed()}>
+      <div class="alert-dialog-overlay" role="dialog" aria-modal="true">
+        <div class="scrim" onClick={close} />
+        <div class="alert-dialog-card">
+          <div class="alert-dialog-hdr">
+            <span class="wbadge">
+              <span class="wd" />
+              {info().isError ? t("prompt.error") : t("prompt.alert")}
+            </span>
+            <button class="cbtn" aria-label={t("common.close")} onClick={close}>
+              <Icon name="x" />
             </button>
-          </Show>
-        </div>
-        <div class="qbody">
-          <div class="qtitle">{info().title}</div>
-          <div class="alert-box">
-            {info().message}
           </div>
-        </div>
-        <div class="optbtns" style={{ "margin-top": "12px" }}>
-          <button class="btn acc blk" onClick={handleClose}>
-            {t("prompt.dismiss")}
-          </button>
-          <button class="btn ghost blk" onClick={openTerminal}>
-            <Icon name="term" sm />
-            {t("prompt.viewTerminal")}
-          </button>
+          <div class="alert-dialog-body">
+            <div class="alert-dialog-title">{info().title}</div>
+            <div class="alert-box">{info().message}</div>
+          </div>
+          <div class="alert-dialog-foot">
+            <button class="btn acc blk" onClick={close}>
+              {t("prompt.dismiss")}
+            </button>
+          </div>
         </div>
       </div>
-    </>
+    </Show>
   );
 }
 

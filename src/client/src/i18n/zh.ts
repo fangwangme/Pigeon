@@ -166,13 +166,11 @@ export const zh: Messages = {
 
   "prompt.notSent": "没有发出",
   "prompt.inTerminal": "在终端中处理",
-  "prompt.viewTerminal": "在终端中查看",
   "prompt.permission": "需要授权",
   "prompt.waiting": "Agent 在等待",
   "prompt.error": "错误提示",
   "prompt.alert": "提示",
   "prompt.dismiss": "关闭",
-  "prompt.openDialog": "查看弹窗",
   "prompt.mismatch": "屏幕上的选项和问题对不上，请在终端中处理",
   "prompt.prev": "上一题",
   "prompt.next": "下一题",

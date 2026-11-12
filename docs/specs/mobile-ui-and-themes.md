@@ -129,7 +129,7 @@ Answers to an interaction recognized on screen are sent as the screen's numbered
 When the transcript has a pending plan tool call (Claude `ExitPlanMode`), the card shows the plan as Markdown, faded past the card height with **全文** to read it in a sheet, and the screen's options as buttons. An option that asks to keep planning focuses the composer like §4.1.
 
 ### 4.4 No numbered options
-A prompt without numbered options, or `blocked` with nothing recognized, shows its question (or "Agent 在等待") and **在终端中处理** only.
+A prompt without numbered options, or `blocked` with nothing recognized, shows as a dialog over the session page with the screen's last lines, titled **错误** when they read as an agent error (error, failure, capacity, limit, quota, exception, unavailable) and **提示** otherwise, and one **关闭** button (user decision, 2026-11-13). **关闭**, a tap outside the dialog or its × closes it on this page and sends nothing to the agent; the composer stays usable underneath. A closed prompt does not show again; a new one does. The dialog offers no terminal action; the ⋯ menu's **查看终端** remains.
 
 ## 5. Terminal view
 
