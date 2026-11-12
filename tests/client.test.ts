@@ -68,6 +68,10 @@ describe("installable app (architecture.md §2)", () => {
     expect(readFileSync(join(rootDir, "index.html"), "utf-8")).toContain("interactive-widget=resizes-content");
   });
 
+  test("a home-screen app keeps an opaque status bar (mobile-ui-and-themes.md §1.1)", () => {
+    expect(readFileSync(join(rootDir, "index.html"), "utf-8")).not.toContain("apple-mobile-web-app-status-bar-style");
+  });
+
   /** Runs public/sw.js against a stand-in service-worker global and returns its listeners. */
   function loadServiceWorker() {
     const listeners: Record<string, (event: any) => void> = {};

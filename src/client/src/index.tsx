@@ -15,44 +15,37 @@ import { t } from "./i18n";
 
 applyTheme(state.themeMode, state.accent);
 
+// mobile-ui-and-themes.md §1.1: the window never scrolls; only a page's scroll area does.
 function resetWindowScroll() {
-  if (typeof window === "undefined") return;
-  if (window.scrollY !== 0 || window.scrollX !== 0) {
-    window.scrollTo({ top: 0, left: 0, behavior: "instant" as ScrollBehavior });
-  }
-  if (document.documentElement && (document.documentElement.scrollTop !== 0 || document.documentElement.scrollLeft !== 0)) {
-    document.documentElement.scrollTop = 0;
-    document.documentElement.scrollLeft = 0;
-  }
-  if (document.body && (document.body.scrollTop !== 0 || document.body.scrollLeft !== 0)) {
-    document.body.scrollTop = 0;
-    document.body.scrollLeft = 0;
-  }
+  if (window.scrollY !== 0 || window.scrollX !== 0) window.scrollTo(0, 0);
 }
 
-function updateViewportMetrics() {
-  if (typeof window === "undefined") return;
+const isTextField = (el: Element | null) => Boolean(el?.matches?.("input, textarea, [contenteditable]"));
+
+// §1.1 "Keyboard on iOS": iOS shrinks only the visual viewport for the keyboard, so while a text
+// field has focus the page follows the visual viewport. Without focus the readings are ignored:
+// iOS 26 can leave them stale after the keyboard closes.
+let fullHeight = 0;
+let fullWidth = 0;
+function fitToVisualViewport() {
   const vv = window.visualViewport;
+  const root = document.documentElement;
   if (!vv) return;
-
-  const rawOffset = window.innerHeight - vv.height - (vv.offsetTop || 0);
-  const keyboardHeight = window.innerHeight - vv.height;
-  const isInputFocused = Boolean(document.activeElement?.matches?.("input, textarea, [contenteditable]"));
-
-  // Detect virtual keyboard presence reliably:
-  // Layout viewport shrinking by >100px or an active input with an offset >50px.
-  const isKeyboardOpen = keyboardHeight > 100 || (isInputFocused && rawOffset > 50);
-
-  if (isKeyboardOpen) {
-    const offset = Math.max(0, Math.round(rawOffset));
-    document.documentElement.style.setProperty("--keyboard-offset", `${offset}px`);
-    document.documentElement.style.setProperty("--keyboard-height", `${Math.round(keyboardHeight)}px`);
-    document.documentElement.setAttribute("data-keyboard", "open");
-  } else {
-    document.documentElement.style.setProperty("--keyboard-offset", "0px");
-    document.documentElement.style.setProperty("--keyboard-height", "0px");
-    document.documentElement.removeAttribute("data-keyboard");
+  if (vv.width !== fullWidth) {
+    fullWidth = vv.width;
+    fullHeight = 0;
   }
+  if (!isTextField(document.activeElement)) {
+    fullHeight = Math.max(fullHeight, vv.height);
+    root.style.removeProperty("--vv-top");
+    root.style.removeProperty("--vv-height");
+    root.removeAttribute("data-keyboard");
+    return;
+  }
+  root.style.setProperty("--vv-top", `${Math.round(vv.offsetTop)}px`);
+  root.style.setProperty("--vv-height", `${Math.round(vv.height)}px`);
+  if (fullHeight - vv.height > 120) root.setAttribute("data-keyboard", "open");
+  else root.removeAttribute("data-keyboard");
 }
 
 if (typeof window !== "undefined") {
@@ -61,43 +54,16 @@ if (typeof window !== "undefined") {
     document.documentElement.setAttribute("data-mode", "standalone");
   }
 
-  window.addEventListener("focusin", (e) => {
-    const target = e.target as HTMLElement | null;
-    if (target?.matches?.("input, textarea, [contenteditable]")) {
-      updateViewportMetrics();
-      requestAnimationFrame(updateViewportMetrics);
-      setTimeout(updateViewportMetrics, 100);
-      setTimeout(updateViewportMetrics, 300);
-    }
-  });
-
+  window.addEventListener("focusin", fitToVisualViewport);
   window.addEventListener("focusout", () => {
-    setTimeout(updateViewportMetrics, 50);
-    setTimeout(() => {
-      updateViewportMetrics();
-      resetWindowScroll();
-    }, 250);
-    setTimeout(() => {
-      updateViewportMetrics();
-      resetWindowScroll();
-    }, 450);
+    // Focus may be moving to another field; act on where it lands.
+    requestAnimationFrame(() => {
+      fitToVisualViewport();
+      if (!isTextField(document.activeElement)) resetWindowScroll();
+    });
   });
-
   window.addEventListener("scroll", () => {
-    // Only lock window scroll at (0, 0) when the virtual keyboard is NOT active
-    if (!document.documentElement.hasAttribute("data-keyboard")) {
-      if (window.scrollY !== 0 || window.scrollX !== 0) {
-        resetWindowScroll();
-      }
-    }
-  });
-
-  window.addEventListener("touchend", () => {
-    if (!document.documentElement.hasAttribute("data-keyboard")) {
-      if (window.scrollY !== 0 || window.scrollX !== 0) {
-        resetWindowScroll();
-      }
-    }
+    if (!isTextField(document.activeElement)) resetWindowScroll();
   }, { passive: true });
 
   document.addEventListener("touchmove", (e) => {
@@ -107,14 +73,9 @@ if (typeof window !== "undefined") {
     }
   }, { passive: false });
 
-  if (window.visualViewport) {
-    window.visualViewport.addEventListener("resize", () => {
-      updateViewportMetrics();
-    });
-    window.visualViewport.addEventListener("scroll", () => {
-      updateViewportMetrics();
-    });
-  }
+  window.visualViewport?.addEventListener("resize", fitToVisualViewport);
+  window.visualViewport?.addEventListener("scroll", fitToVisualViewport);
+  fitToVisualViewport();
 }
 
 let waitingWorker: ServiceWorker | null = null;
@@ -281,7 +242,6 @@ function App() {
   createEffect(on(() => state.route.name, () => {
     reportPresence();
     resetWindowScroll();
-    requestAnimationFrame(resetWindowScroll);
   }, { defer: true }));
   createEffect(() => {
     if (state.configReady && state.quotaUsageEnabled === false) {
