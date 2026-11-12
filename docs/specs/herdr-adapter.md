@@ -157,10 +157,11 @@ Each recipe's model list (`protocol.md` §5.7) comes from a catalog the daemon k
 
 
 ### 7.2 Answering transcript questions
-A transcript interaction (`protocol.md` §5.4) is answered with the keys the agent's question UI takes, checked against the real CLI and listed here per agent, with the date of the check. An agent not listed, and any question kind its row does not cover (a multi-select question, typing an "other" answer), is answered in the terminal view (`mobile-ui-and-themes.md` §5).
+A transcript interaction (`protocol.md` §5.4) is answered in one go: the phone sends every question's picks, and the daemon sends the keys the agent's question UI takes for all of them, checked against the real CLI and listed here per agent, with the date of the check. Typing an "other" answer is not offered.
 
-| Agent | Question tool | Keys for option `n` of question `k` |
+| Agent | Question tool | Keys for the picks, question by question |
 | :--- | :--- | :--- |
+| claude | `AskUserQuestion` | a single-select question: the digit of its pick, which moves on by itself; a multi-select question: the digit of each pick (a digit toggles that option), then `right`. After the last question, `1` (Submit answers on the review screen), except for a lone single-select question, which its digit answers at once. Checked with Claude Code 2.1.322 on 2026-11-13: one question, two single-select questions, one multi-select question, and a multi-select followed by a single-select question. |
 
 ## 8. Screen Parse Rules
 
