@@ -1,4 +1,4 @@
-const CACHE_NAME = "pigeon-cache-v2";
+const CACHE_NAME = "pigeon-cache-v3";
 
 self.addEventListener("message", (event) => {
   if (event.data && event.data.type === "SKIP_WAITING") self.skipWaiting();

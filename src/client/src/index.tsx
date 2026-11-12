@@ -35,15 +35,23 @@ function updateViewportMetrics() {
   const vv = window.visualViewport;
   if (!vv) return;
 
-  const keyboardHeight = Math.max(0, window.innerHeight - vv.height - (vv.offsetTop || 0));
+  const rawOffset = window.innerHeight - vv.height - (vv.offsetTop || 0);
+  const keyboardHeight = window.innerHeight - vv.height;
+  const isInputFocused = Boolean(document.activeElement?.matches?.("input, textarea, [contenteditable]"));
 
-  if (keyboardHeight > 100) {
+  // Detect virtual keyboard presence reliably:
+  // Layout viewport shrinking by >100px or an active input with an offset >50px.
+  const isKeyboardOpen = keyboardHeight > 100 || (isInputFocused && rawOffset > 50);
+
+  if (isKeyboardOpen) {
+    const offset = Math.max(0, Math.round(rawOffset));
+    document.documentElement.style.setProperty("--keyboard-offset", `${offset}px`);
     document.documentElement.style.setProperty("--keyboard-height", `${Math.round(keyboardHeight)}px`);
     document.documentElement.setAttribute("data-keyboard", "open");
   } else {
+    document.documentElement.style.setProperty("--keyboard-offset", "0px");
     document.documentElement.style.setProperty("--keyboard-height", "0px");
     document.documentElement.removeAttribute("data-keyboard");
-    resetWindowScroll();
   }
 }
 
@@ -56,27 +64,39 @@ if (typeof window !== "undefined") {
   window.addEventListener("focusin", (e) => {
     const target = e.target as HTMLElement | null;
     if (target?.matches?.("input, textarea, [contenteditable]")) {
-      setTimeout(updateViewportMetrics, 60);
-      setTimeout(updateViewportMetrics, 200);
-      setTimeout(updateViewportMetrics, 400);
+      updateViewportMetrics();
+      requestAnimationFrame(updateViewportMetrics);
+      setTimeout(updateViewportMetrics, 100);
+      setTimeout(updateViewportMetrics, 300);
     }
   });
 
   window.addEventListener("focusout", () => {
     setTimeout(updateViewportMetrics, 50);
-    setTimeout(updateViewportMetrics, 200);
-    setTimeout(resetWindowScroll, 350);
+    setTimeout(() => {
+      updateViewportMetrics();
+      resetWindowScroll();
+    }, 250);
+    setTimeout(() => {
+      updateViewportMetrics();
+      resetWindowScroll();
+    }, 450);
   });
 
   window.addEventListener("scroll", () => {
-    if (window.scrollY !== 0 || window.scrollX !== 0) {
-      resetWindowScroll();
+    // Only lock window scroll at (0, 0) when the virtual keyboard is NOT active
+    if (!document.documentElement.hasAttribute("data-keyboard")) {
+      if (window.scrollY !== 0 || window.scrollX !== 0) {
+        resetWindowScroll();
+      }
     }
   });
 
   window.addEventListener("touchend", () => {
-    if (window.scrollY !== 0 || window.scrollX !== 0) {
-      resetWindowScroll();
+    if (!document.documentElement.hasAttribute("data-keyboard")) {
+      if (window.scrollY !== 0 || window.scrollX !== 0) {
+        resetWindowScroll();
+      }
     }
   }, { passive: true });
 
@@ -90,11 +110,9 @@ if (typeof window !== "undefined") {
   if (window.visualViewport) {
     window.visualViewport.addEventListener("resize", () => {
       updateViewportMetrics();
-      resetWindowScroll();
     });
     window.visualViewport.addEventListener("scroll", () => {
       updateViewportMetrics();
-      resetWindowScroll();
     });
   }
 }
@@ -232,46 +250,7 @@ function Toast() {
   );
 }
 
-/** Temporary metrics overlay to record window.scrollY and visualViewport.offsetTop */
-function MetricsOverlay() {
-  const [scrollY, setScrollY] = createSignal(typeof window !== "undefined" ? window.scrollY : 0);
-  const [vvTop, setVvTop] = createSignal(typeof window !== "undefined" && window.visualViewport ? window.visualViewport.offsetTop : 0);
-  const [kb, setKb] = createSignal(0);
 
-  onMount(() => {
-    const update = () => {
-      setScrollY(window.scrollY);
-      setVvTop(window.visualViewport ? window.visualViewport.offsetTop : 0);
-      if (window.visualViewport) {
-        const h = Math.max(0, window.innerHeight - window.visualViewport.height - (window.visualViewport.offsetTop || 0));
-        setKb(Math.round(h));
-      }
-    };
-    window.addEventListener("scroll", update, { passive: true });
-    window.visualViewport?.addEventListener("scroll", update, { passive: true });
-    window.visualViewport?.addEventListener("resize", update, { passive: true });
-    window.addEventListener("resize", update, { passive: true });
-    const timer = setInterval(() => {
-      update();
-      if (typeof window !== "undefined" && (window.scrollY !== 0 || window.scrollX !== 0)) {
-        resetWindowScroll();
-      }
-    }, 500);
-    onCleanup(() => {
-      window.removeEventListener("scroll", update);
-      window.visualViewport?.removeEventListener("scroll", update);
-      window.visualViewport?.removeEventListener("resize", update);
-      window.removeEventListener("resize", update);
-      clearInterval(timer);
-    });
-  });
-
-  return (
-    <div class="metrics-overlay">
-      scrollY: {scrollY()} | vvTop: {vvTop()} | kb: {kb()}
-    </div>
-  );
-}
 
 function App() {
   const [systemReduce, setSystemReduce] = createSignal(systemReducesTransparency());
@@ -348,7 +327,6 @@ function App() {
         </button>
       </Show>
       <Toast />
-      <MetricsOverlay />
     </div>
   );
 }

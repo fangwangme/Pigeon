@@ -233,7 +233,16 @@ export function SessionPage() {
     if (chat) ro.observe(chat);
     if (dock) ro.observe(dock);
     if (scroller) ro.observe(scroller);
-    onCleanup(() => ro.disconnect());
+    const onVv = () => {
+      if (document.documentElement.hasAttribute("data-keyboard") && nearBottom()) {
+        toBottom(true);
+      }
+    };
+    window.visualViewport?.addEventListener("resize", onVv);
+    onCleanup(() => {
+      ro.disconnect();
+      window.visualViewport?.removeEventListener("resize", onVv);
+    });
   });
 
   const stop = () => {
