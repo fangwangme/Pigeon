@@ -236,7 +236,7 @@ export function setFilter(filter: FilterState): void {
 }
 
 export function filterActive(f: FilterState = state.filter): boolean {
-  return f.statuses.length > 0 || f.agents.length > 0 || !f.showTerminals || !f.showIdle || (Boolean(f.groupBy) && f.groupBy !== "status");
+  return f.statuses.length > 0 || f.agents.length > 0 || !f.showTerminals || !f.showIdle;
 }
 
 export function toggleCollapsed(workspaceId: string): void {

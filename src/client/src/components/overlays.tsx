@@ -156,7 +156,7 @@ function FilterSheet() {
       onClose={() => setOverlay(null)}
       right={
         <Show when={filterActive()}>
-          <button class="lnk" onClick={() => setFilter(EMPTY_FILTER)}>
+          <button class="lnk" onClick={() => setFilter({ ...EMPTY_FILTER, groupBy: state.filter.groupBy })}>
             {t("filter.reset")}
           </button>
         </Show>
