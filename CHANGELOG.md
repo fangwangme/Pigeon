@@ -19,6 +19,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Instance-isolated PWA icons**: Formal/production instance (port 4100) serves light icons while test instances (non-4100) serve dark icons for visual distinction on mobile home screen (#21).
 - **Daemon logging**: Persistent daemon logging to `pigeon.log` with truncation on startup (#21).
 
+### Fixed
+- **Mobile PWA window scroll lock**: Fix `html[data-mode="standalone"]` selector, constrain `html` and `body` height to prevent WebKit outer window vertical scrolling, and auto-reset window scroll on input focusout, visual viewport resize/scroll, and route navigation (#21).
+
 ## [0.1.9] - 2026-11-11
 
 ### Added

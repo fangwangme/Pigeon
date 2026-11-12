@@ -3,12 +3,14 @@
 :root { color-scheme: light dark; -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
 :root[data-theme="dark"] { color-scheme: dark; }
 :root[data-theme="light"] { color-scheme: light; }
-html, body, #root { height: 100%; width: 100%; overflow: hidden; background: var(--bg); color: var(--fg); -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
+html { height: 100%; max-height: 100%; width: 100%; overflow: hidden; overscroll-behavior: none; background: var(--bg); color: var(--fg); -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
 body {
+  position: fixed; inset: 0; width: 100%; height: 100%; max-height: 100%; overflow: hidden; overscroll-behavior: none;
   font: 15px/1.5 -apple-system, BlinkMacSystemFont, "SF Pro Text", Inter, "PingFang SC", "Noto Sans SC", "Segoe UI", sans-serif;
-  -webkit-font-smoothing: antialiased; overscroll-behavior: none;
+  -webkit-font-smoothing: antialiased;
   -webkit-text-size-adjust: 100%; text-size-adjust: 100%;
 }
+#root { height: 100%; width: 100%; overflow: hidden; }
 button { font: inherit; color: inherit; background: none; border: 0; cursor: pointer; }
 input, textarea { font: inherit; color: inherit; }
 .mono, code, pre, kbd { font-family: "SF Mono", "JetBrains Mono", ui-monospace, Menlo, Consolas, monospace; }
@@ -17,9 +19,12 @@ svg.i { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-widt
 svg.i.sm { width: 16px; height: 16px; }
 
 /* ---------- page frame ---------- */
-[data-mode="standalone"] html,
+html[data-mode="standalone"],
 [data-mode="standalone"] body,
-[data-mode="standalone"] #root,
+[data-mode="standalone"] #root {
+  height: 100%;
+  max-height: 100%;
+}
 [data-mode="standalone"] .page {
   height: 100%;
   height: 100dvh;
@@ -542,3 +547,24 @@ svg.i.sm { width: 16px; height: 16px; }
   font-size: 14px;
   line-height: 1.5;
 }
+
+/* ---------- temporary metrics overlay ---------- */
+.metrics-overlay {
+  position: fixed;
+  top: calc(env(safe-area-inset-top) + 48px);
+  right: 10px;
+  z-index: 9999;
+  background: rgba(0, 0, 0, 0.72);
+  color: #fff;
+  font-family: "SF Mono", "JetBrains Mono", ui-monospace, Menlo, Consolas, monospace;
+  font-size: 11px;
+  line-height: 1.4;
+  padding: 3px 8px;
+  border-radius: 6px;
+  pointer-events: none;
+  user-select: none;
+  letter-spacing: -0.02em;
+  -webkit-backdrop-filter: blur(8px);
+  backdrop-filter: blur(8px);
+}
+

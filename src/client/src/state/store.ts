@@ -257,6 +257,9 @@ export function navigate(route: Route): void {
   if (route.name === "home") {
     writePref("pigeon_active_pane", null);
   }
+  if (typeof window !== "undefined" && (window.scrollY !== 0 || window.scrollX !== 0)) {
+    window.scrollTo(0, 0);
+  }
 }
 
 export function goBack(): void {

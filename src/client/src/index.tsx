@@ -1,5 +1,5 @@
 import { render } from "solid-js/web";
-import { createEffect, createSignal, Match, on, onMount, Show, Switch } from "solid-js";
+import { createEffect, createSignal, Match, on, onCleanup, onMount, Show, Switch } from "solid-js";
 import "./styles.css";
 import { goBack, navigate, quotaFeatureOn, setState, state, systemReducesTransparency } from "./state/store";
 import { applyTheme } from "./themes";
@@ -15,10 +15,43 @@ import { t } from "./i18n";
 
 applyTheme(state.themeMode, state.accent);
 
+function resetWindowScroll() {
+  if (typeof window === "undefined") return;
+  if (window.scrollY !== 0 || window.scrollX !== 0) {
+    window.scrollTo(0, 0);
+  }
+  if (document.documentElement && (document.documentElement.scrollTop !== 0 || document.documentElement.scrollLeft !== 0)) {
+    document.documentElement.scrollTop = 0;
+    document.documentElement.scrollLeft = 0;
+  }
+  if (document.body && (document.body.scrollTop !== 0 || document.body.scrollLeft !== 0)) {
+    document.body.scrollTop = 0;
+    document.body.scrollLeft = 0;
+  }
+}
+
 if (typeof window !== "undefined") {
   const isStandalone = window.matchMedia("(display-mode: standalone)").matches || Boolean((navigator as any).standalone);
   if (isStandalone) {
     document.documentElement.setAttribute("data-mode", "standalone");
+  }
+
+  window.addEventListener("focusout", () => {
+    resetWindowScroll();
+    requestAnimationFrame(resetWindowScroll);
+    setTimeout(resetWindowScroll, 100);
+    setTimeout(resetWindowScroll, 350);
+  });
+
+  window.addEventListener("scroll", () => {
+    if (window.scrollY !== 0 || window.scrollX !== 0) {
+      resetWindowScroll();
+    }
+  });
+
+  if (window.visualViewport) {
+    window.visualViewport.addEventListener("resize", resetWindowScroll);
+    window.visualViewport.addEventListener("scroll", resetWindowScroll);
   }
 }
 
@@ -155,6 +188,37 @@ function Toast() {
   );
 }
 
+/** Temporary metrics overlay to record window.scrollY and visualViewport.offsetTop */
+function MetricsOverlay() {
+  const [scrollY, setScrollY] = createSignal(typeof window !== "undefined" ? window.scrollY : 0);
+  const [vvTop, setVvTop] = createSignal(typeof window !== "undefined" && window.visualViewport ? window.visualViewport.offsetTop : 0);
+
+  onMount(() => {
+    const update = () => {
+      setScrollY(window.scrollY);
+      setVvTop(window.visualViewport ? window.visualViewport.offsetTop : 0);
+    };
+    window.addEventListener("scroll", update, { passive: true });
+    window.visualViewport?.addEventListener("scroll", update, { passive: true });
+    window.visualViewport?.addEventListener("resize", update, { passive: true });
+    window.addEventListener("resize", update, { passive: true });
+    const timer = setInterval(update, 500);
+    onCleanup(() => {
+      window.removeEventListener("scroll", update);
+      window.visualViewport?.removeEventListener("scroll", update);
+      window.visualViewport?.removeEventListener("resize", update);
+      window.removeEventListener("resize", update);
+      clearInterval(timer);
+    });
+  });
+
+  return (
+    <div class="metrics-overlay">
+      sY: {scrollY()} | vvTop: {vvTop()}
+    </div>
+  );
+}
+
 function App() {
   const [systemReduce, setSystemReduce] = createSignal(systemReducesTransparency());
   onMount(async () => {
@@ -181,7 +245,11 @@ function App() {
     await initWebSocket();
     registerServiceWorker();
   });
-  createEffect(on(() => state.route.name, () => reportPresence(), { defer: true }));
+  createEffect(on(() => state.route.name, () => {
+    reportPresence();
+    resetWindowScroll();
+    requestAnimationFrame(resetWindowScroll);
+  }, { defer: true }));
   createEffect(() => {
     if (state.configReady && state.quotaUsageEnabled === false) {
       if (state.route.name === "quota" || state.route.name === "usage") {
@@ -226,6 +294,7 @@ function App() {
         </button>
       </Show>
       <Toast />
+      <MetricsOverlay />
     </div>
   );
 }
