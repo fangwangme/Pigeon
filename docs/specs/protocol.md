@@ -376,7 +376,7 @@ A pane that becomes bound or switches session (for example after the agent's `/c
 ```
 Skills are per pane: they depend on the pane's agent kind and project directory (`herdr-adapter.md` §8.3). `source` is `project`, `user`, `plugin` or `builtin`; `kind` is `skill` or `command`. A built-in command also carries `descriptionId` (`herdr-adapter.md` §8.3), and the phone shows its own text for that id, falling back to the English `description`. The client ignores skills for a pane it is no longer viewing. Choosing an entry inserts its `invocation` as prompt text.
 
-Each recipe summary also carries `resumable` (the recipe can resume a session) and `launchModel` (whether §4.5 can start the agent on a chosen model, `herdr-adapter.md` §5). A recipe's `models` is that agent's list in the model catalog (`herdr-adapter.md` §7.1), complete; the phone searches it.
+Each recipe summary also carries `resumable` (the recipe can resume a session) and `launchModel` (whether §4.5 can start the agent on a chosen model, `herdr-adapter.md` §5). A recipe without `launchModel` may carry `lastUsed: { "model": "<id>", "thinking"?: "<level>" }`, the model and effort the agent will start on (`herdr-adapter.md` §5; today OpenCode). A recipe's `models` is that agent's list in the model catalog (`herdr-adapter.md` §7.1), complete; the phone searches it.
 
 ### 5.8 Queue (`prompt_queue`)
 ```json

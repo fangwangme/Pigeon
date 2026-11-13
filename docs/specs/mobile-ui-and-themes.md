@@ -175,7 +175,7 @@ A sheet listing the tab's panes (agent or shell, status). The session page defau
 ## 7. New session
 
 ### 7.1 New
-A blank session page: segments **新建 / 恢复**, chips for **工作区** (Herdr's workspaces; preset from where it was opened), **Agent** (recipes) and **模型** (opens §6.4's picker; only for an agent that takes a model at launch, `protocol.md` §5.7), then the composer for the first message. Sending creates the tab with the first message (`protocol.md` §4.5) and opens it; the title starts as the first message and can be renamed. Creating a Herdr workspace is not offered.
+A blank session page: segments **新建 / 恢复**, chips for **工作区** (Herdr's workspaces; preset from where it was opened), **Agent** (recipes) and **模型** (opens §6.4's picker; only for an agent that takes a model at launch, `protocol.md` §5.7). For an agent that does not, one muted line says so and names what it will start on (user decision, 2026-11-13): "OpenCode 不支持指定模型，沿用上次：GLM-5.3-Flash · max" from the recipe's `lastUsed` (label from the catalog), or "OpenCode 不支持指定模型，沿用上次的模型" without it. Then the composer for the first message. Sending creates the tab with the first message (`protocol.md` §4.5) and opens it; the title starts as the first message and can be renamed. Creating a Herdr workspace is not offered.
 
 ### 7.2 Resume
 The **恢复** segment (also reached from `+`) lists the agent's past sessions for the chosen workspace's folder (`protocol.md` §4.10): title or first message, then the age and the model joined by ` · ` (only the age when the model is unknown). A tap opens a new tab that resumes it (`protocol.md` §4.5 `resumeSessionId`) and goes there. Resuming always opens a new tab.
