@@ -91,8 +91,6 @@ export function validateClientMessage(raw: unknown): ValidationResult {
     case "close_tab":
       if (!isObj(p) || !isStr(p.tabId)) return fail(id, "close_tab needs payload.tabId");
       return ok();
-    case "agent_set_model":
-      return fail(id, "agent_set_model is no longer accepted");
     case "queue_resume":
       if (!isObj(p) || !isStr(p.paneId)) return fail(id, "queue_resume needs paneId");
       return ok();

@@ -15,7 +15,7 @@ import { openOverlay } from "./overlays";
 import { PromptCard } from "./PromptCard";
 import { DiffView, renderPath, ScreenCard, TodoCapsule, TodoSheet, ToolSheet, Turn } from "./Transcript";
 import { DiffBadge, findPane, formatModelName, Icon, paneLabel, paneStatus, paneSummary, Sheet, StatusIcon } from "./ui";
-import { t, type MessageId } from "../i18n";
+import { t } from "../i18n";
 
 const TERMINAL_KEYS: Array<[string, string]> = [
   ["↑", "up"],

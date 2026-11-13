@@ -311,8 +311,6 @@ export interface AgentRecipeSummary {
   launchModel: boolean;
   /** Without `launchModel`: the model and effort the agent will start on (`protocol.md` §5.7). */
   lastUsed?: { model: string; thinking?: string };
-  /** Which values `agent_set_model` can change (`protocol.md` §4.9). */
-  runtimeSwitch?: { model: boolean; thinking: boolean };
 }
 
 export interface SessionValue {
@@ -485,7 +483,6 @@ export type ClientMessage =
   | { type: "agent_send_keys"; id: string; payload: { targetPaneId: string; keys: string[] } }
   | { type: "create_tab_and_agent"; id: string; payload: { workspaceId: string; agentKind: string; modelId?: string; thinking?: string; cwd?: string; firstMessage?: string; resumeSessionId?: string } }
   | { type: "close_tab"; id: string; payload: { tabId: string } }
-  | { type: "agent_set_model"; id: string; payload: { targetPaneId: string; modelId?: string; thinking?: string } }
   | { type: "sessions_list"; id: string; payload: { workspaceId: string; agentKind: string } }
   | { type: "tab_rename"; id: string; payload: { tabId: string; name: string } }
   | { type: "devices_list"; id: string }

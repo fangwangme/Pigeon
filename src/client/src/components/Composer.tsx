@@ -1,4 +1,4 @@
-import { createEffect, createMemo, createSignal, For, onCleanup, onMount, Show, type JSX } from "solid-js";
+import { createEffect, createMemo, createSignal, For, onCleanup, onMount, Show } from "solid-js";
 import { draftKey, readPref, showToast, state, writePref } from "../state/store";
 import { requestSkills, uploadFile } from "../state/ws";
 import type { SkillEntry } from "../../../types/protocol";

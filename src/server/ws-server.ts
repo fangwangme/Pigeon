@@ -667,8 +667,8 @@ export class WsServer {
           }
           steps = [{ keys: [option.keyShortcut] }];
         }
-        // protocol.md §4.1: send exactly the option's key; a prompt still on screen afterwards
-        // is reported as not approved so the client falls back to the terminal view.
+        // protocol.md §4.1: send the answer once; a prompt still on screen afterwards is acked
+        // as not approved, and the card stays.
         this.answeringPanes.add(targetPaneId);
         let approved: boolean;
         try {

@@ -1,5 +1,5 @@
 import { render } from "solid-js/web";
-import { createEffect, createSignal, Match, on, onCleanup, onMount, Show, Switch } from "solid-js";
+import { createEffect, createSignal, Match, on, onMount, Show, Switch } from "solid-js";
 import "./styles.css";
 import { goBack, navigate, quotaFeatureOn, setState, state, systemReducesTransparency } from "./state/store";
 import { applyTheme } from "./themes";

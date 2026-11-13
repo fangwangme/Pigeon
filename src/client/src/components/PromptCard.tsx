@@ -6,12 +6,9 @@ import { focusComposer } from "./Composer";
 import { Markdown, openToolDetail } from "./Transcript";
 import { DiffBadge, Icon, Sheet } from "./ui";
 import { t } from "../i18n";
-import { matchScreenOption } from "../prompt-match";
 
 /** Options that hand the turn back to the user to write something (§4.1, §4.3). */
 const TELL_RE = /tell|keep planning|告诉|说明|继续规划/i;
-
-const norm = (s: string) => s.replace(/\s+/g, " ").trim().toLowerCase();
 
 function lastTurn() {
   return state.normalizedTurns[state.normalizedTurns.length - 1];
@@ -279,82 +276,6 @@ function MenuQuestionCard(props: { p: InteractionCardData }) {
   );
 }
 
-/** §4.2: a question recognized on screen; answers go as the screen's digits. */
-function QuestionCard(props: { p: InteractionCardData; q: NormalizedQuestion; onCollapse: () => void }) {
-  const qs = () => props.q.questions;
-  const onScreen = createMemo(() => {
-    const text = norm(props.p.question + " " + (props.p.payload ?? ""));
-    const i = qs().findIndex((q) => text.includes(norm(q.question)) || norm(q.question).includes(norm(props.p.question)));
-    return i === -1 ? 0 : i;
-  });
-  const [page, setPage] = createSignal<number | null>(null);
-  const cur = () => page() ?? onScreen();
-  const [picked, setPicked] = createSignal<Record<number, string>>({});
-  const { sending, answer } = useAnswer(() => props.p);
-  const q = () => qs()[cur()];
-  const submit = () => {
-    const label = picked()[cur()];
-    const opt = label ? matchScreenOption(props.p.options, label) : undefined;
-    if (!opt) {
-      showToast(t("prompt.mismatch"));
-      return;
-    }
-    setPage(null);
-    answer(opt.id, opt.label);
-  };
-  return (
-    <div class="qcard">
-      <div class="qtop">
-        <div class="pg">
-          <Show when={qs().length > 1}>
-            <button aria-label={t("prompt.prev")} disabled={cur() === 0} onClick={() => setPage(Math.max(0, cur() - 1))}>
-              <Icon name="chevL" sm />
-            </button>
-            <span>
-              {cur() + 1}/{qs().length}
-            </span>
-            <button aria-label={t("prompt.next")} disabled={cur() === qs().length - 1} onClick={() => setPage(Math.min(qs().length - 1, cur() + 1))}>
-              <Icon name="chevR" sm />
-            </button>
-          </Show>
-          <Show when={q()?.header}>
-            <span class="wbadge" style={{ "margin-left": "6px" }}>
-              {q()!.header}
-            </span>
-          </Show>
-        </div>
-        <button class="x" aria-label={t("common.collapse")} onClick={props.onCollapse}>
-          <Icon name="x" sm />
-        </button>
-      </div>
-      <div class="qbody">
-        <div class="qtitle">{q()?.question}</div>
-        <For each={q()?.options ?? []}>
-          {(o) => (
-            <button class={`opt${picked()[cur()] === o.label ? " sel" : ""}`} onClick={() => setPicked({ ...picked(), [cur()]: o.label })}>
-              <span class="rd" />
-              <div class="tx">
-                <b>{o.label}</b>
-                <Show when={o.description}>
-                  <span>{o.description}</span>
-                </Show>
-              </div>
-            </button>
-          )}
-        </For>
-      </div>
-      <div class="qfoot">
-        <span style={{ flex: 1 }} />
-        <Show when={!q()?.multiSelect} fallback={<ReplyBelow />}>
-          <button class="btn acc" disabled={!picked()[cur()] || !!sending() || cur() !== onScreen()} onClick={submit}>
-            {sending() ? t("common.sending") : cur() === qs().length - 1 ? t("prompt.submit") : t("prompt.nextShort")}
-          </button>
-        </Show>
-      </div>
-    </div>
-  );
-}
-
 /** §4.3 */
 function PlanCard(props: { p: InteractionCardData; markdown: string }) {
   const [full, setFull] = createSignal(false);
@@ -466,11 +387,11 @@ export function PromptCard(props: { collapsed: boolean; onCollapse: () => void; 
   const isAlert = () => isAlertPrompt(p());
   // A pane refresh replaces these objects; a card is rebuilt only when its prompt changes, so
   // the page and picks the user made survive (§4.2).
-  const questionId = () => question()?.id;
   const isTranscript = createMemo(() => p().source === "transcript");
+  const questionId = () => (isTranscript() ? question()?.id : undefined);
   return (
     <Show
-      when={!props.collapsed || !question()}
+      when={!props.collapsed || !questionId()}
       fallback={
         <button class="qcap" onClick={props.onExpand}>
           <span class="wd" />
@@ -504,11 +425,7 @@ export function PromptCard(props: { collapsed: boolean; onCollapse: () => void; 
           </Show>
         }
       >
-        {(_id: string) => (
-          <Show when={isTranscript()} fallback={<QuestionCard p={p()} q={question()!} onCollapse={props.onCollapse} />}>
-            <TranscriptQuestionCard p={p()} q={question()!} onCollapse={props.onCollapse} />
-          </Show>
-        )}
+        {(_id: string) => <TranscriptQuestionCard p={p()} q={question()!} onCollapse={props.onCollapse} />}
       </Show>
     </Show>
   );

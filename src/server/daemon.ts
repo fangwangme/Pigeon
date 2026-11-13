@@ -320,7 +320,6 @@ export class PigeonDaemon {
   private iconDark192 = Buffer.from(PWA_ICON_DARK_192_BASE64, "base64");
   private iconDark512 = Buffer.from(PWA_ICON_DARK_512_BASE64, "base64");
   public readonly isProduction: boolean;
-  private httpHandler: ((req: Request) => Promise<Response>) | null = null;
 
   constructor(opts: DaemonConfig) {
     this.configManager = opts.configManager;
