@@ -8,7 +8,7 @@ import type {
   UsageGetPayload,
   UsageModelPayload,
 } from "../../../types/protocol";
-import { Icon } from "./ui";
+import { formatModelName, Icon } from "./ui";
 import { t, locale } from "../i18n";
 
 const AGENT_KEYS = ["claude", "codex", "agy", "opencode", "pi"] as const;
@@ -529,7 +529,7 @@ export function UsagePage() {
       return {
         id: mdl.model,
         type: "model" as const,
-        title: mdl.model,
+        title: formatModelName(mdl.agents[0], mdl.model),
         titleColor: COMPANY_COLORS[mdl.company] || "var(--co-other)",
         sub,
         subColor: "var(--accent)",
@@ -547,7 +547,7 @@ export function UsagePage() {
   return (
     <div class="page">
       {/* Shared Header */}
-      <div class="hdr" style={{ padding: "12px 12px 8px" }}>
+      <div class="hdr">
         <button class="cbtn" aria-label={t("common.back")} onClick={() => navigate({ name: backTarget() })}>
           <Icon name="chevL" />
         </button>
@@ -1558,7 +1558,7 @@ export function UsagePage() {
                     "overflow-wrap": "anywhere",
                   }}
                 >
-                  {selectedModel()}
+                  {formatModelName(modelData()?.agents[0]?.agent, selectedModel())}
                 </div>
                 <div style={{ "font-size": "12.5px", color: "var(--faint)" }}>
                   {modelData()?.company ?? ""} · {rangeText()}

@@ -2,7 +2,7 @@ import { existsSync, readdirSync, realpathSync, statSync } from "node:fs";
 import { join } from "node:path";
 import type { FileDiffSummary, TodoItem } from "../../shared/agent-session";
 import type { PastSession } from "../../types/protocol";
-import { countPatch, isObj, JsonlTail, readFirstJsonLine, readHeadJsonLines, str, todoStatus, TurnBuilder, tsOf, type SessionRead } from "./common";
+import { countPatch, isObj, JsonlTail, readFirstJsonLine, readHeadJsonLines, readTailJsonLines, str, todoStatus, TurnBuilder, tsOf, type SessionRead } from "./common";
 import type { PaneFacts, SessionSource } from "./source";
 
 const MAX_LISTED_ROLLOUTS = 2000;
@@ -122,17 +122,37 @@ export class CodexSource implements SessionSource {
       if (!meta || (meta.cwd !== folder && !meta.cwd.startsWith(folder + "/"))) continue;
       this.paths.set(meta.id, path);
       let title: string | undefined;
+      let model: string | undefined;
       for (const r of readHeadJsonLines(path)) {
+        if (isObj(r)) {
+          if (r.type === "event_msg" && isObj(r.payload) && r.payload.type === "thread_settings_applied" && isObj(r.payload.thread_settings) && str(r.payload.thread_settings.model)) {
+            model = r.payload.thread_settings.model;
+          }
+          if (r.type === "turn_context" && str((r as any).model)) {
+            model = (r as any).model;
+          }
+        }
         const p = isObj(r) && r.type === "response_item" ? r.payload : null;
-        if (isObj(p) && p.type === "message" && p.role === "user") {
+        if (!title && isObj(p) && p.type === "message" && p.role === "user") {
           const t = messageText(p.content);
           if (t && !NOT_PROMPT.test(t)) {
             title = t;
-            break;
           }
         }
       }
-      out.push({ id: meta.id, title: (title ?? meta.id).slice(0, 120), updatedAt: mtime });
+      if (statSync(path).size > 262_144) {
+        for (const r of readTailJsonLines(path)) {
+          if (isObj(r)) {
+            if (r.type === "event_msg" && isObj(r.payload) && r.payload.type === "thread_settings_applied" && isObj(r.payload.thread_settings) && str(r.payload.thread_settings.model)) {
+              model = r.payload.thread_settings.model;
+            }
+            if (r.type === "turn_context" && str((r as any).model)) {
+              model = (r as any).model;
+            }
+          }
+        }
+      }
+      out.push({ id: meta.id, title: (title ?? meta.id).slice(0, 120), updatedAt: mtime, ...(model ? { model } : {}) });
     }
     return out;
   }

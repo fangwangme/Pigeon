@@ -2,6 +2,24 @@ import type { ModelOption } from "../types/protocol";
 
 export type { ModelOption };
 
+/** One step of answering a question menu: keys pressed, or text pasted and submitted with Enter. */
+export type AnswerStep = { keys: string[] } | { text: string };
+
+/** A question's answer: picked option numbers (1-based) and, when given, the user's own text. */
+export interface QuestionAnswer {
+  multiSelect: boolean;
+  picks: number[];
+  other?: string;
+}
+
+/** `herdr-adapter.md` §7.2 claude row and §8.2: the steps that answer one Claude question. */
+export function claudeQuestionSteps(q: QuestionAnswer): AnswerStep[] {
+  const digits = q.picks.map(String);
+  if (!q.multiSelect) return q.other !== undefined ? [{ text: q.other }] : [{ keys: digits }];
+  if (q.other === undefined) return [{ keys: [...digits, "right"] }];
+  return [...(digits.length ? [{ keys: digits }] : []), { text: q.other }, { keys: ["enter", "down", "enter"] }];
+}
+
 /**
  * Per-agent launch knowledge. Model lists live in the model catalog (`model-catalog.ts`,
  * `herdr-adapter.md` §7.1). Flags are the ones each CLI's `--help` documents.
@@ -25,9 +43,11 @@ export interface AgentRecipe {
   mentionPrefix: string;
   /** Separator between prompt text and attachment paths (defaults to "\n\n"). */
   attachmentSeparator?: string;
-  /** The agent's own runtime commands (`herdr-adapter.md` §7); absent when it has none. */
-  runtimeModelCommand?: (modelId: string) => string;
-  runtimeThinkingCommand?: (level: string) => string;
+  /**
+   * `herdr-adapter.md` §7.2: the steps that answer a transcript question, given each question's
+   * answer; absent when the keys were never checked.
+   */
+  questionSteps?: (questions: QuestionAnswer[]) => AnswerStep[];
 }
 
 const AGENT_RECIPES: Record<string, AgentRecipe> = {
@@ -41,7 +61,10 @@ const AGENT_RECIPES: Record<string, AgentRecipe> = {
     interruptKeys: ["esc"],
     resumable: true,
     mentionPrefix: "@",
-    runtimeModelCommand: (id) => `/model ${id}`,
+    questionSteps(questions) {
+      const steps = questions.flatMap(claudeQuestionSteps);
+      return questions.length === 1 && !questions[0].multiSelect ? steps : [...steps, { keys: ["1"] }];
+    },
   },
   codex: {
     kind: "codex",
@@ -60,8 +83,6 @@ const AGENT_RECIPES: Record<string, AgentRecipe> = {
     resumable: true,
     mentionPrefix: "",
     // herdr-adapter.md §7, checked against Codex 0.167: both apply to this session only.
-    runtimeModelCommand: (id) => `/model ${id}`,
-    runtimeThinkingCommand: (level) => `/model --reasoning=${level}`,
   },
   agy: {
     kind: "agy",
@@ -69,6 +90,7 @@ const AGENT_RECIPES: Record<string, AgentRecipe> = {
     command: "agy",
     launchArgs(o) {
       return [
+        ...(o?.resume ? ["--conversation", o.resume] : []),
         ...(o?.modelId ? ["--model", o.modelId] : []),
         ...(o?.thinking ? ["--effort", o.thinking] : []),
         ...(o?.firstMessage ? ["-i", o.firstMessage] : []),
@@ -76,7 +98,7 @@ const AGENT_RECIPES: Record<string, AgentRecipe> = {
     },
     promptInArgv: true,
     interruptKeys: ["esc"],
-    resumable: false,
+    resumable: true,
     mentionPrefix: "",
     attachmentSeparator: " ",
   },
@@ -105,7 +127,6 @@ const AGENT_RECIPES: Record<string, AgentRecipe> = {
     mentionPrefix: "@",
     // herdr-adapter.md §7, checked against pi 1.5: `/thinking <level>` changes this session only. Its
     // `/model <text>` opens a fuzzy picker that can pick another model, so pi has no model switch.
-    runtimeThinkingCommand: (level) => `/thinking ${level}`,
   },
   terminal: {
     kind: "terminal",

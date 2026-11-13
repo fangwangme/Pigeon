@@ -67,6 +67,7 @@ export interface AppState {
   paneSyncing: boolean;
   paneLoaded: boolean;
   queue: QueuedPrompt[];
+  queuePaused: boolean;
   skills: SkillEntry[];
   recipes: Record<string, AgentRecipeSummary>;
   themeMode: ThemeMode;
@@ -151,6 +152,7 @@ const [state, setState] = createStore<AppState>({
   paneSyncing: false,
   paneLoaded: false,
   queue: [],
+  queuePaused: false,
   skills: [],
   recipes: {},
   themeMode: (readPref("pigeon_mode") as ThemeMode | null) || "system",
@@ -170,7 +172,7 @@ const [state, setState] = createStore<AppState>({
   quotaButton: true,
   quotaShowAccount: true,
   usageScanMode: "scheduled",
-  usageScanInterval: "5m",
+  usageScanInterval: "15m",
   quotaProviders: { claude: true, codex: true, antigravity: true },
   quotaSnapshots: [],
   quotaUpdated: null,
@@ -234,7 +236,7 @@ export function setFilter(filter: FilterState): void {
 }
 
 export function filterActive(f: FilterState = state.filter): boolean {
-  return f.statuses.length > 0 || f.agents.length > 0 || !f.showTerminals || !f.showIdle || (Boolean(f.groupBy) && f.groupBy !== "status");
+  return f.statuses.length > 0 || f.agents.length > 0 || !f.showTerminals || !f.showIdle;
 }
 
 export function toggleCollapsed(workspaceId: string): void {
@@ -254,6 +256,21 @@ export function navigate(route: Route): void {
   writePref("pigeon_route", JSON.stringify(route));
   if (route.name === "home") {
     writePref("pigeon_active_pane", null);
+  }
+  if (typeof window !== "undefined" && (window.scrollY !== 0 || window.scrollX !== 0)) {
+    window.scrollTo(0, 0);
+  }
+}
+
+export function goBack(): void {
+  const r = state.route;
+  if (r.name === "home") return;
+  if (r.name === "session") {
+    navigate({ name: r.from === "agents" ? "agents" : "home" });
+  } else if (r.name === "quota" || r.name === "usage") {
+    navigate({ name: (r as { from?: "home" | "agents" | "settings" }).from || "home" });
+  } else {
+    navigate({ name: "home" });
   }
 }
 

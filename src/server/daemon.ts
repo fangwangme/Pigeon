@@ -1,6 +1,7 @@
-import { join } from "node:path";
+import { join, dirname } from "node:path";
 import { networkInterfaces } from "node:os";
 import { createHash } from "node:crypto";
+import { mkdirSync, writeFileSync, appendFileSync } from "node:fs";
 import type { Server } from "bun";
 import { HerdrClient } from "./herdr-client";
 import { PairingManager } from "./pairing";
@@ -12,7 +13,17 @@ import { ModelCatalog } from "./model-catalog";
 import { MAX_UPLOAD_BYTES, UploadStore } from "./uploads";
 import { QuotaService } from "./quota/index";
 import { UsageService } from "./usage/index";
-import { PWA_MANIFEST, PWA_SW_SCRIPT, PWA_ICON_SVG, PWA_ICON_192_BASE64, PWA_ICON_512_BASE64 } from "./pwa-assets";
+import {
+  PWA_MANIFEST,
+  PWA_MANIFEST_DARK,
+  PWA_SW_SCRIPT,
+  PWA_ICON_SVG,
+  PWA_ICON_192_BASE64,
+  PWA_ICON_512_BASE64,
+  PWA_ICON_DARK_SVG,
+  PWA_ICON_DARK_192_BASE64,
+  PWA_ICON_DARK_512_BASE64,
+} from "./pwa-assets";
 
 export interface DaemonConfig {
   configManager: ConfigManager;
@@ -29,6 +40,7 @@ export interface DaemonConfig {
   pushSubscriptionsPath?: string;
   uploadsDir?: string;
   embeddedHtml?: string;
+  logPath?: string;
   productionPort?: number;
   autoServe?: boolean;
 }
@@ -46,6 +58,7 @@ export interface ResolvedDaemonConfig {
   vapidPath: string;
   pushSubscriptionsPath: string;
   uploadsDir: string;
+  logPath: string;
 }
 
 const VIRTUAL_IFACE_RE = /^(docker|br-|veth|virbr|vmnet|vboxnet|lo|tailscale|tun|tap|wg)/;
@@ -304,6 +317,9 @@ export class PigeonDaemon {
   private allowedOrigins: Set<string>;
   private icon192 = Buffer.from(PWA_ICON_192_BASE64, "base64");
   private icon512 = Buffer.from(PWA_ICON_512_BASE64, "base64");
+  private iconDark192 = Buffer.from(PWA_ICON_DARK_192_BASE64, "base64");
+  private iconDark512 = Buffer.from(PWA_ICON_DARK_512_BASE64, "base64");
+  public readonly isProduction: boolean;
 
   constructor(opts: DaemonConfig) {
     this.configManager = opts.configManager;
@@ -312,6 +328,7 @@ export class PigeonDaemon {
     const insecureDev = opts.insecureDev ?? serverCfg.insecureDev;
     const productionPort = opts.productionPort ?? resolveProductionPort(this.configManager.env);
     const isProduction = port === productionPort;
+    this.isProduction = isProduction;
     const tailscaleHttpsPort =
       serverCfg.tailscaleHttpsPort ??
       (isProduction ? DEFAULT_TAILSCALE_HTTPS_PORT : DEFAULT_TEST_TAILSCALE_HTTPS_PORT);
@@ -326,6 +343,7 @@ export class PigeonDaemon {
     this.access = access;
 
     const instancePaths = resolveInstancePaths({ port, productionPort, env: this.configManager.env });
+    const stateDir = isProduction ? serverCfg.stateDir : instancePaths.stateDir;
 
     this.config = {
       port,
@@ -340,6 +358,7 @@ export class PigeonDaemon {
       vapidPath: opts.vapidPath || (isProduction ? join(serverCfg.stateDir, "vapid.json") : instancePaths.vapidPath),
       pushSubscriptionsPath: opts.pushSubscriptionsPath || (isProduction ? join(serverCfg.stateDir, "push-subscriptions.json") : instancePaths.pushSubscriptionsPath),
       uploadsDir: opts.uploadsDir || (isProduction ? join(serverCfg.stateDir, "uploads") : instancePaths.uploadsDir),
+      logPath: opts.logPath || (isProduction ? join(serverCfg.stateDir, "pigeon.log") : instancePaths.logPath),
     };
 
     // Only the HTML compiled into this build is served (never a file found via the cwd).
@@ -387,6 +406,8 @@ export class PigeonDaemon {
     this.herdrClient = new HerdrClient({
       appSocketPath: this.config.herdrAppSocketPath,
       coreSocketPath: this.config.herdrCoreSocketPath,
+      logger: (msg) => this.log(msg),
+      seenPanesFilePath: join(stateDir, "seen-panes.json"),
     });
     const quotaService = new QuotaService({ configManager: this.configManager });
     const usageService = new UsageService({ configManager: this.configManager });
@@ -412,7 +433,10 @@ export class PigeonDaemon {
       },
     });
     this.pushManager = new PushManager(this.config.vapidPath, this.config.pushSubscriptionsPath, this.config.publicBaseUrl);
-    this.pairingManager.on("device_revoked", (deviceId: string) => this.pushManager.removeSubscriptionByDevice(deviceId));
+    this.pairingManager.on("device_revoked", (deviceId: string) => {
+      this.log(`device revoked: ${deviceId}`);
+      this.pushManager.removeSubscriptionByDevice(deviceId);
+    });
     this.uploadStore = new UploadStore(this.config.uploadsDir);
     this.wsServer = new WsServer({
       buildId: createHash("sha256").update(this.html).digest("hex").slice(0, 12),
@@ -421,13 +445,14 @@ export class PigeonDaemon {
       configManager: this.configManager,
       uploadStore: this.uploadStore,
       pairingManager: this.pairingManager,
-      modelCatalog: new ModelCatalog(),
+      modelCatalog: new ModelCatalog({ cachePath: join(stateDir, "models.json") }),
       queueFilePath: this.config.queueFilePath,
       port: this.config.port,
       productionPort,
       environmentKind: this.config.insecureDev ? "dev" : (isProduction ? undefined : "test"),
       quotaService,
       usageService,
+      logger: (msg) => this.log(msg),
     });
   }
 
@@ -441,12 +466,22 @@ export class PigeonDaemon {
   }
 
   /** security-and-pairing.md §4: exact Host and Origin match, against CSWSH and DNS rebinding. */
-  private checkHostAndOrigin(req: Request): Response | null {
+  private checkHostAndOrigin(req: Request, requireOrigin = true): Response | null {
     const host = hostOf(req.headers.get("host") || "");
     if (!host || !this.allowedHosts.has(host)) return new Response("Forbidden Host", { status: 403 });
     const origin = req.headers.get("origin");
-    if (!origin || !this.allowedOrigins.has(origin)) return new Response("Forbidden Origin", { status: 403 });
+    if (origin) {
+      if (!this.allowedOrigins.has(origin)) return new Response("Forbidden Origin", { status: 403 });
+    } else if (requireOrigin) {
+      return new Response("Forbidden Origin", { status: 403 });
+    }
     return null;
+  }
+
+  public log(msg: string): void {
+    const timestamp = new Date().toISOString();
+    const line = `[${timestamp}] ${msg}`;
+    if (this.config.logPath) appendFileSync(this.config.logPath, line + "\n", "utf-8");
   }
 
   /** herdr-adapter.md §7.1: fill the agents' model lists in the background; `welcome` never waits for it. */
@@ -455,6 +490,10 @@ export class PigeonDaemon {
   }
 
   public async start(): Promise<void> {
+    if (this.config.logPath) {
+      mkdirSync(dirname(this.config.logPath), { recursive: true });
+      writeFileSync(this.config.logPath, `[${new Date().toISOString()}] Pigeon daemon ${SERVER_VERSION} on port ${this.config.port}\n`, "utf-8");
+    }
     await this.pairingManager.startAdminSocket();
     await this.herdrClient.connect();
 
@@ -483,10 +522,6 @@ export class PigeonDaemon {
 
     const self = this;
     const cookieName = this.pairingManager.getCookieName();
-    const csp =
-      "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' ws: wss:; frame-ancestors 'none'; base-uri 'none'; object-src 'none'; form-action 'none';";
-    const htmlResponse = () =>
-      new Response(self.html, { headers: { "Content-Type": "text/html; charset=utf-8", "Content-Security-Policy": csp } });
     const sessionOf = (req: Request) => self.pairingManager.validateSession(self.parseCookie(req)[cookieName]);
 
     try {
@@ -497,145 +532,21 @@ export class PigeonDaemon {
         ...(this.config.host ? { hostname: this.config.host } : {}),
 
         async fetch(req, server) {
-        const url = new URL(req.url);
+          const url = new URL(req.url);
 
-        if (url.pathname === "/ws") {
-          const rejected = self.checkHostAndOrigin(req);
-          if (rejected) return rejected;
-          const session = sessionOf(req);
-          if (!session) return new Response("Unauthorized", { status: 401, statusText: "ERR_UNAUTHORIZED" });
-          const upgraded = server.upgrade(req, {
-            data: { session, connectionId: newConnectionId(), subscribedPaneId: null, lastPingTime: Date.now() },
-          });
-          return upgraded ? undefined : new Response("WebSocket upgrade failed", { status: 400 });
-        }
-
-        if (url.pathname === "/api/pair" && req.method === "POST") {
-          let body: any;
-          try {
-            body = await req.json();
-          } catch {
-            return Response.json({ success: false, error: "Body must be JSON" }, { status: 400 });
+          if (url.pathname === "/ws") {
+            const rejected = self.checkHostAndOrigin(req);
+            if (rejected) return rejected;
+            const session = sessionOf(req);
+            if (!session) return new Response("Unauthorized", { status: 401, statusText: "ERR_UNAUTHORIZED" });
+            const upgraded = server.upgrade(req, {
+              data: { session, connectionId: newConnectionId(), subscribedPaneId: null, lastPingTime: Date.now() },
+            });
+            return upgraded ? undefined : new Response("WebSocket upgrade failed", { status: 400 });
           }
-          const { code, deviceName } = body || {};
-          if (typeof code !== "string" || code.length > 64 || (deviceName !== undefined && (typeof deviceName !== "string" || deviceName.length > 128))) {
-            return Response.json({ success: false, error: "Expected { code: string, deviceName?: string }" }, { status: 400 });
-          }
-          const res = self.pairingManager.exchangeToken(code, deviceName || "Mobile Chrome", self.parseCookie(req)[cookieName]);
-          if (!res.success) return Response.json({ success: false, error: res.error }, { status: 400 });
-          const secureFlag = isHttps ? "; Secure" : "";
-          return Response.json(
-            { success: true, deviceId: res.deviceId },
-            { headers: { "Set-Cookie": `${cookieName}=${res.sessionToken}; HttpOnly; SameSite=Strict; Path=/; Max-Age=${COOKIE_MAX_AGE_S}${secureFlag}` } }
-          );
-        }
 
-        if (url.pathname === "/api/uploads" && req.method === "POST") {
-          // protocol.md §7: the same gate as the WebSocket, then the body is validated.
-          const rejected = self.checkHostAndOrigin(req);
-          if (rejected) return rejected;
-          if (!sessionOf(req)) return new Response("Unauthorized", { status: 401 });
-          const declared = Number(req.headers.get("content-length") || "0");
-          if (declared > MAX_UPLOAD_BYTES) return Response.json({ error: "File too large" }, { status: 413 });
-          let name: string;
-          try {
-            name = decodeURIComponent(req.headers.get("x-pigeon-filename") || "");
-          } catch {
-            return Response.json({ error: "Bad file name" }, { status: 400 });
-          }
-          if (!name || name.length > 200) return Response.json({ error: "X-Pigeon-Filename is required" }, { status: 400 });
-          const bytes = new Uint8Array(await req.arrayBuffer());
-          if (bytes.length > MAX_UPLOAD_BYTES) return Response.json({ error: "File too large" }, { status: 413 });
-          if (bytes.length === 0) return Response.json({ error: "Empty file" }, { status: 400 });
-          const mime = (req.headers.get("content-type") || "application/octet-stream").split(";")[0].trim();
-          const info = self.uploadStore.save({ name, mime, bytes });
-          return Response.json({ id: info.id, name: info.name, size: info.size, mime: info.mime });
-        }
-
-        const uploadMatch = url.pathname.match(/^\/api\/uploads\/(up_[0-9a-f]{16})$/);
-        if (uploadMatch && req.method === "GET") {
-          const rejected = self.checkHostAndOrigin(req);
-          if (rejected) return rejected;
-          if (!sessionOf(req)) return new Response("Unauthorized", { status: 401 });
-          const info = self.uploadStore.get(uploadMatch[1]);
-          if (!info) return new Response("Not found", { status: 404 });
-          const file = Bun.file(info.path);
-          const mime = (info.mime || "application/octet-stream").toLowerCase();
-          const isRaster = ["image/png", "image/jpeg", "image/jpg", "image/gif", "image/webp", "image/heic"].includes(mime);
-          const disposition = isRaster ? "inline" : "attachment";
-          return new Response(file, {
-            headers: {
-              "Content-Type": info.mime || "application/octet-stream",
-              "Content-Disposition": `${disposition}; filename="${encodeURIComponent(info.name)}"`,
-              "Cache-Control": "private, max-age=86400",
-              "X-Content-Type-Options": "nosniff",
-              "Content-Security-Policy": "default-src 'none'; sandbox",
-            },
-          });
-        }
-
-        if (url.pathname === "/api/version") return Response.json({ version: SERVER_VERSION, name: "pigeon" });
-
-        if (url.pathname === "/api/auth/status") {
-          const session = sessionOf(req);
-          return Response.json({ authenticated: !!session, deviceId: session?.deviceId || null });
-        }
-
-        if (url.pathname === "/api/push/vapid-public-key") return Response.json({ publicKey: self.pushManager.getPublicKey() });
-
-        if (url.pathname === "/api/push/subscribe" && req.method === "POST") {
-          const session = sessionOf(req);
-          if (!session) return new Response("Unauthorized", { status: 401 });
-          let sub: any;
-          try {
-            sub = await req.json();
-          } catch {
-            return Response.json({ success: false, error: "Body must be JSON" }, { status: 400 });
-          }
-          if (!isPushSubscription(sub)) return Response.json({ success: false, error: "Invalid push subscription" }, { status: 400 });
-          self.pushManager.addSubscription({ ...sub, deviceId: session.deviceId });
-          return Response.json({ success: true });
-        }
-
-        if (url.pathname === "/api/push/unsubscribe" && req.method === "POST") {
-          const session = sessionOf(req);
-          if (!session) return new Response("Unauthorized", { status: 401 });
-          let body: any;
-          try {
-            body = await req.json();
-          } catch {
-            return Response.json({ success: false, error: "Body must be JSON" }, { status: 400 });
-          }
-          if (!body || typeof body.endpoint !== "string") {
-            return Response.json({ success: false, error: "Invalid endpoint" }, { status: 400 });
-          }
-          self.pushManager.removeSubscription(body.endpoint);
-          return Response.json({ success: true });
-        }
-
-        if (url.pathname === "/manifest.webmanifest" || url.pathname === "/manifest.json") {
-          return Response.json(PWA_MANIFEST, {
-            headers: { "Content-Type": "application/manifest+json; charset=utf-8", "Cache-Control": "public, max-age=3600" },
-          });
-        }
-        if (url.pathname === "/sw.js") {
-          return new Response(PWA_SW_SCRIPT, {
-            headers: { "Content-Type": "application/javascript; charset=utf-8", "Cache-Control": "no-cache, no-store, must-revalidate" },
-          });
-        }
-        if (url.pathname === "/icon.svg") {
-          return new Response(PWA_ICON_SVG, { headers: { "Content-Type": "image/svg+xml; charset=utf-8", "Cache-Control": "public, max-age=86400" } });
-        }
-        if (url.pathname === "/icon-192.png") {
-          return new Response(self.icon192, { headers: { "Content-Type": "image/png", "Cache-Control": "public, max-age=86400" } });
-        }
-        if (url.pathname === "/icon-512.png") {
-          return new Response(self.icon512, { headers: { "Content-Type": "image/png", "Cache-Control": "public, max-age=86400" } });
-        }
-        if (url.pathname === "/" || url.pathname === "/index.html" || url.pathname === "/pair") return htmlResponse();
-
-        return new Response("Not Found", { status: 404 });
-      },
+          return self.handleHttp(req);
+        },
 
       websocket: {
         perMessageDeflate: true,
@@ -667,6 +578,202 @@ export class PigeonDaemon {
       }
       throw err;
     }
+  }
+
+  public async handleHttp(req: Request): Promise<Response> {
+    const url = new URL(req.url);
+    const cookieName = this.pairingManager.getCookieName();
+    const isHttps = this.config.publicBaseUrl.startsWith("https://");
+    const sessionOf = (r: Request) => this.pairingManager.validateSession(this.parseCookie(r)[cookieName]);
+    const csp =
+      "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self' ws: wss:; frame-ancestors 'none'; base-uri 'none'; object-src 'none'; form-action 'none';";
+    const getHtml = () => {
+      if (this.isProduction) return this.html;
+      return this.html
+        .replaceAll(/href="\.?\/?icon-192\.png"/g, 'href="/icon-dark-192.png"')
+        .replaceAll(/href="\.?\/?icon-512\.png"/g, 'href="/icon-dark-512.png"')
+        .replaceAll(/href="\.?\/?icon\.svg"/g, 'href="/icon-dark.svg"');
+    };
+    const htmlResponse = () =>
+      new Response(getHtml(), { headers: { "Content-Type": "text/html; charset=utf-8", "Content-Security-Policy": csp } });
+
+    if (url.pathname === "/api/pair" && req.method === "POST") {
+      let body: any;
+      try {
+        body = await req.json();
+      } catch {
+        return Response.json({ success: false, error: "Body must be JSON" }, { status: 400 });
+      }
+      const { code, deviceName } = body || {};
+      if (typeof code !== "string" || code.length > 64 || (deviceName !== undefined && (typeof deviceName !== "string" || deviceName.length > 128))) {
+        return Response.json({ success: false, error: "Expected { code: string, deviceName?: string }" }, { status: 400 });
+      }
+      const res = this.pairingManager.exchangeToken(code, deviceName || "Mobile Chrome", this.parseCookie(req)[cookieName]);
+      if (!res.success) {
+        this.log(`pairing failed: ${res.error}`);
+        return Response.json({ success: false, error: res.error }, { status: 400 });
+      }
+      this.log(`pairing success: device "${deviceName || "Mobile Chrome"}" (id=${res.deviceId})`);
+      const secureFlag = isHttps ? "; Secure" : "";
+      return Response.json(
+        { success: true, deviceId: res.deviceId },
+        { headers: { "Set-Cookie": `${cookieName}=${res.sessionToken}; HttpOnly; SameSite=Strict; Path=/; Max-Age=${COOKIE_MAX_AGE_S}${secureFlag}` } }
+      );
+    }
+
+    if (url.pathname === "/api/uploads" && req.method === "POST") {
+      const rejected = this.checkHostAndOrigin(req);
+      if (rejected) return rejected;
+      if (!sessionOf(req)) return new Response("Unauthorized", { status: 401 });
+      const declared = Number(req.headers.get("content-length") || "0");
+      if (declared > MAX_UPLOAD_BYTES) return Response.json({ error: "File too large" }, { status: 413 });
+      let name: string;
+      try {
+        name = decodeURIComponent(req.headers.get("x-pigeon-filename") || "");
+      } catch {
+        return Response.json({ error: "Bad file name" }, { status: 400 });
+      }
+      if (!name || name.length > 200) return Response.json({ error: "X-Pigeon-Filename is required" }, { status: 400 });
+      const bytes = new Uint8Array(await req.arrayBuffer());
+      if (bytes.length > MAX_UPLOAD_BYTES) return Response.json({ error: "File too large" }, { status: 413 });
+      if (bytes.length === 0) return Response.json({ error: "Empty file" }, { status: 400 });
+      const mime = (req.headers.get("content-type") || "application/octet-stream").split(";")[0].trim();
+      const info = this.uploadStore.save({ name, mime, bytes });
+      this.log(`upload received: ${info.id} (${info.name}, ${info.size} bytes, mime=${info.mime})`);
+      return Response.json({ id: info.id, name: info.name, size: info.size, mime: info.mime });
+    }
+
+    const uploadMatch = url.pathname.match(/^\/api\/uploads\/(up_[0-9a-f]{16})$/);
+    if (uploadMatch && req.method === "GET") {
+      const rejected = this.checkHostAndOrigin(req, false);
+      if (rejected) return rejected;
+      if (!sessionOf(req)) return new Response("Unauthorized", { status: 401 });
+      const info = this.uploadStore.get(uploadMatch[1]);
+      if (!info) return new Response("Not found", { status: 404 });
+      const file = Bun.file(info.path);
+      const mime = (info.mime || "application/octet-stream").toLowerCase();
+      const isRaster = ["image/png", "image/jpeg", "image/jpg", "image/gif", "image/webp", "image/heic"].includes(mime);
+      const disposition = isRaster ? "inline" : "attachment";
+      return new Response(file, {
+        headers: {
+          "Content-Type": info.mime || "application/octet-stream",
+          "Content-Disposition": `${disposition}; filename="${encodeURIComponent(info.name)}"`,
+          "Cache-Control": "private, max-age=86400",
+          "X-Content-Type-Options": "nosniff",
+          "Content-Security-Policy": "default-src 'none'; sandbox",
+        },
+      });
+    }
+
+    if (url.pathname === "/api/version") return Response.json({ version: SERVER_VERSION, name: "pigeon" });
+
+    if (url.pathname === "/api/auth/status") {
+      const session = sessionOf(req);
+      return Response.json({ authenticated: !!session, deviceId: session?.deviceId || null });
+    }
+
+    if (url.pathname === "/api/push/vapid-public-key") return Response.json({ publicKey: this.pushManager.getPublicKey() });
+
+    if (url.pathname === "/api/push/subscribe" && req.method === "POST") {
+      const session = sessionOf(req);
+      if (!session) return new Response("Unauthorized", { status: 401 });
+      let sub: any;
+      try {
+        sub = await req.json();
+      } catch {
+        return Response.json({ success: false, error: "Body must be JSON" }, { status: 400 });
+      }
+      if (!isPushSubscription(sub)) return Response.json({ success: false, error: "Invalid push subscription" }, { status: 400 });
+      this.pushManager.addSubscription({ ...sub, deviceId: session.deviceId });
+      this.log(`push subscribed: device ${session.deviceId}`);
+      return Response.json({ success: true });
+    }
+
+    if (url.pathname === "/api/push/unsubscribe" && req.method === "POST") {
+      const session = sessionOf(req);
+      if (!session) return new Response("Unauthorized", { status: 401 });
+      let body: any;
+      try {
+        body = await req.json();
+      } catch {
+        return Response.json({ success: false, error: "Body must be JSON" }, { status: 400 });
+      }
+      if (!body || typeof body.endpoint !== "string") {
+        return Response.json({ success: false, error: "Invalid endpoint" }, { status: 400 });
+      }
+      this.pushManager.removeSubscription(body.endpoint);
+      this.log(`push unsubscribed: device ${session.deviceId}`);
+      return Response.json({ success: true });
+    }
+
+    if (url.pathname === "/manifest.webmanifest" || url.pathname === "/manifest.json") {
+      return Response.json(this.isProduction ? PWA_MANIFEST : PWA_MANIFEST_DARK, {
+        headers: { "Content-Type": "application/manifest+json; charset=utf-8", "Cache-Control": "public, max-age=3600" },
+      });
+    }
+    if (url.pathname === "/sw.js") {
+      return new Response(PWA_SW_SCRIPT, {
+        headers: { "Content-Type": "application/javascript; charset=utf-8", "Cache-Control": "no-cache, no-store, must-revalidate" },
+      });
+    }
+    const iconCache = this.isProduction ? "public, max-age=86400" : "no-cache, must-revalidate";
+    if (url.pathname === "/icon.svg") {
+      return new Response(this.isProduction ? PWA_ICON_SVG : PWA_ICON_DARK_SVG, {
+        headers: { "Content-Type": "image/svg+xml; charset=utf-8", "Cache-Control": iconCache },
+      });
+    }
+    if (url.pathname === "/icon-192.png") {
+      return new Response(this.isProduction ? this.icon192 : this.iconDark192, {
+        headers: { "Content-Type": "image/png", "Cache-Control": iconCache },
+      });
+    }
+    if (url.pathname === "/icon-512.png") {
+      return new Response(this.isProduction ? this.icon512 : this.iconDark512, {
+        headers: { "Content-Type": "image/png", "Cache-Control": iconCache },
+      });
+    }
+    if (url.pathname === "/icon-dark.svg") {
+      return new Response(PWA_ICON_DARK_SVG, {
+        headers: { "Content-Type": "image/svg+xml; charset=utf-8", "Cache-Control": iconCache },
+      });
+    }
+    if (url.pathname === "/icon-dark-192.png") {
+      return new Response(this.iconDark192, {
+        headers: { "Content-Type": "image/png", "Cache-Control": iconCache },
+      });
+    }
+    if (url.pathname === "/icon-dark-512.png") {
+      return new Response(this.iconDark512, {
+        headers: { "Content-Type": "image/png", "Cache-Control": iconCache },
+      });
+    }
+    if (url.pathname === "/icon-light.svg") {
+      return new Response(PWA_ICON_SVG, {
+        headers: { "Content-Type": "image/svg+xml; charset=utf-8", "Cache-Control": iconCache },
+      });
+    }
+    if (url.pathname === "/icon-light-192.png") {
+      return new Response(this.icon192, {
+        headers: { "Content-Type": "image/png", "Cache-Control": iconCache },
+      });
+    }
+    if (url.pathname === "/icon-light-512.png") {
+      return new Response(this.icon512, {
+        headers: { "Content-Type": "image/png", "Cache-Control": iconCache },
+      });
+    }
+    if (url.pathname.startsWith("/apple-touch-icon")) {
+      return new Response(this.isProduction ? this.icon192 : this.iconDark192, {
+        headers: { "Content-Type": "image/png", "Cache-Control": iconCache },
+      });
+    }
+    if (url.pathname === "/" || url.pathname === "/index.html" || url.pathname === "/pair") return htmlResponse();
+
+    return new Response("Not Found", { status: 404 });
+  }
+
+  public async fetch(req: Request): Promise<Response> {
+    return this.handleHttp(req);
   }
 
   public stop(): void {

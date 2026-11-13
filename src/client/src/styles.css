@@ -3,12 +3,16 @@
 :root { color-scheme: light dark; -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
 :root[data-theme="dark"] { color-scheme: dark; }
 :root[data-theme="light"] { color-scheme: light; }
-html, body, #root { height: 100%; width: 100%; overflow: hidden; background: var(--bg); color: var(--fg); -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
+/* §1.1: a double tap never zooms the page. */
+*, *::before, *::after { touch-action: manipulation; }
+html { height: 100%; max-height: 100%; width: 100%; overflow: hidden; overscroll-behavior: none; background: var(--bg); color: var(--fg); -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
 body {
+  position: fixed; inset: 0; width: 100%; height: 100%; max-height: 100%; overflow: hidden; overscroll-behavior: none;
   font: 15px/1.5 -apple-system, BlinkMacSystemFont, "SF Pro Text", Inter, "PingFang SC", "Noto Sans SC", "Segoe UI", sans-serif;
-  -webkit-font-smoothing: antialiased; overscroll-behavior: none;
+  -webkit-font-smoothing: antialiased;
   -webkit-text-size-adjust: 100%; text-size-adjust: 100%;
 }
+#root { height: 100%; width: 100%; overflow: hidden; }
 button { font: inherit; color: inherit; background: none; border: 0; cursor: pointer; }
 input, textarea { font: inherit; color: inherit; }
 .mono, code, pre, kbd { font-family: "SF Mono", "JetBrains Mono", ui-monospace, Menlo, Consolas, monospace; }
@@ -17,9 +21,11 @@ svg.i { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-widt
 svg.i.sm { width: 16px; height: 16px; }
 
 /* ---------- page frame ---------- */
-.page { position: fixed; inset: 0; display: flex; flex-direction: column; background: var(--bg); }
+/* §1.1 "Keyboard on iOS": while a text field has focus the page follows the visual viewport. */
+.page { position: fixed; left: 0; right: 0; top: var(--vv-top, 0px); height: var(--vv-height, 100%); display: flex; flex-direction: column; background: var(--bg); overscroll-behavior: none; }
 .scroll { flex: 1; overflow-y: auto; -webkit-overflow-scrolling: touch; overscroll-behavior: contain; }
 .hdr { position: relative; z-index: 20; display: flex; align-items: center; gap: 10px; padding: calc(8px + env(safe-area-inset-top)) 12px 10px; flex: none; }
+.hdr.home-hdr { padding-bottom: 6px; }
 .hdr.float { position: absolute; top: 0; left: 0; right: 0; border-bottom: 1px solid var(--line); }
 .hdr.float::before {
   content: ""; position: absolute; inset: 0; z-index: -1; pointer-events: none;
@@ -138,6 +144,7 @@ svg.i.sm { width: 16px; height: 16px; }
 .gh { display: flex; align-items: center; gap: 8px; font-size: 13.5px; font-weight: 650; margin: 18px 0 4px; min-height: 36px; width: 100%; text-align: left; }
 .gh .c { color: var(--muted); font-weight: 600; font-size: 12px; line-height: 18px; background: rgba(127,127,127,.16); border-radius: 9px; padding: 0 7px; }
 .bottombar { position: fixed; left: 16px; right: 16px; bottom: calc(20px + env(safe-area-inset-bottom)); display: flex; justify-content: space-between; align-items: center; z-index: 15; pointer-events: none; }
+[data-mode="standalone"] .bottombar { bottom: calc(8px + env(safe-area-inset-bottom)); }
 .bottombar > * { pointer-events: auto; }
 .fab { height: 52px; border-radius: 26px; background: var(--fg); color: var(--bg); display: inline-flex; align-items: center; gap: 10px; padding: 0 22px 0 18px; font-weight: 600; font-size: 16px; box-shadow: 0 8px 24px rgba(0,0,0,.3); }
 .searchbar { display: flex; align-items: center; gap: 8px; height: 44px; border-radius: 14px; background: var(--surface); border: 1px solid var(--line); padding: 0 12px; color: var(--faint); margin: 8px 0 4px; }
@@ -164,7 +171,7 @@ svg.i.sm { width: 16px; height: 16px; }
 .msg hr { border: 0; border-top: 1px solid var(--line); margin: 14px 0; }
 .cb { background: var(--code); border: 1px solid var(--line); border-radius: 14px; margin: 10px 0; overflow: hidden; position: relative; }
 .cb pre { padding: 12px; font-size: 12.5px; line-height: 1.55; overflow-x: auto; white-space: pre; }
-.cb .cpy { position: absolute; top: 4px; right: 4px; height: 32px; padding: 0 10px; border-radius: 10px; font-size: 12px; color: var(--muted); background: var(--surface); border: 1px solid var(--line); }
+.cb .cpy { position: absolute; z-index: 2; top: 4px; right: 4px; height: 32px; padding: 0 10px; border-radius: 10px; font-size: 12px; color: var(--muted); background: var(--surface); border: 1px solid var(--line); }
 .ub { align-self: flex-end; max-width: 84%; background: var(--bubble); border-radius: 22px 22px 6px 22px; padding: 10px 15px; font-size: 15.5px; margin: 14px 0 6px; white-space: pre-wrap; overflow-wrap: anywhere; }
 .ub.q { background: transparent; border: 1.5px dashed var(--line2); color: var(--muted); }
 .ubm { align-self: flex-end; font-size: 12.5px; color: var(--faint); margin: -2px 4px 6px; display: flex; gap: 10px; align-items: center; }
@@ -182,6 +189,9 @@ svg.i.sm { width: 16px; height: 16px; }
 .dfb .a { background: var(--addbg); color: var(--addfg); padding: 4px 6px; }
 .dfb .d { background: var(--delbg); color: var(--delfg); padding: 4px 6px; }
 .think { color: var(--faint); }
+.tool.compact { background: var(--accentbg); color: var(--accent); border-radius: 12px; padding: 6px 12px; margin: 6px 0; }
+.tool.compact .chev { color: var(--accent); }
+.compactbody { max-height: 40vh; overflow-y: auto; overscroll-behavior: contain; }
 .thinkbody { color: var(--faint); font-size: 14px; white-space: pre-wrap; border-left: 2px solid var(--line2); padding: 2px 0 2px 12px; margin: 2px 0 8px; }
 .typing { display: flex; align-items: center; gap: 10px; color: var(--accent); font-size: 15px; margin: 10px 0 4px; }
 .dots { display: flex; gap: 4px; } .dots i { width: 5px; height: 5px; border-radius: 50%; background: currentColor; animation: bl 1.2s infinite; }
@@ -210,8 +220,9 @@ svg.i.sm { width: 16px; height: 16px; }
 .solid .hdr.float::before { -webkit-backdrop-filter: none; backdrop-filter: none; background: var(--bg); -webkit-mask-image: none; mask-image: none; inset: 0; }
 
 /* ---------- composer ---------- */
-.dock { position: fixed; left: 10px; right: 10px; bottom: calc(10px + env(safe-area-inset-bottom)); z-index: 15; display: flex; flex-direction: column; gap: 8px; }
+.dock { position: absolute; left: 10px; right: 10px; bottom: calc(10px + env(safe-area-inset-bottom)); z-index: 15; display: flex; flex-direction: column; gap: 8px; }
 [data-mode="standalone"] .dock { bottom: calc(2px + env(safe-area-inset-bottom)); }
+[data-keyboard="open"] .dock { bottom: 8px; }
 .dockrow { display: flex; justify-content: space-between; align-items: flex-end; gap: 8px; pointer-events: none; }
 .dockrow > * { pointer-events: auto; }
 .comp { position: relative; min-height: 58px; border-radius: 29px; display: flex; align-items: flex-end; gap: 6px; padding: 6px; }
@@ -256,6 +267,9 @@ svg.i.sm { width: 16px; height: 16px; }
 .sheet.full { height: calc(100% - 48px - env(safe-area-inset-top) - env(safe-area-inset-bottom)); }
 @keyframes up { from { transform: translateY(40px); opacity: 0; } }
 .sheet .body { overflow-y: auto; flex: 1; min-height: 0; margin: 0 -4px; padding: 0 4px; }
+.sheet .body.flush { overflow: hidden; display: flex; flex-direction: column; margin: 0; padding: 0; }
+.sheet .body.flush > * { flex: none; }
+.sheet .body.flush > .body, .sheet .body.flush > .card { flex: 1; min-height: 0; }
 .grab { width: 40px; height: 5px; border-radius: 3px; background: var(--line2); margin: 0 auto 8px; flex: none; }
 .sh { display: grid; grid-template-columns: 44px 1fr 44px; align-items: center; margin-bottom: 8px; flex: none; }
 .sh .t { text-align: center; font-weight: 650; font-size: 16.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; padding: 0 6px; }
@@ -335,7 +349,7 @@ svg.i.sm { width: 16px; height: 16px; }
 .opt span { display: block; font-size: 13.5px; color: var(--muted); line-height: 1.45; margin-top: 2px; }
 .opt .rd { width: 22px; height: 22px; border-radius: 50%; border: 2px solid var(--line2); flex: none; margin-top: 1px; }
 .opt.sel .rd { border: 6px solid var(--accent); }
-.opt.oth { color: var(--muted); border-bottom: 0; }
+.othtext { display: block; width: 100%; margin: 8px 0 4px; padding: 10px 12px; border-radius: 12px; border: 1px solid var(--line2); background: var(--surface); color: var(--fg); font: inherit; font-size: 16px; resize: none; }
 .qfoot { display: flex; justify-content: space-between; align-items: center; margin-top: 10px; gap: 8px; }
 .optbtns { display: flex; flex-direction: column; gap: 8px; }
 .btn { min-height: 48px; border-radius: 24px; padding: 0 20px; display: inline-flex; align-items: center; justify-content: center; gap: 8px; font-size: 15.5px; font-weight: 650; background: rgba(127,127,127,.16); text-align: center; }
@@ -427,3 +441,174 @@ svg.i.sm { width: 16px; height: 16px; }
 .newempty .logo { width: 64px; height: 64px; margin: 0 auto 12px; }
 .newempty .big { font-size: 22px; font-weight: 650; color: var(--fg); margin-bottom: 4px; }
 .reslist { padding: 0 16px; }
+
+/* ---------- image viewer lightbox ---------- */
+.img-viewer-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 70;
+  background: rgba(0, 0, 0, 0.92);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  touch-action: pan-x pan-y pinch-zoom;
+  animation: fade .18s ease-out;
+}
+.img-viewer-close {
+  position: absolute;
+  top: calc(16px + env(safe-area-inset-top));
+  right: 16px;
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.2);
+  color: #fff;
+  display: grid;
+  place-items: center;
+  z-index: 71;
+  cursor: pointer;
+}
+.img-viewer-content {
+  max-width: 100vw;
+  max-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+}
+.img-viewer-content img {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+  border-radius: 8px;
+  user-select: none;
+}
+
+/* ---------- model picker design c ---------- */
+.model-pinned-card {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  padding: 12px 14px;
+  margin-bottom: 8px;
+  flex: none;
+}
+.model-pinned-card .nm {
+  font-size: 16px;
+  font-weight: 650;
+  color: var(--fg);
+}
+.model-pinned-card .id {
+  font-size: 12.5px;
+  color: var(--muted);
+  margin-top: 2px;
+}
+.model-pinned-card .thinking-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+.model-pinned-card .unsupported {
+  font-size: 13px;
+  color: var(--faint);
+  padding: 4px 0;
+}
+
+/* ---------- tool sheet scroll indicator & jump ---------- */
+.scroll-track {
+  height: 2px;
+  background: var(--line);
+  margin-bottom: 8px;
+  border-radius: 1px;
+  overflow: hidden;
+  flex: none;
+}
+.scroll-thumb {
+  height: 100%;
+  background: var(--accent);
+  border-radius: 1px;
+  transition: width 0.1s;
+}
+.tool-jump {
+  position: absolute;
+  right: 20px;
+  bottom: calc(16px + env(safe-area-inset-bottom));
+  z-index: 50;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.3);
+}
+
+/* ---------- turn error item ---------- */
+.turn-error {
+  color: var(--danger);
+  margin: 8px 0;
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+/* ---------- alert dialog & box ---------- */
+.alert-dialog-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px 16px;
+  animation: fade .18s ease-out;
+}
+.alert-dialog-card {
+  position: relative;
+  z-index: 61;
+  background: var(--surface);
+  border: 1px solid var(--line2);
+  border-radius: 24px;
+  width: 100%;
+  max-width: 400px;
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.45);
+  padding: 20px 20px 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  animation: pop .18s ease-out;
+}
+.alert-dialog-hdr {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.alert-dialog-title {
+  font-size: 17px;
+  font-weight: 700;
+  color: var(--fg);
+  line-height: 1.35;
+  margin-top: 4px;
+}
+.alert-box {
+  background: var(--warnbg);
+  color: var(--warn);
+  border: 1px solid rgba(242, 180, 92, 0.32);
+  border-radius: 14px;
+  padding: 12px 14px;
+  font-size: 13.5px;
+  line-height: 1.5;
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  word-break: break-word;
+  white-space: pre-wrap;
+  max-height: 240px;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+}
+.alert-dialog-foot {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+
+
+.opt.multi .rd { border-radius: 6px; }
+.opt.multi.sel .rd { border: 2px solid var(--accent); background: var(--accent); }

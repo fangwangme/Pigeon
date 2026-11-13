@@ -119,6 +119,7 @@ export class OpenCodeAdapter {
             turnId: msg.id || `turn_${turnCounter}`,
             turnNumber: turnCounter,
             timestamp,
+            updatedAt: timestamp,
             userPrompt: {
               text: userText,
               files: userFiles,
@@ -133,10 +134,12 @@ export class OpenCodeAdapter {
               turnId: msg.id || `turn_${turnCounter}`,
               turnNumber: turnCounter,
               timestamp,
+              updatedAt: timestamp,
               toolCalls: [],
               items: [],
             };
           }
+          currentTurn.updatedAt = Math.max(currentTurn.updatedAt ?? currentTurn.timestamp, timestamp);
 
           // Process parts / content array in assistant message
           const contentList: any[] = Array.isArray(data.content)

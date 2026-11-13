@@ -3,9 +3,10 @@ import { mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { ConfigManager, resolveInstancePaths, resolveProductionPort } from "../src/server/config-manager";
 import { PigeonDaemon, resolveAccess } from "../src/server/daemon";
+import { PWA_ICON_192_BASE64, PWA_ICON_DARK_192_BASE64 } from "../src/server/pwa-assets";
 import { PairingManager, generateBase32Token } from "../src/server/pairing";
 import { PushManager } from "../src/server/push";
-import { tempDir } from "./helpers/fixtures";
+import { freePort, tempDir } from "./helpers/fixtures";
 
 function pairingIn(dir: string, publicBaseUrl = "https://pigeon.example.ts.net") {
   return new PairingManager({ publicBaseUrl, adminSocketPath: join(dir, "admin.sock"), devicesFilePath: join(dir, "devices.json") });
@@ -283,7 +284,7 @@ describe("reachable address (architecture.md §4.2)", () => {
 
 describe("HTTP and WebSocket gate (security-and-pairing.md §3, §4)", () => {
   const PUBLIC = "https://pigeon.example.ts.net";
-  const port = 41000 + Math.floor(Math.random() * 2000);
+  const port = freePort();
   const base = `http://127.0.0.1:${port}`;
   let daemon: PigeonDaemon;
 
@@ -298,7 +299,7 @@ describe("HTTP and WebSocket gate (security-and-pairing.md §3, §4)", () => {
       adminSocketPath: join(dir, "admin.sock"),
       devicesFilePath: join(dir, "devices.json"),
       vapidPath: join(dir, "vapid.json"),
-      embeddedHtml: "<!doctype html><title>Pigeon</title>",
+      embeddedHtml: "<!doctype html><title>Pigeon</title><link rel=\"apple-touch-icon\" href=\"/icon-192.png\" /><link rel=\"icon\" type=\"image/svg+xml\" href=\"/icon.svg\" />",
     });
     await daemon.start();
   });
@@ -415,5 +416,164 @@ describe("HTTP and WebSocket gate (security-and-pairing.md §3, §4)", () => {
     expect(getRes.headers.get("content-disposition")).toContain("attachment;");
     expect(getRes.headers.get("x-content-type-options")).toBe("nosniff");
     expect(getRes.headers.get("content-security-policy")).toBe("default-src 'none'; sandbox");
+  });
+
+  // Issue #21: a browser sends no Origin for <img> loads or link navigation.
+  test("an upload is readable without an Origin header, a foreign Origin is still refused (protocol.md §7)", async () => {
+    const cookie = pairedCookie();
+    const { id } = await (await upload({ Origin: PUBLIC, Cookie: cookie })).json();
+    const plain = await fetch(`${base}/api/uploads/${id}`, { headers: { Cookie: cookie } });
+    expect(plain.status).toBe(200);
+    expect(await plain.text()).toBe("hello");
+    expect((await fetch(`${base}/api/uploads/${id}`, { headers: { Origin: "https://evil.example", Cookie: cookie } })).status).toBe(403);
+    expect((await fetch(`${base}/api/uploads/${id}`)).status).toBe(401);
+  });
+
+  test("the app shell's CSP allows blob: images (architecture.md §5)", async () => {
+    const res = await fetch(`${base}/`);
+    const imgSrc = (res.headers.get("content-security-policy") ?? "")
+      .split(";")
+      .map((d) => d.trim())
+      .find((d) => d.startsWith("img-src"));
+    expect(imgSrc?.split(/\s+/)).toContain("blob:");
+  });
+
+  test("non-4100 daemon returns dark icon, 4100 returns light icon (security-and-pairing.md §3, issue #21)", async () => {
+    // 1. Non-4100 daemon (the active test daemon on `base` uses an ephemeral non-4100 port)
+    const testSvgRes = await fetch(`${base}/icon.svg`);
+    expect(testSvgRes.status).toBe(200);
+    const testSvg = await testSvgRes.text();
+    expect(testSvg).toContain('<stop offset="0%" stop-color="#24272B" />');
+    expect(testSvg).not.toContain("#F7F4EC");
+
+    const testPngRes = await fetch(`${base}/icon-192.png`);
+    expect(testPngRes.status).toBe(200);
+    const testPngBytes = new Uint8Array(await testPngRes.arrayBuffer());
+    expect(testPngBytes).toEqual(new Uint8Array(Buffer.from(PWA_ICON_DARK_192_BASE64, "base64")));
+
+    const testManifestRes = await fetch(`${base}/manifest.webmanifest`);
+    expect(testManifestRes.status).toBe(200);
+    const testManifest = await testManifestRes.json();
+    expect(testManifest.icons.some((i: any) => i.src === "/icon-dark-192.png")).toBe(true);
+
+    const testHtmlRes = await fetch(`${base}/`);
+    expect(testHtmlRes.status).toBe(200);
+    const testHtml = await testHtmlRes.text();
+    expect(testHtml).toContain('href="/icon-dark-192.png"');
+
+    // 2. Production daemon on port 4100
+    const dir = tempDir("prod-daemon");
+    const prodDaemon = new PigeonDaemon({
+      configManager: new ConfigManager(join(dir, "config.json"), { HOME: dir }),
+      port: 4100,
+      publicBaseUrl: "https://pigeon.example.ts.net",
+      herdrAppSocketPath: join(dir, "no-app.sock"),
+      herdrCoreSocketPath: join(dir, "no-core.sock"),
+      adminSocketPath: join(dir, "admin.sock"),
+      devicesFilePath: join(dir, "devices.json"),
+      vapidPath: join(dir, "vapid.json"),
+      embeddedHtml: "<!doctype html><title>Pigeon</title><link rel=\"apple-touch-icon\" href=\"/icon-192.png\" /><link rel=\"icon\" type=\"image/svg+xml\" href=\"/icon.svg\" />",
+    });
+
+    const prodSvgRes = await prodDaemon.fetch(new Request("http://127.0.0.1:4100/icon.svg"));
+    expect(prodSvgRes.status).toBe(200);
+    const prodSvg = await prodSvgRes.text();
+    expect(prodSvg).toContain(".bg-0 { stop-color: #F7F4EC; }");
+    expect(prodSvg).not.toContain('<stop offset="0%" stop-color="#24272B" />');
+
+    const prodPngRes = await prodDaemon.fetch(new Request("http://127.0.0.1:4100/icon-192.png"));
+    expect(prodPngRes.status).toBe(200);
+    const prodPngBytes = new Uint8Array(await prodPngRes.arrayBuffer());
+    expect(prodPngBytes).toEqual(new Uint8Array(Buffer.from(PWA_ICON_192_BASE64, "base64")));
+
+    const prodManifestRes = await prodDaemon.fetch(new Request("http://127.0.0.1:4100/manifest.webmanifest"));
+    expect(prodManifestRes.status).toBe(200);
+    const prodManifest = await prodManifestRes.json();
+    expect(prodManifest.icons.some((i: any) => i.src === "/icon-192.png")).toBe(true);
+
+    const prodHtmlRes = await prodDaemon.fetch(new Request("http://127.0.0.1:4100/"));
+    expect(prodHtmlRes.status).toBe(200);
+    const prodHtml = await prodHtmlRes.text();
+    expect(prodHtml).toContain('href="/icon-192.png"');
+  });
+});
+
+describe("daemon log file (architecture.md §4.6, issue #21)", () => {
+  test("the daemon log file is truncated at start", async () => {
+    const dir = tempDir("daemon-log");
+    const logPath = join(dir, "pigeon.log");
+    writeFileSync(logPath, "stale line from the previous run\n");
+    const port = freePort();
+    const daemon = new PigeonDaemon({
+      configManager: new ConfigManager(join(dir, "config.json"), { HOME: dir }),
+      port,
+      publicBaseUrl: "https://pigeon.example.ts.net",
+      herdrAppSocketPath: join(dir, "no-app.sock"),
+      herdrCoreSocketPath: join(dir, "no-core.sock"),
+      adminSocketPath: join(dir, "admin.sock"),
+      devicesFilePath: join(dir, "devices.json"),
+      vapidPath: join(dir, "vapid.json"),
+      embeddedHtml: "<!doctype html><title>Pigeon</title><link rel=\"apple-touch-icon\" href=\"/icon-192.png\" /><link rel=\"icon\" type=\"image/svg+xml\" href=\"/icon.svg\" />",
+      logPath,
+    });
+    await daemon.start();
+    try {
+      const text = readFileSync(logPath, "utf-8");
+      expect(text).not.toContain("stale line");
+      expect(text.split("\n")[0]).toContain(String(port));
+    } finally {
+      await daemon.stop();
+    }
+  });
+
+  test("core events and requests are recorded in the log file (architecture.md §4.6)", async () => {
+    const dir = tempDir("daemon-log-events");
+    const logPath = join(dir, "pigeon.log");
+    const port = freePort();
+    const origin = `http://127.0.0.1:${port}`;
+    const daemon = new PigeonDaemon({
+      configManager: new ConfigManager(join(dir, "config.json"), { HOME: dir }),
+      port,
+      publicBaseUrl: "https://pigeon.example.ts.net",
+      herdrAppSocketPath: join(dir, "no-app.sock"),
+      herdrCoreSocketPath: join(dir, "no-core.sock"),
+      adminSocketPath: join(dir, "admin.sock"),
+      devicesFilePath: join(dir, "devices.json"),
+      vapidPath: join(dir, "vapid.json"),
+      embeddedHtml: "<!doctype html><title>Pigeon</title><link rel=\"apple-touch-icon\" href=\"/icon-192.png\" /><link rel=\"icon\" type=\"image/svg+xml\" href=\"/icon.svg\" />",
+      logPath,
+    });
+    await daemon.start();
+    try {
+      // 1. Pairing token exchange
+      const { token } = daemon.pairingManager.createPairingToken();
+      const pairRes = await daemon.fetch(new Request(`${origin}/api/pair`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Host: `127.0.0.1:${port}` },
+        body: JSON.stringify({ code: token, deviceName: "Test Phone" }),
+      }));
+      expect(pairRes.status).toBe(200);
+
+      // 2. Upload file
+      const uploadRes = await daemon.fetch(new Request(`${origin}/api/uploads`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "text/plain",
+          "X-Pigeon-Filename": "notes.txt",
+          Host: `127.0.0.1:${port}`,
+          Origin: origin,
+          Cookie: pairRes.headers.get("Set-Cookie")!.split(";")[0],
+        },
+        body: "Hello log test",
+      }));
+      expect(uploadRes.status).toBe(200);
+
+      const logContent = readFileSync(logPath, "utf-8");
+      expect(logContent).toContain('pairing success: device "Test Phone"');
+      expect(logContent).toContain("upload received:");
+      expect(logContent).toContain("notes.txt");
+    } finally {
+      await daemon.stop();
+    }
   });
 });

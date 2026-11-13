@@ -8,15 +8,12 @@ import { fileCredentialSource, type CredentialSource } from "./credentials";
 export interface ClaudeQuotaProviderOptions {
   home?: string;
   usageUrl?: string;
-  tokenUrl?: string;
   /** `false` skips the macOS Keychain; a `CredentialSource` replaces it (tests). Default: on macOS only. */
   keychain?: boolean | CredentialSource;
   now?: () => number;
 }
 
 const DEFAULT_USAGE_URL = "https://api.anthropic.com/api/oauth/usage";
-const DEFAULT_TOKEN_URL = "https://platform.claude.com/v1/oauth/token";
-const CLAUDE_CLIENT_ID = "9d1c250a-e61b-44d9-88ed-5944d1962f5e";
 const KEYCHAIN_SERVICE = "Claude Code-credentials";
 const HOUR_MS = 60 * 60 * 1000;
 const WINDOW_PERIODS: Record<string, number> = { five_hour: 5 * HOUR_MS, seven_day: 7 * 24 * HOUR_MS };
@@ -48,14 +45,12 @@ function familyLabel(family: string): string {
 export class ClaudeQuotaProvider {
   private home: string;
   private usageUrl: string;
-  private tokenUrl: string;
   private keychain: CredentialSource | null;
   private now: () => number;
 
   constructor(options: ClaudeQuotaProviderOptions = {}) {
     this.home = options.home ?? process.env.HOME ?? "";
     this.usageUrl = options.usageUrl ?? DEFAULT_USAGE_URL;
-    this.tokenUrl = options.tokenUrl ?? DEFAULT_TOKEN_URL;
     const keychain = options.keychain ?? process.platform === "darwin";
     this.keychain = keychain === true ? macKeychainSource() : keychain === false ? null : keychain;
     this.now = options.now ?? (() => Date.now());

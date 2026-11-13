@@ -5,6 +5,27 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.10] - 2026-11-12
+
+### Added
+- **Mobile PWA layout**: Opaque status bar so the home-screen app reaches the screen's bottom edge, bottom bar safe-area offset, compact home header, and edge swipe-back gesture across sub-pages (#21).
+- **In-app image viewer**: Full-screen lightbox viewer for uploaded image thumbnails in transcript and composer previews without navigating away from the PWA (#21).
+- **Launch-time model picker**: Pinned model card displaying model details, thinking level chips or fallback indicator, search filtering when over five models, and manual per-agent catalog refresh (#21).
+- **Dynamic model catalog**: Claude models from the Models API, fetched at most once a day automatically and persisted; OpenCode labels and effort levels from its models cache; removed runtime `agent_set_model` command (#21).
+- **Questions answered in the card**: Claude's `AskUserQuestion`, from the transcript or read from its on-screen menu, is answered entirely in the card, including multi-select questions and the user's own text (其他（自己输入）); prompt cards never hand off to the terminal, and optionless prompts show a dialog that only closes (#21).
+- **Queue error pause**: Automatic queue pausing upon agent error items with manual `queue_resume` continuation (#21).
+- **Queue sends everything at once**: When the turn ends, every queued message goes out together as one prompt (#21).
+- **Compaction line**: Claude's compaction summary shows as one tinted line on the agent's side, expandable, instead of a user message (#21).
+- **OpenCode last-used model hint**: The new session page names the model and effort OpenCode will start on (#21).
+- **Antigravity resume & history**: Support resuming AGY sessions via `--conversation <id>` and list workspace conversations from conversation summaries (#21).
+- **Past session model tags**: Sessions list carries last-used model and displays model tags in resume list (#21).
+- **Instance-isolated PWA icons**: Formal/production instance (port 4100) serves light icons while test instances (non-4100) serve dark icons for visual distinction on mobile home screen (#21).
+- **Daemon logging**: Persistent daemon logging to `pigeon.log` with truncation on startup (#21).
+
+### Fixed
+- **Mobile PWA layout on iOS 26**: The home-screen app no longer asks for a translucent status bar, which shortened the page and blurred its top; while a text field has focus the page follows the visual viewport, so the composer sits directly above the keyboard; a double tap no longer zooms the page (#21).
+- **Code block copy**: The copy button sits above its scrolling block and falls back to a selected textarea, always with a toast (#21).
+
 ## [0.1.9] - 2026-11-11
 
 ### Added

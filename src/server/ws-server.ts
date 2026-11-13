@@ -1,4 +1,4 @@
-import { randomBytes } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { existsSync, readFileSync, writeFileSync, renameSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import type { ServerWebSocket } from "bun";
@@ -10,9 +10,10 @@ import { type ConfigManager, resolveProductionPort, DEFAULT_PORT } from "./confi
 import { AgentAdapterManager } from "./agent-adapters/index";
 import { PaneStore } from "./pane-store";
 import { SkillScanner } from "./skill-scanner";
-import { getAgentRecipe, listAgentRecipes } from "./agent-recipes";
+import { claudeQuestionSteps, getAgentRecipe, listAgentRecipes, type AnswerStep, type QuestionAnswer } from "./agent-recipes";
 import { ModelCatalog } from "./model-catalog";
 import { validateClientMessage } from "./ws-validate";
+import { computeInteractionFingerprint } from "./card-classifier";
 import {
   type ClientMessage,
   type ServerMessage,
@@ -20,6 +21,8 @@ import {
   type ClientConfig,
   type AgentRecipeSummary,
   type PaneStatePayload,
+  type InteractionCardData,
+  type InteractionOption,
   type QueuedPrompt,
   type HaveInfo,
   type TurnsDeltaPayload,
@@ -61,6 +64,7 @@ export interface WsServerOptions {
   port?: number;
   productionPort?: number;
   environmentKind?: "production" | "dev" | "test";
+  logger?: (msg: string) => void;
 }
 
 export interface ClientConnectionData {
@@ -72,6 +76,15 @@ export interface ClientConnectionData {
 }
 
 type Ws = ServerWebSocket<ClientConnectionData>;
+
+/** protocol.md §4.2: a pane's queue; `batch` holds the queue ids out in the current send. */
+interface QueueState {
+  state: "idle" | "sending";
+  sawWorking: boolean;
+  unboundSent: boolean;
+  batch: string[];
+  timer?: ReturnType<typeof setTimeout>;
+}
 
 /** Herdr error codes the spec lists (herdr-adapter.md §6) and the protocol code each maps to. */
 // herdr-adapter.md §6: Herdr Core error kinds.
@@ -117,7 +130,7 @@ export class WsServer {
   private queueFilePath?: string;
   private queueSendTimeoutMs: number;
   private queues = new Map<string, Array<{ item: QueuedPrompt; send: string; created_ms: number }>>();
-  private queueStates = new Map<string, { state: "idle" | "sending"; sawWorking: boolean; unboundSent: boolean; timer?: ReturnType<typeof setTimeout> }>();
+  private queueStates = new Map<string, QueueState>();
   private restoredPaneIds = new Set<string>();
   private firstSnapshotSeen = false;
 
@@ -128,8 +141,10 @@ export class WsServer {
   private onSnapshotUpdated: (snapshot: any) => void;
   private onCardsUpdated: (state: PaneStatePayload) => void;
   private onPaneStatusChanged: (event: { paneId: string; status: string }) => void;
+  private logger?: (msg: string) => void;
 
   constructor(options: WsServerOptions) {
+    this.logger = options.logger;
     this.buildId = options.buildId;
     this.queueFilePath = options.queueFilePath;
     this.queueSendTimeoutMs = options.queueSendTimeoutMs ?? 30_000;
@@ -173,9 +188,13 @@ export class WsServer {
         const hasUser = delta.appendTurns.some((t: NormalizedTurn) => !!t.userPrompt);
         if (hasUser) this.transitionQueue(delta.paneId, { type: "user_turn" });
       }
+      this.syncTranscriptInteraction(delta.paneId);
+      this.updateQueuePause(delta.paneId);
       this.maybeSendPaneTail(delta.paneId);
     });
     this.paneStore.on("session_changed", (paneId: string) => {
+      const bound = this.paneStore.boundSession(paneId);
+      this.logger?.(`${this.paneLogLabel(paneId)} session binding: ${bound ? `bound ${bound.sessionId} (${bound.agent})` : "unbound"}`);
       const payload = this.paneStore.getPayload(paneId, this.herdrClient.getPaneAgentKind(paneId));
       const lightPayload: NormalizedTurnsPayload = {
         ...payload,
@@ -183,6 +202,8 @@ export class WsServer {
         ...(payload.sessionStats ? { sessionStats: toLightStats(payload.sessionStats) } : {}),
       };
       this.sendToSubscribers(paneId, { type: "normalized_turns", payload: lightPayload });
+      this.syncTranscriptInteraction(paneId);
+      this.updateQueuePause(paneId);
       this.maybeSendPaneTail(paneId);
     });
 
@@ -198,6 +219,9 @@ export class WsServer {
     this.paneStore.on("title_changed", () => queueMicrotask(() => this.herdrClient.relabelTabs()));
 
     this.onSnapshotUpdated = (snapshot) => {
+      // protocol.md §4.2: restored prompts go out only after binding has read the session, so a
+      // pause derived from it holds them.
+      const restoredToSend: string[] = [];
       if (!this.firstSnapshotSeen) {
         this.firstSnapshotSeen = true;
         for (const paneId of Array.from(this.restoredPaneIds)) {
@@ -210,15 +234,13 @@ export class WsServer {
             if (paneFacts && currentCreatedMs === entry.created_ms) {
               kept.push(entry);
             } else {
+              this.logger?.(`${this.paneLogLabel(paneId)} queue: dropped restored ${entry.item.queueId} (terminal creation time mismatch)`);
               console.log(`[Pigeon] Dropping restored queue item ${entry.item.queueId} for ${paneId}: terminal creation time mismatch (stored ${entry.created_ms}, current ${currentCreatedMs})`);
             }
           }
           if (kept.length > 0) {
             this.queues.set(paneId, kept);
-            const status = this.herdrClient.getPaneHerdrStatus(paneId);
-            if (status === "idle" || status === "done") {
-              this.kickQueue(paneId);
-            }
+            restoredToSend.push(paneId);
           } else {
             this.queues.delete(paneId);
           }
@@ -245,6 +267,7 @@ export class WsServer {
       this.saveQueues();
       this.broadcast({ type: "snapshot_update", payload: snapshot });
       this.rebindSessions();
+      for (const paneId of restoredToSend) this.kickQueue(paneId);
     };
     this.herdrClient.on("snapshot_updated", this.onSnapshotUpdated);
     this.rebindSessions();
@@ -305,14 +328,20 @@ export class WsServer {
     return { event, agent: null, workspace: "", tab: "", paneId };
   }
 
+  private paneLogLabel(paneId: string): string {
+    return this.herdrClient.paneLogLabel(paneId);
+  }
+
   public handleOpen(ws: Ws): void {
     this.clients.add(ws);
+    this.logger?.(`ws connect: ${ws.data?.session?.deviceName || "client"} (conn=${ws.data?.connectionId})`);
   }
 
   public handleClose(ws: Ws): void {
     this.clients.delete(ws);
     this.pushManager.removePresence(ws.data.connectionId);
     this.syncMonitoredPanes();
+    this.logger?.(`ws disconnect: ${ws.data?.session?.deviceName || "client"} (conn=${ws.data?.connectionId})`);
   }
 
   private syncMonitoredPanes(): void {
@@ -353,8 +382,9 @@ export class WsServer {
         interruptKeys: r.interruptKeys,
         resumable: r.resumable,
         launchModel: r.launchModel !== false,
-        runtimeSwitch: { model: !!r.runtimeModelCommand, thinking: !!r.runtimeThinkingCommand },
       };
+      const lastUsed = r.launchModel === false ? this.modelCatalog.lastUsed(r.kind) : undefined;
+      if (lastUsed) recipes[r.kind].lastUsed = lastUsed;
     }
     return recipes;
   }
@@ -472,34 +502,13 @@ export class WsServer {
         return;
       }
 
-      case "agent_set_model": {
-        const { targetPaneId, modelId, thinking } = msg.payload;
-        if (!this.requireKnownPane(ws, msg.id, targetPaneId)) return;
-        const kind = this.herdrClient.getPaneAgentKind(targetPaneId);
-        const recipe = kind ? getAgentRecipe(kind) : undefined;
-        const models = kind ? this.modelCatalog.models(kind) : [];
-        const commands: string[] = [];
-        if (modelId) {
-          if (!recipe?.runtimeModelCommand || !models.some((m) => m.id === modelId)) {
-            this.sendError(ws, msg.id, ProtocolErrors.ERR_INVALID_PAYLOAD, `This agent cannot switch to model '${modelId}' at runtime`);
-            return;
-          }
-        }
-        if (thinking) {
-          const current = modelId ?? this.paneStore.sessionInfo(targetPaneId, kind).model.value;
-          const levels = models.find((m) => m.id === current)?.thinkingLevels ?? [];
-          if (!recipe?.runtimeThinkingCommand || !levels.includes(thinking)) {
-            this.sendError(ws, msg.id, ProtocolErrors.ERR_INVALID_PAYLOAD, `This agent cannot switch effort to '${thinking}' at runtime`);
-            return;
-          }
-        }
-        if (modelId && thinking && recipe?.kind === "codex") {
-          commands.push(`/model ${modelId} --reasoning=${thinking}`);
-        } else {
-          if (modelId && recipe?.runtimeModelCommand) commands.push(recipe.runtimeModelCommand(modelId));
-          if (thinking && recipe?.runtimeThinkingCommand) commands.push(recipe.runtimeThinkingCommand(thinking));
-        }
-        for (const [i, text] of commands.entries()) await this.submitPrompt(ws, i === commands.length - 1 ? msg.id : null, targetPaneId, text, { text, attachments: [] });
+      case "queue_resume": {
+        const { paneId } = msg.payload;
+        if (!this.requireKnownPane(ws, msg.id, paneId)) return;
+        this.releaseQueuePause(paneId);
+        this.logger?.(`${this.paneLogLabel(paneId)} queue: resumed`);
+        this.sendAck(ws, msg.id, { paneId });
+        this.updateQueuePause(paneId);
         return;
       }
 
@@ -514,6 +523,7 @@ export class WsServer {
         queue.splice(idx, 1);
         this.saveQueues();
         this.sendQueue(targetPaneId);
+        this.logger?.(`${this.paneLogLabel(targetPaneId)} queue: canceled ${queueId}`);
         this.sendAck(ws, msg.id, { queueId });
         return;
       }
@@ -542,12 +552,19 @@ export class WsServer {
         entry.send = full;
         this.saveQueues();
         this.sendQueue(targetPaneId);
+        this.logger?.(`${this.paneLogLabel(targetPaneId)} queue: updated ${queueId}`);
         this.sendAck(ws, msg.id, { queueId, updated: true });
         return;
       }
 
       case "models_refresh": {
-        await this.refreshModels();
+        this.logger?.("models refresh requested");
+        const agent = msg.payload?.agent;
+        if (agent !== undefined && !getAgentRecipe(agent)) {
+          this.sendError(ws, msg.id, ProtocolErrors.ERR_INVALID_PAYLOAD, `Unknown agent kind '${agent}'`);
+          return;
+        }
+        if (await this.modelCatalog.refreshAsked(agent)) this.broadcastRecipes();
         this.sendAck(ws, msg.id, { recipes: this.recipeSummaries() });
         return;
       }
@@ -559,7 +576,10 @@ export class WsServer {
           return;
         }
         const recipe = getAgentRecipe(msg.payload.agentKind);
-        const sessions = recipe?.resumable ? this.agentAdapters.listSessions(recipe.kind, folder) : [];
+        // agent-session-normalization.md §2.6: a listed model resolved through the catalog.
+        const sessions = (recipe?.resumable ? this.agentAdapters.listSessions(recipe.kind, folder) : []).map((s) =>
+          s.model ? { ...s, model: this.modelCatalog.resolve(recipe!.kind, s.model) } : s
+        );
         this.sendAck(ws, msg.id, { sessions });
         return;
       }
@@ -570,6 +590,8 @@ export class WsServer {
           this.sendError(ws, msg.id, ProtocolErrors.ERR_NOT_FOUND, `Unknown tab ${msg.payload.tabId}`);
           return;
         }
+        const oldLabel = this.herdrClient.getTabLabel(msg.payload.tabId);
+        this.logger?.(`tab renamed: ${msg.payload.tabId}${oldLabel ? ` ("${oldLabel}")` : ""} -> "${name}"`);
         await this.herdrClient.renameTab(msg.payload.tabId, name);
         this.sendAck(ws, msg.id, { tabId: msg.payload.tabId, name });
         return;
@@ -602,13 +624,14 @@ export class WsServer {
       case "agent_send_keys": {
         const { targetPaneId, keys } = msg.payload;
         if (!this.requireKnownPane(ws, msg.id, targetPaneId)) return;
+        this.logger?.(`${this.paneLogLabel(targetPaneId)} keys dispatched: ${keys.join(",")}`);
         await this.herdrClient.sendKeys(targetPaneId, keys);
         this.sendAck(ws, msg.id);
         return;
       }
 
       case "interaction_respond": {
-        const { targetPaneId, interactionId, fingerprint, optionId } = msg.payload;
+        const { targetPaneId, interactionId, fingerprint, optionId, optionIds, otherTexts } = msg.payload;
         if (!this.requireKnownPane(ws, msg.id, targetPaneId)) return;
         if (this.answeringPanes.has(targetPaneId)) {
           this.sendError(ws, msg.id, ProtocolErrors.ERR_INTERACTION_STALE, "This prompt is already being answered.");
@@ -619,20 +642,51 @@ export class WsServer {
           this.sendError(ws, msg.id, ProtocolErrors.ERR_INTERACTION_STALE, "The prompt changed or was already answered.");
           return;
         }
-        const option = pending.options.find((o) => o.id === optionId);
-        if (!option?.keyShortcut) {
-          this.sendError(ws, msg.id, ProtocolErrors.ERR_INVALID_PAYLOAD, `Unknown optionId '${optionId}'`);
+        if (pending.source === "transcript") {
+          // protocol.md §4.1: every question's picks at once; the agent's checked keys (herdr-adapter.md §7.2).
+          const steps = optionIds ? this.transcriptAnswerSteps(targetPaneId, optionIds, otherTexts ?? {}) : null;
+          if (!steps) {
+            this.sendError(ws, msg.id, ProtocolErrors.ERR_INVALID_PAYLOAD, "optionIds must pick every question, and the agent needs checked keys");
+            return;
+          }
+          this.answeringPanes.add(targetPaneId);
+          try {
+            await this.herdrClient.answerSteps(targetPaneId, steps);
+          } finally {
+            this.answeringPanes.delete(targetPaneId);
+          }
+          this.logger?.(`${this.paneLogLabel(targetPaneId)} interaction respond: ${optionIds!.join(",")} (transcript)`);
+          this.herdrClient.markAnswered(targetPaneId, interactionId);
+          this.sendAck(ws, msg.id, { approved: true, interactionId });
           return;
         }
-        // protocol.md §4.1: send exactly the option's key; a prompt still on screen afterwards
-        // is reported as not approved so the client falls back to the terminal view.
+        let steps: AnswerStep[];
+        if (pending.multiSelect !== undefined) {
+          // herdr-adapter.md §8.2: a question menu, single- or multi-select, maybe with other text.
+          const answer = this.menuAnswer(pending, optionId, optionIds, otherTexts ?? {});
+          if (!answer) {
+            this.sendError(ws, msg.id, ProtocolErrors.ERR_INVALID_PAYLOAD, "The picks do not answer this question menu");
+            return;
+          }
+          steps = claudeQuestionSteps(answer);
+        } else {
+          const option = optionId === undefined || otherTexts ? undefined : pending.options.find((o) => o.id === optionId);
+          if (!option?.keyShortcut) {
+            this.sendError(ws, msg.id, ProtocolErrors.ERR_INVALID_PAYLOAD, `Unknown optionId '${optionId}'`);
+            return;
+          }
+          steps = [{ keys: [option.keyShortcut] }];
+        }
+        // protocol.md §4.1: send the answer once; a prompt still on screen afterwards is acked
+        // as not approved, and the card stays.
         this.answeringPanes.add(targetPaneId);
         let approved: boolean;
         try {
-          approved = await this.herdrClient.answerInteraction(targetPaneId, interactionId, [option.keyShortcut]);
+          approved = await this.herdrClient.answerInteraction(targetPaneId, interactionId, steps);
         } finally {
           this.answeringPanes.delete(targetPaneId);
         }
+        this.logger?.(`${this.paneLogLabel(targetPaneId)} interaction respond: ${optionId ?? optionIds!.join(",")} (approved=${approved})`);
         this.sendAck(ws, msg.id, { approved, interactionId });
         return;
       }
@@ -648,7 +702,8 @@ export class WsServer {
           this.sendError(ws, msg.id, ProtocolErrors.ERR_INVALID_PAYLOAD, `${recipe.label} takes no model at launch`);
           return;
         }
-        const model = modelId ? this.modelCatalog.models(recipe.kind).find((m) => m.id === modelId) : undefined;
+        const models = this.modelCatalog.models(recipe.kind);
+        const model = modelId ? models.find((m) => m.id === modelId) : undefined;
         if (modelId && !model) {
           this.sendError(ws, msg.id, ProtocolErrors.ERR_INVALID_PAYLOAD, `Unknown model '${modelId}' for ${agentKind}`);
           return;
@@ -669,19 +724,23 @@ export class WsServer {
         }
         const res = await this.herdrClient.createTabAndAgent(workspaceId, recipe.kind, { modelId, thinking, cwd, firstMessage, resume });
         this.paneStore.setLaunch(res.paneId, { agent: recipe.kind, modelId, thinking, resumeSessionId });
+        this.logger?.(`tab created: ${res.tabId} (${this.paneLogLabel(res.paneId)}, agent=${recipe.kind})`);
         this.rebindSessions();
         this.sendAck(ws, msg.id, { workspaceId, tabId: res.tabId, paneId: res.paneId });
         return;
       }
 
-      case "close_tab":
+      case "close_tab": {
         if (!this.herdrClient.hasTab(msg.payload.tabId)) {
           this.sendError(ws, msg.id, ProtocolErrors.ERR_NOT_FOUND, `Unknown tab ${msg.payload.tabId}`);
           return;
         }
+        const tabLabel = this.herdrClient.getTabLabel(msg.payload.tabId);
+        this.logger?.(`tab closed: ${msg.payload.tabId}${tabLabel ? ` ("${tabLabel}")` : ""}`);
         await this.herdrClient.closeTab(msg.payload.tabId);
         this.sendAck(ws, msg.id, { closedTabId: msg.payload.tabId });
         return;
+      }
 
       case "skills_get":
         this.sendSkills(ws, data.subscribedPaneId, msg.id);
@@ -700,6 +759,7 @@ export class WsServer {
         this.usageService?.updateConfig();
         this.quotaService?.updateConfig();
         this.configVersion++;
+        this.logger?.("config patched: client settings updated");
         this.sendAck(ws, msg.id, { version: this.configVersion, client });
         this.broadcastConfigUpdated(client, ws);
         return;
@@ -868,8 +928,11 @@ export class WsServer {
       turnsPayload = this.paneStore.getPayload(paneId, agentKind);
     }
 
+    this.syncTranscriptInteraction(paneId);
     const cached = this.herdrClient.getPaneState(paneId);
     const queueItems = (this.queues.get(paneId) ?? []).map((q) => q.item);
+    const queuePaused = this.isQueuePaused(paneId);
+    this.wasQueuePaused.set(paneId, queuePaused);
     const serverMs = Date.now() - startMs;
 
     const lightTurns = turnsPayload
@@ -886,6 +949,7 @@ export class WsServer {
         turns: lightTurns,
         resume: resumePayload,
         queue: queueItems,
+        queuePaused,
         state: cached ?? null,
         serverMs,
       },
@@ -1021,13 +1085,157 @@ export class WsServer {
     return text.trim() ? `${text}${sep}${lines}` : lines;
   }
 
-  private getQueueState(paneId: string): { state: "idle" | "sending"; sawWorking: boolean; unboundSent: boolean; timer?: ReturnType<typeof setTimeout> } {
+  private resumedErrorKey = new Map<string, string>();
+  /** The `paused` viewers last heard in `prompt_queue`. */
+  private wasQueuePaused = new Map<string, boolean>();
+
+  private getErrorFingerprint(paneId: string): string | null {
+    const sessionState = this.paneStore.getPaneState(paneId);
+    if (!sessionState || sessionState.turns.length === 0) return null;
+    const lastTurn = sessionState.turns[sessionState.turns.length - 1];
+    if (!lastTurn.items || lastTurn.items.length === 0) return null;
+    const lastItem = lastTurn.items[lastTurn.items.length - 1];
+    if (lastItem.kind !== "error") return null;
+    return `${lastTurn.turnId}:${lastTurn.items.length}:${(lastItem as any).text}`;
+  }
+
+  private isQueuePaused(paneId: string): boolean {
+    const fp = this.getErrorFingerprint(paneId);
+    if (!fp) return false;
+    return this.resumedErrorKey.get(paneId) !== fp;
+  }
+
+  /** protocol.md §4.2: the current agent error no longer holds the queue. */
+  private releaseQueuePause(paneId: string): void {
+    const fp = this.getErrorFingerprint(paneId);
+    if (fp) this.resumedErrorKey.set(paneId, fp);
+  }
+
+  /** protocol.md §4.2: viewers hear every change of `paused`; a released queue sends its head. */
+  private updateQueuePause(paneId: string): void {
+    const now = this.isQueuePaused(paneId);
+    if ((this.wasQueuePaused.get(paneId) ?? false) === now) return;
+    this.logger?.(`${this.paneLogLabel(paneId)} queue: ${now ? "paused (error in transcript)" : "unpaused"}`);
+    this.sendQueue(paneId);
+    if (!now) this.kickQueue(paneId);
+  }
+
+  /** herdr-adapter.md §7.2: the keys for a transcript question's picks; null when they do not pick every question. */
+  /** protocol.md §4.1: a question menu's picks, `opt_other` standing for the text of question 1. */
+  private menuAnswer(pending: InteractionCardData, optionId: string | undefined, optionIds: string[] | undefined, otherTexts: Record<string, string>): QuestionAnswer | null {
+    const ids = optionIds ?? (optionId !== undefined ? [optionId] : []);
+    if (new Set(ids).size !== ids.length || (!pending.multiSelect && (optionIds || ids.length !== 1))) return null;
+    const wantsOther = ids.includes("opt_other");
+    const keys = Object.keys(otherTexts);
+    if (wantsOther ? !pending.allowsOther || keys.join() !== "1" : keys.length > 0) return null;
+    const picks: number[] = [];
+    for (const id of ids) {
+      if (id === "opt_other") continue;
+      const key = pending.options.find((o) => o.id === id)?.keyShortcut;
+      if (!key) return null;
+      picks.push(Number(key));
+    }
+    return { multiSelect: !!pending.multiSelect, picks, ...(wantsOther ? { other: otherTexts["1"].trim() } : {}) };
+  }
+
+  /** protocol.md §4.1: every question answered, in question order, by picks or other text. */
+  private transcriptAnswerSteps(paneId: string, optionIds: string[], otherTexts: Record<string, string>): AnswerStep[] | null {
+    const turns = this.paneStore.getPaneState(paneId)?.turns ?? [];
+    const pq = turns[turns.length - 1]?.pendingQuestion;
+    const kind = this.herdrClient.getPaneAgentKind(paneId);
+    const questionSteps = kind ? getAgentRecipe(kind)?.questionSteps : undefined;
+    if (!pq || !questionSteps) return null;
+    const answers: QuestionAnswer[] = pq.questions.map((q) => ({ multiSelect: !!q.multiSelect, picks: [] }));
+    let reached = 0;
+    for (const id of optionIds) {
+      const m = /^q(\d+)_(?:opt_(\d+)|(other))$/.exec(id);
+      const k = m ? Number(m[1]) - 1 : -1;
+      if (k < reached || k >= answers.length) return null;
+      reached = k;
+      const a = answers[k];
+      if (m![3]) {
+        const text = otherTexts[String(k + 1)];
+        if (a.other !== undefined || text === undefined) return null;
+        a.other = text.trim();
+        continue;
+      }
+      const n = Number(m![2]);
+      if (n < 1 || n > pq.questions[k].options.length || a.picks.includes(n)) return null;
+      a.picks.push(n);
+    }
+    const usedTexts = answers.filter((a) => a.other !== undefined).length;
+    if (usedTexts !== Object.keys(otherTexts).length) return null;
+    const count = (a: QuestionAnswer) => a.picks.length + (a.other !== undefined ? 1 : 0);
+    if (answers.some((a) => count(a) === 0 || (!a.multiSelect && count(a) > 1))) return null;
+    return questionSteps(answers);
+  }
+
+  private syncTranscriptInteraction(paneId: string): void {
+    const kind = this.herdrClient.getPaneAgentKind(paneId);
+    const keysChecked = !!(kind && getAgentRecipe(kind)?.questionSteps);
+    const sessionState = this.paneStore.getPaneState(paneId);
+    const lastTurn = sessionState?.turns[sessionState.turns.length - 1];
+    let interaction: InteractionCardData | null = null;
+    if (lastTurn?.pendingQuestion) {
+      const pq = lastTurn.pendingQuestion;
+      const firstQ = pq.questions[0]?.question ?? "";
+      const options: InteractionOption[] = [];
+      for (let k = 0; k < pq.questions.length; k++) {
+        const q = pq.questions[k];
+        for (let n = 0; n < q.options.length; n++) {
+          const opt = q.options[n];
+          options.push({
+            id: `q${k + 1}_opt_${n + 1}`,
+            label: opt.label,
+            keyShortcut: keysChecked ? String(n + 1) : "",
+          });
+        }
+      }
+      const hash = createHash("sha256").update(pq.id).digest("hex").slice(0, 10);
+      interaction = {
+        id: `card_interaction_${hash}`,
+        kind: "interaction",
+        source: "transcript",
+        interactionId: `int_${hash}`,
+        title: "",
+        question: firstQ,
+        payload: "",
+        fingerprint: computeInteractionFingerprint(firstQ, "", options),
+        options,
+        fallbackKeys: ["enter", "esc", "up", "down"],
+        ...(keysChecked ? { allowsOther: true } : {}),
+      };
+    } else if (lastTurn?.pendingPlan) {
+      const hash = createHash("sha256").update(lastTurn.pendingPlan.markdown).digest("hex").slice(0, 10);
+      interaction = {
+        id: `card_interaction_${hash}`,
+        kind: "interaction",
+        source: "transcript",
+        interactionId: `int_${hash}`,
+        title: "",
+        question: "",
+        payload: lastTurn.pendingPlan.markdown,
+        fingerprint: computeInteractionFingerprint("", lastTurn.pendingPlan.markdown, []),
+        options: [],
+        fallbackKeys: ["enter", "esc", "up", "down"],
+      };
+    }
+    this.herdrClient.setTranscriptInteraction(paneId, interaction, !!lastTurn?.pendingQuestion && keysChecked);
+  }
+
+  private getQueueState(paneId: string): QueueState {
     let s = this.queueStates.get(paneId);
     if (!s) {
-      s = { state: "idle", sawWorking: false, unboundSent: false };
+      s = { state: "idle", sawWorking: false, unboundSent: false, batch: [] };
       this.queueStates.set(paneId, s);
     }
     return s;
+  }
+
+  /** protocol.md §4.2: the batch out leaves the queue together. */
+  private dropBatch(paneId: string, queueState: QueueState): void {
+    const out = new Set(queueState.batch);
+    this.queues.set(paneId, (this.queues.get(paneId) ?? []).filter((e) => !out.has(e.item.queueId)));
   }
 
   /** Queues while the agent works or others wait; sends otherwise (protocol.md §4.2). */
@@ -1035,7 +1243,8 @@ export class WsServer {
     const queue = this.queues.get(paneId) ?? [];
     const state = this.getQueueState(paneId);
     const herdrStatus = this.herdrClient.getPaneHerdrStatus(paneId);
-    if (herdrStatus === "working" || queue.length > 0 || state.state === "sending") {
+    const paused = this.isQueuePaused(paneId);
+    if (herdrStatus === "working" || queue.length > 0 || state.state === "sending" || paused) {
       const facts = this.herdrClient.getPaneFacts(paneId);
       const created_ms = facts?.createdMs ?? 0;
       const item: QueuedPrompt = { queueId: `q_${randomBytes(6).toString("hex")}`, ...shown, createdAt: Date.now() };
@@ -1043,16 +1252,17 @@ export class WsServer {
       this.queues.set(paneId, queue);
       this.saveQueues();
       this.sendQueue(paneId);
+      this.logger?.(`${this.paneLogLabel(paneId)} queue: enqueued ${item.queueId}`);
       if (replyTo) this.sendAck(ws, replyTo, { queued: true, queueId: item.queueId });
       return;
     }
+    this.logger?.(`${this.paneLogLabel(paneId)} prompt: sent immediate`);
     await this.herdrClient.sendPrompt(paneId, send);
     if (replyTo) this.sendAck(ws, replyTo, { queued: false });
   }
 
   public clearSendingPrompt(paneId: string, queueId?: string): void {
-    const head = this.queues.get(paneId)?.[0];
-    const qId = queueId ?? head?.item.queueId ?? "";
+    const qId = queueId ?? this.queueStates.get(paneId)?.batch[0] ?? "";
     this.transitionQueue(paneId, { type: "timeout", queueId: qId });
   }
 
@@ -1081,8 +1291,17 @@ export class WsServer {
     const queue = this.queues.get(paneId) ?? [];
 
 
+    // protocol.md §4.2: a pane turning `working` releases a paused queue.
+    if (event.type === "status" && event.status === "working") {
+      this.releaseQueuePause(paneId);
+      this.updateQueuePause(paneId);
+    }
+
     if (event.type === "remove_pane") {
       if (queueState.timer) clearTimeout(queueState.timer);
+      for (const entry of queue) {
+        this.logger?.(`${this.paneLogLabel(paneId)} queue: dropped ${entry.item.queueId} (pane removed)`);
+      }
       this.queueStates.delete(paneId);
       this.queues.delete(paneId);
       this.lastPaneTailAt.delete(paneId);
@@ -1095,32 +1314,21 @@ export class WsServer {
 
     if (queueState.state === "sending") {
       let settled = false;
-      const head = queue[0];
+      let settleReason = "";
 
       if (event.type === "user_turn") {
         const canFlushImmediately =
           queueState.sawWorking &&
           (this.herdrClient.getPaneHerdrStatus(paneId) === "idle" || this.herdrClient.getPaneHerdrStatus(paneId) === "done");
-        if (queueState.timer) {
-          clearTimeout(queueState.timer);
-          queueState.timer = undefined;
-        }
-        if (!queueState.unboundSent && head) {
-          queue.shift();
-        }
-        queueState.state = "idle";
-        queueState.sawWorking = false;
-        queueState.unboundSent = false;
-        this.saveQueues();
-        this.sendQueue(paneId);
-
+        this.settleBatch(paneId, queueState, "user_turn");
         if (canFlushImmediately) {
           this.kickQueue(paneId);
         }
         return;
       } else if (event.type === "timeout") {
-        if (!event.queueId || event.queueId === head?.item.queueId) {
+        if (!event.queueId || event.queueId === queueState.batch[0]) {
           settled = true;
+          settleReason = "timeout";
         }
       } else if (event.type === "status") {
         if (event.status === "working") {
@@ -1129,6 +1337,7 @@ export class WsServer {
           // Idle after working settles the head prompt for all panes (protocol §4.2).
           if (queueState.sawWorking) {
             settled = true;
+            settleReason = "status";
           }
         }
       } else if (event.type === "send_result") {
@@ -1137,14 +1346,14 @@ export class WsServer {
             clearTimeout(queueState.timer);
             queueState.timer = undefined;
           }
-          if (head && head.item.queueId === event.queueId) {
-            queue.shift();
-          }
+          if (queueState.batch[0] === event.queueId) this.dropBatch(paneId, queueState);
           queueState.state = "idle";
           queueState.sawWorking = false;
           queueState.unboundSent = false;
+          queueState.batch = [];
           this.saveQueues();
           this.sendQueue(paneId);
+          this.logger?.(`${this.paneLogLabel(paneId)} queue: send failed ${event.queueId}`);
 
           const err = event.error;
           const isOffline =
@@ -1165,8 +1374,8 @@ export class WsServer {
           // Success
           if (!this.paneStore.boundSession(paneId)) {
             // Unbound pane: leaves the queue right after successful send, but queue still waits for it to settle
-            if (head && head.item.queueId === event.queueId && !queueState.unboundSent) {
-              queue.shift();
+            if (queueState.batch[0] === event.queueId && !queueState.unboundSent) {
+              this.dropBatch(paneId, queueState);
               queueState.unboundSent = true;
               this.saveQueues();
               this.sendQueue(paneId);
@@ -1176,19 +1385,7 @@ export class WsServer {
       }
 
       if (settled) {
-        if (queueState.timer) {
-          clearTimeout(queueState.timer);
-          queueState.timer = undefined;
-        }
-        if (!queueState.unboundSent && head) {
-          queue.shift();
-        }
-        queueState.state = "idle";
-        queueState.sawWorking = false;
-        queueState.unboundSent = false;
-        this.saveQueues();
-        this.sendQueue(paneId);
-
+        this.settleBatch(paneId, queueState, settleReason);
         this.kickQueue(paneId);
         return;
       }
@@ -1199,24 +1396,43 @@ export class WsServer {
     }
   }
 
+  private settleBatch(paneId: string, queueState: QueueState, reason: string): void {
+    if (queueState.timer) {
+      clearTimeout(queueState.timer);
+      queueState.timer = undefined;
+    }
+    if (!queueState.unboundSent) this.dropBatch(paneId, queueState);
+    const settled = queueState.batch;
+    queueState.state = "idle";
+    queueState.sawWorking = false;
+    queueState.unboundSent = false;
+    queueState.batch = [];
+    this.saveQueues();
+    this.sendQueue(paneId);
+    if (settled.length) this.logger?.(`${this.paneLogLabel(paneId)} queue: settled ${settled.join(",")} (${reason})`);
+  }
+
   private kickQueue(paneId: string): void {
     const queueState = this.getQueueState(paneId);
     if (queueState.state !== "idle") return;
+    if (this.isQueuePaused(paneId)) return;
     const queue = this.queues.get(paneId);
     if (!queue || queue.length === 0) return;
 
     const herdrStatus = this.herdrClient.getPaneHerdrStatus(paneId);
     if (herdrStatus !== "idle" && herdrStatus !== "done") return;
 
-    const entry = queue[0];
-    if (entry.item.sending) return;
-
-    entry.item.sending = true;
+    // protocol.md §4.2: everything queued goes out as one prompt, in queue order.
+    const batch = [...queue];
+    for (const e of batch) e.item.sending = true;
     queueState.state = "sending";
     queueState.sawWorking = false;
     queueState.unboundSent = false;
+    queueState.batch = batch.map((e) => e.item.queueId);
+    const send = batch.map((e) => e.send).join("\n\n");
 
-    const queueId = entry.item.queueId;
+    const queueId = queueState.batch[0];
+    this.logger?.(`${this.paneLogLabel(paneId)} queue: sending ${queueState.batch.join(",")}`);
     queueState.timer = setTimeout(() => {
       this.transitionQueue(paneId, { type: "timeout", queueId });
     }, this.queueSendTimeoutMs);
@@ -1226,7 +1442,7 @@ export class WsServer {
 
     void (async () => {
       try {
-        await this.herdrClient.sendPrompt(paneId, entry.send);
+        await this.herdrClient.sendPrompt(paneId, send);
         this.transitionQueue(paneId, { type: "send_result", success: true, queueId });
       } catch (err) {
         this.transitionQueue(paneId, { type: "send_result", success: false, error: err, queueId });
@@ -1235,7 +1451,16 @@ export class WsServer {
   }
 
   private sendQueue(paneId: string): void {
-    this.sendToSubscribers(paneId, { type: "prompt_queue", payload: { paneId, items: (this.queues.get(paneId) ?? []).map((q) => q.item) } });
+    const paused = this.isQueuePaused(paneId);
+    this.wasQueuePaused.set(paneId, paused);
+    this.sendToSubscribers(paneId, {
+      type: "prompt_queue",
+      payload: {
+        paneId,
+        paused,
+        items: (this.queues.get(paneId) ?? []).map((q) => q.item),
+      },
+    });
   }
 
   private loadQueues(): void {

@@ -19,7 +19,7 @@ function computeCardId(kind: CardKind, anchor: string, occurrence: number): stri
   return `card_${kind}_${hash}`;
 }
 
-function computeInteractionFingerprint(question: string, payload = "", options: Array<{ id?: string; label: string }> = []): string {
+export function computeInteractionFingerprint(question: string, payload = "", options: Array<{ id?: string; label: string }> = []): string {
   const raw = `${question.trim()}|${payload.trim()}|${options.map((o) => o.id || o.label).join(",")}`;
   return "fp_" + createHash("sha256").update(raw).digest("hex").slice(0, 12);
 }
@@ -37,6 +37,8 @@ const NUMBERED_OPTION_RE = /^(?:\[(\d+)\]|\((\d+)\)|(\d+)[.)])\s+(.+)$/;
 const PROMPT_HINT_RE = /(esc|enter|tab|↑|↓|to cancel|to select|to confirm|to navigate|ctrl\+)/i;
 const BORDER_ONLY_RE = /^[\s─━│┃╭╮╰╯┌┐└┘├┤═║╔╗╚╝-]*$/;
 const TOOL_CALL_RE = /^([A-Za-z_][A-Za-z0-9_.-]*)\((.*)\)$/;
+const STATUS_LINE_RE = /(ctx:\d+%|token:\d+|mode:(?:auto|plan|bypass))\b/i;
+const BARE_PROMPT_RE = /^[>❯›▶$]\s*$/;
 
 /** Removes TUI box-drawing side borders so `│ Do you want to proceed? │` reads as plain text. */
 function unbox(line: string): string {
@@ -131,6 +133,60 @@ function parseTailPrompt(lines: string[], start: number): PromptParse | null {
   };
 }
 
+const MENU_HINT_RE = /Enter to select/i;
+const MENU_TABS_RE = /^←.*→$/;
+const MENU_CHECK_RE = /^\[[ ✔✓xX]\]\s+/;
+const MENU_OWN_ENTRY_RE = /^(Type something\.?|Chat about this)$/i;
+const MENU_STEP_RE = /^(Next|Submit)$/i;
+
+/**
+ * herdr-adapter.md §8.2 "Question menus": Claude's AskUserQuestion menu, a numbered list right
+ * above the `Enter to select` hint. Returns null when the screen does not end in one.
+ */
+function parseQuestionMenu(lines: string[]): (PromptParse & { multiSelect: boolean; allowsOther: boolean; descriptions: string[] }) | null {
+  let end = lines.length - 1;
+  while (end >= 0 && (!lines[end].trim() || BORDER_ONLY_RE.test(lines[end].trim()))) end--;
+  if (end < 0 || !MENU_HINT_RE.test(lines[end])) return null;
+  let first = -1;
+  for (let j = end - 1; j >= 0; j--) {
+    const trimmed = lines[j].trim();
+    if (!trimmed || BORDER_ONLY_RE.test(trimmed) || MENU_STEP_RE.test(trimmed)) continue;
+    // Indented lines are option descriptions, also below the last option.
+    if (parseNumberedOption(trimmed)) first = j;
+    else if (!/^\s{2,}\S/.test(lines[j])) break;
+  }
+  if (first === -1) return null;
+  let q = first - 1;
+  while (q >= 0 && (!lines[q].trim() || BORDER_ONLY_RE.test(lines[q].trim()) || MENU_TABS_RE.test(lines[q].trim()))) q--;
+  if (q < 0) return null;
+  const options: PromptParse["options"] = [];
+  const descriptions: string[] = [];
+  let multiSelect = false;
+  let allowsOther = false;
+  let current = -1;
+  for (let j = first; j < end; j++) {
+    const trimmed = lines[j].trim();
+    if (!trimmed || BORDER_ONLY_RE.test(trimmed) || MENU_STEP_RE.test(trimmed)) continue;
+    const opt = parseNumberedOption(trimmed);
+    if (opt) {
+      if (MENU_CHECK_RE.test(opt.label)) multiSelect = true;
+      const label = opt.label.replace(MENU_CHECK_RE, "").trim();
+      if (MENU_OWN_ENTRY_RE.test(label)) {
+        if (/^Type something/i.test(label)) allowsOther = true;
+        current = -1;
+        continue;
+      }
+      options.push({ id: `opt_${opt.num}`, label, keyShortcut: opt.num });
+      descriptions.push("");
+      current = options.length - 1;
+    } else if (current >= 0) {
+      descriptions[current] = descriptions[current] ? `${descriptions[current]} ${trimmed}` : trimmed;
+    }
+  }
+  if (options.length === 0) return null;
+  return { question: lines[q].trim(), payload: "", options, fallbackKeys: DEFAULT_FALLBACK_KEYS, multiSelect, allowsOther, descriptions };
+}
+
 /** `protocol.md` §5.4: `title` and `question` hold only what the screen showed. */
 function buildInteraction(prompt: PromptParse, title = ""): InteractionCardData {
   const optionKey = prompt.options.map((o) => o.label).join("|");
@@ -138,6 +194,7 @@ function buildInteraction(prompt: PromptParse, title = ""): InteractionCardData 
   return {
     id: computeCardId("interaction", prompt.question, 0),
     kind: "interaction",
+    source: "screen",
     interactionId,
     title,
     question: prompt.question,
@@ -153,13 +210,23 @@ function buildInteraction(prompt: PromptParse, title = ""): InteractionCardData 
  * still needs something to act on: a card with the screen tail and the raw key pad, no choices.
  */
 export function buildUnrecognizedPrompt(rawScreen: string): InteractionCardData {
-  const tail = stripAnsi(rawScreen)
+  const allLines = stripAnsi(rawScreen)
     .split("\n")
     .map((l) => l.trimEnd())
-    .filter((l) => l.trim() && !BORDER_ONLY_RE.test(l.trim()))
-    .slice(-6);
-  const question = tail.length > 0 ? unbox(tail[tail.length - 1]).trim() : "";
-  return buildInteraction({ question, payload: tail.slice(0, -1).map((l) => unbox(l)).join("\n"), options: [], fallbackKeys: DEFAULT_FALLBACK_KEYS });
+    .filter((l) => {
+      const trimmed = l.trim();
+      if (!trimmed || BORDER_ONLY_RE.test(trimmed)) return false;
+      if (BARE_PROMPT_RE.test(trimmed)) return false;
+      if (STATUS_LINE_RE.test(trimmed)) return false;
+      return true;
+    });
+
+  // protocol.md §5.4: no title of our own; the phone labels it (mobile-ui-and-themes.md §4.4).
+  const tail = allLines.slice(-8);
+  const isError = /error|fail|capacity|limit|quota|exception|unavailable/i.test(tail.join("\n"));
+  const question = tail.length > 0 ? unbox(isError ? tail[0] : tail[tail.length - 1]).trim() : "";
+  const payload = tail.map((l) => unbox(l)).join("\n");
+  return buildInteraction({ question, payload, options: [], fallbackKeys: DEFAULT_FALLBACK_KEYS });
 }
 
 export class CardClassifier {
@@ -292,6 +359,18 @@ export class CardClassifier {
       }
     }
 
+    if (!pendingInteraction) {
+      const menu = parseQuestionMenu(lines);
+      if (menu) {
+        const card = buildInteraction(menu);
+        pendingInteraction = {
+          ...card,
+          multiSelect: menu.multiSelect,
+          ...(menu.allowsOther ? { allowsOther: true } : {}),
+          options: card.options.map((o, k) => (menu.descriptions[k] ? { ...o, description: menu.descriptions[k] } : o)),
+        };
+      }
+    }
     return { cards, pendingInteraction };
   }
 

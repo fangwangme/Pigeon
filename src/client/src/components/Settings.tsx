@@ -379,7 +379,7 @@ export function Settings() {
                   <div style={{ display: "inline-flex", gap: "6px" }}>
                     <For each={["1m", "2m", "5m", "10m", "15m"] as const}>
                       {(interval) => {
-                        const isSel = () => (state.usageScanInterval || "5m") === interval;
+                        const isSel = () => (state.usageScanInterval || "15m") === interval;
                         return (
                           <button
                             style={{

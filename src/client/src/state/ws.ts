@@ -1,4 +1,4 @@
-import { state, setState, applySyncedClientConfig, openTerminal, setUnread, showToast, writePref } from "./store";
+import { state, setState, applySyncedClientConfig, setUnread, showToast, writePref } from "./store";
 import { load, save, remove, clearAll, sweep, meta, migrateLocalStorageCache, getMemoryPaneView, applyPaneTail, type PaneCacheEntry } from "./pane-cache";
 import type { ClientMessage, ServerMessage, SnapshotPayload, PaneStatePayload, ClientConfig, AgentStatus, HaveInfo, QuotaProviderState } from "../../../types/protocol";
 import { hashTurn } from "../../../types/protocol";
@@ -202,11 +202,17 @@ export async function initWebSocket(): Promise<void> {
   };
 }
 
+/** mobile-ui-and-themes.md §4.4: per pane, the alert closed while it stays pending there. */
+const closedAlerts = new Map<string, string>();
+export const isAlertClosed = (paneId: string | null, interactionId: string) => !!paneId && closedAlerts.get(paneId) === interactionId;
+export const closeAlert = (paneId: string | null, interactionId: string) => paneId && closedAlerts.set(paneId, interactionId);
+
 function applyPaneState(p: PaneStatePayload): void {
   if (p.paneId !== state.activePaneId) return;
   const last = paneRevisions.get(p.paneId) || 0;
   if (p.revision <= last) return; // out-of-order or replayed update
   paneRevisions.set(p.paneId, p.revision);
+  if (closedAlerts.get(p.paneId) !== p.pendingInteraction?.interactionId) closedAlerts.delete(p.paneId);
   const prevStatus = state.agentStatus;
   setState({
     activeTabId: p.tabId,
@@ -309,6 +315,7 @@ export function handleServerMessage(msg: ServerMessage): void {
       }
       if (msg.payload.queue) {
         setState("queue", msg.payload.queue);
+        setState("queuePaused", Boolean(msg.payload.queuePaused));
       }
       if (msg.payload.turns) {
         setState({
@@ -412,7 +419,10 @@ export function handleServerMessage(msg: ServerMessage): void {
     }
 
     case "prompt_queue":
-      if (msg.payload.paneId === state.activePaneId) setState("queue", msg.payload.items);
+      if (msg.payload.paneId === state.activePaneId) {
+        setState("queue", msg.payload.items);
+        setState("queuePaused", Boolean(msg.payload.paused));
+      }
       return;
 
     case "ack": {
@@ -426,8 +436,8 @@ export function handleServerMessage(msg: ServerMessage): void {
         waiter.resolve(p);
       }
       if (p.approved === false && p.interactionId === state.pendingInteraction?.interactionId) {
-        // The prompt is still on screen after the key was sent: hand over to the terminal view.
-        openTerminal();
+        // mobile-ui-and-themes.md §4.1: the card stays; the user can answer in the composer.
+        showToast(t("prompt.stillWaiting"));
       }
       if (typeof p.version === "number") configVersion = Math.max(configVersion, p.version);
       return;
@@ -488,9 +498,9 @@ type Command = Exclude<ClientMessage, { type: "ping" } | { type: "presence_updat
 type WithoutId<T> = T extends any ? Omit<T, "id"> : never;
 
 /** Sends a command and resolves with its ack payload; rejects with the error (or offline). */
-/** protocol.md §4.14: the daemon reads every agent's model list again. */
-export function refreshModels(): Promise<any> {
-  return request({ type: "models_refresh", payload: {} });
+/** protocol.md §4.14: the daemon reads an agent's (or every agent's) model list again. */
+export function refreshModels(agent?: string): Promise<any> {
+  return request({ type: "models_refresh", payload: agent ? { agent } : {} });
 }
 
 export function request(msg: WithoutId<Command>): Promise<any> {
@@ -527,9 +537,15 @@ export function requestSkills(): void {
   sendMessage({ type: "skills_get", id: nextId() });
 }
 
-export function respondInteraction(interactionId: string, optionId: string, fingerprint: string): Promise<any> {
+/** protocol.md §4.1: several picks at once (a transcript interaction, or a multi-select question menu). */
+export function respondOptionIds(interactionId: string, optionIds: string[], fingerprint: string, otherTexts?: Record<string, string>): Promise<any> {
   if (!state.activePaneId) return Promise.reject({ code: "ERR_NOT_FOUND", message: "no pane" });
-  return request({ type: "interaction_respond", payload: { targetPaneId: state.activePaneId, interactionId, optionId, fingerprint } });
+  return request({ type: "interaction_respond", payload: { targetPaneId: state.activePaneId, interactionId, optionIds, fingerprint, ...(otherTexts ? { otherTexts } : {}) } });
+}
+
+export function respondInteraction(interactionId: string, optionId: string, fingerprint: string, otherTexts?: Record<string, string>): Promise<any> {
+  if (!state.activePaneId) return Promise.reject({ code: "ERR_NOT_FOUND", message: "no pane" });
+  return request({ type: "interaction_respond", payload: { targetPaneId: state.activePaneId, interactionId, optionId, fingerprint, ...(otherTexts ? { otherTexts } : {}) } });
 }
 
 /** The one navigation entry point into a pane: workspace and tab follow from it. */
@@ -553,6 +569,7 @@ export async function selectPane(paneId: string): Promise<void> {
     todos: memoryView?.todos || null,
     session: memoryView?.session || null,
     queue: memoryView?.queue || [],
+    queuePaused: false,
     pendingInteraction: null,
     rawScreen: "",
     skills: [],
@@ -699,11 +716,22 @@ export function reportPresence(): void {
   );
 }
 
+/** Copies with the Clipboard API, else a selected textarea; always says whether it worked. */
 export function copyText(text: string): void {
-  navigator.clipboard?.writeText(text).then(
-    () => showToast(t("common.copied")),
-    () => showToast(t("common.copyFailed"))
-  );
+  const viaSelection = () => {
+    const ta = document.createElement("textarea");
+    ta.value = text;
+    ta.setAttribute("readonly", "");
+    ta.style.cssText = "position:fixed;top:0;left:0;opacity:0;";
+    document.body.appendChild(ta);
+    ta.select();
+    ta.setSelectionRange(0, text.length);
+    const ok = document.execCommand("copy");
+    ta.remove();
+    showToast(t(ok ? "common.copied" : "common.copyFailed"));
+  };
+  if (!navigator.clipboard?.writeText) return viaSelection();
+  navigator.clipboard.writeText(text).then(() => showToast(t("common.copied")), viaSelection);
 }
 
 // Startup migration and sweep

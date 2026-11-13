@@ -152,3 +152,176 @@ describe("model catalog (herdr-adapter.md §7.1)", () => {
     expect(payload.session.model).toEqual({ value: "gemini-3.8-flash-medium", source: "log" });
   });
 });
+
+// Issue #21: Claude from Anthropic's Models API, the daily limit and persistence, OpenCode labels and levels.
+const LEVELS = ["low", "medium", "high", "xhigh", "max"];
+const effort = (levels: string[]) => ({ supported: levels.length > 0, ...Object.fromEntries(LEVELS.map((l) => [l, { supported: levels.includes(l) }])) });
+
+function claudeCredentials(home: string) {
+  mkdirSync(join(home, ".claude"), { recursive: true });
+  writeFileSync(
+    join(home, ".claude", ".credentials.json"),
+    JSON.stringify({ claudeAiOauth: { accessToken: "test-access-token", refreshToken: "test-refresh-token", expiresAt: Date.now() + 30 * 86_400_000 } })
+  );
+}
+
+/** A local stand-in for `GET /v1/models` that records each request's auth headers. */
+function modelsApi() {
+  const requests: Array<{ authorization: string | null; beta: string | null; version: string | null }> = [];
+  const server = Bun.serve({
+    port: 0,
+    hostname: "127.0.0.1",
+    fetch(req) {
+      requests.push({ authorization: req.headers.get("authorization"), beta: req.headers.get("anthropic-beta"), version: req.headers.get("anthropic-version") });
+      return Response.json({
+        data: [
+          { type: "model", id: "claude-opus-5-5", display_name: "Claude Opus 5.5", created_at: "2026-10-01T00:00:00Z", capabilities: { effort: effort(LEVELS) } },
+          { type: "model", id: "claude-haiku-4-5-20251001", display_name: "Claude Haiku 4.5", created_at: "2025-10-01T00:00:00Z", capabilities: { effort: effort([]) } },
+        ],
+        has_more: false,
+        first_id: "claude-opus-5-5",
+        last_id: "claude-haiku-4-5-20251001",
+      });
+    },
+  });
+  cleanup.push(() => server.stop(true));
+  return { url: `http://127.0.0.1:${server.port}/v1/models`, requests };
+}
+
+/** A WsServer on `catalog`; `ask` sends `models_refresh` with the payload and waits for its ack. */
+async function refreshServer(catalog: ModelCatalog, home: string) {
+  const herdr = new FakeHerdr(tempDir("herdr"));
+  await herdr.listen();
+  herdr.handlers["terminal.read"] = () => ({ result: { text: "", how: "history" } });
+  const client = new HerdrClient({ appSocketPath: herdr.appSocketPath, coreSocketPath: herdr.coreSocketPath, debounceMs: 5, panePollMs: 60_000 });
+  client.applySnapshot(topologyOf([{ paneId: "p1", app: "codex", cwd: home }]));
+  const server = new WsServer({
+    buildId: "b",
+    herdrClient: client,
+    pushManager: new PushManager(join(home, "vapid.json")),
+    configManager: new ConfigManager(join(home, "config.json"), { HOME: home }),
+    skillScanner: new SkillScanner(home),
+    agentAdapters: new AgentAdapterManager({ home }),
+    modelCatalog: catalog,
+  });
+  cleanup.push(async () => {
+    server.destroy();
+    client.disconnect();
+    await herdr.close();
+  });
+  const c = fakeWs("dev_refresh");
+  server.handleOpen(c.ws);
+  await server.handleMessage(c.ws, JSON.stringify({ type: "hello", id: "h", payload: { protocolVersion: "1.0.0", subscribePaneId: "p1" } }));
+  let n = 0;
+  const ask = async (payload: object, answer: "ack" | "error" = "ack") => {
+    const id = `r${++n}`;
+    await server.handleMessage(c.ws, JSON.stringify({ type: "models_refresh", id, payload }));
+    expect(c.ofType(answer).find((a: any) => a.replyTo === id)).toBeDefined();
+  };
+  return { ask };
+}
+
+describe("Claude and OpenCode model sources (herdr-adapter.md §7.1, issue #21)", () => {
+  test("claude models come from the Models API with labels and effort levels", async () => {
+    const { home, env } = agentHome();
+    claudeCredentials(home);
+    const api = modelsApi();
+    const catalog = new ModelCatalog({ home, env, keychain: false, anthropicModelsUrl: api.url, cachePath: join(home, "state", "models.json") });
+    await catalog.refresh();
+    expect(catalog.models("claude").map((m) => [m.id, m.label, m.thinkingLevels ?? []])).toEqual([
+      ["claude-opus-5-5", "Claude Opus 5.5", LEVELS],
+      ["claude-haiku-4-5-20251001", "Claude Haiku 4.5", []],
+    ]);
+    expect(api.requests).toHaveLength(1);
+    expect(api.requests[0].authorization).toBe("Bearer test-access-token");
+    expect(api.requests[0].beta ?? "").toContain("oauth-2025-04-20");
+    expect(api.requests[0].version).toBe("2023-06-01");
+  });
+
+  test("the Claude list is fetched at most once a day automatically and persists", async () => {
+    const { home, env } = agentHome();
+    claudeCredentials(home);
+    const api = modelsApi();
+    let now = Date.UTC(2026, 10, 12, 9, 0, 0);
+    const options = { home, env, keychain: false, anthropicModelsUrl: api.url, cachePath: join(home, "state", "models.json"), now: () => now };
+    const catalog = new ModelCatalog(options);
+    await catalog.refresh();
+    await catalog.refresh();
+    expect(api.requests).toHaveLength(1);
+
+    const { ask } = await refreshServer(catalog, home);
+    await ask({ agent: "codex" });
+    expect(api.requests).toHaveLength(1);
+    await ask({ agent: "claude" });
+    expect(api.requests).toHaveLength(2);
+    // protocol.md §4.15: an asked refresh of every list reads the API too; an unknown agent is refused.
+    await ask({});
+    expect(api.requests).toHaveLength(3);
+    await ask({ agent: "nope" }, "error");
+    expect(api.requests).toHaveLength(3);
+
+    now += 25 * 3_600_000;
+    await catalog.refresh();
+    expect(api.requests).toHaveLength(4);
+
+    // A restarted daemon lists the cached models before any request succeeds.
+    const restarted = new ModelCatalog({ ...options, anthropicModelsUrl: "http://127.0.0.1:9/v1/models" });
+    expect(restarted.models("claude").map((m) => m.id)).toEqual(["claude-opus-5-5", "claude-haiku-4-5-20251001"]);
+  });
+
+  test("opencode labels and levels come from its models cache", async () => {
+    const { home, env } = agentHome();
+    mkdirSync(join(home, ".cache", "opencode"), { recursive: true });
+    writeFileSync(
+      join(home, ".cache", "opencode", "models.json"),
+      JSON.stringify({
+        anthropic: { id: "anthropic", models: { "claude-x": { id: "claude-x", name: "Claude X", reasoning: true, reasoning_options: [{ type: "effort", values: ["low", "high"] }] } } },
+        openai: { id: "openai", models: { "gpt-y": { id: "gpt-y", name: "GPT Y", reasoning: false } } },
+      })
+    );
+    const catalog = new ModelCatalog({ home, env, keychain: false, cachePath: join(home, "state", "models.json") });
+    await catalog.refresh();
+    expect(catalog.models("opencode").map((m) => [m.id, m.label, m.thinkingLevels ?? []])).toEqual([
+      ["anthropic/claude-x", "Claude X", ["low", "high"]],
+      ["openai/gpt-y", "GPT Y", []],
+    ]);
+  });
+
+  test("opencode's last-used model and effort come from its state file; none without it (herdr-adapter.md §5)", () => {
+    const { home, env } = agentHome();
+    const catalog = new ModelCatalog({ home, env, keychain: false, cachePath: join(home, "state", "models.json") });
+    expect(catalog.lastUsed("opencode")).toBeUndefined();
+    mkdirSync(join(home, ".local", "state", "opencode"), { recursive: true });
+    writeFileSync(
+      join(home, ".local", "state", "opencode", "model.json"),
+      JSON.stringify({ recent: [{ providerID: "nvidia", modelID: "z-ai/glm-5.3-flash" }, { providerID: "openai", modelID: "gpt-y" }], variant: { "nvidia/z-ai/glm-5.3-flash": "max" } })
+    );
+    expect(catalog.lastUsed("opencode")).toEqual({ model: "nvidia/z-ai/glm-5.3-flash", thinking: "max" });
+    expect(catalog.lastUsed("claude")).toBeUndefined();
+  });
+
+  test("without Claude credentials no Claude model is listed, not even the CLI's aliases (herdr-adapter.md §7.1)", async () => {
+    const { home, env } = agentHome();
+    const catalog = new ModelCatalog({ home, env, keychain: false, cachePath: join(home, "state", "models.json") });
+    await catalog.refresh();
+    expect(catalog.models("claude")).toEqual([]);
+  });
+
+  test("opencode lists only the models `opencode models` offers (herdr-adapter.md §7.1)", async () => {
+    const { home, env } = agentHome();
+    mkdirSync(join(home, ".cache", "opencode"), { recursive: true });
+    writeFileSync(
+      join(home, ".cache", "opencode", "models.json"),
+      JSON.stringify({
+        anthropic: { id: "anthropic", models: { "claude-x": { id: "claude-x", name: "Claude X" }, "claude-unused": { id: "claude-unused", name: "Unused" } } },
+        mistral: { id: "mistral", models: { "m-z": { id: "m-z", name: "M Z" } } },
+      })
+    );
+    const catalog = new ModelCatalog({ home, env, keychain: false, cachePath: join(home, "state", "models.json") });
+    await catalog.refresh();
+    expect(catalog.models("opencode").map((m) => [m.id, m.label])).toEqual([
+      ["anthropic/claude-x", "Claude X"],
+      ["openai/gpt-y", "openai/gpt-y"],
+    ]);
+  });
+});

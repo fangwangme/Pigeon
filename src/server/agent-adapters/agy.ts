@@ -96,6 +96,13 @@ function computeSessionStats(turns: NormalizedTurn[]): SessionStats {
   };
 }
 
+/** agent-session-normalization.md §2.2: the label a "Model Selection" settings change names, if any. */
+export function agyModelSetting(content: string): string | undefined {
+  const m = content.match(/The user changed setting `Model Selection` from .*? to `?(.+?)`?\.(?:\s+No need|\s*<\/USER_SETTINGS_CHANGE>|$)/);
+  const raw = m?.[1]?.replace(/^`+|`+$/g, "").trim();
+  return raw && raw !== "None" ? raw : undefined;
+}
+
 export interface AgyAdapterOptions {
   baseBrainDir?: string;
 }
@@ -246,13 +253,8 @@ export class AgyAdapter {
           : Date.now();
 
         const rawContent = record.content || "";
-        const modelMatch = rawContent.match(
-          /The user changed setting `Model Selection` from .*? to `?(.+?)`?\.(?:\s+No need|\s*<\/USER_SETTINGS_CHANGE>|$)/
-        );
-        if (modelMatch && modelMatch[1]) {
-          const raw = modelMatch[1].replace(/^`+|`+$/g, "").trim();
-          if (raw && raw !== "None") this.cachedModels.set(sessionId, raw);
-        }
+        const model = agyModelSetting(rawContent);
+        if (model) this.cachedModels.set(sessionId, model);
 
         if (recType === "USER_INPUT") {
           // Clean prompt: extract content from <USER_REQUEST> if wrapped
@@ -278,6 +280,7 @@ export class AgyAdapter {
             turnId: `turn_${turnCounter}`,
             turnNumber: turnCounter,
             timestamp,
+            updatedAt: timestamp,
             userPrompt: {
               text: cleanText || promptText,
               ...(files.length > 0 ? { files } : {}),
@@ -293,11 +296,13 @@ export class AgyAdapter {
               turnId: `turn_${turnCounter}`,
               turnNumber: turnCounter,
               timestamp,
+              updatedAt: timestamp,
               toolCalls: [],
               items: [],
             };
             turns.push(currentTurn);
           }
+          currentTurn.updatedAt = Math.max(currentTurn.updatedAt ?? currentTurn.timestamp, timestamp);
 
           if (record.thinking) {
             currentTurn.reasoning = {

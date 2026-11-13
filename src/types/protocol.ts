@@ -41,19 +41,28 @@ export interface MarkdownCard extends BaseCard {
   content: string;
 }
 
+export interface InteractionOption {
+  id: string;
+  label: string;
+  keyShortcut?: string;
+  /** herdr-adapter.md §8.2: a question menu option's description line. */
+  description?: string;
+}
+
 export interface InteractionCardData extends BaseCard {
   kind: "interaction";
+  source?: "screen" | "transcript";
   interactionId: string;
   title: string;
   question: string;
   payload?: string;
   fingerprint: string;
-  options: Array<{
-    id: string;
-    label: string;
-    keyShortcut?: string;
-  }>;
+  options: InteractionOption[];
   fallbackKeys: string[];
+  /** herdr-adapter.md §8.2: set on a question menu; true when several options may be picked. */
+  multiSelect?: boolean;
+  /** protocol.md §5.4: the questions also take the user's own text (`opt_other` / `q<k>_other`). */
+  allowsOther?: boolean;
 }
 
 export type Card = ThoughtCard | ToolCallCard | DiffCard | MarkdownCard | InteractionCardData;
@@ -300,8 +309,8 @@ export interface AgentRecipeSummary {
   resumable: boolean;
   /** Whether `create_tab_and_agent` can start the agent on a chosen model (`protocol.md` §4.5). */
   launchModel: boolean;
-  /** Which values `agent_set_model` can change (`protocol.md` §4.9). */
-  runtimeSwitch: { model: boolean; thinking: boolean };
+  /** Without `launchModel`: the model and effort the agent will start on (`protocol.md` §5.7). */
+  lastUsed?: { model: string; thinking?: string };
 }
 
 export interface SessionValue {
@@ -353,12 +362,14 @@ export interface QueuedPrompt {
 export interface PromptQueuePayload {
   paneId: string;
   items: QueuedPrompt[];
+  paused?: boolean;
 }
 
 export interface PastSession {
   id: string;
   title: string;
   updatedAt: number;
+  model?: string;
 }
 
 export interface DeviceInfo {
@@ -448,6 +459,7 @@ export interface PaneBootstrapPayload {
   turns: NormalizedTurnsPayload | null;
   resume: TurnsDeltaPayload | null;
   queue: QueuedPrompt[];
+  queuePaused?: boolean;
   state: PaneStatePayload | null;
   serverMs: number;
 }
@@ -466,19 +478,19 @@ export type ClientMessage =
   | { type: "ping"; timestamp?: number }
   | { type: "presence_update"; isVisible: boolean; viewingPaneId: string | null }
   | { type: "select_view"; id: string; payload: { paneId: string | null; have?: HaveInfo } }
-  | { type: "interaction_respond"; id: string; payload: { targetPaneId: string; interactionId: string; optionId: string; fingerprint: string } }
+  | { type: "interaction_respond"; id: string; payload: { targetPaneId: string; interactionId: string; optionId?: string; optionIds?: string[]; otherTexts?: Record<string, string>; fingerprint: string } }
   | { type: "agent_prompt"; id: string; payload: { targetPaneId: string; text: string; attachments?: string[] } }
   | { type: "agent_send_keys"; id: string; payload: { targetPaneId: string; keys: string[] } }
   | { type: "create_tab_and_agent"; id: string; payload: { workspaceId: string; agentKind: string; modelId?: string; thinking?: string; cwd?: string; firstMessage?: string; resumeSessionId?: string } }
   | { type: "close_tab"; id: string; payload: { tabId: string } }
-  | { type: "agent_set_model"; id: string; payload: { targetPaneId: string; modelId?: string; thinking?: string } }
   | { type: "sessions_list"; id: string; payload: { workspaceId: string; agentKind: string } }
   | { type: "tab_rename"; id: string; payload: { tabId: string; name: string } }
   | { type: "devices_list"; id: string }
   | { type: "device_revoke"; id: string; payload: { deviceId: string } }
   | { type: "queue_cancel"; id: string; payload: { targetPaneId: string; queueId: string } }
   | { type: "queue_update"; id: string; payload: { targetPaneId: string; queueId: string; text: string; attachments?: string[] } }
-  | { type: "models_refresh"; id: string; payload: Record<string, never> }
+  | { type: "queue_resume"; id: string; payload: { paneId: string } }
+  | { type: "models_refresh"; id: string; payload?: { agent?: string } }
   | { type: "skills_get"; id: string }
   | { type: "config_get"; id: string }
   | { type: "config_patch"; id: string; payload: { client: Partial<ClientConfig> } }

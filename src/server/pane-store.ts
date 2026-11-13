@@ -3,7 +3,6 @@ import { watch, type FSWatcher, existsSync } from "node:fs";
 import type { AgentAdapterManager } from "./agent-adapters/index";
 import type { NormalizedTurn, SessionStats, TodoItem } from "../shared/agent-session";
 import type { NormalizedTurnsPayload, SessionInfo, TurnsDeltaPayload } from "../types/protocol";
-import { toLightTurn, toLightStats } from "../types/protocol";
 
 export type { TurnsDeltaPayload } from "../types/protocol";
 

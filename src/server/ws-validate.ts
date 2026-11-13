@@ -61,8 +61,22 @@ export function validateClientMessage(raw: unknown): ValidationResult {
       }
       return ok();
     case "interaction_respond":
-      if (!isObj(p) || !isStr(p.targetPaneId) || !isStr(p.interactionId) || !isStr(p.optionId) || !isStr(p.fingerprint)) {
-        return fail(id, "interaction_respond needs targetPaneId, interactionId, optionId and fingerprint");
+      if (
+        !isObj(p) || !isStr(p.targetPaneId) || !isStr(p.interactionId) || !isStr(p.fingerprint) ||
+        (p.optionId === undefined) === (p.optionIds === undefined) ||
+        (p.optionId !== undefined && !isStr(p.optionId)) ||
+        (p.optionIds !== undefined && (!Array.isArray(p.optionIds) || p.optionIds.length === 0 || p.optionIds.length > 64 || !p.optionIds.every((o: unknown) => isStr(o, 32))))
+      ) {
+        return fail(id, "interaction_respond needs targetPaneId, interactionId, fingerprint and optionId or optionIds");
+      }
+      // protocol.md §4.1: other text by question number, 1–2000 characters after trimming.
+      if (
+        p.otherTexts !== undefined &&
+        (!isObj(p.otherTexts) ||
+          Object.keys(p.otherTexts).length > 16 ||
+          !Object.entries(p.otherTexts).every(([k, v]) => /^[1-9]\d?$/.test(k) && typeof v === "string" && v.trim().length > 0 && v.trim().length <= 2000))
+      ) {
+        return fail(id, "interaction_respond otherTexts maps question numbers to 1–2000 characters of text");
       }
       return ok();
     case "create_tab_and_agent":
@@ -77,10 +91,8 @@ export function validateClientMessage(raw: unknown): ValidationResult {
     case "close_tab":
       if (!isObj(p) || !isStr(p.tabId)) return fail(id, "close_tab needs payload.tabId");
       return ok();
-    case "agent_set_model":
-      if (!isObj(p) || !isStr(p.targetPaneId) || !optStr(p.modelId, 128) || !optStr(p.thinking, 32) || (p.modelId === undefined && p.thinking === undefined)) {
-        return fail(id, "agent_set_model needs targetPaneId and modelId or thinking");
-      }
+    case "queue_resume":
+      if (!isObj(p) || !isStr(p.paneId)) return fail(id, "queue_resume needs paneId");
       return ok();
     case "sessions_list":
       if (!isObj(p) || !isStr(p.workspaceId) || !isStr(p.agentKind, 32)) return fail(id, "sessions_list needs workspaceId and agentKind");

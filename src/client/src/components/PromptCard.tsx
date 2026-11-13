@@ -1,18 +1,14 @@
 import { createMemo, createSignal, For, Show } from "solid-js";
-import { openTerminal, showToast, state } from "../state/store";
-import { respondInteraction } from "../state/ws";
+import { showToast, state } from "../state/store";
+import { closeAlert, isAlertClosed, respondInteraction, respondOptionIds } from "../state/ws";
 import type { InteractionCardData, NormalizedQuestion, NormalizedToolCall } from "../../../types/protocol";
 import { focusComposer } from "./Composer";
 import { Markdown, openToolDetail } from "./Transcript";
 import { DiffBadge, Icon, Sheet } from "./ui";
 import { t } from "../i18n";
-import { matchScreenOption } from "../prompt-match";
 
 /** Options that hand the turn back to the user to write something (§4.1, §4.3). */
 const TELL_RE = /tell|keep planning|告诉|说明|继续规划/i;
-const OTHER_RE = /type something|other|其他|自己输入/i;
-
-const norm = (s: string) => s.replace(/\s+/g, " ").trim().toLowerCase();
 
 function lastTurn() {
   return state.normalizedTurns[state.normalizedTurns.length - 1];
@@ -40,13 +36,41 @@ function useAnswer(p: () => InteractionCardData) {
   return { sending, answer };
 }
 
-function TerminalLink() {
+/** §4.2: 其他（自己输入）: a pick that opens a text box under it. */
+function OtherOption(props: { multi: boolean; text: string | undefined; onToggle: () => void; onText: (s: string) => void }) {
+  let box: HTMLTextAreaElement | undefined;
   return (
-    <button class="btn ghost blk" onClick={openTerminal}>
-      <Icon name="term" sm />
-      {t("prompt.inTerminal")}
-    </button>
+    <>
+      <button
+        class={`opt${props.multi ? " multi" : ""}${props.text !== undefined ? " sel" : ""}`}
+        onClick={() => {
+          props.onToggle();
+          queueMicrotask(() => box?.focus());
+        }}
+      >
+        <span class="rd" />
+        <div class="tx">
+          <b>{t("prompt.other")}</b>
+        </div>
+      </button>
+      <Show when={props.text !== undefined}>
+        <textarea
+          ref={box}
+          class="othtext"
+          rows={2}
+          maxLength={2000}
+          placeholder={t("prompt.otherPlaceholder")}
+          value={props.text ?? ""}
+          onInput={(e) => props.onText(e.currentTarget.value)}
+        />
+      </Show>
+    </>
   );
+}
+
+/** §4.1: what a tap cannot answer is answered by typing in the composer. */
+function ReplyBelow() {
+  return <p class="note" style={{ margin: "4px 2px 0" }}>{t("prompt.replyBelow")}</p>;
 }
 
 function Options(props: { p: InteractionCardData }) {
@@ -60,7 +84,6 @@ function Options(props: { p: InteractionCardData }) {
           </button>
         )}
       </For>
-      <TerminalLink />
     </div>
   );
 }
@@ -91,50 +114,59 @@ function PermissionCard(props: { p: InteractionCardData }) {
           </button>
         </Show>
       </div>
-      <Show when={props.p.options.length} fallback={<TerminalLink />}>
+      <Show when={props.p.options.length} fallback={<ReplyBelow />}>
         <Options p={props.p} />
       </Show>
     </div>
   );
 }
 
-/** §4.2: the transcript question drives the card; answers go as the screen's digits. */
-function QuestionCard(props: { p: InteractionCardData; q: NormalizedQuestion; onCollapse: () => void }) {
+/** §4.2: a transcript question is answered entirely in the card, all questions at once. */
+function TranscriptQuestionCard(props: { p: InteractionCardData; q: NormalizedQuestion; onCollapse: () => void }) {
   const qs = () => props.q.questions;
-  const onScreen = createMemo(() => {
-    const text = norm(props.p.question + " " + (props.p.payload ?? ""));
-    const i = qs().findIndex((q) => text.includes(norm(q.question)) || norm(q.question).includes(norm(props.p.question)));
-    return i === -1 ? 0 : i;
-  });
-  const [page, setPage] = createSignal<number | null>(null);
-  const cur = () => page() ?? onScreen();
-  const [picked, setPicked] = createSignal<Record<number, string>>({});
-  const { sending, answer } = useAnswer(() => props.p);
+  const [cur, setCur] = createSignal(0);
+  const [picked, setPicked] = createSignal<Record<number, number[]>>({});
+  // A question's own text: undefined while 其他 is not picked.
+  const [others, setOthers] = createSignal<Record<number, string | undefined>>({});
+  const [sending, setSending] = createSignal(false);
   const q = () => qs()[cur()];
-  const other = () => props.p.options.find((o) => OTHER_RE.test(o.label));
+  const picksOf = (k: number) => picked()[k] ?? [];
+  const toggle = (n: number) => {
+    const k = cur();
+    const now = picksOf(k);
+    const next = q()?.multiSelect ? (now.includes(n) ? now.filter((x) => x !== n) : [...now, n].sort((a, b) => a - b)) : [n];
+    setPicked({ ...picked(), [k]: next });
+    if (!q()?.multiSelect) setOthers({ ...others(), [k]: undefined });
+  };
+  const toggleOther = () => {
+    const k = cur();
+    setOthers({ ...others(), [k]: others()[k] === undefined ? "" : undefined });
+    if (!q()?.multiSelect) setPicked({ ...picked(), [k]: [] });
+  };
+  const hasPick = (k: number) => picksOf(k).length > 0 || !!others()[k]?.trim();
+  const last = () => cur() === qs().length - 1;
+  const allPicked = () => qs().every((_, k) => hasPick(k) && (others()[k] === undefined || !!others()[k]!.trim()));
   const submit = () => {
-    const label = picked()[cur()];
-    const opt = label ? matchScreenOption(props.p.options, label) : undefined;
-    if (!opt) {
-      showToast(t("prompt.mismatch"));
-      openTerminal();
-      return;
-    }
-    setPage(null);
-    answer(opt.id, opt.label);
+    if (sending()) return;
+    const ids = qs().flatMap((_, k) => [...picksOf(k).map((n) => `q${k + 1}_opt_${n}`), ...(others()[k] !== undefined ? [`q${k + 1}_other`] : [])]);
+    const texts = Object.fromEntries(qs().flatMap((_, k) => (others()[k] !== undefined ? [[String(k + 1), others()[k]!.trim()]] : [])));
+    setSending(true);
+    respondOptionIds(props.p.interactionId, ids, props.p.fingerprint, Object.keys(texts).length ? texts : undefined)
+      .catch((e) => showToast(e.message || t("prompt.notSent")))
+      .finally(() => setSending(false));
   };
   return (
     <div class="qcard">
       <div class="qtop">
         <div class="pg">
           <Show when={qs().length > 1}>
-            <button aria-label={t("prompt.prev")} disabled={cur() === 0} onClick={() => setPage(Math.max(0, cur() - 1))}>
+            <button aria-label={t("prompt.prev")} disabled={cur() === 0} onClick={() => setCur(Math.max(0, cur() - 1))}>
               <Icon name="chevL" sm />
             </button>
             <span>
               {cur() + 1}/{qs().length}
             </span>
-            <button aria-label={t("prompt.next")} disabled={cur() === qs().length - 1} onClick={() => setPage(Math.min(qs().length - 1, cur() + 1))}>
+            <button aria-label={t("prompt.next")} disabled={last()} onClick={() => setCur(Math.min(qs().length - 1, cur() + 1))}>
               <Icon name="chevR" sm />
             </button>
           </Show>
@@ -151,8 +183,8 @@ function QuestionCard(props: { p: InteractionCardData; q: NormalizedQuestion; on
       <div class="qbody">
         <div class="qtitle">{q()?.question}</div>
         <For each={q()?.options ?? []}>
-          {(o) => (
-            <button class={`opt${picked()[cur()] === o.label ? " sel" : ""}`} onClick={() => setPicked({ ...picked(), [cur()]: o.label })}>
+          {(o, i) => (
+            <button class={`opt${q()?.multiSelect ? " multi" : ""}${picksOf(cur()).includes(i() + 1) ? " sel" : ""}`} onClick={() => toggle(i() + 1)}>
               <span class="rd" />
               <div class="tx">
                 <b>{o.label}</b>
@@ -163,32 +195,82 @@ function QuestionCard(props: { p: InteractionCardData; q: NormalizedQuestion; on
             </button>
           )}
         </For>
-        <Show when={other()} keyed>
-          {(o) => (
-            <button class="opt oth" disabled={!!sending() || cur() !== onScreen()} onClick={() => answer(o.id, "tell")}>
-              <span class="rd" style={{ visibility: "hidden" }} />
-              <div class="tx">{t("prompt.other")}</div>
-            </button>
-          )}
+        <Show when={props.p.allowsOther}>
+          <OtherOption multi={!!q()?.multiSelect} text={others()[cur()]} onToggle={toggleOther} onText={(s) => setOthers({ ...others(), [cur()]: s })} />
         </Show>
       </div>
       <div class="qfoot">
-        <button class="lnk" onClick={openTerminal}>
-          <Icon name="term" sm />
-          {t("agent.terminal")}
-        </button>
+        <span style={{ flex: 1 }} />
         <Show
-          when={!q()?.multiSelect}
+          when={last()}
           fallback={
-            <button class="btn acc" onClick={openTerminal}>
-              {t("prompt.inTerminal")}
+            <button class="btn acc" disabled={!hasPick(cur()) || (others()[cur()] !== undefined && !others()[cur()]!.trim())} onClick={() => setCur(cur() + 1)}>
+              {t("prompt.nextShort")}
             </button>
           }
         >
-          <button class="btn acc" disabled={!picked()[cur()] || !!sending() || cur() !== onScreen()} onClick={submit}>
-            {sending() ? t("common.sending") : cur() === qs().length - 1 ? t("prompt.submit") : t("prompt.nextShort")}
+          <button class="btn acc" disabled={!allPicked() || sending()} onClick={submit}>
+            {sending() ? t("common.sending") : t("prompt.submit")}
           </button>
         </Show>
+      </div>
+    </div>
+  );
+}
+
+/** §4.2: an agent's question menu read from the screen, answered one question at a time. */
+function MenuQuestionCard(props: { p: InteractionCardData }) {
+  const [picked, setPicked] = createSignal<string[]>([]);
+  const [other, setOther] = createSignal<string | undefined>(undefined);
+  const [sending, setSending] = createSignal(false);
+  const toggle = (id: string) => {
+    if (!props.p.multiSelect) {
+      setOther(undefined);
+      return setPicked([id]);
+    }
+    setPicked(picked().includes(id) ? picked().filter((x) => x !== id) : [...picked(), id]);
+  };
+  const toggleOther = () => {
+    setOther(other() === undefined ? "" : undefined);
+    if (!props.p.multiSelect) setPicked([]);
+  };
+  const ready = () => (picked().length > 0 || other() !== undefined) && (other() === undefined || !!other()!.trim());
+  const confirm = () => {
+    if (sending() || !ready()) return;
+    setSending(true);
+    const ids = [...picked(), ...(other() !== undefined ? ["opt_other"] : [])];
+    const texts = other() !== undefined ? { "1": other()!.trim() } : undefined;
+    const sent = props.p.multiSelect
+      ? respondOptionIds(props.p.interactionId, ids, props.p.fingerprint, texts)
+      : respondInteraction(props.p.interactionId, ids[0], props.p.fingerprint, texts);
+    sent.catch((e) => showToast(e.message || t("prompt.notSent"))).finally(() => setSending(false));
+  };
+  return (
+    <div class="qcard">
+      <div class="qbody">
+        <div class="qtitle">{props.p.question}</div>
+        <For each={props.p.options}>
+          {(o) => (
+            <button class={`opt${props.p.multiSelect ? " multi" : ""}${picked().includes(o.id) ? " sel" : ""}`} onClick={() => toggle(o.id)}>
+              <span class="rd" />
+              <div class="tx">
+                <b>{o.label}</b>
+                <Show when={o.description}>
+                  <span>{o.description}</span>
+                </Show>
+              </div>
+            </button>
+          )}
+        </For>
+        <Show when={props.p.allowsOther}>
+          <OtherOption multi={!!props.p.multiSelect} text={other()} onToggle={toggleOther} onText={setOther} />
+        </Show>
+      </div>
+      <div class="qfoot">
+        <span style={{ flex: 1 }} />
+        <button class="btn acc" disabled={!ready() || sending()} onClick={confirm}>
+          {sending() ? t("common.sending") : t("common.confirm")}
+        </button>
       </div>
     </div>
   );
@@ -215,7 +297,7 @@ function PlanCard(props: { p: InteractionCardData; markdown: string }) {
         </div>
       </div>
       <div style={{ "margin-top": "10px" }}>
-        <Show when={props.p.options.length} fallback={<TerminalLink />}>
+        <Show when={props.p.options.length} fallback={<ReplyBelow />}>
           <Options p={props.p} />
         </Show>
       </div>
@@ -228,14 +310,87 @@ function PlanCard(props: { p: InteractionCardData; markdown: string }) {
   );
 }
 
-/** §4: replaces the composer while the pane has a pending interaction. Returns null when collapsed. */
+function isAlertPrompt(p: InteractionCardData): boolean {
+  if (p.options.length > 0) return false;
+  return !pendingCall();
+}
+
+function cleanAlertInfo(p: InteractionCardData) {
+  // The question is one of the payload's lines; show it once.
+  const raw = p.payload || p.question || "";
+  const lines = raw
+    .split("\n")
+    .map((l) => l.trim())
+    .filter((l) => {
+      if (!l) return false;
+      if (/^[>❯›▶$]\s*$/.test(l)) return false;
+      if (/(mode:auto|mode:plan|mode:bypass|ctx:\d+%|token:\d+)/i.test(l)) return false;
+      return true;
+    });
+
+  const fullText = lines.join("\n");
+  const isError = /error|fail|capacity|limit|quota|exception|unavailable/i.test(fullText);
+
+  let title = p.title && !/(mode:auto|ctx:|token:)/i.test(p.title) ? p.title : "";
+  if (!title) {
+    title = isError ? t("prompt.error") : t("prompt.alert");
+  }
+
+  const message = lines.length > 0 ? lines.join("\n") : (p.payload || p.question || t("prompt.waiting"));
+  return { title, message, isError };
+}
+
+/** §4.4: rebuilt per prompt (keyed by its id); a closed one stays closed while it is pending. */
+function AlertDialogCard(props: { p: InteractionCardData }) {
+  const [closed, setClosed] = createSignal(isAlertClosed(state.activePaneId, props.p.interactionId));
+  const info = () => cleanAlertInfo(props.p);
+  const close = () => {
+    closeAlert(state.activePaneId, props.p.interactionId);
+    setClosed(true);
+  };
+
+  return (
+    <Show when={!closed()}>
+      <div class="alert-dialog-overlay" role="dialog" aria-modal="true">
+        <div class="scrim" onClick={close} />
+        <div class="alert-dialog-card">
+          <div class="alert-dialog-hdr">
+            <span class="wbadge">
+              <span class="wd" />
+              {info().isError ? t("prompt.error") : t("prompt.alert")}
+            </span>
+            <button class="cbtn" aria-label={t("common.close")} onClick={close}>
+              <Icon name="x" />
+            </button>
+          </div>
+          <div class="alert-dialog-body">
+            <div class="alert-dialog-title">{info().title}</div>
+            <div class="alert-box">{info().message}</div>
+          </div>
+          <div class="alert-dialog-foot">
+            <button class="btn acc blk" onClick={close}>
+              {t("prompt.dismiss")}
+            </button>
+          </div>
+        </div>
+      </div>
+    </Show>
+  );
+}
+
+/** §4: the pending interaction's card, above the composer; collapsed to a cap when asked. */
 export function PromptCard(props: { collapsed: boolean; onCollapse: () => void; onExpand: () => void }) {
   const p = () => state.pendingInteraction!;
   const question = () => lastTurn()?.pendingQuestion;
   const plan = () => lastTurn()?.pendingPlan;
+  const isAlert = () => isAlertPrompt(p());
+  // A pane refresh replaces these objects; a card is rebuilt only when its prompt changes, so
+  // the page and picks the user made survive (§4.2).
+  const isTranscript = createMemo(() => p().source === "transcript");
+  const questionId = () => (isTranscript() ? question()?.id : undefined);
   return (
     <Show
-      when={!props.collapsed || !question()}
+      when={!props.collapsed || !questionId()}
       fallback={
         <button class="qcap" onClick={props.onExpand}>
           <span class="wd" />
@@ -243,8 +398,35 @@ export function PromptCard(props: { collapsed: boolean; onCollapse: () => void; 
         </button>
       }
     >
-      <Show when={question()} keyed fallback={<Show when={plan()} keyed fallback={<PermissionCard p={p()} />}>{(pl) => <PlanCard p={p()} markdown={pl.markdown} />}</Show>}>
-        {(q) => <QuestionCard p={p()} q={q} onCollapse={props.onCollapse} />}
+      <Show
+        when={questionId()}
+        keyed
+        fallback={
+          <Show
+            when={plan()?.markdown}
+            keyed
+            fallback={
+              <Show
+                when={p().multiSelect !== undefined}
+                fallback={
+                  <Show when={isAlert()} fallback={<PermissionCard p={p()} />}>
+                    <Show when={p().interactionId} keyed>
+                      {(_id: string) => <AlertDialogCard p={p()} />}
+                    </Show>
+                  </Show>
+                }
+              >
+                <Show when={p().interactionId} keyed>
+                  {(_id: string) => <MenuQuestionCard p={p()} />}
+                </Show>
+              </Show>
+            }
+          >
+            {(md: string) => <PlanCard p={p()} markdown={md} />}
+          </Show>
+        }
+      >
+        {(_id: string) => <TranscriptQuestionCard p={p()} q={question()!} onCollapse={props.onCollapse} />}
       </Show>
     </Show>
   );

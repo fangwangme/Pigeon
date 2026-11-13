@@ -1,12 +1,14 @@
 import { connect, type Socket } from "node:net";
 import { EventEmitter } from "node:events";
 import { createHash } from "node:crypto";
-import { basename } from "node:path";
+import { basename, dirname } from "node:path";
+import { readFileSync, writeFileSync, existsSync, mkdirSync, renameSync } from "node:fs";
 import { readGitBranch } from "./git-branch";
 import { CardClassifier, buildUnrecognizedPrompt } from "./card-classifier";
-import { getAgentRecipe } from "./agent-recipes";
+import { getAgentRecipe, type AnswerStep } from "./agent-recipes";
 import type {
   AgentStatus,
+  InteractionCardData,
   PaneStatePayload,
   SnapshotPayload,
   WorkspaceSummary,
@@ -32,7 +34,11 @@ export interface HerdrClientOptions {
   coreSocketPath: string;
   debounceMs?: number;
   panePollMs?: number;
+  /** protocol.md §4.1: how long an answered transcript question stays hidden while still pending. */
+  answeredHoldMs?: number;
   requestTimeoutMs?: number;
+  logger?: (msg: string) => void;
+  seenPanesFilePath?: string;
 }
 
 /**
@@ -88,6 +94,7 @@ export class HerdrClient extends EventEmitter {
   private coreSocketPath: string;
   private debounceMs: number;
   private panePollMs: number;
+  private answeredHoldMs: number;
   private requestTimeoutMs: number;
   private subSocket: Socket | null = null;
   private reachable: Record<Channel, boolean> = { app: false, core: false };
@@ -118,6 +125,10 @@ export class HerdrClient extends EventEmitter {
   private focusedPaneId: string | null = null;
   /** herdr-adapter.md §4: `done` panes a phone has looked at, reported as `idle`. */
   private seenPanes = new Set<string>();
+  private seenPanesFilePath?: string;
+  private transcriptInteractions = new Map<string, InteractionCardData>();
+  private transcriptOverrides = new Set<string>();
+  private answeredInteractions = new Map<string, { interactionId: string; timer: ReturnType<typeof setTimeout> }>();
   /** protocol.md §5.3: the title of the session bound to a pane, for tabs without a name of their own. */
   private sessionTitleOf: (paneId: string) => string | undefined = () => undefined;
   /** protocol.md §5.3: the active/latest model of the session bound to a pane. */
@@ -126,6 +137,9 @@ export class HerdrClient extends EventEmitter {
   private monitoredPaneIds = new Set<string>();
   private workspaceFolders = new Map<string, string>();
   private tabIds = new Set<string>();
+  private logger?: (msg: string) => void;
+  private lastReportedStatus = new Map<string, AgentStatus>();
+  private lastHadPrompt = new Map<string, boolean>();
 
   constructor(options: HerdrClientOptions) {
     super();
@@ -133,7 +147,25 @@ export class HerdrClient extends EventEmitter {
     this.coreSocketPath = options.coreSocketPath;
     this.debounceMs = options.debounceMs ?? 200;
     this.panePollMs = options.panePollMs ?? 1000;
+    this.answeredHoldMs = options.answeredHoldMs ?? 10_000;
     this.requestTimeoutMs = options.requestTimeoutMs ?? REQUEST_TIMEOUT_MS;
+    this.logger = options.logger;
+    this.seenPanesFilePath = options.seenPanesFilePath;
+    this.loadSeenPanes();
+  }
+
+  private loadSeenPanes(): void {
+    if (!this.seenPanesFilePath || !existsSync(this.seenPanesFilePath)) return;
+    const list: string[] = JSON.parse(readFileSync(this.seenPanesFilePath, "utf-8"));
+    this.seenPanes = new Set(list);
+  }
+
+  private saveSeenPanes(): void {
+    if (!this.seenPanesFilePath) return;
+    mkdirSync(dirname(this.seenPanesFilePath), { recursive: true });
+    const tmp = `${this.seenPanesFilePath}.tmp`;
+    writeFileSync(tmp, JSON.stringify(Array.from(this.seenPanes)), "utf-8");
+    renameSync(tmp, this.seenPanesFilePath);
   }
 
   public async connect(): Promise<void> {
@@ -190,6 +222,7 @@ export class HerdrClient extends EventEmitter {
     const connected = this.reachable.app && this.reachable.core;
     if (this.connected === connected) return;
     this.connected = connected;
+    this.logger?.(`herdr connection ${connected ? "up" : "down"}`);
     this.emit(connected ? "connected" : "disconnected");
   }
 
@@ -254,6 +287,7 @@ export class HerdrClient extends EventEmitter {
     this.reachable = { app: false, core: false };
     if (this.connected) {
       this.connected = false;
+      this.logger?.("herdr connection down");
       this.emit("disconnected");
     }
     this.stopped = true;
@@ -411,12 +445,15 @@ export class HerdrClient extends EventEmitter {
       const known = this.knownPanes.get(paneId);
       if (!known) return; // a terminal the window does not show
       const status = this.normalizeStatus(params.data.status);
-      if (status !== "done") this.seenPanes.delete(paneId);
+      if (status !== "done") {
+        if (this.seenPanes.delete(paneId)) this.saveSeenPanes();
+      }
       known.herdrStatus = status;
       // relabelTabs() re-applies the last topology before the next snapshot arrives: keep it current.
       const term = this.lastTopology?.terminals.find((t) => t.address === paneId);
       if (term) term.status = params.data.status;
       this.emit("pane_status_changed", { paneId, status });
+      this.checkReportedStatusChange(paneId);
       // The read re-classifies under the new status, which reaches viewers as a new pane_state.
       if (status === "blocked" || this.paneStates.has(paneId)) this.scheduleDebouncedRead(paneId);
       if (this.lastTopology) this.applySnapshot(this.lastTopology);
@@ -493,7 +530,14 @@ export class HerdrClient extends EventEmitter {
     }
     for (const id of Array.from(this.stitchedPanes)) if (!nextKnown.has(id)) this.stitchedPanes.delete(id);
     for (const id of Array.from(this.timeoutDemotedAt.keys())) if (!nextKnown.has(id)) this.timeoutDemotedAt.delete(id);
-    for (const id of Array.from(this.seenPanes)) if (nextKnown.get(id)?.herdrStatus !== "done") this.seenPanes.delete(id);
+    let seenChanged = false;
+    for (const id of Array.from(this.seenPanes)) {
+      if (nextKnown.get(id)?.herdrStatus !== "done") {
+        this.seenPanes.delete(id);
+        seenChanged = true;
+      }
+    }
+    if (seenChanged) this.saveSeenPanes();
     const prevKnown = this.knownPanes;
     this.knownPanes = nextKnown;
     this.focusedPaneId = focusedPaneId;
@@ -504,6 +548,7 @@ export class HerdrClient extends EventEmitter {
       if (prev && prev.herdrStatus !== next.herdrStatus) {
         this.emit("pane_status_changed", { paneId, status: next.herdrStatus });
       }
+      this.checkReportedStatusChange(paneId);
     }
     // herdr-adapter.md §3.1: the App's space folder is where the space was started, not the project.
     const folderOf = (space: (typeof topology.ls.spaces)[number]): string => {
@@ -615,8 +660,94 @@ export class HerdrClient extends EventEmitter {
   /** Herdr's status is authoritative; a recognized prompt on screen can only add `blocked`. */
   private effectiveStatus(paneId: string): AgentStatus {
     const state = this.paneStates.get(paneId);
-    if (state?.pendingInteraction) return "blocked";
+    if (state?.pendingInteraction || this.transcriptInteractions.has(paneId)) return "blocked";
     return this.reportedStatus(paneId);
+  }
+
+  /**
+   * protocol.md §5.4: the bound session's pending question or plan. `overridesScreen` (a question
+   * whose keys are checked) wins over a prompt recognized on screen.
+   */
+  public setTranscriptInteraction(paneId: string, interaction: InteractionCardData | null, overridesScreen = false): void {
+    const previous = this.transcriptInteractions.get(paneId);
+    if (!interaction && !previous) return;
+    if (interaction && previous && interaction.interactionId === previous.interactionId) return;
+    if (interaction) {
+      this.transcriptInteractions.set(paneId, interaction);
+      if (overridesScreen) this.transcriptOverrides.add(paneId);
+      else this.transcriptOverrides.delete(paneId);
+    } else {
+      this.transcriptInteractions.delete(paneId);
+      this.transcriptOverrides.delete(paneId);
+    }
+    this.republishPane(paneId);
+  }
+
+  /**
+   * protocol.md §4.1: a transcript question whose answer was sent is no longer reported, so every
+   * viewer drops its card; it comes back if it is still pending after `answeredHoldMs`.
+   */
+  public markAnswered(paneId: string, interactionId: string): void {
+    const previous = this.answeredInteractions.get(paneId);
+    if (previous) clearTimeout(previous.timer);
+    const timer = setTimeout(() => {
+      if (this.answeredInteractions.get(paneId)?.timer !== timer) return;
+      this.answeredInteractions.delete(paneId);
+      this.republishPane(paneId);
+    }, this.answeredHoldMs);
+    timer.unref?.();
+    this.answeredInteractions.set(paneId, { interactionId, timer });
+    this.republishPane(paneId);
+  }
+
+  /** Reports a pane's prompt again from its last screen, after the transcript or an answer changed it. */
+  private republishPane(paneId: string): void {
+    const known = this.knownPanes.get(paneId);
+    if (!known) return;
+    const existing = this.paneStates.get(paneId);
+    const screenPrompt = existing?.rawScreen ? this.classifier.classifyScreen(existing.rawScreen).pendingInteraction : null;
+    const pendingInteraction = this.pickInteraction(paneId, screenPrompt, known.herdrStatus === "blocked" && existing ? existing.rawScreen : null);
+    const agentStatus = pendingInteraction ? "blocked" : this.reportedStatus(paneId);
+    const payload: PaneStatePayload = {
+      paneId,
+      workspaceId: known.workspaceId,
+      tabId: known.tabId,
+      agentStatus,
+      cards: existing?.cards ?? [],
+      pendingInteraction,
+      rawScreen: existing?.rawScreen ?? "",
+      revision: (existing?.revision || 0) + 1,
+    };
+    this.paneStates.set(paneId, payload);
+    this.checkPromptChange(paneId, Boolean(pendingInteraction));
+    this.emit("cards_updated", payload);
+    if (this.lastTopology) this.applySnapshot(this.lastTopology);
+  }
+
+  /** protocol.md §5.4: which pending interaction a pane reports. `blockedScreen` is the screen when Herdr says `blocked`. */
+  private pickInteraction(paneId: string, screenPrompt: InteractionCardData | null, blockedScreen: string | null): InteractionCardData | null {
+    const answered = this.answeredInteractions.get(paneId)?.interactionId;
+    const transcript = this.transcriptInteractions.get(paneId) ?? null;
+    if (transcript && transcript.interactionId === answered) return null;
+    if (transcript && this.transcriptOverrides.has(paneId)) return transcript;
+    return screenPrompt ?? transcript ?? (blockedScreen !== null ? buildUnrecognizedPrompt(blockedScreen) : null);
+  }
+
+  private checkReportedStatusChange(paneId: string, seen = false): void {
+    const current = this.reportedStatus(paneId);
+    const prev = this.lastReportedStatus.get(paneId);
+    if (prev !== undefined && prev !== current) {
+      this.logger?.(`${this.paneLogLabel(paneId)} status change: ${prev} -> ${current}${seen ? " (seen)" : ""}`);
+    }
+    this.lastReportedStatus.set(paneId, current);
+  }
+
+  private checkPromptChange(paneId: string, hasPrompt: boolean): void {
+    const prev = this.lastHadPrompt.get(paneId) ?? false;
+    if (hasPrompt !== prev) {
+      this.lastHadPrompt.set(paneId, hasPrompt);
+      this.logger?.(`${this.paneLogLabel(paneId)} prompt: ${hasPrompt ? "recognized" : "gone"}`);
+    }
   }
 
   /** Herdr's status, with a seen `done` reported as `idle` (herdr-adapter.md §4). */
@@ -632,6 +763,8 @@ export class HerdrClient extends EventEmitter {
   public markSeen(paneId: string): void {
     if (this.knownPanes.get(paneId)?.herdrStatus !== "done" || this.seenPanes.has(paneId)) return;
     this.seenPanes.add(paneId);
+    this.saveSeenPanes();
+    this.checkReportedStatusChange(paneId, true);
     const state = this.paneStates.get(paneId);
     if (state) this.applyScreen(paneId, state.rawScreen);
     this.scheduleSnapshot();
@@ -648,6 +781,35 @@ export class HerdrClient extends EventEmitter {
 
   public getSnapshot(): SnapshotPayload {
     return this.currentSnapshot;
+  }
+
+  public getTabLabelForPane(paneId: string): string | null {
+    if (!this.currentSnapshot?.workspaces) return null;
+    for (const ws of this.currentSnapshot.workspaces) {
+      for (const tab of ws.tabs) {
+        if (tab.panes.some((p) => p.id === paneId)) {
+          return tab.label;
+        }
+      }
+    }
+    return null;
+  }
+
+  public getTabLabel(tabId: string): string | null {
+    if (!this.currentSnapshot?.workspaces) return null;
+    for (const ws of this.currentSnapshot.workspaces) {
+      for (const tab of ws.tabs) {
+        if (tab.id === tabId) {
+          return tab.label;
+        }
+      }
+    }
+    return null;
+  }
+
+  public paneLogLabel(paneId: string): string {
+    const label = this.getTabLabelForPane(paneId);
+    return label ? `pane ${paneId} (${label})` : `pane ${paneId}`;
   }
 
   public getFocusedPaneId(): string | null {
@@ -719,13 +881,12 @@ export class HerdrClient extends EventEmitter {
     if (!known) throw new HerdrError("not_found", `Pane ${paneId} is not in the Herdr snapshot`);
     const existing = this.paneStates.get(paneId);
     // herdr-adapter.md §3.3: a new Herdr status alone is classified again, even on an unchanged screen.
-    const classifyKey = `${createHash("sha256").update(rawScreen).digest("hex")}|${known.herdrStatus}|${this.seenPanes.has(paneId)}`;
+    const classifyKey = `${createHash("sha256").update(rawScreen).digest("hex")}|${known.herdrStatus}|${this.seenPanes.has(paneId)}|${this.transcriptInteractions.get(paneId)?.interactionId ?? ""}`;
     if (existing && this.paneClassifyKeys.get(paneId) === classifyKey) return existing;
 
-    let { cards, pendingInteraction } = this.classifier.classifyScreen(rawScreen);
-    if (!pendingInteraction && known.herdrStatus === "blocked") {
-      pendingInteraction = buildUnrecognizedPrompt(rawScreen);
-    }
+    const classified = this.classifier.classifyScreen(rawScreen);
+    const cards = classified.cards;
+    const pendingInteraction = this.pickInteraction(paneId, classified.pendingInteraction, known.herdrStatus === "blocked" ? rawScreen : null);
 
     const payload: PaneStatePayload = {
       paneId,
@@ -739,6 +900,7 @@ export class HerdrClient extends EventEmitter {
     };
     this.paneClassifyKeys.set(paneId, classifyKey);
     this.paneStates.set(paneId, payload);
+    this.checkPromptChange(paneId, Boolean(pendingInteraction));
     this.emit("cards_updated", payload);
     return payload;
   }
@@ -759,11 +921,27 @@ export class HerdrClient extends EventEmitter {
    * Returns true when that prompt is gone (no prompt, or a different one). Never retries:
    * a timed-out send may already have landed.
    */
-  public async answerInteraction(paneId: string, interactionId: string, keys: string[]): Promise<boolean> {
-    await this.coreRequest("terminal.keys", { terminal: paneId, keys });
+  public async answerInteraction(paneId: string, interactionId: string, steps: AnswerStep[]): Promise<boolean> {
+    await this.runAnswerSteps(paneId, steps);
     await new Promise((r) => setTimeout(r, 300));
     const state = await this.readAndClassifyPane(paneId);
     return state.pendingInteraction?.interactionId !== interactionId;
+  }
+
+  /**
+   * herdr-adapter.md §7.2: answers a question dialog step by step, each sent once. Text is pasted
+   * with `force`, since the agent is `blocked` on the dialog it answers.
+   */
+  public async answerSteps(paneId: string, steps: AnswerStep[]): Promise<void> {
+    await this.runAnswerSteps(paneId, steps);
+    this.scheduleDebouncedRead(paneId);
+  }
+
+  private async runAnswerSteps(paneId: string, steps: AnswerStep[]): Promise<void> {
+    for (const step of steps) {
+      if ("text" in step) await this.coreRequest("terminal.send", { terminal: paneId, text: step.text, force: true });
+      else await this.coreRequest("terminal.keys", { terminal: paneId, keys: step.keys });
+    }
   }
 
   public async sendKeys(paneId: string, keys: string[]): Promise<void> {

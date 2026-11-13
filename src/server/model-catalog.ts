@@ -1,27 +1,43 @@
-import { existsSync, readFileSync } from "node:fs";
-import { homedir } from "node:os";
-import { join } from "node:path";
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { homedir, userInfo } from "node:os";
+import { dirname, join } from "node:path";
 import type { ModelOption } from "../types/protocol";
+import { fileCredentialSource, type CredentialSource } from "./quota/credentials";
 
-const EFFORT_LADDER = ["low", "medium", "high", "xhigh", "max"];
+const KEYCHAIN_SERVICE = "Claude Code-credentials";
+const DEFAULT_ANTHROPIC_MODELS_URL = "https://api.anthropic.com/v1/models";
+
+
 /** `pi --help`: the levels `--thinking` takes. */
 const PI_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
 const COMMAND_TIMEOUT_MS = 30_000;
-
-/** The CLI's own aliases; the CLI resolves them to its current models, so no version is named here. */
-const CLAUDE_MODELS: ModelOption[] = [
-  { id: "opus", label: "Opus", thinkingLevels: EFFORT_LADDER },
-  { id: "sonnet", label: "Sonnet", thinkingLevels: EFFORT_LADDER },
-  { id: "haiku", label: "Haiku" },
-];
 
 export interface ModelCatalogOptions {
   home?: string;
   /** Environment for the agents' list commands (`PATH` finds them). */
   env?: Record<string, string | undefined>;
+  keychain?: boolean | CredentialSource;
+  anthropicModelsUrl?: string;
+  cachePath?: string;
+  now?: () => number;
 }
 
 const isObj = (v: unknown): v is Record<string, any> => typeof v === "object" && v !== null && !Array.isArray(v);
+
+function macKeychainSource(): CredentialSource {
+  const account = userInfo().username;
+  return {
+    read: () => {
+      const res = Bun.spawnSync(["security", "find-generic-password", "-s", KEYCHAIN_SERVICE, "-w"]);
+      return res.exitCode === 0 ? res.stdout.toString().trim() || null : null;
+    },
+    write: (raw) => {
+      const command = `add-generic-password -U -a "${account}" -s "${KEYCHAIN_SERVICE}" -X "${Buffer.from(raw, "utf-8").toString("hex")}"\n`;
+      const res = Bun.spawnSync(["security", "-i"], { stdin: new TextEncoder().encode(command) });
+      if (res.exitCode !== 0) throw new Error(`Keychain write failed with exit code ${res.exitCode}`);
+    },
+  };
+}
 
 /**
  * `herdr-adapter.md` §7.1: every agent's model list, filled from the agent's own source. The sources
@@ -31,7 +47,13 @@ const isObj = (v: unknown): v is Record<string, any> => typeof v === "object" &&
 export class ModelCatalog {
   private home: string;
   private env: Record<string, string | undefined>;
-  private lists = new Map<string, ModelOption[]>([["claude", CLAUDE_MODELS]]);
+  private keychain: CredentialSource | null;
+  private anthropicModelsUrl: string;
+  private cachePath?: string;
+  private now: () => number;
+
+  private lists = new Map<string, ModelOption[]>();
+  private fetchedAt = new Map<string, number>();
   private filling: Promise<boolean> | null = null;
   /** Log model names that already caused a fill, so a model no source lists cannot loop. */
   private chased = new Set<string>();
@@ -39,10 +61,57 @@ export class ModelCatalog {
   constructor(options: ModelCatalogOptions = {}) {
     this.home = options.home ?? homedir();
     this.env = options.env ?? process.env;
+    const keychain = options.keychain ?? process.platform === "darwin";
+    this.keychain = keychain === true ? macKeychainSource() : keychain === false ? null : keychain;
+    this.anthropicModelsUrl = options.anthropicModelsUrl ?? DEFAULT_ANTHROPIC_MODELS_URL;
+    this.cachePath = options.cachePath;
+    this.now = options.now ?? (() => Date.now());
+
+    this.loadCache();
+  }
+
+  private loadCache(): void {
+    if (!this.cachePath || !existsSync(this.cachePath)) return;
+    const data: Record<string, { models: ModelOption[]; fetchedAt?: number }> = JSON.parse(readFileSync(this.cachePath, "utf-8"));
+    for (const [agent, entry] of Object.entries(data)) {
+      this.lists.set(agent, entry.models);
+      if (entry.fetchedAt !== undefined) this.fetchedAt.set(agent, entry.fetchedAt);
+    }
+  }
+
+  private saveCache(): void {
+    if (!this.cachePath) return;
+    mkdirSync(dirname(this.cachePath), { recursive: true });
+    const data: Record<string, { models: ModelOption[]; fetchedAt?: number }> = {};
+    for (const [agent, models] of this.lists) data[agent] = { models, fetchedAt: this.fetchedAt.get(agent) };
+    const tmp = `${this.cachePath}.tmp`;
+    writeFileSync(tmp, JSON.stringify(data, null, 2), "utf-8");
+    renameSync(tmp, this.cachePath);
   }
 
   public models(agent: string): ModelOption[] {
     return this.lists.get(agent) ?? [];
+  }
+
+  /**
+   * herdr-adapter.md §5: the model and effort an agent that takes no model at launch will start
+   * on. OpenCode keeps them in its own state file, which may be missing or in another shape.
+   */
+  public lastUsed(agent: string): { model: string; thinking?: string } | undefined {
+    if (agent !== "opencode") return undefined;
+    const path = join(this.home, ".local", "state", "opencode", "model.json");
+    if (!existsSync(path)) return undefined;
+    let data: unknown;
+    try {
+      data = JSON.parse(readFileSync(path, "utf-8"));
+    } catch {
+      return undefined;
+    }
+    const first = isObj(data) && Array.isArray(data.recent) ? data.recent[0] : undefined;
+    if (!isObj(first) || typeof first.providerID !== "string" || typeof first.modelID !== "string") return undefined;
+    const model = `${first.providerID}/${first.modelID}`;
+    const thinking = isObj(data) && isObj(data.variant) ? data.variant[model] : undefined;
+    return { model, ...(typeof thinking === "string" ? { thinking } : {}) };
   }
 
   /**
@@ -64,10 +133,19 @@ export class ModelCatalog {
     return idOrLabel;
   }
 
-  /** Fills every list again; resolves whether any list changed. Concurrent calls share one fill. */
+  /** An automatic fill of every list; resolves whether any list changed. Concurrent calls share one fill. */
   public refresh(): Promise<boolean> {
-    this.filling ??= this.fill().finally(() => (this.filling = null));
+    this.filling ??= this.fill(null, false).finally(() => (this.filling = null));
     return this.filling;
+  }
+
+  /**
+   * protocol.md §4.15: a fill asked from the phone, of one agent's list or all of them. It always
+   * reads its sources, so it runs after a fill already under way instead of joining it.
+   */
+  public async refreshAsked(agent?: string): Promise<boolean> {
+    if (this.filling) await this.filling;
+    return this.fill(agent ? [agent] : null, true);
   }
 
   /**
@@ -75,22 +153,23 @@ export class ModelCatalog {
    * name; resolves whether a list changed.
    */
   public async noteModel(agent: string, model: string): Promise<boolean> {
-    if (agent === "claude" || this.models(agent).some((m) => m.id === model)) return false;
+    if (this.models(agent).some((m) => m.id === model)) return false;
     const key = `${agent}|${model}`;
     if (this.chased.has(key)) return false;
     this.chased.add(key);
     return this.refresh();
   }
 
-  private async fill(): Promise<boolean> {
+  private async fill(agents: string[] | null, asked: boolean): Promise<boolean> {
     const sources: Array<[string, () => Promise<ModelOption[]>]> = [
+      ["claude", () => this.claude(asked)],
       ["codex", async () => this.codex()],
       ["pi", async () => this.pi()],
       ["opencode", () => this.opencode()],
       ["agy", () => this.agy()],
     ];
     const results = await Promise.all(
-      sources.map(async ([agent, read]) => {
+      sources.filter(([agent]) => !agents || agents.includes(agent)).map(async ([agent, read]) => {
         try {
           return [agent, await read()] as const;
         } catch (err) {
@@ -99,18 +178,97 @@ export class ModelCatalog {
         }
       })
     );
+    const fetchedBefore = this.fetchedAt.get("claude");
     let changed = false;
     for (const [agent, list] of results) {
       if (!list || JSON.stringify(list) === JSON.stringify(this.lists.get(agent) ?? [])) continue;
       this.lists.set(agent, list);
       changed = true;
     }
+    if (changed || this.fetchedAt.get("claude") !== fetchedBefore) this.saveCache();
     return changed;
   }
 
   private readJson(path: string): unknown {
     if (!existsSync(path)) throw new Error(`${path} does not exist`);
     return JSON.parse(readFileSync(path, "utf-8"));
+  }
+
+  private getClaudeToken(): string | null {
+    const file = fileCredentialSource(join(this.home, ".claude", ".credentials.json"));
+    const fromFile = file.read();
+    let raw = fromFile;
+    if (raw === null && this.keychain) {
+      raw = this.keychain.read();
+    }
+    if (raw === null) return null;
+    try {
+      const parsed = JSON.parse(raw);
+      const oauth = parsed?.claudeAiOauth;
+      if (!oauth?.accessToken) return null;
+      if (typeof oauth.expiresAt === "number" && this.now() >= oauth.expiresAt) return null;
+      return oauth.accessToken;
+    } catch {
+      return null;
+    }
+  }
+
+  private async claude(force = false): Promise<ModelOption[]> {
+    const last = this.fetchedAt.get("claude") ?? 0;
+    const ONE_DAY_MS = 24 * 3600 * 1000;
+    if (!force && this.lists.has("claude") && this.now() - last < ONE_DAY_MS) {
+      return this.lists.get("claude")!;
+    }
+
+    const token = this.getClaudeToken();
+    if (!token) return this.lists.get("claude") ?? [];
+
+    const url = new URL(this.anthropicModelsUrl);
+    const out: ModelOption[] = [];
+    const limit = 100;
+    url.searchParams.set("limit", String(limit));
+
+    while (true) {
+      const res = await fetch(url.toString(), {
+        method: "GET",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "anthropic-beta": "oauth-2025-04-20",
+          "anthropic-version": "2023-06-01",
+          Accept: "application/json",
+        },
+        signal: AbortSignal.timeout(10000),
+      });
+
+      if (!res.ok) throw new Error(`Anthropic Models API returned ${res.status}`);
+      const body = (await res.json()) as any;
+      if (!isObj(body) || !Array.isArray(body.data)) break;
+
+      for (const item of body.data) {
+        if (!isObj(item) || typeof item.id !== "string") continue;
+        const id = item.id;
+        const label = typeof item.display_name === "string" && item.display_name ? item.display_name : id;
+        let thinkingLevels: string[] | undefined = undefined;
+        const effort = item.capabilities?.effort;
+        if (isObj(effort) && effort.supported === true) {
+          thinkingLevels = Object.keys(effort).filter((k) => k !== "supported" && isObj(effort[k]) && effort[k].supported === true);
+        }
+        out.push({
+          id,
+          label,
+          ...(thinkingLevels !== undefined ? { thinkingLevels } : {}),
+        });
+      }
+
+      if (body.has_more && body.last_id) {
+        url.searchParams.set("after_id", body.last_id);
+      } else {
+        break;
+      }
+    }
+
+    this.fetchedAt.set("claude", this.now());
+    return out;
   }
 
   private codex(): ModelOption[] {
@@ -142,13 +300,26 @@ export class ModelCatalog {
     return out;
   }
 
-  /** `opencode models`: one `<provider>/<model>` per line. */
+  /**
+   * Ids from `opencode models`, one `<provider>/<model>` per line; label and effort levels from
+   * OpenCode's models cache, which lists every provider, not only the ones OpenCode offers.
+   */
   private async opencode(): Promise<ModelOption[]> {
     const lines = await this.run(["opencode", "models"]);
-    return lines.filter((l) => /^[^\s/]+\/\S+$/.test(l)).map((id) => ({ id, label: id }));
+    const ids = lines.filter((l) => /^[^\s/]+\/\S+$/.test(l));
+    const cachePath = join(this.home, ".cache", "opencode", "models.json");
+    const cache = existsSync(cachePath) ? this.readJson(cachePath) : null;
+    return ids.map((id) => {
+      const slash = id.indexOf("/");
+      const entry = isObj(cache) && isObj(cache[id.slice(0, slash)]?.models) ? cache[id.slice(0, slash)].models[id.slice(slash + 1)] : undefined;
+      if (!isObj(entry)) return { id, label: id };
+      const label = typeof entry.name === "string" && entry.name ? entry.name : id;
+      const effort = Array.isArray(entry.reasoning_options) ? entry.reasoning_options.find((o: unknown) => isObj(o) && o.type === "effort") : undefined;
+      const levels = isObj(effort) && Array.isArray(effort.values) ? effort.values.filter((v: unknown): v is string => typeof v === "string") : undefined;
+      return { id, label, ...(levels ? { thinkingLevels: levels } : {}) };
+    });
   }
 
-  /** `agy models`: one `<id>\t<label>` or `<id>   <label>` per line; the label names the effort, e.g. `Gemini 3.8 Flash (High)`. */
   private async agy(): Promise<ModelOption[]> {
     const lines = await this.run(["agy", "models"]);
     const out: ModelOption[] = [];

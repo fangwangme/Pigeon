@@ -80,25 +80,27 @@ Every command except `ping` and `presence_update` carries a string `id`. Success
   "payload": { "targetPaneId": "w1:p2", "interactionId": "int_4ae721c8e2", "fingerprint": "fp_88a7b9c1d2e3", "optionId": "opt_2" }
 }
 ```
+A multi-select question menu recognized on screen (`herdr-adapter.md` §8.2, `multiSelect: true`) is answered with `optionIds`: its picked option ids; the server sends their digits, then `right`. An interaction with `allowsOther: true` also takes the user's own text for a question: the pick `opt_other` (on screen) or `q<k>_other` (transcript) stands for it, and `otherTexts` carries the text by question, `{ "1": "…" }` (1–2000 characters after trimming, only for questions with that pick); the keys follow `herdr-adapter.md` §7.2. A transcript interaction (§5.4) is answered once for all its questions, with `optionIds` in place of `optionId`: every picked option id (`q<k>_opt_<n>`), in question order; a single-select question has exactly one, a multi-select question at least one.
 *Server Behavior*:
 1. If the pane has no pending prompt, or its `interactionId` or `fingerprint` differs, or another answer for that pane is still being sent (a double tap), the server rejects with `ERR_INTERACTION_STALE` and sends no key. The client then re-selects the pane to get fresh state.
-2. If `optionId` is not one of the prompt's options, the server rejects with `ERR_INVALID_PAYLOAD`.
-3. The server sends exactly the option's `keyShortcut`, which is its digit (`herdr-adapter.md` §8), once through Herdr Core `terminal.keys`. A failed send is never retried, because a timed-out send may already have landed.
-4. After about 300 ms the server re-reads the screen. It acks `{ "approved": true, "interactionId": … }` when that prompt is gone, or `{ "approved": false, … }` when it is still showing. On `approved: false` the client opens the raw terminal sheet.
+2. If `optionId` is not one of the prompt's options, or `optionIds` does not pick every question of a transcript interaction as above, or the agent has no checked keys (`herdr-adapter.md` §7.2), the server rejects with `ERR_INVALID_PAYLOAD`.
+3. The server sends exactly the option's `keyShortcut` once through Herdr Core `terminal.keys`: for an interaction recognized on screen it is the option's digit (`herdr-adapter.md` §8); for a transcript interaction (§5.4) it is the key sequence the agent's question UI takes for all the picks (`herdr-adapter.md` §7.2). A failed send is never retried, because a timed-out send may already have landed.
+4. After about 300 ms the server re-reads the screen. It acks `{ "approved": true, "interactionId": … }` when that prompt is gone, or `{ "approved": false, … }` when it is still showing. On `approved: false` the client keeps the card (`mobile-ui-and-themes.md` §4.1). A transcript interaction is acked `approved: true` once its keys are sent. From then on the pane no longer reports it, so every viewer's `pane_state` drops its card at once, whichever phone answered (user decision, 2026-11-13); the transcript recording the answer later changes nothing. If 10 seconds after the answer the transcript still holds the same question pending, the agent did not take the keys, and the pane reports it again.
 
 ### 4.2 Submit Prompt (`agent_prompt`)
-When Herdr cannot be reached (its socket is missing or refuses the connection, `herdr-adapter.md` §2), this and every other command that writes to Herdr (§4.1, §4.3, §4.5, §4.6, §4.9, §4.11) is answered with `ERR_UPSTREAM_OFFLINE`; nothing reached Herdr. A prompt that is queued (below) makes no Herdr call and is queued as usual.
+When Herdr cannot be reached (its socket is missing or refuses the connection, `herdr-adapter.md` §2), this and every other command that writes to Herdr (§4.1, §4.3, §4.5, §4.6, §4.11, §4.22) is answered with `ERR_UPSTREAM_OFFLINE`; nothing reached Herdr. A prompt that is queued (below) makes no Herdr call and is queued as usual.
 ```json
 { "type": "agent_prompt", "id": "cli_8", "payload": { "targetPaneId": "w1:p2", "text": "Fix the unit tests in auth.test.ts", "attachments": ["up_3f9a0c21d7e4b5a6"] } }
 ```
 - `text` may be empty only when `attachments` is not. `attachments` holds at most 10 upload ids from §7. An id the daemon does not know is `ERR_INVALID_PAYLOAD`, and nothing is sent.
 - **Attachments**: the daemon appends attachment file paths: the file's absolute path, prefixed with the recipe's file-mention prefix (`@` for claude, opencode, and pi; none for codex, agy, and a plain terminal; agy uses space separation without `@` to prevent CLI autocomplete popups and multiline mode stalls).
 - **Queue**: when the pane's Herdr status is `working`, or the pane already has queued prompts, the prompt is queued instead of sent (user decision, 2026-11-06). The ack carries `{ "queued": true, "queueId": "q_…" }`, and every viewer of the pane gets `prompt_queue` (§5.8).
-- **Queue state machine**: each pane's queue is either `idle` (nothing out) or `sending` (its oldest prompt is out and not yet settled). One transition function takes every input: the pane's Herdr status (from a status event or from a snapshot, `herdr-adapter.md` §3.1), a new user turn in the pane's transcript (including the first turn of a fresh session), a send result, the send timeout, a queue edit, and the pane's removal.
-  - In `idle`, when the pane's status is `idle` or `done` and the queue is not empty, the oldest prompt is sent and marked `sending: true`, and the queue enters `sending`.
-  - The prompt out **settles** when a new user turn appears, when the pane is seen `working` and later `idle` or `done`, when the send fails, or when the send timeout (30 seconds after the send) expires. On a pane without a bound session no transcript can confirm it, so it leaves the queue right after a successful send, and the queue still waits for it to settle before the next one. A settled prompt leaves the queue, the queue returns to `idle`, and when the pane is `idle` or `done` at that moment the next prompt goes out at once. This is what keeps a head prompt that never starts work (a slash command such as `/model`, a local command) from blocking the queue.
-  - A prompt that fails to send is dropped and reported to the viewers as `error` with its `queueId` in `details`.
+- **Queue state machine**: each pane's queue is either `idle` (nothing out) or `sending` (a batch is out and not yet settled). One transition function takes every input: the pane's Herdr status (from a status event or from a snapshot, `herdr-adapter.md` §3.1), a new user turn in the pane's transcript (including the first turn of a fresh session), a send result, the send timeout, a queue edit, and the pane's removal.
+  - In `idle`, when the pane's status is `idle` or `done` and the queue is not empty, **every** queued prompt goes out at once as one batch (user decision, 2026-11-13: the agent sees everything that piled up and decides itself): their composed prompts (§4.2) are joined in queue order with a blank line between them and sent as one prompt. Each is marked `sending: true`, and the queue enters `sending`. Prompts queued while a batch is out wait for the next batch.
+  - The batch out **settles** when a new user turn appears, when the pane is seen `working` and later `idle` or `done`, when the send fails, or when the send timeout (30 seconds after the send) expires. On a pane without a bound session no transcript can confirm it, so it leaves the queue right after a successful send, and the queue still waits for it to settle before the next batch. A settled batch leaves the queue, the queue returns to `idle`, and when the pane is `idle` or `done` at that moment the next batch goes out at once — except after a settle by a new user turn before the pane was seen `working`: the agent has just received the batch and is about to work, and its `idle` is stale, so the next batch waits for the pane's next `idle` or `done` (user decision, 2026-11-13). This is what keeps a batch that never starts work (a slash command such as `/model`, a local command) from blocking the queue.
+  - A batch that fails to send is dropped and reported to the viewers as `error` with its first `queueId` in `details`.
   - While a prompt is `sending`, `queue_update` and `queue_cancel` on it answer `ERR_NOT_FOUND`.
+  - **Pause** (user decision, 2026-11-12): while the latest record of the pane's bound session is an agent error (`agent-session-normalization.md` §3, item `error`), the queue is paused. Nothing is sent, a new prompt is queued even when the pane is `idle` or `done`, and `prompt_queue` says `paused: true`. The queue resumes, and sends as in `idle`, on `queue_resume` (§4.22), when the pane turns `working`, or when the session records anything after the error. A pause is not persisted: after a restart it is derived again from the session.
   - `WsServer` takes the send timeout as the option `queueSendTimeoutMs` (default 30 000), so tests drive it with a short one.
 - **Persistence**: the queue is written to `queue.json` in the instance's state directory (`architecture.md` §4.6) only when it changes, atomically (a temporary file, then rename). Each item records the terminal creation time (`created_ms`, `herdr-adapter.md` §3.1) of its pane at enqueue time. A prompt in `sending` is not written. A queue file that cannot be parsed stops startup with an error naming the file, and is left untouched. Closing the pane drops its queue.
 - **Restore** (user decision, 2026-11-11): Herdr reuses terminal addresses, so a restored item is kept only when the first Herdr snapshot after start shows a terminal at its address with the same creation time. Kept items go out as soon as their pane is `idle` or `done`; the others are dropped and logged with their address and `queueId`.
@@ -152,17 +154,14 @@ The server answers with `skills_sync` for the connection's current pane.
 ### 4.8 Configuration (`config_get`, `config_patch`)
 See §6.
 
-### 4.9 Change Model or Effort (`agent_set_model`)
-```json
-{ "type": "agent_set_model", "id": "cli_14", "payload": { "targetPaneId": "w1:p2", "modelId": "sonnet", "thinking": "high" } }
-```
-At least one of `modelId` and `thinking` is given. Each must be one the pane's recipe offers (`thinking` for the given model, else for the pane's current model). The daemon builds the agent's own runtime command from the recipe (`herdr-adapter.md` §7) and submits it like §4.2, queueing included. When both values change, it submits one command when the agent's command takes both, else the model command and then the effort command as two queue entries, so the second goes out only after the first has settled (§4.2). A recipe without a runtime command for that value answers `ERR_INVALID_PAYLOAD` and sends nothing. The client never builds the command text.
+### 4.9 Removed: Change Model or Effort (`agent_set_model`)
+Removed (user decision, 2026-11-12): a session's model and thinking level are chosen only when it is created (§4.5). `agent_set_model` is an unknown type and is answered with `ERR_INVALID_PAYLOAD`.
 
 ### 4.10 List Past Sessions (`sessions_list`)
 ```json
 { "type": "sessions_list", "id": "cli_15", "payload": { "workspaceId": "w1", "agentKind": "claude" } }
 ```
-The ack carries `{ "sessions": [ { "id", "title", "updatedAt" } ] }`: the agent's own sessions whose project folder is the workspace's folder or below it, newest first, at most 50 (`agent-session-normalization.md` §2.6). `title` is the session's title, else its first user message (at most 120 characters). An agent kind without a session store answers with an empty list; an unknown workspace is `ERR_NOT_FOUND`.
+The ack carries `{ "sessions": [ { "id", "title", "updatedAt", "model" } ] }`, `model` being the model id the session last used (left out when its records name none; issue #21): the agent's own sessions whose project folder is the workspace's folder or below it, newest first, at most 50 (`agent-session-normalization.md` §2.6). `title` is the session's title, else its first user message (at most 120 characters). An agent kind without a session store answers with an empty list; an unknown workspace is `ERR_NOT_FOUND`.
 
 ### 4.11 Rename Tab (`tab_rename`)
 ```json
@@ -187,9 +186,9 @@ Updates the text and attachments of an existing queued prompt in-place, preservi
 
 ### 4.15 Refresh Model Lists (`models_refresh`)
 ```json
-{ "type": "models_refresh", "id": "cli_19", "payload": {} }
+{ "type": "models_refresh", "id": "cli_19", "payload": { "agent": "claude" } }
 ```
-Fills the model catalog again from every agent's source (`herdr-adapter.md` §7.1). The ack comes once the fill has finished and carries `{ "recipes": { … } }` in the shape of §5.7; every connected client also gets `recipes_sync` (§5.9) when a list changed.
+`agent`, if given, must be a known recipe; the daemon then fills only that agent's list, else every agent's list (`herdr-adapter.md` §7.1). A refresh asked from the phone always reads the source, the Claude Models API included, whatever the daily limit of an automatic fill. The ack comes once the fill has finished and carries `{ "recipes": { … } }` in the shape of §5.7; every connected client also gets `recipes_sync` (§5.9) when a list changed.
 
 ### 4.16 Quota (`quota_get`)
 ```json
@@ -241,6 +240,12 @@ A pane without a bound session, or a turn, call or file the session does not hav
 { "type": "screen_watch", "id": "cli_25", "payload": { "paneId": "w1:p2", "on": true } }
 ```
 The terminal view (`mobile-ui-and-themes.md` §5) turns this on while it is open. While on, this connection's `pane_state` for that pane carries `cards` and `rawScreen` even when the pane has a bound session (§5.4). Selecting another pane turns it off.
+
+### 4.22 Resume a Paused Queue (`queue_resume`)
+```json
+{ "type": "queue_resume", "id": "cli_30", "payload": { "paneId": "w1:p2" } }
+```
+Releases the pane's paused queue (§4.2): its oldest prompt goes out as in `idle`. A pane the daemon does not know is `ERR_NOT_FOUND`; a queue that is not paused is acked with no effect.
 
 ## 5. Server Events (`server -> client`)
 
@@ -315,6 +320,7 @@ Sent to the clients viewing a pane whenever its classified screen or status chan
 - `pendingInteraction.options` is empty when the prompt has no numbered options, or when Herdr reports `blocked` but no prompt was recognized. The client then shows `fallbackKeys` as a raw key pad.
 - `exitCode` on a tool card is present only when the screen shows it.
 - `pendingInteraction.title` is a title the screen showed for the prompt, else empty; `question` is empty when the screen showed no question line. The phone then shows its own label (`mobile-ui-and-themes.md` §10.2).
+- `pendingInteraction.source` is `screen` or `transcript`. When the pane's bound session has a pending question and the agent's question keys are checked (`herdr-adapter.md` §7.2), the interaction comes from the transcript whatever the screen shows, so the question is answered in the card (`mobile-ui-and-themes.md` §4.2). Otherwise a prompt recognized on screen (`herdr-adapter.md` §8.2), or Herdr's `blocked` with nothing recognized, is `screen`. When no prompt is recognized on screen and the pane's bound session has a pending question or plan (`agent-session-normalization.md` §3 `pendingQuestion`, `pendingPlan`), the interaction comes from the transcript and the pane's `agentStatus` is `blocked`, whatever Herdr reports. A transcript interaction's `question` is the first question's text (empty for a plan) and its `options` are every question's options, with ids `q<k>_opt_<n>` (question `k` and option `n`, counted from 1) and the `label` the transcript gives; their `keyShortcut` follows `herdr-adapter.md` §7.2 and is empty for an agent without checked keys. A plan's interaction has no options. `interactionId` is a hash of the tool call id. A question menu recognized on screen carries `multiSelect` and each option's `description` (`herdr-adapter.md` §8.2). `allowsOther: true` marks an interaction whose questions also take the user's own text: a screen menu with a `Type something` entry, or a transcript interaction whose agent has checked keys for it (`herdr-adapter.md` §7.2).
 
 - `folder` is the Herdr workspace's folder. `branch` (workspace: of its folder; tab: of its first pane's folder) is the checked-out git branch, absent outside a git repository or on a detached HEAD.
 - `program` is the name of the pane's foreground program, absent when the Core does not list the terminal. `summary` is the pane's one-line summary (also in `workingAgents`), and `summaryKind` says how to show it: `text` is shown as is (a prompt's question, the start of the last message, or the terminal title); `run` holds only the running command, which the phone prefixes with its own word for "running"; `thinking` holds the thought's title, or is empty when the agent shows none, and the phone shows its own word for "thinking" in that case. The daemon composes no UI text of its own (`mobile-ui-and-themes.md` §10.2).
@@ -331,7 +337,7 @@ This is sent in the handshake and broadcast whenever the daemon's connection to 
 "session": { "bound": true, "agent": "claude", "sessionId": "2c9ad7c8-…", "model": { "value": "opus", "source": "launch" }, "thinking": { "value": "high", "source": "launch" } }
 ```
 - `bound` says whether the pane has a structured session (`agent-session-normalization.md` §2.0).
-- `model` and `thinking` name the current value and its source: `log` (the session records name it), else `launch` (Pigeon started the pane with it), else `unknown` (value absent). A later `agent_set_model` changes the shown value only once the session records confirm it.
+- `model` and `thinking` name the current value and its source: `log` (the session records name it), else `launch` (Pigeon started the pane with it), else `unknown` (value absent).
 - `todos` is the session's latest todo list (`agent-session-normalization.md` §3); absent when the session has none.
 
 A pane that becomes bound or switches session (for example after the agent's `/clear`) gets a fresh `normalized_turns`.
@@ -370,17 +376,17 @@ A pane that becomes bound or switches session (for example after the agent's `/c
 ```
 Skills are per pane: they depend on the pane's agent kind and project directory (`herdr-adapter.md` §8.3). `source` is `project`, `user`, `plugin` or `builtin`; `kind` is `skill` or `command`. A built-in command also carries `descriptionId` (`herdr-adapter.md` §8.3), and the phone shows its own text for that id, falling back to the English `description`. The client ignores skills for a pane it is no longer viewing. Choosing an entry inserts its `invocation` as prompt text.
 
-Each recipe summary also carries `resumable` (the recipe can resume a session), `launchModel` (whether §4.5 can start the agent on a chosen model, `herdr-adapter.md` §5) and `runtimeSwitch: { model, thinking }` (whether §4.9 can change each value). A recipe's `models` is that agent's list in the model catalog (`herdr-adapter.md` §7.1), complete; the phone searches it.
+Each recipe summary also carries `resumable` (the recipe can resume a session) and `launchModel` (whether §4.5 can start the agent on a chosen model, `herdr-adapter.md` §5). A recipe without `launchModel` may carry `lastUsed: { "model": "<id>", "thinking"?: "<level>" }`, the model and effort the agent will start on (`herdr-adapter.md` §5; today OpenCode). A recipe's `models` is that agent's list in the model catalog (`herdr-adapter.md` §7.1), complete; the phone searches it.
 
 ### 5.8 Queue (`prompt_queue`)
 ```json
-{ "type": "prompt_queue", "payload": { "paneId": "w1:p2", "items": [ { "queueId": "q_1a2b3c", "text": "also run lint", "attachments": [], "createdAt": 1729650000000, "sending": false } ] } }
+{ "type": "prompt_queue", "payload": { "paneId": "w1:p2", "paused": false, "items": [ { "queueId": "q_1a2b3c", "text": "also run lint", "attachments": [], "createdAt": 1729650000000, "sending": false } ] } }
 ```
-The pane's whole queue, oldest first. Sent on pane selection (§3.3) and to the pane's viewers whenever its queue changes. An item's `text` and `attachments` are what the phone sent (its own text and upload ids), so a withdrawn prompt can go back into the composer (`mobile-ui-and-themes.md` §3.5); the prompt that reaches the agent is composed from them as in §4.2. `sending: true` indicates that the prompt has been dispatched to the terminal and is awaiting detection as a user turn in the agent session.
+The pane's whole queue, oldest first, and whether it is paused (§4.2). Sent on pane selection (§3.3) and to the pane's viewers whenever its queue changes. An item's `text` and `attachments` are what the phone sent (its own text and upload ids), so a withdrawn prompt can go back into the composer (`mobile-ui-and-themes.md` §3.5); the prompt that reaches the agent is composed from them as in §4.2. `sending: true` indicates that the prompt has been dispatched to the terminal and is awaiting detection as a user turn in the agent session.
 
 ### 5.9 Recipes (`recipes_sync`)
 ```json
-{ "type": "recipes_sync", "payload": { "recipes": { "codex": { "kind": "codex", "label": "Codex", "models": [ { "id": "gpt-5.5", "label": "GPT-5.5", "thinkingLevels": ["low", "medium", "high"] } ], "interruptKeys": ["esc"], "resumable": true, "runtimeSwitch": { "model": false, "thinking": false } } } } }
+{ "type": "recipes_sync", "payload": { "recipes": { "codex": { "kind": "codex", "label": "Codex", "models": [ { "id": "gpt-5.5", "label": "GPT-5.5", "thinkingLevels": ["low", "medium", "high"] } ], "interruptKeys": ["esc"], "resumable": true, "launchModel": true } } } }
 ```
 Every recipe summary, in the shape of §5.7. Broadcast to every client after a fill of the model catalog changed a list (`herdr-adapter.md` §7.1). It replaces the recipes the client had from `welcome` or `skills_sync`.
 
@@ -412,7 +418,7 @@ The client part of `config.json` (appearance) is shared by all paired devices.
 *Server Behavior*:
 1. The patch is validated against a whitelist of keys and value types: `themeMode` (`system`, `light`, `dark`), `accent` (`blue`, `purple`, `green`, `orange`, `pink`), `quotaUsageEnabled` (boolean), `quotaProviders` (an object with any of `claude`, `codex`, `antigravity`, each a boolean), `quotaDisplay` (`remaining`, `used`), `quotaButton` (boolean), `quotaShowAccount` (boolean), `usageScanMode` (`scheduled`, `realtime`) and `usageScanInterval` (`1m`, `2m`, `5m`, `10m`, `15m`). Any unknown key or bad value rejects the whole patch with `ERR_INVALID_PAYLOAD`, and nothing is saved.
 2. The patch is deep-merged and written to `config.json` before the reply. A write error is reported as `ERR_INTERNAL`.
-3. Defaults are `themeMode: "system"`, `accent: "blue"`, `quotaUsageEnabled: true`, `quotaDisplay: "remaining"`, `quotaButton: true`, `quotaShowAccount: true`, `usageScanMode: "scheduled"` and `usageScanInterval: "5m"`; `quotaProviders` defaults to the providers logged in on this computer (`quota-and-usage.md` §2.5). The config version is bumped. The sender gets `ack` with `{ "version", "client" }`.
+3. Defaults are `themeMode: "system"`, `accent: "blue"`, `quotaUsageEnabled: true`, `quotaDisplay: "remaining"`, `quotaButton: true`, `quotaShowAccount: true`, `usageScanMode: "scheduled"` and `usageScanInterval: "15m"`; `quotaProviders` defaults to the providers logged in on this computer (`quota-and-usage.md` §2.5). The config version is bumped. The sender gets `ack` with `{ "version", "client" }`.
 4. Every other client gets `{ "type": "config_updated", "payload": { "version", "client" } }`. Clients ignore a `config_sync` or `config_updated` whose version is older than one they have already applied.
 
 ## 7. Uploads (`POST /api/uploads`)
@@ -423,7 +429,7 @@ Attachments are uploaded before the prompt that uses them.
 - **Validation** (trust boundary): a body over 20 MiB is HTTP 413; an empty body, a missing or bad file name is HTTP 400. The stored name keeps only `[A-Za-z0-9._-]` of the original (others become `_`, a leading dot is dropped).
 - **Storage**: `<stateDir>/uploads/<id>-<name>`, mode `0600`, where `id` is `up_` + 16 random hex digits. Uploads older than 7 days are deleted when the daemon starts.
 - **Reply**: `{ "id", "name", "size", "mime" }`. The phone then names `id` in `agent_prompt.attachments` (§4.2).
-- **Retrieval (`GET /api/uploads/:id`)**: returns the uploaded file bytes with its stored `Content-Type` for paired clients with a valid session cookie, enabling mobile clients to render inline thumbnail cards and images in transcripts.
+- **Retrieval (`GET /api/uploads/:id`)**: returns the uploaded file bytes with its stored `Content-Type`, so the phone can show thumbnails and images in the transcript. Gate: a valid session cookie (else HTTP 401) and an allowed `Host` (else HTTP 403). `Origin` may be absent, because a browser sends none for an `<img>` load or a link; when present it must pass the exact Origin check (`security-and-pairing.md` §4, else HTTP 403). The session cookie is `SameSite=Strict`, so a request from another site carries no cookie.
 
 ## 8. Error Code Registry
 

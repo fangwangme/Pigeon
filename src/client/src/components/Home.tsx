@@ -129,9 +129,6 @@ function FilterButton() {
       </Show>
       <button aria-label={t("filter.title")} onClick={() => openOverlay({ kind: "filter" })}>
         <Icon name="sliders" />
-        <Show when={filterActive()}>
-          <span class="dot" />
-        </Show>
       </button>
       <button aria-label={t("settings.title")} onClick={() => navigate({ name: "settings" })}>
         <Icon name="gear" />
@@ -156,7 +153,7 @@ export function Home() {
   const focusedWs = () => (state.workspaces.find((w) => w.isFocused) ?? state.workspaces[0])?.id ?? null;
   return (
     <div class="page">
-      <div class="hdr">
+      <div class="hdr home-hdr">
         <div class="logo-mark" aria-label="Pigeon">
           <Logo />
         </div>
@@ -323,9 +320,6 @@ export function AgentsPage() {
           </Show>
           <button aria-label={t("filter.title")} onClick={() => openOverlay({ kind: "filter" })}>
             <Icon name="sliders" />
-            <Show when={filterActive()}>
-              <span class="dot" />
-            </Show>
           </button>
         </div>
       </div>

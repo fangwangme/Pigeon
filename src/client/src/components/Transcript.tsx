@@ -5,6 +5,7 @@ import { renderMarkdown } from "../utils/markdown";
 import type { Card, FileDiffSummary, NormalizedToolCall, NormalizedTurn, ToolVerb, TurnItem } from "../../../types/protocol";
 import type { IconName } from "../icons";
 import { DiffBadge, Icon, Sheet } from "./ui";
+import { openImage } from "./overlays";
 import { t, type MessageId } from "../i18n";
 
 const VERB_LABEL: Record<ToolVerb, MessageId | null> = { run: "verb.run", edit: "verb.edit", create: "verb.create", read: "verb.read", search: "verb.search", other: null };
@@ -27,7 +28,8 @@ function markdownHtml(md: string): string {
 }
 
 function onMarkdownClick(e: MouseEvent): void {
-  const btn = (e.target as HTMLElement).closest("[data-copy]");
+  const target = e.target instanceof Element ? e.target : (e.target as Node | null)?.parentElement;
+  const btn = target?.closest("[data-copy]");
   if (!btn) return;
   const pre = btn.parentElement?.querySelector("pre");
   if (pre) copyText(pre.textContent ?? "");
@@ -264,6 +266,25 @@ function ToolDetail(props: { call: NormalizedToolCall }) {
 }
 
 export function ToolSheet() {
+  const [atBottom, setAtBottom] = createSignal(true);
+  const [canScroll, setCanScroll] = createSignal(false);
+  const [scrollRatio, setScrollRatio] = createSignal(0);
+  let scroller: HTMLDivElement | undefined;
+
+  const handleScroll = () => {
+    if (!scroller) return;
+    const max = scroller.scrollHeight - scroller.clientHeight;
+    setCanScroll(max > 20);
+    setScrollRatio(max > 0 ? scroller.scrollTop / max : 0);
+    setAtBottom(max - scroller.scrollTop < 24);
+  };
+
+  const scrollToBottom = () => {
+    if (scroller) {
+      scroller.scrollTo({ top: scroller.scrollHeight, behavior: "smooth" });
+    }
+  };
+
   return (
     <Show when={toolSheet()} keyed>
       {(s) => {
@@ -274,34 +295,54 @@ export function ToolSheet() {
         return (
           <Sheet
             full
+            flush
             title={s.detail ? `${verbLabel(s.detail)} ${s.detail.target?.split("/").pop() || ""}`.trim() : s.title}
             onClose={close}
             onBack={s.detail && !s.direct ? () => setToolSheet({ ...s, detail: null }) : undefined}
           >
-            <Show
-              when={s.detail}
-              fallback={
-                <For each={s.calls}>
-                  {(c) => (
-                    <button class="tli" onClick={() => { setToolSheet({ ...s, detail: c }); loadCallDetailIfNeeded(c); }}>
-                      <Show when={c.status !== "running"} fallback={<span class="spin" style={{ margin: "2px" }} />}>
-                        <Icon name={VERB_ICON[c.verb]} />
-                      </Show>
-                      <div class="tx">
-                        <div class="v" style={{ color: c.status === "failed" ? "var(--danger)" : undefined }}>
-                          {verbLabel(c)}
-                        </div>
-                        <div class={`o mono${isPathCall(c) ? " path-rev" : ""}`}>
-                          {isPathCall(c) ? renderPath(callObject(c)) : callObject(c)}
-                        </div>
-                      </div>
-                      <DiffBadge add={c.diff?.additions ?? 0} del={c.diff?.deletions ?? 0} />
-                    </button>
-                  )}
-                </For>
-              }
+            <Show when={canScroll()}>
+              <div class="scroll-track">
+                <div class="scroll-thumb" style={{ width: `${Math.max(10, scrollRatio() * 100)}%` }} />
+              </div>
+            </Show>
+            <div
+              class="body"
+              ref={(el) => {
+                scroller = el;
+                setTimeout(handleScroll, 50);
+              }}
+              onScroll={handleScroll}
             >
-              <ToolDetail call={s.detail!} />
+              <Show
+                when={s.detail}
+                fallback={
+                  <For each={s.calls}>
+                    {(c) => (
+                      <button class="tli" onClick={() => { setToolSheet({ ...s, detail: c }); loadCallDetailIfNeeded(c); }}>
+                        <Show when={c.status !== "running"} fallback={<span class="spin" style={{ margin: "2px" }} />}>
+                          <Icon name={VERB_ICON[c.verb]} />
+                        </Show>
+                        <div class="tx">
+                          <div class="v" style={{ color: c.status === "failed" ? "var(--danger)" : undefined }}>
+                            {verbLabel(c)}
+                          </div>
+                          <div class={`o mono${isPathCall(c) ? " path-rev" : ""}`}>
+                            {isPathCall(c) ? renderPath(callObject(c)) : callObject(c)}
+                          </div>
+                        </div>
+                        <DiffBadge add={c.diff?.additions ?? 0} del={c.diff?.deletions ?? 0} />
+                      </button>
+                    )}
+                  </For>
+                }
+              >
+                <ToolDetail call={s.detail!} />
+              </Show>
+            </div>
+            <Show when={!atBottom()}>
+              <button class="jump tool-jump" aria-label={t("session.jump")} onClick={scrollToBottom}>
+                <Icon name="down" />
+              </button>
             </Show>
           </Sheet>
         );
@@ -367,7 +408,12 @@ export function TodoCapsule() {
 
 // ---------- turns (§3.2, §3.3) ----------
 
-type Block = { kind: "text"; markdown: string } | { kind: "tools"; calls: NormalizedToolCall[] } | { kind: "todo"; done: number; total: number };
+type Block =
+  | { kind: "text"; markdown: string }
+  | { kind: "tools"; calls: NormalizedToolCall[] }
+  | { kind: "todo"; done: number; total: number }
+  | { kind: "error"; text: string }
+  | { kind: "compact"; summary: string };
 
 function blocksOf(turn: NormalizedTurn): Block[] {
   const items: TurnItem[] = turn.items?.length
@@ -385,6 +431,8 @@ function blocksOf(turn: NormalizedTurn): Block[] {
     } else if (it.kind === "text") {
       out.push({ kind: "text", markdown: it.markdown });
     } else if (it.kind === "todo") {
+      out.push(it);
+    } else if (it.kind === "error" || it.kind === "compact") {
       out.push(it);
     }
   }
@@ -439,6 +487,23 @@ function Reasoning(props: { text: string; durationMs?: number; streaming?: boole
   );
 }
 
+/** §3: a compaction is one line; a tap shows the summary in a scrolling box. */
+function Compaction(props: { summary: string }) {
+  const [open, setOpen] = createSignal(false);
+  return (
+    <>
+      <button class="tool compact" onClick={() => setOpen(!open())} aria-expanded={open()}>
+        <Icon name="list" sm />
+        <span class="lab">{t("transcript.compacted")}</span>
+        <Icon name={open() ? "chevD" : "chevR"} sm class="chev" />
+      </button>
+      <Show when={open()}>
+        <div class="thinkbody compactbody">{props.summary}</div>
+      </Show>
+    </>
+  );
+}
+
 function lastText(turn: NormalizedTurn): string {
   const blocks = blocksOf(turn);
   for (let i = blocks.length - 1; i >= 0; i--) {
@@ -446,6 +511,21 @@ function lastText(turn: NormalizedTurn): string {
     if (b.kind === "text") return b.markdown;
   }
   return "";
+}
+
+function formatTurnTime(ts: number): string {
+  const d = new Date(ts);
+  const now = new Date();
+  const isSameDay =
+    d.getFullYear() === now.getFullYear() &&
+    d.getMonth() === now.getMonth() &&
+    d.getDate() === now.getDate();
+  const hh = String(d.getHours()).padStart(2, "0");
+  const mm = String(d.getMinutes()).padStart(2, "0");
+  if (isSameDay) return `${hh}:${mm}`;
+  const mon = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${mon}-${day} ${hh}:${mm}`;
 }
 
 export function Turn(props: { turn: NormalizedTurn; last: boolean; working: boolean }) {
@@ -465,10 +545,15 @@ export function Turn(props: { turn: NormalizedTurn; last: boolean; working: bool
                     const fileName = f.split("/").pop() || f;
                     const isImg = /\.(png|jpe?g|webp|gif|svg)$/i.test(f) || !!uploadId;
                     return uploadId ? (
-                      <a href={`/api/uploads/${uploadId}`} target="_blank" rel="noopener noreferrer" class="att-thumb-link">
+                      <button
+                        type="button"
+                        class="att-thumb-link"
+                        style={{ cursor: "pointer", border: "1px solid var(--line)" }}
+                        onClick={() => openImage(`/api/uploads/${uploadId}`, fileName)}
+                      >
                         <img src={`/api/uploads/${uploadId}`} alt={fileName} class="att-thumb" />
                         <span class="att-name">{fileName.replace(/^up_[0-9a-f]{16}-/, "")}</span>
-                      </a>
+                      </button>
                     ) : (
                       <span>
                         <Icon name={isImg ? "image" : "folder"} sm />
@@ -506,14 +591,31 @@ export function Turn(props: { turn: NormalizedTurn; last: boolean; working: bool
                 <Icon name="chevR" sm class="chev" />
               </button>
             </Match>
+            <Match when={b.kind === "compact"}>
+              <Compaction summary={(b as { summary: string }).summary} />
+            </Match>
+            <Match when={b.kind === "error"}>
+              <div class="turn-error" style={{ color: "var(--danger)", margin: "8px 0", "font-size": "14px", "line-height": "1.5" }}>
+                {(b as { text: string }).text}
+              </div>
+            </Match>
           </Switch>
         )}
       </For>
-      <Show when={finished() && lastText(props.turn)}>
-        <div class="acts">
-          <button aria-label={t("transcript.copyReply")} onClick={() => copyText(lastText(props.turn))}>
-            <Icon name="copy" sm />
-          </button>
+      <Show when={finished()}>
+        <div class="acts" style={{ display: "flex", "align-items": "center", "justify-content": "space-between" }}>
+          <div style={{ display: "flex", gap: "6px" }}>
+            <Show when={lastText(props.turn)}>
+              <button aria-label={t("transcript.copyReply")} onClick={() => copyText(lastText(props.turn))}>
+                <Icon name="copy" sm />
+              </button>
+            </Show>
+          </div>
+          <Show when={props.turn.updatedAt}>
+            <span class="mono" style={{ "font-size": "11.5px", color: "var(--faint)", "margin-right": "4px" }}>
+              {formatTurnTime(props.turn.updatedAt!)}
+            </span>
+          </Show>
         </div>
       </Show>
     </>

@@ -1,9 +1,10 @@
 import { Database } from "bun:sqlite";
-import { existsSync, readdirSync, realpathSync, statSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, realpathSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { OpenCodeAdapter, type OpenCodeAdapterOptions } from "./opencode";
-import { AgyAdapter, type AgyAdapterOptions } from "./agy";
+import { AgyAdapter, agyModelSetting, type AgyAdapterOptions } from "./agy";
+import { isObj, readHeadJsonLines, readTailJsonLines } from "../sessions/common";
 import { ClaudeSource } from "../sessions/claude";
 import { CodexSource } from "../sessions/codex";
 import { PiSource } from "../sessions/pi";
@@ -87,8 +88,75 @@ class AgySource implements SessionSource {
   public forget(id: string): void {
     this.adapter.resetCache(id);
   }
-  public list(): PastSession[] {
-    return [];
+  public list(folder: string): PastSession[] {
+    const dbPath = join(dirname(this.brainDir), "conversation_summaries.db");
+    if (!existsSync(dbPath)) return [];
+    try {
+      const db = new Database(dbPath, { readonly: true });
+      try {
+        db.run("PRAGMA query_only = ON;");
+        db.run("PRAGMA busy_timeout = 2000;");
+        const rows = db.query<{
+          conversation_id: string;
+          title: string;
+          preview: string;
+          last_modified_time: string;
+          workspace_uris: string;
+          nesting_depth: number;
+        }, []>(
+          "SELECT conversation_id, title, preview, last_modified_time, workspace_uris, nesting_depth FROM conversation_summaries WHERE nesting_depth = 0 ORDER BY last_modified_time DESC"
+        ).all();
+
+        const targetUri = "file://" + (folder.endsWith("/") ? folder.slice(0, -1) : folder);
+        const out: PastSession[] = [];
+        for (const r of rows) {
+          let uris: string[] = [];
+          try {
+            uris = JSON.parse(r.workspace_uris);
+          } catch {
+            continue;
+          }
+          if (!Array.isArray(uris)) continue;
+          const matches = uris.some((u) => typeof u === "string" && (u === targetUri || u.startsWith(targetUri + "/")));
+          if (!matches) continue;
+
+          let ts: number;
+          try {
+            ts = Date.parse(r.last_modified_time);
+            if (Number.isNaN(ts)) ts = Date.parse(r.last_modified_time.replace(" ", "T"));
+          } catch {
+            ts = 0;
+          }
+
+          // agent-session-normalization.md §2.6: the latest setting in the first and last 256 KB.
+          let model: string | undefined = undefined;
+          const logPath = this.adapter.getSessionLogPath(r.conversation_id);
+          if (existsSync(logPath)) {
+            const size = statSync(logPath).size;
+            const records = size > 524_288 ? [...readHeadJsonLines(logPath), ...readTailJsonLines(logPath)] : readHeadJsonLines(logPath, size + 1);
+            for (const rec of records) {
+              const found = isObj(rec) && typeof rec.content === "string" ? agyModelSetting(rec.content) : undefined;
+              if (found) model = found;
+            }
+          }
+
+          out.push({
+            id: r.conversation_id,
+            title: r.title ? r.title : r.preview,
+            updatedAt: ts,
+            ...(model ? { model } : {}),
+          });
+          if (out.length >= 50) break;
+        }
+        return out;
+      } finally {
+        db.close();
+      }
+    } catch (err) {
+      // agent-session-normalization.md §2.6: AGY's own database, locked or changed, degrades only this list.
+      console.warn("[pigeon] agy session list unavailable:", err);
+      return [];
+    }
   }
 }
 
@@ -170,7 +238,8 @@ class OpenCodeSource implements SessionSource {
     ).map((r) => {
       const isPlaceholder = r.title ? OPENCODE_PLACEHOLDER_TITLE.test(r.title) : false;
       const effectiveTitle = (!isPlaceholder && r.title) || this.firstPrompt(r.id) || r.id;
-      return { id: r.id, title: effectiveTitle.slice(0, 120), updatedAt: r.time_updated };
+      const m = this.model(r.id);
+      return { id: r.id, title: effectiveTitle.slice(0, 120), updatedAt: r.time_updated, ...(m ? { model: m } : {}) };
     });
   }
 }

@@ -82,7 +82,16 @@ export function modelLabel(model: string | null | undefined, agent?: string | nu
     const fuzzy = list.find((m) => norm(m.id) === target || norm(m.label) === target);
     if (fuzzy) return fuzzy.label;
   }
+  const slashIdx = model.lastIndexOf("/");
+  if (slashIdx >= 0 && slashIdx < model.length - 1) {
+    return model.slice(slashIdx + 1);
+  }
   return model;
+}
+
+/** mobile-ui-and-themes.md §6.4 "Model names": the one rule for every place a model is shown. */
+export function formatModelName(agent: string | null | undefined, model: string | null | undefined): string {
+  return model ? modelLabel(model, agent) : "";
 }
 
 /** The pane the session page opens by default: the tab's first pane with an agent (§6.8). */
@@ -152,6 +161,8 @@ export function Sheet(props: {
   full?: boolean;
   children: JSX.Element;
   noHeader?: boolean;
+  /** The body does not scroll; the children hold their own scroller below a fixed part. */
+  flush?: boolean;
 }) {
   return (
     <div class="overlay" role="dialog" aria-modal="true">
@@ -181,7 +192,7 @@ export function Sheet(props: {
             <div>{props.right}</div>
           </div>
         </Show>
-        <div class="body">{props.children}</div>
+        <div class={`body${props.flush ? " flush" : ""}`}>{props.children}</div>
       </div>
     </div>
   );

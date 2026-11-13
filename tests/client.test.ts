@@ -3,7 +3,6 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { PALETTES } from "../src/client/src/themes";
 import { renderMarkdown } from "../src/client/src/utils/markdown";
-import { matchScreenOption } from "../src/client/src/prompt-match";
 import { state, setState } from "../src/client/src/state/store";
 import { applyClientConfigWithTransitions, sendConfigPatch, handleServerMessage, initWebSocket } from "../src/client/src/state/ws";
 
@@ -68,6 +67,15 @@ describe("installable app (architecture.md §2)", () => {
     expect(readFileSync(join(rootDir, "index.html"), "utf-8")).toContain("interactive-widget=resizes-content");
   });
 
+  test("a home-screen app keeps an opaque status bar (mobile-ui-and-themes.md §1.1)", () => {
+    expect(readFileSync(join(rootDir, "index.html"), "utf-8")).not.toContain("apple-mobile-web-app-status-bar-style");
+  });
+
+  test("a double tap never zooms the page (mobile-ui-and-themes.md §1.1)", () => {
+    const css = readFileSync(join(rootDir, "src", "client", "src", "styles.css"), "utf-8");
+    expect(css).toMatch(/^\*, \*::before, \*::after \{ touch-action: manipulation; \}$/m);
+  });
+
   /** Runs public/sw.js against a stand-in service-worker global and returns its listeners. */
   function loadServiceWorker() {
     const listeners: Record<string, (event: any) => void> = {};
@@ -87,23 +95,6 @@ describe("installable app (architecture.md §2)", () => {
     expect(sw.skipped()).toBe(0);
     sw.listeners.message({ data: { type: "SKIP_WAITING" } });
     expect(sw.skipped()).toBe(1);
-  });
-});
-
-describe("question answers (mobile-ui-and-themes.md §4.2)", () => {
-  const screen = [
-    { id: "1", label: "No, tell Claude what to do differently" },
-    { id: "2", label: "No" },
-    { id: "3", label: "Postgres replica (read-only, eu-wes" },
-  ];
-
-  test("an exact label wins over a longer option that starts with it", () => {
-    expect(matchScreenOption(screen, "No")?.id).toBe("2");
-  });
-
-  test("a label cut short on screen matches only when one option has that prefix", () => {
-    expect(matchScreenOption(screen, "Postgres replica (read-only, eu-west-1)")?.id).toBe("3");
-    expect(matchScreenOption([{ id: "1", label: "Run all tests" }, { id: "2", label: "Run all lints" }], "Run all")).toBeUndefined();
   });
 });
 

@@ -1,7 +1,7 @@
 import { render } from "solid-js/web";
 import { createEffect, createSignal, Match, on, onMount, Show, Switch } from "solid-js";
 import "./styles.css";
-import { navigate, quotaFeatureOn, setState, state, systemReducesTransparency } from "./state/store";
+import { goBack, navigate, quotaFeatureOn, setState, state, systemReducesTransparency } from "./state/store";
 import { applyTheme } from "./themes";
 import { checkPairingFromUrlHash, initWebSocket, reportPresence, selectPane } from "./state/ws";
 import { AgentsPage, Home } from "./components/Home";
@@ -15,15 +15,138 @@ import { t } from "./i18n";
 
 applyTheme(state.themeMode, state.accent);
 
+// mobile-ui-and-themes.md §1.1: the window never scrolls; only a page's scroll area does.
+function resetWindowScroll() {
+  if (window.scrollY !== 0 || window.scrollX !== 0) window.scrollTo(0, 0);
+}
+
+const isTextField = (el: Element | null) => Boolean(el?.matches?.("input, textarea, [contenteditable]"));
+
+// §1.1 "Keyboard on iOS": iOS shrinks only the visual viewport for the keyboard, so while a text
+// field has focus the page follows the visual viewport. Without focus the readings are ignored:
+// iOS 26 can leave them stale after the keyboard closes.
+let fullHeight = 0;
+let fullWidth = 0;
+function fitToVisualViewport() {
+  const vv = window.visualViewport;
+  const root = document.documentElement;
+  if (!vv) return;
+  if (vv.width !== fullWidth) {
+    fullWidth = vv.width;
+    fullHeight = 0;
+  }
+  if (!isTextField(document.activeElement)) {
+    fullHeight = Math.max(fullHeight, vv.height);
+    root.style.removeProperty("--vv-top");
+    root.style.removeProperty("--vv-height");
+    root.removeAttribute("data-keyboard");
+    return;
+  }
+  root.style.setProperty("--vv-top", `${Math.round(vv.offsetTop)}px`);
+  root.style.setProperty("--vv-height", `${Math.round(vv.height)}px`);
+  if (fullHeight - vv.height > 120) root.setAttribute("data-keyboard", "open");
+  else root.removeAttribute("data-keyboard");
+}
+
 if (typeof window !== "undefined") {
   const isStandalone = window.matchMedia("(display-mode: standalone)").matches || Boolean((navigator as any).standalone);
   if (isStandalone) {
     document.documentElement.setAttribute("data-mode", "standalone");
   }
+
+  window.addEventListener("focusin", fitToVisualViewport);
+  window.addEventListener("focusout", () => {
+    // Focus may be moving to another field; act on where it lands.
+    requestAnimationFrame(() => {
+      fitToVisualViewport();
+      if (!isTextField(document.activeElement)) resetWindowScroll();
+    });
+  });
+  window.addEventListener("scroll", () => {
+    if (!isTextField(document.activeElement)) resetWindowScroll();
+  }, { passive: true });
+
+  document.addEventListener("touchmove", (e) => {
+    const target = e.target as HTMLElement | null;
+    if (target?.closest(".hdr, .bottombar")) {
+      if (e.cancelable) e.preventDefault();
+    }
+  }, { passive: false });
+
+  window.visualViewport?.addEventListener("resize", fitToVisualViewport);
+  window.visualViewport?.addEventListener("scroll", fitToVisualViewport);
+  fitToVisualViewport();
 }
 
 let waitingWorker: ServiceWorker | null = null;
 let updateRequested = false;
+
+function isInsideHorizontalScroller(el: Element | null): boolean {
+  while (el && el !== document.body && el !== document.documentElement) {
+    if (el.matches?.(".chipr, table, pre, code, .cb, .dfb")) return true;
+    try {
+      const style = window.getComputedStyle(el);
+      if (style.overflowX === "auto" || style.overflowX === "scroll") return true;
+    } catch {}
+    el = el.parentElement;
+  }
+  return false;
+}
+
+let touchStartX = 0;
+let touchStartY = 0;
+let eligibleSwipe = false;
+
+if (typeof window !== "undefined") {
+  window.addEventListener("touchstart", (e) => {
+    if (e.touches.length !== 1) {
+      eligibleSwipe = false;
+      return;
+    }
+    if (state.route.name === "home") {
+      eligibleSwipe = false;
+      return;
+    }
+    const touch = e.touches[0];
+    if (touch.clientX > 24) {
+      eligibleSwipe = false;
+      return;
+    }
+    if (isInsideHorizontalScroller(touch.target as Element | null)) {
+      eligibleSwipe = false;
+      return;
+    }
+    touchStartX = touch.clientX;
+    touchStartY = touch.clientY;
+    eligibleSwipe = true;
+  }, { passive: true });
+
+  window.addEventListener("touchmove", (e) => {
+    if (!eligibleSwipe || e.touches.length !== 1) return;
+    const touch = e.touches[0];
+    const dy = Math.abs(touch.clientY - touchStartY);
+    const dx = touch.clientX - touchStartX;
+    if (dy > 30 && dy > dx) {
+      eligibleSwipe = false;
+    }
+  }, { passive: true });
+
+  window.addEventListener("touchend", (e) => {
+    if (!eligibleSwipe) return;
+    eligibleSwipe = false;
+    const touch = e.changedTouches[0];
+    if (!touch) return;
+    const dx = touch.clientX - touchStartX;
+    const dy = Math.abs(touch.clientY - touchStartY);
+    if (dx >= 80 && dx > dy) {
+      goBack();
+    }
+  }, { passive: true });
+
+  window.addEventListener("touchcancel", () => {
+    eligibleSwipe = false;
+  }, { passive: true });
+}
 
 function applyUpdate() {
   // A waiting service worker takes over and `controllerchange` reloads once. Without one, the
@@ -88,6 +211,8 @@ function Toast() {
   );
 }
 
+
+
 function App() {
   const [systemReduce, setSystemReduce] = createSignal(systemReducesTransparency());
   onMount(async () => {
@@ -114,7 +239,10 @@ function App() {
     await initWebSocket();
     registerServiceWorker();
   });
-  createEffect(on(() => state.route.name, () => reportPresence(), { defer: true }));
+  createEffect(on(() => state.route.name, () => {
+    reportPresence();
+    resetWindowScroll();
+  }, { defer: true }));
   createEffect(() => {
     if (state.configReady && state.quotaUsageEnabled === false) {
       if (state.route.name === "quota" || state.route.name === "usage") {

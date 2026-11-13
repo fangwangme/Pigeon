@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { CardClassifier } from "../src/server/card-classifier";
+import { CardClassifier, buildUnrecognizedPrompt } from "../src/server/card-classifier";
 
 // herdr-adapter.md §8 (screen parse rules) and protocol.md §4.1 (answering prompts).
 const classifier = new CardClassifier();
@@ -108,5 +108,66 @@ describe("what is a prompt (herdr-adapter.md §8.2)", () => {
       "",
     ].join("\n");
     expect(classify(idle).pendingInteraction).toBeNull();
+  });
+
+  test("buildUnrecognizedPrompt filters status lines and extracts error dialog cleanly", () => {
+    const screen = [
+      "╭───────────────────────────────────────────╮",
+      "│ No capacity available for model gemini-3. │",
+      "│ 8-flash-medium on the server)             │",
+      "│ Error ID: 56ffdbc0-8965-4219-8736-d0eb    │",
+      "╰───────────────────────────────────────────╯",
+      ">",
+      "Pigeon main ctx:14%/1M token:672k Gemini 3.8 Flash (Medium) mode:auto",
+    ].join("\n");
+    const prompt = buildUnrecognizedPrompt(screen);
+    expect(prompt.title).toBe("");
+    expect(prompt.question).toContain("No capacity available");
+    expect(prompt.question).not.toContain("mode:auto");
+    expect(prompt.payload).toContain("Error ID: 56ffdbc0");
+    expect(prompt.payload).not.toContain("mode:auto");
+    expect(prompt.options).toHaveLength(0);
+  });
+});
+
+describe("question menus (herdr-adapter.md §8.2)", () => {
+  const classifier = new CardClassifier();
+
+  test("Claude's multi-select menu: question, options with descriptions, its own entries left out", () => {
+    const screen = [
+      "←  ☐ Toppings  ☐ Size  ✔ Submit  →",
+      "Pick toppings",
+      "❯ 1. [ ] Cheese",
+      "         Cheese topping",
+      "  2. [✔] Ham",
+      "         Ham topping",
+      "  3. [ ] Type something",
+      "     Next",
+      "────────────",
+      "  4. Chat about this",
+      "Enter to select · Tab/Arrow keys to navigate · Esc to cancel",
+    ].join("\n");
+    const p = classifier.classifyScreen(screen).pendingInteraction!;
+    expect(p.question).toBe("Pick toppings");
+    expect(p.multiSelect).toBe(true);
+    expect(p.options.map((o) => [o.id, o.label, o.description, o.keyShortcut])).toEqual([
+      ["opt_1", "Cheese", "Cheese topping", "1"],
+      ["opt_2", "Ham", "Ham topping", "2"],
+    ]);
+  });
+
+  test("a description under the last option still belongs to the menu", () => {
+    const screen = "Pick a size\n❯ 1. Small\n     Small size\n  2. Large\n     Large size\nEnter to select · ↑/↓ to navigate · Esc to cancel";
+    const p = classifier.classifyScreen(screen).pendingInteraction!;
+    expect(p.options.map((o) => [o.label, o.description])).toEqual([
+      ["Small", "Small size"],
+      ["Large", "Large size"],
+    ]);
+  });
+
+  test("a single-select menu without a question mark is a single-select question", () => {
+    const screen = "Pick a size\n❯ 1. Small\n     Small size\n  2. Large\n  3. Type something.\nEnter to select · ↑/↓ to navigate · Esc to cancel";
+    const p = classifier.classifyScreen(screen).pendingInteraction!;
+    expect([p.question, p.multiSelect, p.options.map((o) => o.label)]).toEqual(["Pick a size", false, ["Small", "Large"]]);
   });
 });

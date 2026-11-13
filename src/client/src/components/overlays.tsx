@@ -5,10 +5,48 @@ import { agentLabel, findTab, Icon, paneLabel, Sheet } from "./ui";
 import { t, type MessageId } from "../i18n";
 
 // Sheets reached from more than one screen (mobile-ui-and-themes.md §2.1 swipe actions, §6.5 menu).
-type Overlay = { kind: "rename"; tabId: string } | { kind: "close"; tabId: string } | { kind: "filter" } | null;
+type Overlay =
+  | { kind: "rename"; tabId: string }
+  | { kind: "close"; tabId: string }
+  | { kind: "filter" }
+  | { kind: "image"; url: string; alt?: string }
+  | null;
 
 const [overlay, setOverlay] = createSignal<Overlay>(null);
 export const openOverlay = setOverlay;
+
+export function openImage(url: string, alt?: string): void {
+  setOverlay({ kind: "image", url, alt });
+}
+
+function ImageViewer(props: { url: string; alt?: string }) {
+  return (
+    <div
+      class="img-viewer-overlay"
+      role="dialog"
+      aria-modal="true"
+      onClick={() => setOverlay(null)}
+    >
+      <button
+        class="img-viewer-close"
+        aria-label={t("common.close")}
+        onClick={(e) => {
+          e.stopPropagation();
+          setOverlay(null);
+        }}
+      >
+        <Icon name="x" />
+      </button>
+      <div class="img-viewer-content" onClick={(e) => e.stopPropagation()}>
+        <img
+          src={props.url}
+          alt={props.alt || ""}
+          onClick={() => setOverlay(null)}
+        />
+      </div>
+    </div>
+  );
+}
 
 function RenameSheet(props: { tabId: string }) {
   const found = findTab(props.tabId);
@@ -118,7 +156,7 @@ function FilterSheet() {
       onClose={() => setOverlay(null)}
       right={
         <Show when={filterActive()}>
-          <button class="lnk" onClick={() => setFilter(EMPTY_FILTER)}>
+          <button class="lnk" onClick={() => setFilter({ ...EMPTY_FILTER, groupBy: state.filter.groupBy })}>
             {t("filter.reset")}
           </button>
         </Show>
@@ -186,6 +224,9 @@ export function Overlays() {
       </Show>
       <Show when={overlay()?.kind === "filter"}>
         <FilterSheet />
+      </Show>
+      <Show when={overlay()?.kind === "image" ? (overlay() as { kind: "image"; url: string; alt?: string }) : null} keyed>
+        {(img) => <ImageViewer url={img.url} alt={img.alt} />}
       </Show>
     </>
   );

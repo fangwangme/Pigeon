@@ -9,6 +9,14 @@ export function tempDir(prefix: string): string {
   return mkdtempSync(join(tmpdir(), `pigeon-${prefix}-`));
 }
 
+/** A port the OS just reported free, for a test daemon; never 4100. */
+export function freePort(): number {
+  const probe = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: () => new Response() });
+  const port = probe.port!;
+  probe.stop(true);
+  return port;
+}
+
 export interface HerdrCall {
   /** Core JSON-RPC method, App request (`ls`, `status`) or App command (`tab.new`). */
   method: string;

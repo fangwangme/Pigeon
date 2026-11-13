@@ -41,6 +41,7 @@ export interface InstancePaths {
   vapidPath: string;
   pushSubscriptionsPath: string;
   uploadsDir: string;
+  logPath: string;
   usageDbPath: string;
   pricingCachePath: string;
 }
@@ -85,6 +86,7 @@ export function resolveInstancePaths(options: {
     vapidPath: join(stateDir, "vapid.json"),
     pushSubscriptionsPath: join(stateDir, "push-subscriptions.json"),
     uploadsDir: join(stateDir, "uploads"),
+    logPath: join(stateDir, "pigeon.log"),
     usageDbPath: join(dataHome, "pigeon", "usage.db"),
     pricingCachePath: join(dataHome, "pigeon", "pricing-cache.json"),
   };
