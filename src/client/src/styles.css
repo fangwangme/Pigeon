@@ -187,6 +187,8 @@ svg.i.sm { width: 16px; height: 16px; }
 .dfb .a { background: var(--addbg); color: var(--addfg); padding: 4px 6px; }
 .dfb .d { background: var(--delbg); color: var(--delfg); padding: 4px 6px; }
 .think { color: var(--faint); }
+.tool.compact { background: var(--accentbg); color: var(--accent); border-radius: 12px; padding: 6px 12px; margin: 6px 0; }
+.tool.compact .chev { color: var(--accent); }
 .compactbody { max-height: 40vh; overflow-y: auto; overscroll-behavior: contain; }
 .thinkbody { color: var(--faint); font-size: 14px; white-space: pre-wrap; border-left: 2px solid var(--line2); padding: 2px 0 2px 12px; margin: 2px 0 8px; }
 .typing { display: flex; align-items: center; gap: 10px; color: var(--accent); font-size: 15px; margin: 10px 0 4px; }

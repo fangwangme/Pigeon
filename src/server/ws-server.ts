@@ -77,6 +77,15 @@ export interface ClientConnectionData {
 
 type Ws = ServerWebSocket<ClientConnectionData>;
 
+/** protocol.md §4.2: a pane's queue; `batch` holds the queue ids out in the current send. */
+interface QueueState {
+  state: "idle" | "sending";
+  sawWorking: boolean;
+  unboundSent: boolean;
+  batch: string[];
+  timer?: ReturnType<typeof setTimeout>;
+}
+
 /** Herdr error codes the spec lists (herdr-adapter.md §6) and the protocol code each maps to. */
 // herdr-adapter.md §6: Herdr Core error kinds.
 const HERDR_ERROR_MAP: Record<string, string> = {
@@ -121,7 +130,7 @@ export class WsServer {
   private queueFilePath?: string;
   private queueSendTimeoutMs: number;
   private queues = new Map<string, Array<{ item: QueuedPrompt; send: string; created_ms: number }>>();
-  private queueStates = new Map<string, { state: "idle" | "sending"; sawWorking: boolean; unboundSent: boolean; timer?: ReturnType<typeof setTimeout> }>();
+  private queueStates = new Map<string, QueueState>();
   private restoredPaneIds = new Set<string>();
   private firstSnapshotSeen = false;
 
@@ -1202,13 +1211,19 @@ export class WsServer {
     this.herdrClient.setTranscriptInteraction(paneId, interaction, !!lastTurn?.pendingQuestion && keysChecked);
   }
 
-  private getQueueState(paneId: string): { state: "idle" | "sending"; sawWorking: boolean; unboundSent: boolean; timer?: ReturnType<typeof setTimeout> } {
+  private getQueueState(paneId: string): QueueState {
     let s = this.queueStates.get(paneId);
     if (!s) {
-      s = { state: "idle", sawWorking: false, unboundSent: false };
+      s = { state: "idle", sawWorking: false, unboundSent: false, batch: [] };
       this.queueStates.set(paneId, s);
     }
     return s;
+  }
+
+  /** protocol.md §4.2: the batch out leaves the queue together. */
+  private dropBatch(paneId: string, queueState: QueueState): void {
+    const out = new Set(queueState.batch);
+    this.queues.set(paneId, (this.queues.get(paneId) ?? []).filter((e) => !out.has(e.item.queueId)));
   }
 
   /** Queues while the agent works or others wait; sends otherwise (protocol.md §4.2). */
@@ -1235,8 +1250,7 @@ export class WsServer {
   }
 
   public clearSendingPrompt(paneId: string, queueId?: string): void {
-    const head = this.queues.get(paneId)?.[0];
-    const qId = queueId ?? head?.item.queueId ?? "";
+    const qId = queueId ?? this.queueStates.get(paneId)?.batch[0] ?? "";
     this.transitionQueue(paneId, { type: "timeout", queueId: qId });
   }
 
@@ -1289,35 +1303,18 @@ export class WsServer {
     if (queueState.state === "sending") {
       let settled = false;
       let settleReason = "";
-      const head = queue[0];
 
       if (event.type === "user_turn") {
         const canFlushImmediately =
           queueState.sawWorking &&
           (this.herdrClient.getPaneHerdrStatus(paneId) === "idle" || this.herdrClient.getPaneHerdrStatus(paneId) === "done");
-        if (queueState.timer) {
-          clearTimeout(queueState.timer);
-          queueState.timer = undefined;
-        }
-        const settledId = head?.item.queueId;
-        if (!queueState.unboundSent && head) {
-          queue.shift();
-        }
-        queueState.state = "idle";
-        queueState.sawWorking = false;
-        queueState.unboundSent = false;
-        this.saveQueues();
-        this.sendQueue(paneId);
-        if (settledId) {
-          this.logger?.(`${this.paneLogLabel(paneId)} queue: settled ${settledId} (user_turn)`);
-        }
-
+        this.settleBatch(paneId, queueState, "user_turn");
         if (canFlushImmediately) {
           this.kickQueue(paneId);
         }
         return;
       } else if (event.type === "timeout") {
-        if (!event.queueId || event.queueId === head?.item.queueId) {
+        if (!event.queueId || event.queueId === queueState.batch[0]) {
           settled = true;
           settleReason = "timeout";
         }
@@ -1337,12 +1334,11 @@ export class WsServer {
             clearTimeout(queueState.timer);
             queueState.timer = undefined;
           }
-          if (head && head.item.queueId === event.queueId) {
-            queue.shift();
-          }
+          if (queueState.batch[0] === event.queueId) this.dropBatch(paneId, queueState);
           queueState.state = "idle";
           queueState.sawWorking = false;
           queueState.unboundSent = false;
+          queueState.batch = [];
           this.saveQueues();
           this.sendQueue(paneId);
           this.logger?.(`${this.paneLogLabel(paneId)} queue: send failed ${event.queueId}`);
@@ -1366,8 +1362,8 @@ export class WsServer {
           // Success
           if (!this.paneStore.boundSession(paneId)) {
             // Unbound pane: leaves the queue right after successful send, but queue still waits for it to settle
-            if (head && head.item.queueId === event.queueId && !queueState.unboundSent) {
-              queue.shift();
+            if (queueState.batch[0] === event.queueId && !queueState.unboundSent) {
+              this.dropBatch(paneId, queueState);
               queueState.unboundSent = true;
               this.saveQueues();
               this.sendQueue(paneId);
@@ -1377,23 +1373,7 @@ export class WsServer {
       }
 
       if (settled) {
-        if (queueState.timer) {
-          clearTimeout(queueState.timer);
-          queueState.timer = undefined;
-        }
-        const settledId = head?.item.queueId;
-        if (!queueState.unboundSent && head) {
-          queue.shift();
-        }
-        queueState.state = "idle";
-        queueState.sawWorking = false;
-        queueState.unboundSent = false;
-        this.saveQueues();
-        this.sendQueue(paneId);
-        if (settledId) {
-          this.logger?.(`${this.paneLogLabel(paneId)} queue: settled ${settledId} (${settleReason})`);
-        }
-
+        this.settleBatch(paneId, queueState, settleReason);
         this.kickQueue(paneId);
         return;
       }
@@ -1402,6 +1382,22 @@ export class WsServer {
     if (queueState.state === "idle") {
       this.kickQueue(paneId);
     }
+  }
+
+  private settleBatch(paneId: string, queueState: QueueState, reason: string): void {
+    if (queueState.timer) {
+      clearTimeout(queueState.timer);
+      queueState.timer = undefined;
+    }
+    if (!queueState.unboundSent) this.dropBatch(paneId, queueState);
+    const settled = queueState.batch;
+    queueState.state = "idle";
+    queueState.sawWorking = false;
+    queueState.unboundSent = false;
+    queueState.batch = [];
+    this.saveQueues();
+    this.sendQueue(paneId);
+    if (settled.length) this.logger?.(`${this.paneLogLabel(paneId)} queue: settled ${settled.join(",")} (${reason})`);
   }
 
   private kickQueue(paneId: string): void {
@@ -1414,16 +1410,17 @@ export class WsServer {
     const herdrStatus = this.herdrClient.getPaneHerdrStatus(paneId);
     if (herdrStatus !== "idle" && herdrStatus !== "done") return;
 
-    const entry = queue[0];
-    if (entry.item.sending) return;
-
-    entry.item.sending = true;
+    // protocol.md §4.2: everything queued goes out as one prompt, in queue order.
+    const batch = [...queue];
+    for (const e of batch) e.item.sending = true;
     queueState.state = "sending";
     queueState.sawWorking = false;
     queueState.unboundSent = false;
+    queueState.batch = batch.map((e) => e.item.queueId);
+    const send = batch.map((e) => e.send).join("\n\n");
 
-    const queueId = entry.item.queueId;
-    this.logger?.(`${this.paneLogLabel(paneId)} queue: sending ${queueId}`);
+    const queueId = queueState.batch[0];
+    this.logger?.(`${this.paneLogLabel(paneId)} queue: sending ${queueState.batch.join(",")}`);
     queueState.timer = setTimeout(() => {
       this.transitionQueue(paneId, { type: "timeout", queueId });
     }, this.queueSendTimeoutMs);
@@ -1433,7 +1430,7 @@ export class WsServer {
 
     void (async () => {
       try {
-        await this.herdrClient.sendPrompt(paneId, entry.send);
+        await this.herdrClient.sendPrompt(paneId, send);
         this.transitionQueue(paneId, { type: "send_result", success: true, queueId });
       } catch (err) {
         this.transitionQueue(paneId, { type: "send_result", success: false, error: err, queueId });

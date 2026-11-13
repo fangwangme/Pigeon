@@ -491,7 +491,7 @@ function Compaction(props: { summary: string }) {
   const [open, setOpen] = createSignal(false);
   return (
     <>
-      <button class="tool think" onClick={() => setOpen(!open())} aria-expanded={open()}>
+      <button class="tool compact" onClick={() => setOpen(!open())} aria-expanded={open()}>
         <Icon name="list" sm />
         <span class="lab">{t("transcript.compacted")}</span>
         <Icon name={open() ? "chevD" : "chevR"} sm class="chev" />
