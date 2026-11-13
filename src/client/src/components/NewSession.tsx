@@ -112,6 +112,16 @@ export function NewSession(props: { workspaceId: string | null; mode: "new" | "r
             </button>
           </Show>
         </div>
+        <Show when={mode() === "new" && recipe() && !recipe()!.launchModel}>
+          <p class="note" style={{ margin: "8px 2px 0" }}>
+            {recipe()!.lastUsed
+              ? t("new.lastUsed", {
+                  agent: agentLabel(agent()),
+                  model: formatModelName(agent(), recipe()!.lastUsed!.model) + (recipe()!.lastUsed!.thinking ? ` · ${recipe()!.lastUsed!.thinking}` : ""),
+                })
+              : t("new.lastUsedUnknown", { agent: agentLabel(agent()) })}
+          </p>
+        </Show>
       </div>
 
       <div class="scroll">

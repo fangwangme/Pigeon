@@ -282,6 +282,19 @@ describe("Claude and OpenCode model sources (herdr-adapter.md §7.1, issue #21)"
     ]);
   });
 
+  test("opencode's last-used model and effort come from its state file; none without it (herdr-adapter.md §5)", () => {
+    const { home, env } = agentHome();
+    const catalog = new ModelCatalog({ home, env, keychain: false, cachePath: join(home, "state", "models.json") });
+    expect(catalog.lastUsed("opencode")).toBeUndefined();
+    mkdirSync(join(home, ".local", "state", "opencode"), { recursive: true });
+    writeFileSync(
+      join(home, ".local", "state", "opencode", "model.json"),
+      JSON.stringify({ recent: [{ providerID: "nvidia", modelID: "z-ai/glm-5.3-flash" }, { providerID: "openai", modelID: "gpt-y" }], variant: { "nvidia/z-ai/glm-5.3-flash": "max" } })
+    );
+    expect(catalog.lastUsed("opencode")).toEqual({ model: "nvidia/z-ai/glm-5.3-flash", thinking: "max" });
+    expect(catalog.lastUsed("claude")).toBeUndefined();
+  });
+
   test("without Claude credentials no Claude model is listed, not even the CLI's aliases (herdr-adapter.md §7.1)", async () => {
     const { home, env } = agentHome();
     const catalog = new ModelCatalog({ home, env, keychain: false, cachePath: join(home, "state", "models.json") });

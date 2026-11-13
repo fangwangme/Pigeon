@@ -309,6 +309,8 @@ export interface AgentRecipeSummary {
   resumable: boolean;
   /** Whether `create_tab_and_agent` can start the agent on a chosen model (`protocol.md` §4.5). */
   launchModel: boolean;
+  /** Without `launchModel`: the model and effort the agent will start on (`protocol.md` §5.7). */
+  lastUsed?: { model: string; thinking?: string };
   /** Which values `agent_set_model` can change (`protocol.md` §4.9). */
   runtimeSwitch?: { model: boolean; thinking: boolean };
 }

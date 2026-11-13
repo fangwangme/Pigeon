@@ -132,6 +132,8 @@ export const en = {
   "new.segResume": "Resume",
   "new.pickWorkspace": "Choose workspace",
   "new.defaultModel": "Default model",
+  "new.lastUsed": "{agent} can't pick a model at launch; uses last: {model}",
+  "new.lastUsedUnknown": "{agent} can't pick a model at launch; uses the last one",
   "new.start": "Start a new session",
   "new.startHint": "Sending the first message opens a new tab in Herdr on your computer.",
   "new.notResumable": "{agent} can't resume past sessions.",

@@ -382,6 +382,8 @@ export class WsServer {
         resumable: r.resumable,
         launchModel: r.launchModel !== false,
       };
+      const lastUsed = r.launchModel === false ? this.modelCatalog.lastUsed(r.kind) : undefined;
+      if (lastUsed) recipes[r.kind].lastUsed = lastUsed;
     }
     return recipes;
   }

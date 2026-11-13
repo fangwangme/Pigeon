@@ -92,6 +92,27 @@ export class ModelCatalog {
   }
 
   /**
+   * herdr-adapter.md §5: the model and effort an agent that takes no model at launch will start
+   * on. OpenCode keeps them in its own state file, which may be missing or in another shape.
+   */
+  public lastUsed(agent: string): { model: string; thinking?: string } | undefined {
+    if (agent !== "opencode") return undefined;
+    const path = join(this.home, ".local", "state", "opencode", "model.json");
+    if (!existsSync(path)) return undefined;
+    let data: unknown;
+    try {
+      data = JSON.parse(readFileSync(path, "utf-8"));
+    } catch {
+      return undefined;
+    }
+    const first = isObj(data) && Array.isArray(data.recent) ? data.recent[0] : undefined;
+    if (!isObj(first) || typeof first.providerID !== "string" || typeof first.modelID !== "string") return undefined;
+    const model = `${first.providerID}/${first.modelID}`;
+    const thinking = isObj(data) && isObj(data.variant) ? data.variant[model] : undefined;
+    return { model, ...(typeof thinking === "string" ? { thinking } : {}) };
+  }
+
+  /**
    * herdr-adapter.md §7.1: resolves a model value read from records to a catalog id by exact id,
    * else case-insensitive label match, else kept as read.
    */

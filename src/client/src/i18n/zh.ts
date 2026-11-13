@@ -133,6 +133,8 @@ export const zh: Messages = {
   "new.segResume": "恢复",
   "new.pickWorkspace": "选择工作区",
   "new.defaultModel": "默认模型",
+  "new.lastUsed": "{agent} 不支持指定模型，沿用上次：{model}",
+  "new.lastUsedUnknown": "{agent} 不支持指定模型，沿用上次的模型",
   "new.start": "开始新会话",
   "new.startHint": "发送第一条消息后，会在电脑上的 Herdr 里新开一个标签页。",
   "new.notResumable": "{agent} 不支持恢复历史会话。",
