@@ -133,6 +133,57 @@ function parseTailPrompt(lines: string[], start: number): PromptParse | null {
   };
 }
 
+const MENU_HINT_RE = /Enter to select/i;
+const MENU_TABS_RE = /^←.*→$/;
+const MENU_CHECK_RE = /^\[[ ✔✓xX]\]\s+/;
+const MENU_OWN_ENTRY_RE = /^(Type something\.?|Chat about this)$/i;
+const MENU_STEP_RE = /^(Next|Submit)$/i;
+
+/**
+ * herdr-adapter.md §8.2 "Question menus": Claude's AskUserQuestion menu, a numbered list right
+ * above the `Enter to select` hint. Returns null when the screen does not end in one.
+ */
+function parseQuestionMenu(lines: string[]): (PromptParse & { multiSelect: boolean; descriptions: string[] }) | null {
+  let end = lines.length - 1;
+  while (end >= 0 && (!lines[end].trim() || BORDER_ONLY_RE.test(lines[end].trim()))) end--;
+  if (end < 0 || !MENU_HINT_RE.test(lines[end])) return null;
+  let first = -1;
+  for (let j = end - 1; j >= 0; j--) {
+    const trimmed = lines[j].trim();
+    if (!trimmed || BORDER_ONLY_RE.test(trimmed) || MENU_STEP_RE.test(trimmed)) continue;
+    if (parseNumberedOption(trimmed)) first = j;
+    else if (first === -1 || !/^\s{2,}\S/.test(lines[j])) break;
+  }
+  if (first === -1) return null;
+  let q = first - 1;
+  while (q >= 0 && (!lines[q].trim() || BORDER_ONLY_RE.test(lines[q].trim()) || MENU_TABS_RE.test(lines[q].trim()))) q--;
+  if (q < 0) return null;
+  const options: PromptParse["options"] = [];
+  const descriptions: string[] = [];
+  let multiSelect = false;
+  let current = -1;
+  for (let j = first; j < end; j++) {
+    const trimmed = lines[j].trim();
+    if (!trimmed || BORDER_ONLY_RE.test(trimmed) || MENU_STEP_RE.test(trimmed)) continue;
+    const opt = parseNumberedOption(trimmed);
+    if (opt) {
+      if (MENU_CHECK_RE.test(opt.label)) multiSelect = true;
+      const label = opt.label.replace(MENU_CHECK_RE, "").trim();
+      if (MENU_OWN_ENTRY_RE.test(label)) {
+        current = -1;
+        continue;
+      }
+      options.push({ id: `opt_${opt.num}`, label, keyShortcut: opt.num });
+      descriptions.push("");
+      current = options.length - 1;
+    } else if (current >= 0) {
+      descriptions[current] = descriptions[current] ? `${descriptions[current]} ${trimmed}` : trimmed;
+    }
+  }
+  if (options.length === 0) return null;
+  return { question: lines[q].trim(), payload: "", options, fallbackKeys: DEFAULT_FALLBACK_KEYS, multiSelect, descriptions };
+}
+
 /** `protocol.md` §5.4: `title` and `question` hold only what the screen showed. */
 function buildInteraction(prompt: PromptParse, title = ""): InteractionCardData {
   const optionKey = prompt.options.map((o) => o.label).join("|");
@@ -313,6 +364,17 @@ export class CardClassifier {
       }
     }
 
+    if (!pendingInteraction) {
+      const menu = parseQuestionMenu(lines);
+      if (menu) {
+        const card = buildInteraction(menu);
+        pendingInteraction = {
+          ...card,
+          multiSelect: menu.multiSelect,
+          options: card.options.map((o, k) => (menu.descriptions[k] ? { ...o, description: menu.descriptions[k] } : o)),
+        };
+      }
+    }
     return { cards, pendingInteraction };
   }
 

@@ -1,6 +1,6 @@
 import { createMemo, createSignal, For, Show } from "solid-js";
 import { showToast, state } from "../state/store";
-import { respondInteraction, respondTranscriptQuestions } from "../state/ws";
+import { respondInteraction, respondOptionIds } from "../state/ws";
 import type { InteractionCardData, NormalizedQuestion, NormalizedToolCall } from "../../../types/protocol";
 import { focusComposer } from "./Composer";
 import { Markdown, openToolDetail } from "./Transcript";
@@ -113,7 +113,7 @@ function TranscriptQuestionCard(props: { p: InteractionCardData; q: NormalizedQu
     if (sending()) return;
     const ids = qs().flatMap((_, k) => picksOf(k).map((n) => `q${k + 1}_opt_${n}`));
     setSending(true);
-    respondTranscriptQuestions(props.p.interactionId, ids, props.p.fingerprint)
+    respondOptionIds(props.p.interactionId, ids, props.p.fingerprint)
       .catch((e) => showToast(e.message || t("prompt.notSent")))
       .finally(() => setSending(false));
   };
@@ -172,6 +172,50 @@ function TranscriptQuestionCard(props: { p: InteractionCardData; q: NormalizedQu
             {sending() ? t("common.sending") : t("prompt.submit")}
           </button>
         </Show>
+      </div>
+    </div>
+  );
+}
+
+/** §4.2: an agent's question menu read from the screen, answered one question at a time. */
+function MenuQuestionCard(props: { p: InteractionCardData }) {
+  const [picked, setPicked] = createSignal<string[]>([]);
+  const [sending, setSending] = createSignal(false);
+  const toggle = (id: string) => {
+    if (!props.p.multiSelect) return setPicked([id]);
+    setPicked(picked().includes(id) ? picked().filter((x) => x !== id) : [...picked(), id]);
+  };
+  const confirm = () => {
+    if (sending() || picked().length === 0) return;
+    setSending(true);
+    const sent = props.p.multiSelect
+      ? respondOptionIds(props.p.interactionId, picked(), props.p.fingerprint)
+      : respondInteraction(props.p.interactionId, picked()[0], props.p.fingerprint);
+    sent.catch((e) => showToast(e.message || t("prompt.notSent"))).finally(() => setSending(false));
+  };
+  return (
+    <div class="qcard">
+      <div class="qbody">
+        <div class="qtitle">{props.p.question}</div>
+        <For each={props.p.options}>
+          {(o) => (
+            <button class={`opt${props.p.multiSelect ? " multi" : ""}${picked().includes(o.id) ? " sel" : ""}`} onClick={() => toggle(o.id)}>
+              <span class="rd" />
+              <div class="tx">
+                <b>{o.label}</b>
+                <Show when={o.description}>
+                  <span>{o.description}</span>
+                </Show>
+              </div>
+            </button>
+          )}
+        </For>
+      </div>
+      <div class="qfoot">
+        <span style={{ flex: 1 }} />
+        <button class="btn acc" disabled={picked().length === 0 || sending()} onClick={confirm}>
+          {sending() ? t("common.sending") : t("common.confirm")}
+        </button>
       </div>
     </div>
   );
@@ -389,8 +433,17 @@ export function PromptCard(props: { collapsed: boolean; onCollapse: () => void; 
             when={plan()}
             keyed
             fallback={
-              <Show when={isAlert()} fallback={<PermissionCard p={p()} />}>
-                <AlertDialogCard p={p()} />
+              <Show
+                when={p().multiSelect !== undefined}
+                fallback={
+                  <Show when={isAlert()} fallback={<PermissionCard p={p()} />}>
+                    <AlertDialogCard p={p()} />
+                  </Show>
+                }
+              >
+                <Show when={p().interactionId} keyed>
+                  {(_id: string) => <MenuQuestionCard p={p()} />}
+                </Show>
               </Show>
             }
           >

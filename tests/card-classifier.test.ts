@@ -129,3 +129,36 @@ describe("what is a prompt (herdr-adapter.md §8.2)", () => {
     expect(prompt.options).toHaveLength(0);
   });
 });
+
+describe("question menus (herdr-adapter.md §8.2)", () => {
+  const classifier = new CardClassifier();
+
+  test("Claude's multi-select menu: question, options with descriptions, its own entries left out", () => {
+    const screen = [
+      "←  ☐ Toppings  ☐ Size  ✔ Submit  →",
+      "Pick toppings",
+      "❯ 1. [ ] Cheese",
+      "         Cheese topping",
+      "  2. [✔] Ham",
+      "         Ham topping",
+      "  3. [ ] Type something",
+      "     Next",
+      "────────────",
+      "  4. Chat about this",
+      "Enter to select · Tab/Arrow keys to navigate · Esc to cancel",
+    ].join("\n");
+    const p = classifier.classifyScreen(screen).pendingInteraction!;
+    expect(p.question).toBe("Pick toppings");
+    expect(p.multiSelect).toBe(true);
+    expect(p.options.map((o) => [o.id, o.label, o.description, o.keyShortcut])).toEqual([
+      ["opt_1", "Cheese", "Cheese topping", "1"],
+      ["opt_2", "Ham", "Ham topping", "2"],
+    ]);
+  });
+
+  test("a single-select menu without a question mark is a single-select question", () => {
+    const screen = "Pick a size\n❯ 1. Small\n     Small size\n  2. Large\n  3. Type something.\nEnter to select · ↑/↓ to navigate · Esc to cancel";
+    const p = classifier.classifyScreen(screen).pendingInteraction!;
+    expect([p.question, p.multiSelect, p.options.map((o) => o.label)]).toEqual(["Pick a size", false, ["Small", "Large"]]);
+  });
+});

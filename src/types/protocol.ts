@@ -45,6 +45,8 @@ export interface InteractionOption {
   id: string;
   label: string;
   keyShortcut?: string;
+  /** herdr-adapter.md §8.2: a question menu option's description line. */
+  description?: string;
 }
 
 export interface InteractionCardData extends BaseCard {
@@ -57,6 +59,8 @@ export interface InteractionCardData extends BaseCard {
   fingerprint: string;
   options: InteractionOption[];
   fallbackKeys: string[];
+  /** herdr-adapter.md §8.2: set on a question menu; true when several options may be picked. */
+  multiSelect?: boolean;
 }
 
 export type Card = ThoughtCard | ToolCallCard | DiffCard | MarkdownCard | InteractionCardData;

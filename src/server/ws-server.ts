@@ -639,25 +639,33 @@ export class WsServer {
           this.sendAck(ws, msg.id, { approved: true, interactionId });
           return;
         }
-        if (optionId === undefined) {
-          this.sendError(ws, msg.id, ProtocolErrors.ERR_INVALID_PAYLOAD, "A screen prompt is answered with optionId");
-          return;
-        }
-        const option = pending.options.find((o) => o.id === optionId);
-        if (!option?.keyShortcut) {
-          this.sendError(ws, msg.id, ProtocolErrors.ERR_INVALID_PAYLOAD, `Unknown optionId '${optionId}'`);
-          return;
+        // herdr-adapter.md §8.2: a multi-select question menu takes each pick's digit, then `right`.
+        let keys: string[];
+        if (pending.multiSelect && optionIds) {
+          const picked = optionIds.map((id) => pending.options.find((o) => o.id === id)?.keyShortcut);
+          if (picked.some((k) => !k) || new Set(optionIds).size !== optionIds.length) {
+            this.sendError(ws, msg.id, ProtocolErrors.ERR_INVALID_PAYLOAD, "optionIds must name distinct options of this menu");
+            return;
+          }
+          keys = [...(picked as string[]), "right"];
+        } else {
+          const option = optionId === undefined ? undefined : pending.options.find((o) => o.id === optionId);
+          if (!option?.keyShortcut) {
+            this.sendError(ws, msg.id, ProtocolErrors.ERR_INVALID_PAYLOAD, `Unknown optionId '${optionId}'`);
+            return;
+          }
+          keys = [option.keyShortcut];
         }
         // protocol.md §4.1: send exactly the option's key; a prompt still on screen afterwards
         // is reported as not approved so the client falls back to the terminal view.
         this.answeringPanes.add(targetPaneId);
         let approved: boolean;
         try {
-          approved = await this.herdrClient.answerInteraction(targetPaneId, interactionId, [option.keyShortcut]);
+          approved = await this.herdrClient.answerInteraction(targetPaneId, interactionId, keys);
         } finally {
           this.answeringPanes.delete(targetPaneId);
         }
-        this.logger?.(`${this.paneLogLabel(targetPaneId)} interaction respond: ${optionId} (approved=${approved})`);
+        this.logger?.(`${this.paneLogLabel(targetPaneId)} interaction respond: ${optionId ?? optionIds!.join(",")} (approved=${approved})`);
         this.sendAck(ws, msg.id, { approved, interactionId });
         return;
       }
