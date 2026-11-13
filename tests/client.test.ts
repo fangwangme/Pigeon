@@ -72,6 +72,11 @@ describe("installable app (architecture.md §2)", () => {
     expect(readFileSync(join(rootDir, "index.html"), "utf-8")).not.toContain("apple-mobile-web-app-status-bar-style");
   });
 
+  test("a double tap never zooms the page (mobile-ui-and-themes.md §1.1)", () => {
+    const css = readFileSync(join(rootDir, "src", "client", "src", "styles.css"), "utf-8");
+    expect(css).toMatch(/^\*, \*::before, \*::after \{ touch-action: manipulation; \}$/m);
+  });
+
   /** Runs public/sw.js against a stand-in service-worker global and returns its listeners. */
   function loadServiceWorker() {
     const listeners: Record<string, (event: any) => void> = {};
