@@ -88,6 +88,7 @@ A sheet shared by §2.1 and §2.2: status (等待你, 工作中, 已完成, 空�
 - The last reply of a finished turn has a copy button and its time (`agent-session-normalization.md` §3 `updatedAt`): `HH:mm` on the same day, else `MM-DD HH:mm`.
 - An agent error (`agent-session-normalization.md` §3, item `error`) shows in its turn as one line in `--danger` with the agent's own text, for example "You've hit your session limit · resets 4:40pm". Pigeon adds no explanation of its own.
 - Reasoning collapses to one line, "思考了 N 秒" (or "思考" when no duration is known); a tap shows the full text.
+- A compaction (`agent-session-normalization.md` §3 `compact` item) is one line on the agent's side, "上下文已压缩"; a tap shows the summary in a box of limited height that scrolls (user decision, 2026-11-13).
 - Agent output is untrusted: Markdown is sanitized (`architecture.md` §5).
 
 ### 3.3 Tool calls

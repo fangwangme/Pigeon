@@ -44,7 +44,8 @@ Binding is re-evaluated for every pane on every snapshot (`herdr-adapter.md` §3
 ### 2.3 Claude Code (`claude`)
 - **Storage**: `~/.claude/projects/<slug(cwd)>/<id>.jsonl` (NDJSON); live process map `~/.claude/sessions/<pid>.json`.
 - **Records used**:
-  - `user` with string `message.content`, or text blocks: a user prompt. Lines with `isMeta: true`, or whose text starts with `<command-`, `<local-command-` or `<system-reminder>`, are not prompts. Image blocks become attachments (`files`).
+  - `user` with string `message.content`, or text blocks: a user prompt. Lines with `isMeta: true`, or whose text starts with `<command-`, `<local-command-` or `<system-reminder>`, are not prompts.
+  - `user` with `isCompactSummary: true`: the summary Claude Code wrote when it compacted the conversation. It is not a prompt and starts no turn; its text becomes a `compact` item (§3) in the current turn (user decision, 2026-11-13). Image blocks become attachments (`files`).
   - `user` whose content holds `tool_result` blocks: the result of the tool call with that `tool_use_id` (`content` as text; `is_error` marks failure). `toolUseResult.structuredPatch` (when present) gives the edit's hunks.
   - `assistant`: content blocks `thinking` (reasoning text; empty thinking is not shown), `text` (assistant Markdown), `tool_use` (`id`, `name`, `input`). `message.model` is the model in use (source `log`).
   - `assistant` with `isApiErrorMessage: true`: an agent error. Its text becomes an `error` item (§3) whose `errorKind` is the record's `error` (seen: `rate_limit`, `authentication_failed`, `server_error`, `model_not_found`; `unknown` when absent). Its `message.model` (`<synthetic>`) is not a model value, so the session model stays the last real one.
@@ -93,6 +94,7 @@ interface NormalizedTurn {
     | { kind: "tool"; call: NormalizedToolCall }
     | { kind: "todo"; done: number; total: number }
     | { kind: "error"; errorKind: string; text: string }
+    | { kind: "compact"; summary: string }
   >;
   toolCalls?: NormalizedToolCall[];
   assistantResponse?: { markdown: string; isStreaming?: boolean };
@@ -126,6 +128,7 @@ interface TodoItem { text: string; status: "pending" | "in_progress" | "complete
 - **Verbs**: run = a shell command; edit = a change to an existing file; create = a new file; read = reading a file; search = grep/glob/web search; other = everything else.
 - `exitCode` is set only when the agent recorded it.
 - `updatedAt` is the timestamp of the turn's latest record that has one, else the turn's `timestamp`.
+- A `compact` item marks where the agent compacted its context, with the summary it carried over; it belongs to the agent's side of the turn. Each agent's reader names the records that are compactions; today that is Claude (§2.3).
 - An `error` item is an error the agent itself reported (for example a rate limit), with the agent's own text. Each agent's reader names the records that are errors; today that is Claude (§2.3), and other agents are added as real samples are seen (user decision, 2026-11-12).
 
 ### 3.1 File diffs and session changes
@@ -137,7 +140,7 @@ The session's todo list is the input of its latest todo tool call (Claude `TodoW
 
 ### 3.3 Light list form
 The daemon sends turns to the phone in a light form (user decision, 2026-11-10: the list needs about 5% of the full records); the full records stay in the daemon and are fetched with `detail_get` (`protocol.md` §4.20).
-- `userPrompt`, text items, error items, `assistantResponse`, `pendingQuestion`, `pendingPlan`, `updatedAt` and todo items are sent in full.
+- `userPrompt`, text items, error items, compact items, `assistantResponse`, `pendingQuestion`, `pendingPlan`, `updatedAt` and todo items are sent in full.
 - A tool item's `call` keeps `id`, `name`, `verb`, `target` (at most 200 characters), `description`, `status`, `exitCode`, `durationMs`, and for an edit `diff` without `patch`. `input` and `output` are left out.
 - `reasoning` keeps `durationMs` and `isStreaming`; `text` is left out and `hasText: true` says there is one.
 - `toolCalls` is not sent; `items` holds the calls in order.
