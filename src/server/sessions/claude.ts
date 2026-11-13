@@ -140,7 +140,7 @@ const NOT_PROMPT = /^\s*<(command-|local-command-|system-reminder)/;
 
 /** The prompt text of a `user` record, or null when it is a tool result or meta line. */
 function promptText(r: Record<string, any>): string | null {
-  if (r.isMeta === true) return null;
+  if (r.isMeta === true || r.isCompactSummary === true) return null;
   const content = r.message?.content;
   if (typeof content === "string") return NOT_PROMPT.test(content) ? null : content;
   if (!Array.isArray(content)) return null;
@@ -210,6 +210,10 @@ function applyRecord(b: TurnBuilder, r: unknown): void {
   }
   if (r.type === "user") {
     const content = r.message?.content;
+    if (r.isCompactSummary === true) {
+      b.compact(resultText(content), ts);
+      return;
+    }
     if (Array.isArray(content)) {
       for (const block of content) {
         if (!isObj(block) || block.type !== "tool_result") continue;

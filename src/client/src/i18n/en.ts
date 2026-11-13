@@ -290,6 +290,7 @@ export const en = {
   "transcript.thoughtFor": "Thought for {seconds} s",
   "transcript.thought": "Thinking",
   "transcript.copyReply": "Copy reply",
+  "transcript.compacted": "Context compacted",
   "transcript.editFile": "Edit {path}",
 
   "verb.run": "Run",

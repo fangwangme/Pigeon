@@ -411,7 +411,8 @@ type Block =
   | { kind: "text"; markdown: string }
   | { kind: "tools"; calls: NormalizedToolCall[] }
   | { kind: "todo"; done: number; total: number }
-  | { kind: "error"; text: string };
+  | { kind: "error"; text: string }
+  | { kind: "compact"; summary: string };
 
 function blocksOf(turn: NormalizedTurn): Block[] {
   const items: TurnItem[] = turn.items?.length
@@ -430,7 +431,7 @@ function blocksOf(turn: NormalizedTurn): Block[] {
       out.push({ kind: "text", markdown: it.markdown });
     } else if (it.kind === "todo") {
       out.push(it);
-    } else if (it.kind === "error") {
+    } else if (it.kind === "error" || it.kind === "compact") {
       out.push(it);
     }
   }
@@ -480,6 +481,23 @@ function Reasoning(props: { text: string; durationMs?: number; streaming?: boole
       </button>
       <Show when={open()}>
         <div class="thinkbody">{props.text}</div>
+      </Show>
+    </>
+  );
+}
+
+/** §3: a compaction is one line; a tap shows the summary in a scrolling box. */
+function Compaction(props: { summary: string }) {
+  const [open, setOpen] = createSignal(false);
+  return (
+    <>
+      <button class="tool think" onClick={() => setOpen(!open())} aria-expanded={open()}>
+        <Icon name="list" sm />
+        <span class="lab">{t("transcript.compacted")}</span>
+        <Icon name={open() ? "chevD" : "chevR"} sm class="chev" />
+      </button>
+      <Show when={open()}>
+        <div class="thinkbody compactbody">{props.summary}</div>
       </Show>
     </>
   );
@@ -571,6 +589,9 @@ export function Turn(props: { turn: NormalizedTurn; last: boolean; working: bool
                 </span>
                 <Icon name="chevR" sm class="chev" />
               </button>
+            </Match>
+            <Match when={b.kind === "compact"}>
+              <Compaction summary={(b as { summary: string }).summary} />
             </Match>
             <Match when={b.kind === "error"}>
               <div class="turn-error" style={{ color: "var(--danger)", margin: "8px 0", "font-size": "14px", "line-height": "1.5" }}>

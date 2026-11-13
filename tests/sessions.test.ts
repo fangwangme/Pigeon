@@ -608,6 +608,24 @@ describe("transcript questions, agent errors and turn times (issue #21)", () => 
     }
   }
 
+  const compacted = (proj: string) =>
+    jsonl([
+      { type: "user", timestamp: at(0), cwd: proj, message: { role: "user", content: "Look at this UI" } },
+      { type: "assistant", timestamp: at(5), message: { model: "claude-opus-5-5", role: "assistant", content: [{ type: "text", text: "Checking." }] } },
+      { type: "system", subtype: "compact_boundary", timestamp: at(6), content: "Conversation compacted" },
+      { type: "user", timestamp: at(7), isCompactSummary: true, isVisibleInTranscriptOnly: true, message: { role: "user", content: "This session is being continued. Summary: the card." } },
+      { type: "assistant", timestamp: at(8), message: { model: "claude-opus-5-5", role: "assistant", content: [{ type: "text", text: "Fixed." }] } },
+    ]);
+
+  test("a compaction summary is a compact item on the agent's side, not a prompt (agent-session-normalization.md §2.3)", async () => {
+    const { home, proj } = claudeHome(compacted);
+    const { open } = await setup(home, [{ paneId: "p1", app: "claude-code", cwd: proj, pid: 4242 }]);
+    const payload = turnsOf(await open("p1"));
+    expect(payload.turns.map((t: any) => t.userPrompt?.text)).toEqual(["Look at this UI"]);
+    expect(payload.turns[0].items.map((i: any) => i.kind)).toEqual(["text", "compact", "text"]);
+    expect(payload.turns[0].items[1]).toEqual({ kind: "compact", summary: "This session is being continued. Summary: the card." });
+  });
+
   test("an API error record is an error item and its synthetic model is ignored", async () => {
     const { home, proj } = claudeHome(rateLimited);
     const { open } = await setup(home, [{ paneId: "p1", app: "claude-code", cwd: proj, pid: 4242 }]);

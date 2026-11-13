@@ -43,7 +43,8 @@ export type TurnItem =
   | { kind: "tool"; call: NormalizedToolCall }
   | { kind: "todo"; done: number; total: number }
   | { kind: "reasoning"; text?: string; hasText?: boolean; durationMs?: number; isStreaming?: boolean }
-  | { kind: "error"; errorKind: string; text: string };
+  | { kind: "error"; errorKind: string; text: string }
+  | { kind: "compact"; summary: string };
 
 export interface NormalizedTurn {
   turnId: string;

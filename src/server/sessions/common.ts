@@ -274,6 +274,13 @@ export class TurnBuilder {
     turn.updatedAt = Math.max(turn.updatedAt ?? turn.timestamp, timestamp);
   }
 
+  /** agent-session-normalization.md §3: a compaction, on the agent's side of the current turn. */
+  public compact(summary: string, timestamp: number): void {
+    const turn = this.current(timestamp);
+    turn.items!.push({ kind: "compact", summary });
+    turn.updatedAt = Math.max(turn.updatedAt ?? turn.timestamp, timestamp);
+  }
+
   public touch(timestamp: number): void {
     const turn = this.turns[this.turns.length - 1];
     if (turn) turn.updatedAt = Math.max(turn.updatedAt ?? turn.timestamp, timestamp);

@@ -291,6 +291,7 @@ export const zh: Messages = {
   "transcript.thoughtFor": "思考了 {seconds} 秒",
   "transcript.thought": "思考",
   "transcript.copyReply": "复制回复",
+  "transcript.compacted": "上下文已压缩",
   "transcript.editFile": "编辑 {path}",
 
   "verb.run": "运行",
