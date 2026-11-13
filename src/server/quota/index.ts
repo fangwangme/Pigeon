@@ -130,7 +130,7 @@ export class QuotaService {
     this.hasFetchedOnce = true;
   }
 
-  public async getQuota(clientConfig?: ClientConfig, force?: boolean): Promise<{ providers: QuotaProviderState[]; fetchedAt: number }> {
+  public async getQuota(clientConfig?: ClientConfig): Promise<{ providers: QuotaProviderState[]; fetchedAt: number }> {
     const config = clientConfig ?? this.configManager?.getClientConfig();
     const mode = config?.usageScanMode ?? this.getScanMode();
     const now = this.now();

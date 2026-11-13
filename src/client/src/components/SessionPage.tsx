@@ -1,6 +1,6 @@
 import { createEffect, createMemo, createSignal, For, on, onCleanup, onMount, Show } from "solid-js";
 import { navigate, openTerminal, setState, showToast, state } from "../state/store";
-import { copyText, getDetail, request, requestSkills, selectPane, sendKeys, sendPrompt, setScreenWatch } from "../state/ws";
+import { copyText, request, requestSkills, selectPane, sendKeys, sendPrompt, setScreenWatch } from "../state/ws";
 import type { FileDiffSummary, QueuedPrompt } from "../../../types/protocol";
 import {
   cancelQueuedPromptEdit,

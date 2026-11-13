@@ -35,10 +35,9 @@ describe("claude quota provider sources and windows (quota-and-usage.md ยง2.2, ย
     new ClaudeQuotaProvider({
       home,
       usageUrl: `http://127.0.0.1:${server.port}/usage`,
-      tokenUrl: `http://127.0.0.1:${server.port}/token`,
       keychain,
       now: () => NOW,
-    } as ConstructorParameters<typeof ClaudeQuotaProvider>[0]);
+    });
 
   test("without the credential file the Keychain item is used", async () => {
     const keychain = { read: () => JSON.stringify({ claudeAiOauth: { accessToken: "kc", expiresAt: NOW + 3600_000, subscriptionType: "max" } }) } as CredentialSource;

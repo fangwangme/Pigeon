@@ -120,8 +120,6 @@ describe("claude quota provider (quota-and-usage.md §2.2, §2.3)", () => {
   let home: string;
   let credPath: string;
   let server: ReturnType<typeof Bun.serve>;
-  let tokenCalls: number;
-  let onToken: () => Response;
   let acceptedToken: string;
   const usageBody = {
     five_hour: { utilization: 52, resets_at: "2026-11-09T12:30:00Z" },
@@ -142,15 +140,10 @@ describe("claude quota provider (quota-and-usage.md §2.2, §2.3)", () => {
     home = tempDir("quota-claude");
     mkdirSync(join(home, ".claude"), { recursive: true });
     credPath = join(home, ".claude", ".credentials.json");
-    tokenCalls = 0;
     server = Bun.serve({
       port: 0,
       fetch(req) {
         const url = new URL(req.url);
-        if (url.pathname === "/token") {
-          tokenCalls++;
-          return onToken();
-        }
         if (url.pathname === "/usage") {
           if (req.headers.get("authorization") !== `Bearer ${acceptedToken}`) return new Response("{}", { status: 401 });
           return Response.json(usageBody);
@@ -162,15 +155,13 @@ describe("claude quota provider (quota-and-usage.md §2.2, §2.3)", () => {
 
   afterEach(() => server.stop(true));
 
-  // `tokenUrl` points any refresh attempt at this fake server; quota-and-usage.md §2.3 says none happens.
   const provider = () =>
     new ClaudeQuotaProvider({
       home,
       usageUrl: `http://127.0.0.1:${server.port}/usage`,
-      tokenUrl: `http://127.0.0.1:${server.port}/token`,
       keychain: false,
       now: () => NOW,
-    } as ConstructorParameters<typeof ClaudeQuotaProvider>[0]);
+    });
 
   test("claude usage windows: only the reported windows, with period, share and reset time; plan from the credential", async () => {
     writeCreds("live", "rt", NOW + HOUR);
@@ -181,18 +172,15 @@ describe("claude quota provider (quota-and-usage.md §2.2, §2.3)", () => {
     expect(snap.windows).toHaveLength(2);
     expect(snap.windows[0]).toMatchObject({ id: "five_hour", usedPercent: 52, periodMs: 5 * HOUR, resetsAt: Date.parse("2026-11-09T12:30:00Z") });
     expect(snap.windows[1]).toMatchObject({ id: "seven_day", usedPercent: 17, periodMs: 7 * DAY, resetsAt: Date.parse("2026-11-14T00:30:00Z") });
-    expect(tokenCalls).toBe(0);
   });
 
   test("claude credentials are read-only (D7)", async () => {
     writeCreds("old", "rt-old", NOW - MIN);
     const before = readFileSync(credPath, "utf-8");
     acceptedToken = "old";
-    onToken = () => Response.json({ access_token: "pigeon-new", refresh_token: "rt-pigeon", expires_in: 3600 });
     const error = await provider().fetch().then(() => null, (e: Error) => e);
     expect(error?.message).toMatch(/claude/i);
     expect(error?.message).toMatch(/refresh/i);
-    expect(tokenCalls).toBe(0);
     expect(readFileSync(credPath, "utf-8")).toBe(before);
   });
 });
