@@ -213,7 +213,7 @@ describe("prompting and answering (herdr-adapter.md §6)", () => {
     client.applySnapshot(topologyOf([{ paneId: "t1", app: "claude-code" }]));
     const pending = client.applyScreen("t1", "Do you want to proceed?\n1. Yes\n2. No\n").pendingInteraction!;
     herdr.handlers["terminal.read"] = () => ({ result: { text: "$ next\n", complete: true, how: "history" } });
-    expect(await client.answerInteraction("t1", pending.interactionId, ["1"])).toBe(true);
+    expect(await client.answerInteraction("t1", pending.interactionId, [{ keys: ["1"] }])).toBe(true);
     expect(herdr.callsOf("terminal.keys").map((c) => c.params)).toEqual([{ terminal: "t1", keys: ["1"] }]);
   });
 
@@ -222,13 +222,23 @@ describe("prompting and answering (herdr-adapter.md §6)", () => {
     const screen = "Do you want to proceed?\n1. Yes\n2. No\n";
     const pending = client.applyScreen("t1", screen).pendingInteraction!;
     herdr.handlers["terminal.read"] = () => ({ result: { text: screen, complete: true, how: "history" } });
-    expect(await client.answerInteraction("t1", pending.interactionId, ["1"])).toBe(false);
+    expect(await client.answerInteraction("t1", pending.interactionId, [{ keys: ["1"] }])).toBe(false);
+  });
+
+  test("other text is pasted with force between key steps (herdr-adapter.md §7.2)", async () => {
+    client.applySnapshot(topologyOf([{ paneId: "t1", app: "claude-code" }]));
+    await client.answerSteps("t1", [{ keys: ["1"] }, { text: "Bacon" }, { keys: ["enter", "down", "enter"] }]);
+    expect(herdr.calls.filter((c) => c.method === "terminal.keys" || c.method === "terminal.send").map((c) => [c.method, c.params])).toEqual([
+      ["terminal.keys", { terminal: "t1", keys: ["1"] }],
+      ["terminal.send", { terminal: "t1", text: "Bacon", force: true }],
+      ["terminal.keys", { terminal: "t1", keys: ["enter", "down", "enter"] }],
+    ]);
   });
 
   test("a failed key send is not retried and carries the Core's error kind", async () => {
     client.applySnapshot(topologyOf([{ paneId: "t1", app: "claude-code" }]));
     herdr.handlers["terminal.keys"] = () => ({ error: "unavailable" });
-    await expect(client.answerInteraction("t1", "int_x", ["1"])).rejects.toMatchObject({ code: "unavailable" });
+    await expect(client.answerInteraction("t1", "int_x", [{ keys: ["1"] }])).rejects.toMatchObject({ code: "unavailable" });
     expect(herdr.callsOf("terminal.keys")).toHaveLength(1);
   });
 });

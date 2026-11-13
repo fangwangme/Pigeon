@@ -28,7 +28,8 @@ function markdownHtml(md: string): string {
 }
 
 function onMarkdownClick(e: MouseEvent): void {
-  const btn = (e.target as HTMLElement).closest("[data-copy]");
+  const target = e.target instanceof Element ? e.target : (e.target as Node | null)?.parentElement;
+  const btn = target?.closest("[data-copy]");
   if (!btn) return;
   const pre = btn.parentElement?.querySelector("pre");
   if (pre) copyText(pre.textContent ?? "");

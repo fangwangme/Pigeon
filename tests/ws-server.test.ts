@@ -154,6 +154,16 @@ describe("answering prompts (protocol.md §4.1)", () => {
     expect(herdr.callsOf("terminal.keys").map((x) => x.params.keys)).toEqual([["1", "3", "right"]]);
   });
 
+  test("a question menu's own text goes in as a paste (herdr-adapter.md §8.2)", async () => {
+    const menu = "Pick a size\n❯ 1. Small\n  2. Large\n  3. Type something.\nEnter to select · ↑/↓ to navigate · Esc to cancel";
+    const pending = client.applyScreen("p1", menu).pendingInteraction!;
+    expect(pending.allowsOther).toBe(true);
+    const c = fakeWs();
+    await send(c.ws, { type: "interaction_respond", id: "r1", payload: { targetPaneId: "p1", interactionId: pending.interactionId, fingerprint: pending.fingerprint, optionId: "opt_other", otherTexts: { "1": "Medium" } } });
+    expect(herdr.callsOf("terminal.send").map((x) => x.params)).toEqual([{ terminal: "p1", text: "Medium", force: true }]);
+    expect(herdr.callsOf("terminal.keys")).toHaveLength(0);
+  });
+
   test("a prompt still on screen afterwards is acked as not approved", async () => {
     const pending = pendingOf();
     herdr.handlers["terminal.read"] = () => ({ result: { text: PROMPT, complete: true, how: "history" } });

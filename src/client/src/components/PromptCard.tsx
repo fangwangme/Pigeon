@@ -10,7 +10,6 @@ import { matchScreenOption } from "../prompt-match";
 
 /** Options that hand the turn back to the user to write something (§4.1, §4.3). */
 const TELL_RE = /tell|keep planning|告诉|说明|继续规划/i;
-const OTHER_RE = /type something|other|其他|自己输入/i;
 
 const norm = (s: string) => s.replace(/\s+/g, " ").trim().toLowerCase();
 
@@ -38,6 +37,38 @@ function useAnswer(p: () => InteractionCardData) {
       .finally(() => setSending(null));
   };
   return { sending, answer };
+}
+
+/** §4.2: 其他（自己输入）: a pick that opens a text box under it. */
+function OtherOption(props: { multi: boolean; text: string | undefined; onToggle: () => void; onText: (s: string) => void }) {
+  let box: HTMLTextAreaElement | undefined;
+  return (
+    <>
+      <button
+        class={`opt${props.multi ? " multi" : ""}${props.text !== undefined ? " sel" : ""}`}
+        onClick={() => {
+          props.onToggle();
+          queueMicrotask(() => box?.focus());
+        }}
+      >
+        <span class="rd" />
+        <div class="tx">
+          <b>{t("prompt.other")}</b>
+        </div>
+      </button>
+      <Show when={props.text !== undefined}>
+        <textarea
+          ref={box}
+          class="othtext"
+          rows={2}
+          maxLength={2000}
+          placeholder={t("prompt.otherPlaceholder")}
+          value={props.text ?? ""}
+          onInput={(e) => props.onText(e.currentTarget.value)}
+        />
+      </Show>
+    </>
+  );
 }
 
 /** §4.1: what a tap cannot answer is answered by typing in the composer. */
@@ -98,6 +129,8 @@ function TranscriptQuestionCard(props: { p: InteractionCardData; q: NormalizedQu
   const qs = () => props.q.questions;
   const [cur, setCur] = createSignal(0);
   const [picked, setPicked] = createSignal<Record<number, number[]>>({});
+  // A question's own text: undefined while 其他 is not picked.
+  const [others, setOthers] = createSignal<Record<number, string | undefined>>({});
   const [sending, setSending] = createSignal(false);
   const q = () => qs()[cur()];
   const picksOf = (k: number) => picked()[k] ?? [];
@@ -106,14 +139,22 @@ function TranscriptQuestionCard(props: { p: InteractionCardData; q: NormalizedQu
     const now = picksOf(k);
     const next = q()?.multiSelect ? (now.includes(n) ? now.filter((x) => x !== n) : [...now, n].sort((a, b) => a - b)) : [n];
     setPicked({ ...picked(), [k]: next });
+    if (!q()?.multiSelect) setOthers({ ...others(), [k]: undefined });
   };
+  const toggleOther = () => {
+    const k = cur();
+    setOthers({ ...others(), [k]: others()[k] === undefined ? "" : undefined });
+    if (!q()?.multiSelect) setPicked({ ...picked(), [k]: [] });
+  };
+  const hasPick = (k: number) => picksOf(k).length > 0 || !!others()[k]?.trim();
   const last = () => cur() === qs().length - 1;
-  const allPicked = () => qs().every((_, k) => picksOf(k).length > 0);
+  const allPicked = () => qs().every((_, k) => hasPick(k) && (others()[k] === undefined || !!others()[k]!.trim()));
   const submit = () => {
     if (sending()) return;
-    const ids = qs().flatMap((_, k) => picksOf(k).map((n) => `q${k + 1}_opt_${n}`));
+    const ids = qs().flatMap((_, k) => [...picksOf(k).map((n) => `q${k + 1}_opt_${n}`), ...(others()[k] !== undefined ? [`q${k + 1}_other`] : [])]);
+    const texts = Object.fromEntries(qs().flatMap((_, k) => (others()[k] !== undefined ? [[String(k + 1), others()[k]!.trim()]] : [])));
     setSending(true);
-    respondOptionIds(props.p.interactionId, ids, props.p.fingerprint)
+    respondOptionIds(props.p.interactionId, ids, props.p.fingerprint, Object.keys(texts).length ? texts : undefined)
       .catch((e) => showToast(e.message || t("prompt.notSent")))
       .finally(() => setSending(false));
   };
@@ -157,13 +198,16 @@ function TranscriptQuestionCard(props: { p: InteractionCardData; q: NormalizedQu
             </button>
           )}
         </For>
+        <Show when={props.p.allowsOther}>
+          <OtherOption multi={!!q()?.multiSelect} text={others()[cur()]} onToggle={toggleOther} onText={(s) => setOthers({ ...others(), [cur()]: s })} />
+        </Show>
       </div>
       <div class="qfoot">
         <span style={{ flex: 1 }} />
         <Show
           when={last()}
           fallback={
-            <button class="btn acc" disabled={picksOf(cur()).length === 0} onClick={() => setCur(cur() + 1)}>
+            <button class="btn acc" disabled={!hasPick(cur()) || (others()[cur()] !== undefined && !others()[cur()]!.trim())} onClick={() => setCur(cur() + 1)}>
               {t("prompt.nextShort")}
             </button>
           }
@@ -180,17 +224,28 @@ function TranscriptQuestionCard(props: { p: InteractionCardData; q: NormalizedQu
 /** §4.2: an agent's question menu read from the screen, answered one question at a time. */
 function MenuQuestionCard(props: { p: InteractionCardData }) {
   const [picked, setPicked] = createSignal<string[]>([]);
+  const [other, setOther] = createSignal<string | undefined>(undefined);
   const [sending, setSending] = createSignal(false);
   const toggle = (id: string) => {
-    if (!props.p.multiSelect) return setPicked([id]);
+    if (!props.p.multiSelect) {
+      setOther(undefined);
+      return setPicked([id]);
+    }
     setPicked(picked().includes(id) ? picked().filter((x) => x !== id) : [...picked(), id]);
   };
+  const toggleOther = () => {
+    setOther(other() === undefined ? "" : undefined);
+    if (!props.p.multiSelect) setPicked([]);
+  };
+  const ready = () => (picked().length > 0 || other() !== undefined) && (other() === undefined || !!other()!.trim());
   const confirm = () => {
-    if (sending() || picked().length === 0) return;
+    if (sending() || !ready()) return;
     setSending(true);
+    const ids = [...picked(), ...(other() !== undefined ? ["opt_other"] : [])];
+    const texts = other() !== undefined ? { "1": other()!.trim() } : undefined;
     const sent = props.p.multiSelect
-      ? respondOptionIds(props.p.interactionId, picked(), props.p.fingerprint)
-      : respondInteraction(props.p.interactionId, picked()[0], props.p.fingerprint);
+      ? respondOptionIds(props.p.interactionId, ids, props.p.fingerprint, texts)
+      : respondInteraction(props.p.interactionId, ids[0], props.p.fingerprint, texts);
     sent.catch((e) => showToast(e.message || t("prompt.notSent"))).finally(() => setSending(false));
   };
   return (
@@ -210,10 +265,13 @@ function MenuQuestionCard(props: { p: InteractionCardData }) {
             </button>
           )}
         </For>
+        <Show when={props.p.allowsOther}>
+          <OtherOption multi={!!props.p.multiSelect} text={other()} onToggle={toggleOther} onText={setOther} />
+        </Show>
       </div>
       <div class="qfoot">
         <span style={{ flex: 1 }} />
-        <button class="btn acc" disabled={picked().length === 0 || sending()} onClick={confirm}>
+        <button class="btn acc" disabled={!ready() || sending()} onClick={confirm}>
           {sending() ? t("common.sending") : t("common.confirm")}
         </button>
       </div>
@@ -234,7 +292,6 @@ function QuestionCard(props: { p: InteractionCardData; q: NormalizedQuestion; on
   const [picked, setPicked] = createSignal<Record<number, string>>({});
   const { sending, answer } = useAnswer(() => props.p);
   const q = () => qs()[cur()];
-  const other = () => props.p.options.find((o) => OTHER_RE.test(o.label));
   const submit = () => {
     const label = picked()[cur()];
     const opt = label ? matchScreenOption(props.p.options, label) : undefined;
@@ -285,14 +342,6 @@ function QuestionCard(props: { p: InteractionCardData; q: NormalizedQuestion; on
             </button>
           )}
         </For>
-        <Show when={other()} keyed>
-          {(o) => (
-            <button class="opt oth" disabled={!!sending() || cur() !== onScreen()} onClick={() => answer(o.id, "tell")}>
-              <span class="rd" style={{ visibility: "hidden" }} />
-              <div class="tx">{t("prompt.other")}</div>
-            </button>
-          )}
-        </Show>
       </div>
       <div class="qfoot">
         <span style={{ flex: 1 }} />
@@ -415,6 +464,10 @@ export function PromptCard(props: { collapsed: boolean; onCollapse: () => void; 
   const question = () => lastTurn()?.pendingQuestion;
   const plan = () => lastTurn()?.pendingPlan;
   const isAlert = () => isAlertPrompt(p());
+  // A pane refresh replaces these objects; a card is rebuilt only when its prompt changes, so
+  // the page and picks the user made survive (§4.2).
+  const questionId = () => question()?.id;
+  const isTranscript = createMemo(() => p().source === "transcript");
   return (
     <Show
       when={!props.collapsed || !question()}
@@ -426,11 +479,11 @@ export function PromptCard(props: { collapsed: boolean; onCollapse: () => void; 
       }
     >
       <Show
-        when={question()}
+        when={questionId()}
         keyed
         fallback={
           <Show
-            when={plan()}
+            when={plan()?.markdown}
             keyed
             fallback={
               <Show
@@ -447,17 +500,15 @@ export function PromptCard(props: { collapsed: boolean; onCollapse: () => void; 
               </Show>
             }
           >
-            {(pl) => <PlanCard p={p()} markdown={pl.markdown} />}
+            {(md: string) => <PlanCard p={p()} markdown={md} />}
           </Show>
         }
       >
-        {(q) =>
-          p().source === "transcript" ? (
-            <TranscriptQuestionCard p={p()} q={q} onCollapse={props.onCollapse} />
-          ) : (
-            <QuestionCard p={p()} q={q} onCollapse={props.onCollapse} />
-          )
-        }
+        {(_id: string) => (
+          <Show when={isTranscript()} fallback={<QuestionCard p={p()} q={question()!} onCollapse={props.onCollapse} />}>
+            <TranscriptQuestionCard p={p()} q={question()!} onCollapse={props.onCollapse} />
+          </Show>
+        )}
       </Show>
     </Show>
   );

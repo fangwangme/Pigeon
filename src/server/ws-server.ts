@@ -10,7 +10,7 @@ import { type ConfigManager, resolveProductionPort, DEFAULT_PORT } from "./confi
 import { AgentAdapterManager } from "./agent-adapters/index";
 import { PaneStore } from "./pane-store";
 import { SkillScanner } from "./skill-scanner";
-import { getAgentRecipe, listAgentRecipes } from "./agent-recipes";
+import { claudeQuestionSteps, getAgentRecipe, listAgentRecipes, type AnswerStep, type QuestionAnswer } from "./agent-recipes";
 import { ModelCatalog } from "./model-catalog";
 import { validateClientMessage } from "./ws-validate";
 import { computeInteractionFingerprint } from "./card-classifier";
@@ -611,7 +611,7 @@ export class WsServer {
       }
 
       case "interaction_respond": {
-        const { targetPaneId, interactionId, fingerprint, optionId, optionIds } = msg.payload;
+        const { targetPaneId, interactionId, fingerprint, optionId, optionIds, otherTexts } = msg.payload;
         if (!this.requireKnownPane(ws, msg.id, targetPaneId)) return;
         if (this.answeringPanes.has(targetPaneId)) {
           this.sendError(ws, msg.id, ProtocolErrors.ERR_INTERACTION_STALE, "This prompt is already being answered.");
@@ -624,14 +624,14 @@ export class WsServer {
         }
         if (pending.source === "transcript") {
           // protocol.md §4.1: every question's picks at once; the agent's checked keys (herdr-adapter.md §7.2).
-          const keys = optionIds ? this.transcriptAnswerKeys(targetPaneId, optionIds) : null;
-          if (!keys) {
+          const steps = optionIds ? this.transcriptAnswerSteps(targetPaneId, optionIds, otherTexts ?? {}) : null;
+          if (!steps) {
             this.sendError(ws, msg.id, ProtocolErrors.ERR_INVALID_PAYLOAD, "optionIds must pick every question, and the agent needs checked keys");
             return;
           }
           this.answeringPanes.add(targetPaneId);
           try {
-            await this.herdrClient.sendKeys(targetPaneId, keys);
+            await this.herdrClient.answerSteps(targetPaneId, steps);
           } finally {
             this.answeringPanes.delete(targetPaneId);
           }
@@ -639,29 +639,29 @@ export class WsServer {
           this.sendAck(ws, msg.id, { approved: true, interactionId });
           return;
         }
-        // herdr-adapter.md §8.2: a multi-select question menu takes each pick's digit, then `right`.
-        let keys: string[];
-        if (pending.multiSelect && optionIds) {
-          const picked = optionIds.map((id) => pending.options.find((o) => o.id === id)?.keyShortcut);
-          if (picked.some((k) => !k) || new Set(optionIds).size !== optionIds.length) {
-            this.sendError(ws, msg.id, ProtocolErrors.ERR_INVALID_PAYLOAD, "optionIds must name distinct options of this menu");
+        let steps: AnswerStep[];
+        if (pending.multiSelect !== undefined) {
+          // herdr-adapter.md §8.2: a question menu, single- or multi-select, maybe with other text.
+          const answer = this.menuAnswer(pending, optionId, optionIds, otherTexts ?? {});
+          if (!answer) {
+            this.sendError(ws, msg.id, ProtocolErrors.ERR_INVALID_PAYLOAD, "The picks do not answer this question menu");
             return;
           }
-          keys = [...(picked as string[]), "right"];
+          steps = claudeQuestionSteps(answer);
         } else {
-          const option = optionId === undefined ? undefined : pending.options.find((o) => o.id === optionId);
+          const option = optionId === undefined || otherTexts ? undefined : pending.options.find((o) => o.id === optionId);
           if (!option?.keyShortcut) {
             this.sendError(ws, msg.id, ProtocolErrors.ERR_INVALID_PAYLOAD, `Unknown optionId '${optionId}'`);
             return;
           }
-          keys = [option.keyShortcut];
+          steps = [{ keys: [option.keyShortcut] }];
         }
         // protocol.md §4.1: send exactly the option's key; a prompt still on screen afterwards
         // is reported as not approved so the client falls back to the terminal view.
         this.answeringPanes.add(targetPaneId);
         let approved: boolean;
         try {
-          approved = await this.herdrClient.answerInteraction(targetPaneId, interactionId, keys);
+          approved = await this.herdrClient.answerInteraction(targetPaneId, interactionId, steps);
         } finally {
           this.answeringPanes.delete(targetPaneId);
         }
@@ -1100,29 +1100,58 @@ export class WsServer {
   }
 
   /** herdr-adapter.md §7.2: the keys for a transcript question's picks; null when they do not pick every question. */
-  private transcriptAnswerKeys(paneId: string, optionIds: string[]): string[] | null {
+  /** protocol.md §4.1: a question menu's picks, `opt_other` standing for the text of question 1. */
+  private menuAnswer(pending: InteractionCardData, optionId: string | undefined, optionIds: string[] | undefined, otherTexts: Record<string, string>): QuestionAnswer | null {
+    const ids = optionIds ?? (optionId !== undefined ? [optionId] : []);
+    if (new Set(ids).size !== ids.length || (!pending.multiSelect && (optionIds || ids.length !== 1))) return null;
+    const wantsOther = ids.includes("opt_other");
+    const keys = Object.keys(otherTexts);
+    if (wantsOther ? !pending.allowsOther || keys.join() !== "1" : keys.length > 0) return null;
+    const picks: number[] = [];
+    for (const id of ids) {
+      if (id === "opt_other") continue;
+      const key = pending.options.find((o) => o.id === id)?.keyShortcut;
+      if (!key) return null;
+      picks.push(Number(key));
+    }
+    return { multiSelect: !!pending.multiSelect, picks, ...(wantsOther ? { other: otherTexts["1"].trim() } : {}) };
+  }
+
+  /** protocol.md §4.1: every question answered, in question order, by picks or other text. */
+  private transcriptAnswerSteps(paneId: string, optionIds: string[], otherTexts: Record<string, string>): AnswerStep[] | null {
     const turns = this.paneStore.getPaneState(paneId)?.turns ?? [];
     const pq = turns[turns.length - 1]?.pendingQuestion;
     const kind = this.herdrClient.getPaneAgentKind(paneId);
-    const questionKeys = kind ? getAgentRecipe(kind)?.questionKeys : undefined;
-    if (!pq || !questionKeys) return null;
-    const picks: number[][] = pq.questions.map(() => []);
+    const questionSteps = kind ? getAgentRecipe(kind)?.questionSteps : undefined;
+    if (!pq || !questionSteps) return null;
+    const answers: QuestionAnswer[] = pq.questions.map((q) => ({ multiSelect: !!q.multiSelect, picks: [] }));
+    let reached = 0;
     for (const id of optionIds) {
-      const m = /^q(\d+)_opt_(\d+)$/.exec(id);
+      const m = /^q(\d+)_(?:opt_(\d+)|(other))$/.exec(id);
       const k = m ? Number(m[1]) - 1 : -1;
-      const n = m ? Number(m[2]) : 0;
-      if (k < 0 || k >= pq.questions.length || n < 1 || n > pq.questions[k].options.length || picks[k].includes(n)) return null;
-      if (k < picks.length - 1 && picks.slice(k + 1).some((p) => p.length > 0)) return null;
-      picks[k].push(n);
+      if (k < reached || k >= answers.length) return null;
+      reached = k;
+      const a = answers[k];
+      if (m![3]) {
+        const text = otherTexts[String(k + 1)];
+        if (a.other !== undefined || text === undefined) return null;
+        a.other = text.trim();
+        continue;
+      }
+      const n = Number(m![2]);
+      if (n < 1 || n > pq.questions[k].options.length || a.picks.includes(n)) return null;
+      a.picks.push(n);
     }
-    const questions = pq.questions.map((q, k) => ({ multiSelect: !!q.multiSelect, picks: picks[k] }));
-    if (questions.some((q) => q.picks.length === 0 || (!q.multiSelect && q.picks.length > 1))) return null;
-    return questionKeys(questions);
+    const usedTexts = answers.filter((a) => a.other !== undefined).length;
+    if (usedTexts !== Object.keys(otherTexts).length) return null;
+    const count = (a: QuestionAnswer) => a.picks.length + (a.other !== undefined ? 1 : 0);
+    if (answers.some((a) => count(a) === 0 || (!a.multiSelect && count(a) > 1))) return null;
+    return questionSteps(answers);
   }
 
   private syncTranscriptInteraction(paneId: string): void {
     const kind = this.herdrClient.getPaneAgentKind(paneId);
-    const keysChecked = !!(kind && getAgentRecipe(kind)?.questionKeys);
+    const keysChecked = !!(kind && getAgentRecipe(kind)?.questionSteps);
     const sessionState = this.paneStore.getPaneState(paneId);
     const lastTurn = sessionState?.turns[sessionState.turns.length - 1];
     let interaction: InteractionCardData | null = null;
@@ -1153,6 +1182,7 @@ export class WsServer {
         fingerprint: computeInteractionFingerprint(firstQ, "", options),
         options,
         fallbackKeys: ["enter", "esc", "up", "down"],
+        ...(keysChecked ? { allowsOther: true } : {}),
       };
     } else if (lastTurn?.pendingPlan) {
       const hash = createHash("sha256").update(lastTurn.pendingPlan.markdown).digest("hex").slice(0, 10);

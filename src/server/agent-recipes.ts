@@ -2,6 +2,24 @@ import type { ModelOption } from "../types/protocol";
 
 export type { ModelOption };
 
+/** One step of answering a question menu: keys pressed, or text pasted and submitted with Enter. */
+export type AnswerStep = { keys: string[] } | { text: string };
+
+/** A question's answer: picked option numbers (1-based) and, when given, the user's own text. */
+export interface QuestionAnswer {
+  multiSelect: boolean;
+  picks: number[];
+  other?: string;
+}
+
+/** `herdr-adapter.md` §7.2 claude row and §8.2: the steps that answer one Claude question. */
+export function claudeQuestionSteps(q: QuestionAnswer): AnswerStep[] {
+  const digits = q.picks.map(String);
+  if (!q.multiSelect) return q.other !== undefined ? [{ text: q.other }] : [{ keys: digits }];
+  if (q.other === undefined) return [{ keys: [...digits, "right"] }];
+  return [...(digits.length ? [{ keys: digits }] : []), { text: q.other }, { keys: ["enter", "down", "enter"] }];
+}
+
 /**
  * Per-agent launch knowledge. Model lists live in the model catalog (`model-catalog.ts`,
  * `herdr-adapter.md` §7.1). Flags are the ones each CLI's `--help` documents.
@@ -26,10 +44,10 @@ export interface AgentRecipe {
   /** Separator between prompt text and attachment paths (defaults to "\n\n"). */
   attachmentSeparator?: string;
   /**
-   * `herdr-adapter.md` §7.2: the keys that answer a transcript question, given each question's
-   * kind and its picked option numbers (1-based); absent when the keys were never checked.
+   * `herdr-adapter.md` §7.2: the steps that answer a transcript question, given each question's
+   * answer; absent when the keys were never checked.
    */
-  questionKeys?: (questions: Array<{ multiSelect: boolean; picks: number[] }>) => string[];
+  questionSteps?: (questions: QuestionAnswer[]) => AnswerStep[];
 }
 
 const AGENT_RECIPES: Record<string, AgentRecipe> = {
@@ -43,9 +61,9 @@ const AGENT_RECIPES: Record<string, AgentRecipe> = {
     interruptKeys: ["esc"],
     resumable: true,
     mentionPrefix: "@",
-    questionKeys(questions) {
-      const keys = questions.flatMap((q) => (q.multiSelect ? [...q.picks.map(String), "right"] : [String(q.picks[0])]));
-      return questions.length === 1 && !questions[0].multiSelect ? keys : [...keys, "1"];
+    questionSteps(questions) {
+      const steps = questions.flatMap(claudeQuestionSteps);
+      return questions.length === 1 && !questions[0].multiSelect ? steps : [...steps, { keys: ["1"] }];
     },
   },
   codex: {

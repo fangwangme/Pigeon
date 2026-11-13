@@ -143,7 +143,7 @@ const MENU_STEP_RE = /^(Next|Submit)$/i;
  * herdr-adapter.md §8.2 "Question menus": Claude's AskUserQuestion menu, a numbered list right
  * above the `Enter to select` hint. Returns null when the screen does not end in one.
  */
-function parseQuestionMenu(lines: string[]): (PromptParse & { multiSelect: boolean; descriptions: string[] }) | null {
+function parseQuestionMenu(lines: string[]): (PromptParse & { multiSelect: boolean; allowsOther: boolean; descriptions: string[] }) | null {
   let end = lines.length - 1;
   while (end >= 0 && (!lines[end].trim() || BORDER_ONLY_RE.test(lines[end].trim()))) end--;
   if (end < 0 || !MENU_HINT_RE.test(lines[end])) return null;
@@ -161,6 +161,7 @@ function parseQuestionMenu(lines: string[]): (PromptParse & { multiSelect: boole
   const options: PromptParse["options"] = [];
   const descriptions: string[] = [];
   let multiSelect = false;
+  let allowsOther = false;
   let current = -1;
   for (let j = first; j < end; j++) {
     const trimmed = lines[j].trim();
@@ -170,6 +171,7 @@ function parseQuestionMenu(lines: string[]): (PromptParse & { multiSelect: boole
       if (MENU_CHECK_RE.test(opt.label)) multiSelect = true;
       const label = opt.label.replace(MENU_CHECK_RE, "").trim();
       if (MENU_OWN_ENTRY_RE.test(label)) {
+        if (/^Type something/i.test(label)) allowsOther = true;
         current = -1;
         continue;
       }
@@ -181,7 +183,7 @@ function parseQuestionMenu(lines: string[]): (PromptParse & { multiSelect: boole
     }
   }
   if (options.length === 0) return null;
-  return { question: lines[q].trim(), payload: "", options, fallbackKeys: DEFAULT_FALLBACK_KEYS, multiSelect, descriptions };
+  return { question: lines[q].trim(), payload: "", options, fallbackKeys: DEFAULT_FALLBACK_KEYS, multiSelect, allowsOther, descriptions };
 }
 
 /** `protocol.md` §5.4: `title` and `question` hold only what the screen showed. */
@@ -371,6 +373,7 @@ export class CardClassifier {
         pendingInteraction = {
           ...card,
           multiSelect: menu.multiSelect,
+          ...(menu.allowsOther ? { allowsOther: true } : {}),
           options: card.options.map((o, k) => (menu.descriptions[k] ? { ...o, description: menu.descriptions[k] } : o)),
         };
       }

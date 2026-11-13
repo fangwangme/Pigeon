@@ -5,7 +5,7 @@ import { basename, dirname } from "node:path";
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
 import { readGitBranch } from "./git-branch";
 import { CardClassifier, buildUnrecognizedPrompt } from "./card-classifier";
-import { getAgentRecipe } from "./agent-recipes";
+import { getAgentRecipe, type AnswerStep } from "./agent-recipes";
 import type {
   AgentStatus,
   InteractionCardData,
@@ -890,11 +890,27 @@ export class HerdrClient extends EventEmitter {
    * Returns true when that prompt is gone (no prompt, or a different one). Never retries:
    * a timed-out send may already have landed.
    */
-  public async answerInteraction(paneId: string, interactionId: string, keys: string[]): Promise<boolean> {
-    await this.coreRequest("terminal.keys", { terminal: paneId, keys });
+  public async answerInteraction(paneId: string, interactionId: string, steps: AnswerStep[]): Promise<boolean> {
+    await this.runAnswerSteps(paneId, steps);
     await new Promise((r) => setTimeout(r, 300));
     const state = await this.readAndClassifyPane(paneId);
     return state.pendingInteraction?.interactionId !== interactionId;
+  }
+
+  /**
+   * herdr-adapter.md §7.2: answers a question dialog step by step, each sent once. Text is pasted
+   * with `force`, since the agent is `blocked` on the dialog it answers.
+   */
+  public async answerSteps(paneId: string, steps: AnswerStep[]): Promise<void> {
+    await this.runAnswerSteps(paneId, steps);
+    this.scheduleDebouncedRead(paneId);
+  }
+
+  private async runAnswerSteps(paneId: string, steps: AnswerStep[]): Promise<void> {
+    for (const step of steps) {
+      if ("text" in step) await this.coreRequest("terminal.send", { terminal: paneId, text: step.text, force: true });
+      else await this.coreRequest("terminal.keys", { terminal: paneId, keys: step.keys });
+    }
   }
 
   public async sendKeys(paneId: string, keys: string[]): Promise<void> {

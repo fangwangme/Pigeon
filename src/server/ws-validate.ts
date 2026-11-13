@@ -69,6 +69,15 @@ export function validateClientMessage(raw: unknown): ValidationResult {
       ) {
         return fail(id, "interaction_respond needs targetPaneId, interactionId, fingerprint and optionId or optionIds");
       }
+      // protocol.md §4.1: other text by question number, 1–2000 characters after trimming.
+      if (
+        p.otherTexts !== undefined &&
+        (!isObj(p.otherTexts) ||
+          Object.keys(p.otherTexts).length > 16 ||
+          !Object.entries(p.otherTexts).every(([k, v]) => /^[1-9]\d?$/.test(k) && typeof v === "string" && v.trim().length > 0 && v.trim().length <= 2000))
+      ) {
+        return fail(id, "interaction_respond otherTexts maps question numbers to 1–2000 characters of text");
+      }
       return ok();
     case "create_tab_and_agent":
       if (!isObj(p) || !isStr(p.workspaceId) || !isStr(p.agentKind, 32) || !optStr(p.modelId, 128) || !optStr(p.thinking, 32) || !optStr(p.cwd, 4096) || !optStr(p.firstMessage, MAX_TEXT)) {
