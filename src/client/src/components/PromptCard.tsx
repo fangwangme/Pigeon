@@ -1,6 +1,6 @@
 import { createMemo, createSignal, For, Show } from "solid-js";
 import { showToast, state } from "../state/store";
-import { respondInteraction, respondOptionIds } from "../state/ws";
+import { closeAlert, isAlertClosed, respondInteraction, respondOptionIds } from "../state/ws";
 import type { InteractionCardData, NormalizedQuestion, NormalizedToolCall } from "../../../types/protocol";
 import { focusComposer } from "./Composer";
 import { Markdown, openToolDetail } from "./Transcript";
@@ -316,7 +316,8 @@ function isAlertPrompt(p: InteractionCardData): boolean {
 }
 
 function cleanAlertInfo(p: InteractionCardData) {
-  const raw = [p.question, p.payload].filter(Boolean).join("\n");
+  // The question is one of the payload's lines; show it once.
+  const raw = p.payload || p.question || "";
   const lines = raw
     .split("\n")
     .map((l) => l.trim())
@@ -339,14 +340,12 @@ function cleanAlertInfo(p: InteractionCardData) {
   return { title, message, isError };
 }
 
-/** §4.4: alerts closed on this page, by interaction id; a new prompt shows again. */
-const closedAlerts = new Set<string>();
-
+/** §4.4: rebuilt per prompt (keyed by its id); a closed one stays closed while it is pending. */
 function AlertDialogCard(props: { p: InteractionCardData }) {
-  const [closed, setClosed] = createSignal(closedAlerts.has(props.p.interactionId));
+  const [closed, setClosed] = createSignal(isAlertClosed(state.activePaneId, props.p.interactionId));
   const info = () => cleanAlertInfo(props.p);
   const close = () => {
-    closedAlerts.add(props.p.interactionId);
+    closeAlert(state.activePaneId, props.p.interactionId);
     setClosed(true);
   };
 
@@ -379,7 +378,7 @@ function AlertDialogCard(props: { p: InteractionCardData }) {
   );
 }
 
-/** §4: replaces the composer while the pane has a pending interaction. Returns null when collapsed. */
+/** §4: the pending interaction's card, above the composer; collapsed to a cap when asked. */
 export function PromptCard(props: { collapsed: boolean; onCollapse: () => void; onExpand: () => void }) {
   const p = () => state.pendingInteraction!;
   const question = () => lastTurn()?.pendingQuestion;
@@ -411,7 +410,9 @@ export function PromptCard(props: { collapsed: boolean; onCollapse: () => void; 
                 when={p().multiSelect !== undefined}
                 fallback={
                   <Show when={isAlert()} fallback={<PermissionCard p={p()} />}>
-                    <AlertDialogCard p={p()} />
+                    <Show when={p().interactionId} keyed>
+                      {(_id: string) => <AlertDialogCard p={p()} />}
+                    </Show>
                   </Show>
                 }
               >

@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { homedir, userInfo } from "node:os";
 import { dirname, join } from "node:path";
 import type { ModelOption } from "../types/protocol";
@@ -84,7 +84,9 @@ export class ModelCatalog {
     mkdirSync(dirname(this.cachePath), { recursive: true });
     const data: Record<string, { models: ModelOption[]; fetchedAt?: number }> = {};
     for (const [agent, models] of this.lists) data[agent] = { models, fetchedAt: this.fetchedAt.get(agent) };
-    writeFileSync(this.cachePath, JSON.stringify(data, null, 2), "utf-8");
+    const tmp = `${this.cachePath}.tmp`;
+    writeFileSync(tmp, JSON.stringify(data, null, 2), "utf-8");
+    renameSync(tmp, this.cachePath);
   }
 
   public models(agent: string): ModelOption[] {
@@ -131,10 +133,19 @@ export class ModelCatalog {
     return idOrLabel;
   }
 
-  /** Fills every list again; resolves whether any list changed. Concurrent calls share one fill. */
-  public refresh(forceAgent?: string): Promise<boolean> {
-    this.filling ??= this.fill(forceAgent).finally(() => (this.filling = null));
+  /** An automatic fill of every list; resolves whether any list changed. Concurrent calls share one fill. */
+  public refresh(): Promise<boolean> {
+    this.filling ??= this.fill(null, false).finally(() => (this.filling = null));
     return this.filling;
+  }
+
+  /**
+   * protocol.md §4.15: a fill asked from the phone, of one agent's list or all of them. It always
+   * reads its sources, so it runs after a fill already under way instead of joining it.
+   */
+  public async refreshAsked(agent?: string): Promise<boolean> {
+    if (this.filling) await this.filling;
+    return this.fill(agent ? [agent] : null, true);
   }
 
   /**
@@ -149,16 +160,16 @@ export class ModelCatalog {
     return this.refresh();
   }
 
-  private async fill(forceAgent?: string): Promise<boolean> {
+  private async fill(agents: string[] | null, asked: boolean): Promise<boolean> {
     const sources: Array<[string, () => Promise<ModelOption[]>]> = [
-      ["claude", () => this.claude(forceAgent === "claude")],
+      ["claude", () => this.claude(asked)],
       ["codex", async () => this.codex()],
       ["pi", async () => this.pi()],
       ["opencode", () => this.opencode()],
       ["agy", () => this.agy()],
     ];
     const results = await Promise.all(
-      sources.map(async ([agent, read]) => {
+      sources.filter(([agent]) => !agents || agents.includes(agent)).map(async ([agent, read]) => {
         try {
           return [agent, await read()] as const;
         } catch (err) {

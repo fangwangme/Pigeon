@@ -4,7 +4,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { ConfigManager } from "../src/server/config-manager";
 import { PigeonDaemon } from "../src/server/daemon";
-import { FakeHerdr, tempDir, type FakePane } from "./helpers/fixtures";
+import { FakeHerdr, freePort, tempDir, type FakePane } from "./helpers/fixtures";
 
 // Issue #19 acceptance: push.md §3 (subscription storage), §4 (trigger), §5 (delivery: RFC 8291 + RFC 8292).
 const PUBLIC = "https://pigeon.example.ts.net";
@@ -41,7 +41,7 @@ function fakePushService() {
 async function startDaemon(dir: string, herdr: FakeHerdr) {
   const daemon = new PigeonDaemon({
     configManager: new ConfigManager(join(dir, "config.json"), { HOME: dir }),
-    port: 42000 + Math.floor(Math.random() * 2000),
+    port: freePort(),
     publicBaseUrl: PUBLIC,
     herdrAppSocketPath: herdr.appSocketPath,
     herdrCoreSocketPath: herdr.coreSocketPath,

@@ -219,6 +219,9 @@ export class WsServer {
     this.paneStore.on("title_changed", () => queueMicrotask(() => this.herdrClient.relabelTabs()));
 
     this.onSnapshotUpdated = (snapshot) => {
+      // protocol.md §4.2: restored prompts go out only after binding has read the session, so a
+      // pause derived from it holds them.
+      const restoredToSend: string[] = [];
       if (!this.firstSnapshotSeen) {
         this.firstSnapshotSeen = true;
         for (const paneId of Array.from(this.restoredPaneIds)) {
@@ -237,10 +240,7 @@ export class WsServer {
           }
           if (kept.length > 0) {
             this.queues.set(paneId, kept);
-            const status = this.herdrClient.getPaneHerdrStatus(paneId);
-            if (status === "idle" || status === "done") {
-              this.kickQueue(paneId);
-            }
+            restoredToSend.push(paneId);
           } else {
             this.queues.delete(paneId);
           }
@@ -267,6 +267,7 @@ export class WsServer {
       this.saveQueues();
       this.broadcast({ type: "snapshot_update", payload: snapshot });
       this.rebindSessions();
+      for (const paneId of restoredToSend) this.kickQueue(paneId);
     };
     this.herdrClient.on("snapshot_updated", this.onSnapshotUpdated);
     this.rebindSessions();
@@ -308,8 +309,8 @@ export class WsServer {
   }
 
   /** herdr-adapter.md §7.1: fill the model catalog again; every client hears of a changed list. */
-  public async refreshModels(forceAgent?: string): Promise<void> {
-    if (await this.modelCatalog.refresh(forceAgent)) this.broadcastRecipes();
+  public async refreshModels(): Promise<void> {
+    if (await this.modelCatalog.refresh()) this.broadcastRecipes();
   }
 
   private broadcastRecipes(): void {
@@ -558,7 +559,12 @@ export class WsServer {
 
       case "models_refresh": {
         this.logger?.("models refresh requested");
-        await this.refreshModels(msg.payload?.agent);
+        const agent = msg.payload?.agent;
+        if (agent !== undefined && !getAgentRecipe(agent)) {
+          this.sendError(ws, msg.id, ProtocolErrors.ERR_INVALID_PAYLOAD, `Unknown agent kind '${agent}'`);
+          return;
+        }
+        if (await this.modelCatalog.refreshAsked(agent)) this.broadcastRecipes();
         this.sendAck(ws, msg.id, { recipes: this.recipeSummaries() });
         return;
       }
@@ -570,7 +576,10 @@ export class WsServer {
           return;
         }
         const recipe = getAgentRecipe(msg.payload.agentKind);
-        const sessions = recipe?.resumable ? this.agentAdapters.listSessions(recipe.kind, folder) : [];
+        // agent-session-normalization.md §2.6: a listed model resolved through the catalog.
+        const sessions = (recipe?.resumable ? this.agentAdapters.listSessions(recipe.kind, folder) : []).map((s) =>
+          s.model ? { ...s, model: this.modelCatalog.resolve(recipe!.kind, s.model) } : s
+        );
         this.sendAck(ws, msg.id, { sessions });
         return;
       }
@@ -647,6 +656,7 @@ export class WsServer {
             this.answeringPanes.delete(targetPaneId);
           }
           this.logger?.(`${this.paneLogLabel(targetPaneId)} interaction respond: ${optionIds!.join(",")} (transcript)`);
+          this.herdrClient.markAnswered(targetPaneId, interactionId);
           this.sendAck(ws, msg.id, { approved: true, interactionId });
           return;
         }

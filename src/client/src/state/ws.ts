@@ -202,11 +202,17 @@ export async function initWebSocket(): Promise<void> {
   };
 }
 
+/** mobile-ui-and-themes.md §4.4: per pane, the alert closed while it stays pending there. */
+const closedAlerts = new Map<string, string>();
+export const isAlertClosed = (paneId: string | null, interactionId: string) => !!paneId && closedAlerts.get(paneId) === interactionId;
+export const closeAlert = (paneId: string | null, interactionId: string) => paneId && closedAlerts.set(paneId, interactionId);
+
 function applyPaneState(p: PaneStatePayload): void {
   if (p.paneId !== state.activePaneId) return;
   const last = paneRevisions.get(p.paneId) || 0;
   if (p.revision <= last) return; // out-of-order or replayed update
   paneRevisions.set(p.paneId, p.revision);
+  if (closedAlerts.get(p.paneId) !== p.pendingInteraction?.interactionId) closedAlerts.delete(p.paneId);
   const prevStatus = state.agentStatus;
   setState({
     activeTabId: p.tabId,

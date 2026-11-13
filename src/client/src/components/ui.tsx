@@ -161,6 +161,8 @@ export function Sheet(props: {
   full?: boolean;
   children: JSX.Element;
   noHeader?: boolean;
+  /** The body does not scroll; the children hold their own scroller below a fixed part. */
+  flush?: boolean;
 }) {
   return (
     <div class="overlay" role="dialog" aria-modal="true">
@@ -190,7 +192,7 @@ export function Sheet(props: {
             <div>{props.right}</div>
           </div>
         </Show>
-        <div class="body">{props.children}</div>
+        <div class={`body${props.flush ? " flush" : ""}`}>{props.children}</div>
       </div>
     </div>
   );

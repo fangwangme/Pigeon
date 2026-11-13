@@ -267,6 +267,9 @@ svg.i.sm { width: 16px; height: 16px; }
 .sheet.full { height: calc(100% - 48px - env(safe-area-inset-top) - env(safe-area-inset-bottom)); }
 @keyframes up { from { transform: translateY(40px); opacity: 0; } }
 .sheet .body { overflow-y: auto; flex: 1; min-height: 0; margin: 0 -4px; padding: 0 4px; }
+.sheet .body.flush { overflow: hidden; display: flex; flex-direction: column; margin: 0; padding: 0; }
+.sheet .body.flush > * { flex: none; }
+.sheet .body.flush > .body, .sheet .body.flush > .card { flex: 1; min-height: 0; }
 .grab { width: 40px; height: 5px; border-radius: 3px; background: var(--line2); margin: 0 auto 8px; flex: none; }
 .sh { display: grid; grid-template-columns: 44px 1fr 44px; align-items: center; margin-bottom: 8px; flex: none; }
 .sh .t { text-align: center; font-weight: 650; font-size: 16.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; padding: 0 6px; }

@@ -6,7 +6,7 @@ import { PigeonDaemon, resolveAccess } from "../src/server/daemon";
 import { PWA_ICON_192_BASE64, PWA_ICON_DARK_192_BASE64 } from "../src/server/pwa-assets";
 import { PairingManager, generateBase32Token } from "../src/server/pairing";
 import { PushManager } from "../src/server/push";
-import { tempDir } from "./helpers/fixtures";
+import { freePort, tempDir } from "./helpers/fixtures";
 
 function pairingIn(dir: string, publicBaseUrl = "https://pigeon.example.ts.net") {
   return new PairingManager({ publicBaseUrl, adminSocketPath: join(dir, "admin.sock"), devicesFilePath: join(dir, "devices.json") });
@@ -284,7 +284,7 @@ describe("reachable address (architecture.md §4.2)", () => {
 
 describe("HTTP and WebSocket gate (security-and-pairing.md §3, §4)", () => {
   const PUBLIC = "https://pigeon.example.ts.net";
-  const port = 41000 + Math.floor(Math.random() * 2000);
+  const port = freePort();
   const base = `http://127.0.0.1:${port}`;
   let daemon: PigeonDaemon;
 
@@ -503,7 +503,7 @@ describe("daemon log file (architecture.md §4.6, issue #21)", () => {
     const dir = tempDir("daemon-log");
     const logPath = join(dir, "pigeon.log");
     writeFileSync(logPath, "stale line from the previous run\n");
-    const port = 43000 + Math.floor(Math.random() * 2000);
+    const port = freePort();
     const daemon = new PigeonDaemon({
       configManager: new ConfigManager(join(dir, "config.json"), { HOME: dir }),
       port,
@@ -529,7 +529,7 @@ describe("daemon log file (architecture.md §4.6, issue #21)", () => {
   test("core events and requests are recorded in the log file (architecture.md §4.6)", async () => {
     const dir = tempDir("daemon-log-events");
     const logPath = join(dir, "pigeon.log");
-    const port = 43000 + Math.floor(Math.random() * 2000);
+    const port = freePort();
     const origin = `http://127.0.0.1:${port}`;
     const daemon = new PigeonDaemon({
       configManager: new ConfigManager(join(dir, "config.json"), { HOME: dir }),

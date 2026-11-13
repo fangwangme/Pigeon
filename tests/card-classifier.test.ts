@@ -121,7 +121,7 @@ describe("what is a prompt (herdr-adapter.md §8.2)", () => {
       "Pigeon main ctx:14%/1M token:672k Gemini 3.8 Flash (Medium) mode:auto",
     ].join("\n");
     const prompt = buildUnrecognizedPrompt(screen);
-    expect(prompt.title).toBe("Agent Error");
+    expect(prompt.title).toBe("");
     expect(prompt.question).toContain("No capacity available");
     expect(prompt.question).not.toContain("mode:auto");
     expect(prompt.payload).toContain("Error ID: 56ffdbc0");
@@ -153,6 +153,15 @@ describe("question menus (herdr-adapter.md §8.2)", () => {
     expect(p.options.map((o) => [o.id, o.label, o.description, o.keyShortcut])).toEqual([
       ["opt_1", "Cheese", "Cheese topping", "1"],
       ["opt_2", "Ham", "Ham topping", "2"],
+    ]);
+  });
+
+  test("a description under the last option still belongs to the menu", () => {
+    const screen = "Pick a size\n❯ 1. Small\n     Small size\n  2. Large\n     Large size\nEnter to select · ↑/↓ to navigate · Esc to cancel";
+    const p = classifier.classifyScreen(screen).pendingInteraction!;
+    expect(p.options.map((o) => [o.label, o.description])).toEqual([
+      ["Small", "Small size"],
+      ["Large", "Large size"],
     ]);
   });
 

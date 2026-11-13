@@ -151,8 +151,9 @@ function parseQuestionMenu(lines: string[]): (PromptParse & { multiSelect: boole
   for (let j = end - 1; j >= 0; j--) {
     const trimmed = lines[j].trim();
     if (!trimmed || BORDER_ONLY_RE.test(trimmed) || MENU_STEP_RE.test(trimmed)) continue;
+    // Indented lines are option descriptions, also below the last option.
     if (parseNumberedOption(trimmed)) first = j;
-    else if (first === -1 || !/^\s{2,}\S/.test(lines[j])) break;
+    else if (!/^\s{2,}\S/.test(lines[j])) break;
   }
   if (first === -1) return null;
   let q = first - 1;
@@ -220,20 +221,12 @@ export function buildUnrecognizedPrompt(rawScreen: string): InteractionCardData 
       return true;
     });
 
+  // protocol.md §5.4: no title of our own; the phone labels it (mobile-ui-and-themes.md §4.4).
   const tail = allLines.slice(-8);
-  const text = tail.join("\n").toLowerCase();
-  const isError = /error|fail|capacity|limit|quota|exception|unavailable/i.test(text);
-
-  let title = "";
-  let question = "";
-  if (isError) {
-    title = "Agent Error";
-    question = tail[0] ? unbox(tail[0]).trim() : "Agent Error";
-  } else {
-    question = tail.length > 0 ? unbox(tail[tail.length - 1]).trim() : "";
-  }
+  const isError = /error|fail|capacity|limit|quota|exception|unavailable/i.test(tail.join("\n"));
+  const question = tail.length > 0 ? unbox(isError ? tail[0] : tail[tail.length - 1]).trim() : "";
   const payload = tail.map((l) => unbox(l)).join("\n");
-  return buildInteraction({ question, payload, options: [], fallbackKeys: DEFAULT_FALLBACK_KEYS }, title);
+  return buildInteraction({ question, payload, options: [], fallbackKeys: DEFAULT_FALLBACK_KEYS });
 }
 
 export class CardClassifier {

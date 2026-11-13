@@ -2,7 +2,7 @@ import { connect, type Socket } from "node:net";
 import { EventEmitter } from "node:events";
 import { createHash } from "node:crypto";
 import { basename, dirname } from "node:path";
-import { readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
+import { readFileSync, writeFileSync, existsSync, mkdirSync, renameSync } from "node:fs";
 import { readGitBranch } from "./git-branch";
 import { CardClassifier, buildUnrecognizedPrompt } from "./card-classifier";
 import { getAgentRecipe, type AnswerStep } from "./agent-recipes";
@@ -34,6 +34,8 @@ export interface HerdrClientOptions {
   coreSocketPath: string;
   debounceMs?: number;
   panePollMs?: number;
+  /** protocol.md §4.1: how long an answered transcript question stays hidden while still pending. */
+  answeredHoldMs?: number;
   requestTimeoutMs?: number;
   logger?: (msg: string) => void;
   seenPanesFilePath?: string;
@@ -92,6 +94,7 @@ export class HerdrClient extends EventEmitter {
   private coreSocketPath: string;
   private debounceMs: number;
   private panePollMs: number;
+  private answeredHoldMs: number;
   private requestTimeoutMs: number;
   private subSocket: Socket | null = null;
   private reachable: Record<Channel, boolean> = { app: false, core: false };
@@ -125,6 +128,7 @@ export class HerdrClient extends EventEmitter {
   private seenPanesFilePath?: string;
   private transcriptInteractions = new Map<string, InteractionCardData>();
   private transcriptOverrides = new Set<string>();
+  private answeredInteractions = new Map<string, { interactionId: string; timer: ReturnType<typeof setTimeout> }>();
   /** protocol.md §5.3: the title of the session bound to a pane, for tabs without a name of their own. */
   private sessionTitleOf: (paneId: string) => string | undefined = () => undefined;
   /** protocol.md §5.3: the active/latest model of the session bound to a pane. */
@@ -143,6 +147,7 @@ export class HerdrClient extends EventEmitter {
     this.coreSocketPath = options.coreSocketPath;
     this.debounceMs = options.debounceMs ?? 200;
     this.panePollMs = options.panePollMs ?? 1000;
+    this.answeredHoldMs = options.answeredHoldMs ?? 10_000;
     this.requestTimeoutMs = options.requestTimeoutMs ?? REQUEST_TIMEOUT_MS;
     this.logger = options.logger;
     this.seenPanesFilePath = options.seenPanesFilePath;
@@ -158,7 +163,9 @@ export class HerdrClient extends EventEmitter {
   private saveSeenPanes(): void {
     if (!this.seenPanesFilePath) return;
     mkdirSync(dirname(this.seenPanesFilePath), { recursive: true });
-    writeFileSync(this.seenPanesFilePath, JSON.stringify(Array.from(this.seenPanes)), "utf-8");
+    const tmp = `${this.seenPanesFilePath}.tmp`;
+    writeFileSync(tmp, JSON.stringify(Array.from(this.seenPanes)), "utf-8");
+    renameSync(tmp, this.seenPanesFilePath);
   }
 
   public async connect(): Promise<void> {
@@ -673,6 +680,28 @@ export class HerdrClient extends EventEmitter {
       this.transcriptInteractions.delete(paneId);
       this.transcriptOverrides.delete(paneId);
     }
+    this.republishPane(paneId);
+  }
+
+  /**
+   * protocol.md §4.1: a transcript question whose answer was sent is no longer reported, so every
+   * viewer drops its card; it comes back if it is still pending after `answeredHoldMs`.
+   */
+  public markAnswered(paneId: string, interactionId: string): void {
+    const previous = this.answeredInteractions.get(paneId);
+    if (previous) clearTimeout(previous.timer);
+    const timer = setTimeout(() => {
+      if (this.answeredInteractions.get(paneId)?.timer !== timer) return;
+      this.answeredInteractions.delete(paneId);
+      this.republishPane(paneId);
+    }, this.answeredHoldMs);
+    timer.unref?.();
+    this.answeredInteractions.set(paneId, { interactionId, timer });
+    this.republishPane(paneId);
+  }
+
+  /** Reports a pane's prompt again from its last screen, after the transcript or an answer changed it. */
+  private republishPane(paneId: string): void {
     const known = this.knownPanes.get(paneId);
     if (!known) return;
     const existing = this.paneStates.get(paneId);
@@ -697,7 +726,9 @@ export class HerdrClient extends EventEmitter {
 
   /** protocol.md §5.4: which pending interaction a pane reports. `blockedScreen` is the screen when Herdr says `blocked`. */
   private pickInteraction(paneId: string, screenPrompt: InteractionCardData | null, blockedScreen: string | null): InteractionCardData | null {
+    const answered = this.answeredInteractions.get(paneId)?.interactionId;
     const transcript = this.transcriptInteractions.get(paneId) ?? null;
+    if (transcript && transcript.interactionId === answered) return null;
     if (transcript && this.transcriptOverrides.has(paneId)) return transcript;
     return screenPrompt ?? transcript ?? (blockedScreen !== null ? buildUnrecognizedPrompt(blockedScreen) : null);
   }

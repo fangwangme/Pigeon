@@ -213,10 +213,10 @@ async function refreshServer(catalog: ModelCatalog, home: string) {
   server.handleOpen(c.ws);
   await server.handleMessage(c.ws, JSON.stringify({ type: "hello", id: "h", payload: { protocolVersion: "1.0.0", subscribePaneId: "p1" } }));
   let n = 0;
-  const ask = async (payload: object) => {
+  const ask = async (payload: object, answer: "ack" | "error" = "ack") => {
     const id = `r${++n}`;
     await server.handleMessage(c.ws, JSON.stringify({ type: "models_refresh", id, payload }));
-    expect(c.ofType("ack").find((a: any) => a.replyTo === id)).toBeDefined();
+    expect(c.ofType(answer).find((a: any) => a.replyTo === id)).toBeDefined();
   };
   return { ask };
 }
@@ -254,10 +254,15 @@ describe("Claude and OpenCode model sources (herdr-adapter.md §7.1, issue #21)"
     expect(api.requests).toHaveLength(1);
     await ask({ agent: "claude" });
     expect(api.requests).toHaveLength(2);
+    // protocol.md §4.15: an asked refresh of every list reads the API too; an unknown agent is refused.
+    await ask({});
+    expect(api.requests).toHaveLength(3);
+    await ask({ agent: "nope" }, "error");
+    expect(api.requests).toHaveLength(3);
 
     now += 25 * 3_600_000;
     await catalog.refresh();
-    expect(api.requests).toHaveLength(3);
+    expect(api.requests).toHaveLength(4);
 
     // A restarted daemon lists the cached models before any request succeeds.
     const restarted = new ModelCatalog({ ...options, anthropicModelsUrl: "http://127.0.0.1:9/v1/models" });

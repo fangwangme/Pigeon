@@ -164,6 +164,16 @@ describe("answering prompts (protocol.md §4.1)", () => {
     expect(herdr.callsOf("terminal.keys")).toHaveLength(0);
   });
 
+  test("a multi-select menu with own text: digits, the paste, then enter, down, enter (herdr-adapter.md §8.2)", async () => {
+    const menu = "Pick toppings\n❯ 1. [ ] Cheese\n  2. [ ] Ham\n  3. [ ] Type something\n     Submit\n  4. Chat about this\nEnter to select · ↑/↓ to navigate · Esc to cancel";
+    const pending = client.applyScreen("p1", menu).pendingInteraction!;
+    expect(pending).toMatchObject({ multiSelect: true, allowsOther: true });
+    const c = fakeWs();
+    await send(c.ws, { type: "interaction_respond", id: "r1", payload: { targetPaneId: "p1", interactionId: pending.interactionId, fingerprint: pending.fingerprint, optionIds: ["opt_2", "opt_other"], otherTexts: { "1": "Basil" } } });
+    const steps = herdr.calls.filter((x) => x.method === "terminal.keys" || x.method === "terminal.send").map((x) => x.params.keys ?? x.params.text);
+    expect(steps).toEqual([["2"], "Basil", ["enter", "down", "enter"]]);
+  });
+
   test("a prompt still on screen afterwards is acked as not approved", async () => {
     const pending = pendingOf();
     herdr.handlers["terminal.read"] = () => ({ result: { text: PROMPT, complete: true, how: "history" } });

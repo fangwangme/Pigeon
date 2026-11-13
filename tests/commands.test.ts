@@ -194,6 +194,21 @@ describe("prompt queue (protocol.md §4.2, §4.13, §5.8)", () => {
     expect(herdr.callsOf("terminal.send").length).toBe(1);
   });
 
+  test("a batch that fails to send is dropped and reported with its first queueId (protocol.md §4.2)", async () => {
+    await client.connect();
+    server.paneStore.registerPaneSession("p1", "claude", "ses_fail");
+    const c = await viewer("p1");
+    await send(c.ws, { type: "agent_prompt", id: "a1", payload: { targetPaneId: "p1", text: "one" } });
+    await send(c.ws, { type: "agent_prompt", id: "a2", payload: { targetPaneId: "p1", text: "two" } });
+    const firstId = c.ofType("prompt_queue").at(-1).payload.items[0].queueId;
+    herdr.handlers["terminal.send"] = () => ({ error: "blocked" });
+    herdr.emitEvent("status", "p1", { status: { state: "done", app: "claude-code" } });
+    await until(() => c.ofType("error").length > 0);
+    expect(c.ofType("error").at(-1).error.details).toMatchObject({ queueId: firstId, paneId: "p1" });
+    await until(() => c.ofType("prompt_queue").at(-1).payload.items.length === 0);
+    expect(herdr.callsOf("terminal.send").map((x) => x.params.text)).toEqual(["one\n\ntwo"]);
+  });
+
   test("on an unbound pane a batch leaves the queue at once, and the next waits for working, then idle", async () => {
     await client.connect();
     // Do NOT register session -> unbound pane

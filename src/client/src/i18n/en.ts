@@ -156,7 +156,7 @@ export const en = {
   "prompt.notSent": "Not sent",
   "prompt.permission": "Needs permission",
   "prompt.waiting": "Agent is waiting",
-  "prompt.error": "Agent Error",
+  "prompt.error": "Error",
   "prompt.alert": "Notice",
   "prompt.dismiss": "Close",
   "prompt.replyBelow": "Reply in the box below",

@@ -295,6 +295,7 @@ export function ToolSheet() {
         return (
           <Sheet
             full
+            flush
             title={s.detail ? `${verbLabel(s.detail)} ${s.detail.target?.split("/").pop() || ""}`.trim() : s.title}
             onClose={close}
             onBack={s.detail && !s.direct ? () => setToolSheet({ ...s, detail: null }) : undefined}

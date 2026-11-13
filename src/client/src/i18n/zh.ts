@@ -157,7 +157,7 @@ export const zh: Messages = {
   "prompt.notSent": "没有发出",
   "prompt.permission": "需要授权",
   "prompt.waiting": "Agent 在等待",
-  "prompt.error": "错误提示",
+  "prompt.error": "错误",
   "prompt.alert": "提示",
   "prompt.dismiss": "关闭",
   "prompt.replyBelow": "在下方输入框回复",

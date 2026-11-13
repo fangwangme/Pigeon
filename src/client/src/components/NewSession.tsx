@@ -104,7 +104,7 @@ export function NewSession(props: { workspaceId: string | null; mode: "new" | "r
             {agent() ? agentLabel(agent()) : "Agent"}
             <Icon name="chevD" />
           </button>
-          <Show when={mode() === "new" && recipe()?.launchModel && recipe()?.models.length}>
+          <Show when={mode() === "new" && recipe()?.launchModel}>
             <button class="chip" onClick={() => setSheet("model")}>
               <Icon name="layers" />
               {(model() ? formatModelName(agent(), model()) : t("new.defaultModel")) + thinkingLabel()}
@@ -313,6 +313,7 @@ function ModelPickerSheet(props: {
   return (
     <Sheet
       full
+      flush
       title={t("model.title")}
       sub={props.recipe?.label}
       onClose={props.onClose}
@@ -368,7 +369,7 @@ function ModelPickerSheet(props: {
         </div>
       </Show>
 
-      <div class="card" style={{ "margin-top": "6px", "overflow-y": "auto", flex: 1 }}>
+      <div class="card" style={{ "margin-top": "6px", "overflow-y": "auto" }}>
         <For each={shown()} fallback={<p class="note">{t("model.none")}</p>}>
           {(m) => {
             const count = m.thinkingLevels?.length ?? 0;

@@ -44,7 +44,7 @@ To prevent manual input errors, brute-force enumeration, and accidental disclosu
 The HTTP server answers only the routes below. Every other path is 404, and nothing is served from the filesystem: the HTML is the single-file bundle compiled into the binary.
 - **Permitted Unauthenticated** (no user or terminal data):
   - `GET /`, `/index.html` and `/pair`: the same single-file app shell. It holds no data until a paired WebSocket is open, and it must load in order to run the pairing exchange.
-  - `GET /manifest.webmanifest`, `/sw.js`, `/icon.svg`, `/icon-192.png`, `/icon-512.png`: PWA install assets.
+  - `GET /manifest.webmanifest` (also as `/manifest.json`), `/sw.js`, `/icon.svg`, `/icon-192.png`, `/icon-512.png`, `/icon-light.svg`, `/icon-light-192.png`, `/icon-light-512.png`, and any path starting with `/apple-touch-icon` (iOS asks for it by itself; it gets the 192 px icon): PWA install assets.
     - **PWA Icons by Instance** (issue #21): To allow distinguishing production and test PWAs installed on the same mobile device, icon assets are served based on the instance port (`architecture.md` §4.6):
       - **Production instance (port 4100)**: returns light icons (`/icon.svg`, `/icon-192.png`, `/icon-512.png`). Manifest icons and HTML `apple-touch-icon` link to these light icons.
       - **Test instances (any non-4100 port)**: returns dark icons (`/icon-dark.svg`, `/icon-dark-192.png`, `/icon-dark-512.png` generated from `public/icon-dark.svg`). The generic routes `/icon.svg`, `/icon-192.png`, `/icon-512.png` return the dark icon assets on non-4100 ports, and the manifest and HTML `apple-touch-icon` link to the dark icon assets.

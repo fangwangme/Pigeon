@@ -3,7 +3,8 @@ import { existsSync, readFileSync, readdirSync, realpathSync, statSync } from "n
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { OpenCodeAdapter, type OpenCodeAdapterOptions } from "./opencode";
-import { AgyAdapter, type AgyAdapterOptions } from "./agy";
+import { AgyAdapter, agyModelSetting, type AgyAdapterOptions } from "./agy";
+import { isObj, readHeadJsonLines, readTailJsonLines } from "../sessions/common";
 import { ClaudeSource } from "../sessions/claude";
 import { CodexSource } from "../sessions/codex";
 import { PiSource } from "../sessions/pi";
@@ -127,19 +128,16 @@ class AgySource implements SessionSource {
             ts = 0;
           }
 
+          // agent-session-normalization.md §2.6: the latest setting in the first and last 256 KB.
           let model: string | undefined = undefined;
           const logPath = this.adapter.getSessionLogPath(r.conversation_id);
           if (existsSync(logPath)) {
-            try {
-              const head = readFileSync(logPath, "utf-8").slice(0, 100_000);
-              const modelMatch = head.match(
-                /The user changed setting `Model Selection` from .*? to `?(.+?)`?\.(?:\s+No need|\s*<\/USER_SETTINGS_CHANGE>|$)/
-              );
-              if (modelMatch && modelMatch[1]) {
-                const raw = modelMatch[1].replace(/^`+|`+$/g, "").trim();
-                if (raw && raw !== "None") model = raw;
-              }
-            } catch {}
+            const size = statSync(logPath).size;
+            const records = size > 524_288 ? [...readHeadJsonLines(logPath), ...readTailJsonLines(logPath)] : readHeadJsonLines(logPath, size + 1);
+            for (const rec of records) {
+              const found = isObj(rec) && typeof rec.content === "string" ? agyModelSetting(rec.content) : undefined;
+              if (found) model = found;
+            }
           }
 
           out.push({
@@ -154,7 +152,9 @@ class AgySource implements SessionSource {
       } finally {
         db.close();
       }
-    } catch {
+    } catch (err) {
+      // agent-session-normalization.md §2.6: AGY's own database, locked or changed, degrades only this list.
+      console.warn("[pigeon] agy session list unavailable:", err);
       return [];
     }
   }

@@ -57,7 +57,7 @@ A sheet shared by §2.1 and §2.2: status (等待你, 工作中, 已完成, 空�
 ## 3. Session page
 
 ### 3.1 Layout
-- A glass header bar with a hairline at its bottom edge; content scrolling under it is blurred and never shows through as legible text. It holds back (hit area 44 × 44 px), the session title (prioritizes named tab labels, falling back to the agent session's title, then agent recipe name per `protocol.md` §5.3; a spinner while working, an amber dot while waiting), a subtitle, and ⋯ (§6.1). The subtitle is the pane's model (named as in §6.4) and thinking level joined by ` · ` (`protocol.md` §5.6 `session.model`, `session.thinking`; an unknown value is left out, and the line when both are), preceded by the pane's name when the tab has several panes. Tapping the title switches pane when there are several (§6.8).
+- A glass header bar with a hairline at its bottom edge; content scrolling under it is blurred and never shows through as legible text. It holds back (hit area 44 × 44 px), the session title (prioritizes named tab labels, falling back to the agent session's title, then agent recipe name per `protocol.md` §5.3; a spinner while working, an amber dot while waiting), a subtitle, and ⋯ (§6.1). The subtitle is the pane's model (named as in §6.4) and thinking level joined by ` · ` (`protocol.md` §5.6 `session.model`, `session.thinking`; an unknown value is left out, and the line when both are); it names neither the agent nor the pane (user decision, 2026-11-13). Tapping the title switches pane when there are several (§6.8).
 - The body is the transcript (§3.2) when the pane has a structured session, else the screen cards (§3.6). A plain terminal tab shows the terminal view (§5) as its body.
 - The composer (§6) floats at the bottom.
 
@@ -131,7 +131,7 @@ A transcript interaction is answered entirely in the card (user decision, 2026-1
 When the transcript has a pending plan tool call (Claude `ExitPlanMode`), the card shows the plan as Markdown, faded past the card height with **全文** to read it in a sheet, and the screen's options as buttons, or **在下方输入框回复** when the screen shows none (§4.1). An option that asks to keep planning focuses the composer like §4.1.
 
 ### 4.4 No numbered options
-A prompt without numbered options, or `blocked` with nothing recognized, shows as a dialog over the session page with the screen's last lines, titled **错误** when they read as an agent error (error, failure, capacity, limit, quota, exception, unavailable) and **提示** otherwise, and one **关闭** button (user decision, 2026-11-13). **关闭**, a tap outside the dialog or its × closes it on this page and sends nothing to the agent; the composer stays usable underneath. A closed prompt does not show again; a new one does. Like every prompt card it offers no terminal action (§4.1).
+A prompt without numbered options, or `blocked` with nothing recognized, shows as a dialog over the session page with the screen's last lines, titled **错误** when they read as an agent error (error, failure, capacity, limit, quota, exception, unavailable) and **提示** otherwise, and one **关闭** button (user decision, 2026-11-13). **关闭**, a tap outside the dialog or its × closes it on this page and sends nothing to the agent; the composer stays usable underneath. A closed prompt does not show again while it stays pending in that pane; a different prompt, or the same one again after the pane's prompt went away, shows. Like every prompt card it offers no terminal action (§4.1).
 
 ## 5. Terminal view
 
@@ -157,7 +157,7 @@ Chosen only when a session is created (§7.1; user decision, 2026-11-12). A runn
 - **Picker sheet**: the agent's models (`herdr-adapter.md` §7.1). A fixed card at the top holds the chosen model: its label, its id in monospace, and its thinking levels as one row of chips that scrolls sideways when it does not fit, or **不支持** when the model has none (the model's levels are a list, empty for a model without thinking). Choosing a model in the list moves it into the card; the level is kept when the new model offers it, else the model's first level is chosen. The list scrolls under the card, which never scrolls away. The approved mockup is board C of issue #21's design canvas.
 - A search field filters by id and label when the agent has more than five models. There is no provider filter.
 - Each row shows the model's label and, when it has levels, their count.
-- A refresh button asks the daemon to fetch this agent's list again (`protocol.md` §4.15).
+- A refresh button asks the daemon to fetch this agent's list again (`protocol.md` §4.15). The **模型** chip shows even while the list is empty (as **默认模型**), so the refresh stays reachable.
 - **Model names** everywhere (home and All agents rows, the 恢复 list, the session header, the picker, the usage model rows; one rule for all of them) show the model's catalog label (`herdr-adapter.md` §7.1). A model the catalog does not list shows the part of its id after the last `/`, or the whole id when it has none.
 
 ### 6.5 ⋯ menu

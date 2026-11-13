@@ -253,10 +253,8 @@ export function SessionPage() {
   const modelValue = () => state.session?.model.value ?? pane()?.model ?? null;
   const thinkingValue = () => state.session?.thinking.value ?? null;
   const subText = () => {
+    // mobile-ui-and-themes.md §3.1: model and thinking level only.
     const parts: string[] = [];
-    if (pane()) {
-      parts.push(paneLabel(pane()!));
-    }
     const m = modelValue() ? formatModelName(pane()?.agent, modelValue()) : null;
     const th = thinkingValue();
     if (m) parts.push(m);

@@ -23,11 +23,17 @@ afterEach(async () => {
 });
 
 /** A WsServer whose agent stores live under `home`, with one tab holding `panes`. */
-async function setup(home: string, panes: FakePane[], folder = "/work") {
+async function setup(
+  home: string,
+  panes: FakePane[],
+  folder = "/work",
+  extra: Partial<ConstructorParameters<typeof WsServer>[0]> = {},
+  clientExtra: Partial<ConstructorParameters<typeof HerdrClient>[0]> = {}
+) {
   const herdr = new FakeHerdr(tempDir("herdr"));
   await herdr.listen();
   herdr.handlers["terminal.read"] = () => ({ result: { text: "", how: "history" } });
-  const client = new HerdrClient({ appSocketPath: herdr.appSocketPath, coreSocketPath: herdr.coreSocketPath, debounceMs: 5, panePollMs: 60_000 });
+  const client = new HerdrClient({ appSocketPath: herdr.appSocketPath, coreSocketPath: herdr.coreSocketPath, debounceMs: 5, panePollMs: 60_000, ...clientExtra });
   client.applySnapshot(topologyOf(panes, { folder }));
   const server = new WsServer({
     buildId: "b",
@@ -36,6 +42,7 @@ async function setup(home: string, panes: FakePane[], folder = "/work") {
     configManager: new ConfigManager(join(home, "config.json"), { HOME: home }),
     skillScanner: new SkillScanner(home),
     agentAdapters: new AgentAdapterManager({ home }),
+    ...extra,
   });
   cleanup.push(async () => {
     server.destroy();
@@ -673,6 +680,22 @@ describe("transcript questions, agent errors and turn times (issue #21)", () => 
     expect(herdr.calls.find((call) => call.method === "terminal.keys")?.params.keys).toEqual(["2"]);
   });
 
+  test("an answer from one phone drops the question card on every phone at once (protocol.md §4.1)", async () => {
+    const { home, proj } = claudeHome(claudeTranscript);
+    const { herdr, server, open } = await setup(home, [{ paneId: "p1", app: "claude-code", cwd: proj, pid: 4242, state: "blocked" }], "/work", {}, { answeredHoldMs: 200 });
+    herdr.handlers["terminal.keys"] = () => ({ result: {} });
+    const a = await open("p1");
+    const b = await open("p1");
+    const shown = (c: ReturnType<typeof fakeWs>) => c.ofType("pane_state").at(-1)?.payload.pendingInteraction?.interactionId ?? null;
+    const interaction = await until(() => a.ofType("pane_state").map((m) => m.payload).find((p) => p.pendingInteraction)?.pendingInteraction);
+    await server.handleMessage(a.ws, JSON.stringify({ type: "interaction_respond", id: "r1", payload: { targetPaneId: "p1", interactionId: interaction.interactionId, fingerprint: interaction.fingerprint, optionIds: ["q1_opt_2"] } }));
+    // The transcript has not recorded the answer yet.
+    expect(shown(a)).toBeNull();
+    expect(shown(b)).toBeNull();
+    // Still pending once the hold is over: the agent did not take the keys, and the card is back.
+    await until(() => shown(b) === interaction.interactionId);
+  });
+
   test("a transcript question takes the user's own text in place of an option (protocol.md §4.1)", async () => {
     const { home, proj } = claudeHome(claudeTranscript);
     const { herdr, server, open } = await setup(home, [{ paneId: "p1", app: "claude-code", cwd: proj, pid: 4242, state: "working" }]);
@@ -755,6 +778,22 @@ describe("transcript questions, agent errors and turn times (issue #21)", () => 
     expect(JSON.stringify(sent.params)).toContain("retry please");
   });
 
+  test("after a restart a restored prompt waits while the session ends in an agent error (protocol.md §4.2)", async () => {
+    const { home, proj } = claudeHome(rateLimited);
+    const createdMs = Date.parse("2026-11-11T08:00:00Z");
+    const pane = { paneId: "p1", app: "claude-code", cwd: proj, pid: 4242, createdMs, state: "idle" };
+    const queueFilePath = join(home, "state", "queue.json");
+    mkdirSync(join(home, "state"), { recursive: true });
+    const item = { queueId: "q_restored", text: "after restart", attachments: [], createdAt: createdMs };
+    writeFileSync(queueFilePath, JSON.stringify({ p1: [{ item, send: "after restart", created_ms: createdMs }] }));
+    // As in a daemon start, the pane first appears in the snapshot after the server was created.
+    const { herdr, client } = await setup(home, [], "/work", { queueFilePath });
+    herdr.handlers["terminal.send"] = () => ({ result: {} });
+    client.applySnapshot(topologyOf([pane], { folder: "/work" }));
+    await Bun.sleep(100);
+    expect(herdr.calls.some((call) => call.method === "terminal.send")).toBe(false);
+  });
+
   test("agent_set_model is no longer accepted", async () => {
     const { home, proj } = claudeHome(claudeTranscript);
     const { server, open } = await setup(home, [{ paneId: "p1", app: "claude-code", cwd: proj, pid: 4242 }]);
@@ -784,11 +823,16 @@ describe("Antigravity past sessions (agent-session-normalization.md §2.6, issue
     row("a-child", "Sub-agent task", "x", "2026-11-11 13:00:00+00:00", proj, 1);
     row("a-other", "Elsewhere", "y", "2026-11-11 14:00:00+00:00", "/elsewhere");
     db.close();
+    // §2.6: the latest "Model Selection" change in the conversation's transcript.
+    const logs = join(dir, "brain", "a-root", ".system_generated", "logs");
+    mkdirSync(logs, { recursive: true });
+    const setting = (from: string, to: string) => ({ type: "USER_INPUT", content: `The user changed setting \`Model Selection\` from ${from} to \`${to}\`. No need to respond.` });
+    writeFileSync(join(logs, "transcript.jsonl"), jsonl([setting("None", "Gemini 3.8 Flash"), setting("Gemini 3.8 Flash", "Gemini 3.8 Pro")]));
 
     const adapters = new AgentAdapterManager({ home });
     expect(adapters.listSessions("agy", proj)).toEqual([
       { id: "a-sub", title: "Review the parser", updatedAt: Date.UTC(2026, 10, 11, 12, 0, 0, 250) },
-      { id: "a-root", title: "Fix the login flow", updatedAt: Date.UTC(2026, 10, 11, 10, 0, 0, 500) },
+      { id: "a-root", title: "Fix the login flow", updatedAt: Date.UTC(2026, 10, 11, 10, 0, 0, 500), model: "Gemini 3.8 Pro" },
     ]);
   });
 });
