@@ -228,6 +228,8 @@ export class AgyAdapter {
         turns.length > 0 ? turns[turns.length - 1] : null;
       let turnCounter = turns.length;
       let fullRecords: Map<number, any> | null = null;
+      let lastTs = stat.birthtimeMs || stat.mtimeMs || 0;
+      let pendingAttachmentFiles: string[] = [];
 
       for (const line of lines) {
         const trimmed = line.trim();
@@ -248,9 +250,9 @@ export class AgyAdapter {
         }
 
         const recType = record.type;
-        const timestamp = record.created_at
-          ? new Date(record.created_at).getTime()
-          : Date.now();
+        const parsedTs = record.created_at ? new Date(record.created_at).getTime() : NaN;
+        const timestamp = Number.isFinite(parsedTs) ? parsedTs : lastTs;
+        if (Number.isFinite(parsedTs)) lastTs = parsedTs;
 
         const rawContent = record.content || "";
         const model = agyModelSetting(rawContent);
@@ -264,25 +266,58 @@ export class AgyAdapter {
             promptText = match[1].trim();
           }
 
-          turnCounter++;
-          // Extract attachment files from promptText if any
-          const files: string[] = [];
-          const uploadRegex = /(?:^|\s)(@?(\/[^\s]+?\.(?:png|jpg|jpeg|webp|gif|svg|pdf|txt|md|json)|@?\/[^\s]+?\/up_[0-9a-f]{16}[^\s]*))/gi;
-          let cleanText = promptText;
-          let m: RegExpExecArray | null;
-          while ((m = uploadRegex.exec(promptText)) !== null) {
-            const rawPath = m[1].replace(/^@/, "");
-            files.push(rawPath);
-            cleanText = cleanText.replace(m[0], " ").trim();
+          // Strip Pigeon upload markers (`[Pigeon user uploaded attachment: ...]`) and trailing Pigeon upload paths only.
+          const files: string[] = [...pendingAttachmentFiles];
+          pendingAttachmentFiles = [];
+          const keptLines: string[] = [];
+          const rawLines = promptText.split("\n");
+          // Remove trailing upload-directory path lines (keeping paths typed intentionally inside prompt prose).
+          let end = rawLines.length;
+          while (end > 0) {
+            const candidate = rawLines[end - 1].trim();
+            if (!candidate) {
+              end--;
+              continue;
+            }
+            const uploadTag = /^\[Pigeon user uploaded attachment:\s*(.+?)\]$/.exec(candidate);
+            if (uploadTag) {
+              files.push(uploadTag[1].trim());
+              end--;
+              continue;
+            }
+            const uploadPath = /^@?(\/[^\s]*(?:\/uploads\/[^\s]+|up_[0-9a-f]{16}[^\s]*))$/.exec(candidate);
+            if (uploadPath) {
+              files.push(uploadPath[1]);
+              end--;
+              continue;
+            }
+            break;
+          }
+          for (let li = 0; li < end; li++) {
+            const candidate = rawLines[li].trim();
+            const uploadTag = /^\[Pigeon user uploaded attachment:\s*(.+?)\]$/.exec(candidate);
+            if (uploadTag) {
+              files.push(uploadTag[1].trim());
+            } else {
+              keptLines.push(rawLines[li]);
+            }
+          }
+          const cleanText = keptLines.join("\n").trim();
+
+          // Upload-only USER_INPUT step precedes the actual prompt step: merge its files onto the next prompt.
+          if (!cleanText && files.length > 0) {
+            pendingAttachmentFiles.push(...files);
+            continue;
           }
 
+          turnCounter++;
           currentTurn = {
             turnId: `turn_${turnCounter}`,
             turnNumber: turnCounter,
             timestamp,
             updatedAt: timestamp,
             userPrompt: {
-              text: cleanText || promptText,
+              text: cleanText,
               ...(files.length > 0 ? { files } : {}),
             },
             toolCalls: [],
@@ -297,9 +332,11 @@ export class AgyAdapter {
               turnNumber: turnCounter,
               timestamp,
               updatedAt: timestamp,
+              ...(pendingAttachmentFiles.length > 0 ? { userPrompt: { text: "", files: pendingAttachmentFiles } } : {}),
               toolCalls: [],
               items: [],
             };
+            pendingAttachmentFiles = [];
             turns.push(currentTurn);
           }
           currentTurn.updatedAt = Math.max(currentTurn.updatedAt ?? currentTurn.timestamp, timestamp);
@@ -333,7 +370,7 @@ export class AgyAdapter {
                 ...(target ? { target } : {}),
                 ...(description ? { description } : {}),
                 input: cleanedArgs,
-                status: "completed",
+                status: "running",
                 ...(diffInfo?.diff ? { diff: diffInfo.diff } : {}),
               };
               currentTurn.toolCalls.push(call);
@@ -352,10 +389,14 @@ export class AgyAdapter {
             };
           }
         } else if (recType === "GENERIC") {
-          // Tool outputs arrive in call order; attach each to the first call still without output.
+          // Tool outputs arrive in call order; attach each (even empty "") to the first call without output.
           const pending = currentTurn?.toolCalls?.find((tc) => tc.output === undefined);
-          if (pending && record.content) {
-            pending.output = record.content;
+          if (pending) {
+            const out = typeof record.content === "string" ? record.content : "";
+            pending.output = out;
+            const exitMatch = /^Command exited with code (\d+)/m.exec(out);
+            const failedByExit = exitMatch !== null && Number(exitMatch[1]) !== 0;
+            pending.status = record.status === "ERROR" || failedByExit ? "failed" : "completed";
           }
         }
       }

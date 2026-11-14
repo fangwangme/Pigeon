@@ -283,16 +283,7 @@ export function resolveAccess(
   };
 }
 
-/**
- * Works out where the phone will reach the daemon.
- */
-export function resolvePublicBaseUrl(
-  opts: { configured?: string; insecureDev: boolean; port: number },
-  detectTs?: (port?: number) => string | null
-): string {
-  const probes = detectTs ? { tailscaleServeDns: () => detectTs(opts.port) } : {};
-  return resolveAccess(opts, probes).publicBaseUrl;
-}
+// Server startup & HTTP/WS orchestration.
 
 function hostOf(hostHeader: string): string | null {
   try {
@@ -491,8 +482,8 @@ export class PigeonDaemon {
   }
 
   private installProcessHandlers(): void {
-    if (Daemon.processHandlersInstalled) return;
-    Daemon.processHandlersInstalled = true;
+    if (PigeonDaemon.processHandlersInstalled) return;
+    PigeonDaemon.processHandlersInstalled = true;
     process.on("uncaughtException", (err) => {
       this.log(`uncaughtException: ${err instanceof Error ? err.stack || err.message : String(err)}`);
     });

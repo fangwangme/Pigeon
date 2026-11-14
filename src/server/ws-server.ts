@@ -135,6 +135,8 @@ export class WsServer {
   private restoredPaneIds = new Set<string>();
   private firstSnapshotSeen = false;
   private lastSavedQueuesJson: string | null = null;
+  private herdrDisconnected = false;
+  private offlineQueuedPanes = new Set<string>();
 
   private environment: { kind: "production" | "dev" | "test"; port: number };
 
@@ -172,8 +174,15 @@ export class WsServer {
     // security-and-pairing.md §5: a revoked device (from the phone or `pigeon devices revoke`) is cut off at once.
     this.pairingManager?.on("device_revoked", (deviceId: string) => this.closeDevice(deviceId));
 
-    this.onHerdrConnected = () => this.paneStore.setHerdrStatus(true);
-    this.onHerdrDisconnected = () => this.paneStore.setHerdrStatus(false);
+    this.onHerdrConnected = () => {
+      this.herdrDisconnected = false;
+      this.offlineQueuedPanes.clear();
+      this.paneStore.setHerdrStatus(true);
+    };
+    this.onHerdrDisconnected = () => {
+      this.herdrDisconnected = true;
+      this.paneStore.setHerdrStatus(false);
+    };
     this.herdrClient.on("connected", this.onHerdrConnected);
     this.herdrClient.on("disconnected", this.onHerdrDisconnected);
 
@@ -271,9 +280,13 @@ export class WsServer {
       }
       this.broadcast({ type: "snapshot_update", payload: snapshot });
       if (!meta?.paneId) {
+        this.herdrDisconnected = false;
+        this.offlineQueuedPanes.clear();
         this.rebindSessions();
+        for (const paneId of new Set([...restoredToSend, ...this.queues.keys()])) this.kickQueue(paneId);
+      } else {
+        for (const paneId of restoredToSend) this.kickQueue(paneId);
       }
-      for (const paneId of restoredToSend) this.kickQueue(paneId);
     };
     this.herdrClient.on("snapshot_updated", this.onSnapshotUpdated);
     this.rebindSessions();
@@ -307,7 +320,9 @@ export class WsServer {
       const dedupeKey = `${paneId}:${pushEvent}`;
       const now = Date.now();
       if (now - (this.lastPushAt.get(dedupeKey) || 0) < PUSH_DEDUPE_MS) return;
-      const result = this.pushManager.sendNotification(this.pushMessage(paneId, pushEvent));
+      const result = this.pushManager.sendNotification(this.pushMessage(paneId, pushEvent), () => {
+        if (this.lastPushAt.get(dedupeKey) === now) this.lastPushAt.delete(dedupeKey);
+      });
       if (!result.suppressed && result.delivered) {
         this.lastPushAt.set(dedupeKey, now);
       }
@@ -668,7 +683,7 @@ export class WsServer {
           return;
         }
         let steps: AnswerStep[];
-        if (pending.multiSelect !== undefined) {
+        if (pending.multiSelect !== undefined && this.herdrClient.getPaneAgentKind(targetPaneId) === "claude") {
           // herdr-adapter.md §8.2: a question menu, single- or multi-select, maybe with other text.
           const answer = this.menuAnswer(pending, optionId, optionIds, otherTexts ?? {});
           if (!answer) {
@@ -1321,8 +1336,24 @@ export class WsServer {
       return;
     }
     this.logger?.(`${this.paneLogLabel(paneId)} prompt: sent immediate`);
-    await this.herdrClient.sendPrompt(paneId, send);
-    if (replyTo) this.sendAck(ws, replyTo, { queued: false });
+    try {
+      await this.herdrClient.sendPrompt(paneId, send);
+      if (replyTo) this.sendAck(ws, replyTo, { queued: false });
+    } catch (err) {
+      const isOffline =
+        err instanceof HerdrError && (UNREACHABLE_CODES.has(err.code) || err.code === "closed" || err.code === "ERR_UPSTREAM_OFFLINE");
+      if (isOffline) {
+        this.offlineQueuedPanes.add(paneId);
+        const facts = this.herdrClient.getPaneFacts(paneId);
+        const created_ms = facts?.createdMs ?? 0;
+        const item: QueuedPrompt = { queueId: `q_${randomBytes(6).toString("hex")}`, ...shown, sending: false, createdAt: Date.now() };
+        queue.push({ item, send, created_ms });
+        this.queues.set(paneId, queue);
+        this.saveQueues();
+        this.sendQueue(paneId);
+      }
+      throw err;
+    }
   }
 
   public clearSendingPrompt(paneId: string, queueId?: string): void {
@@ -1410,7 +1441,18 @@ export class WsServer {
             clearTimeout(queueState.timer);
             queueState.timer = undefined;
           }
-          if (queueState.batch[0] === event.queueId) this.dropBatch(paneId, queueState);
+          const err = event.error;
+          const isOffline =
+            err instanceof HerdrError && (UNREACHABLE_CODES.has(err.code) || err.code === "closed" || err.code === "ERR_UPSTREAM_OFFLINE");
+          if (isOffline) {
+            this.offlineQueuedPanes.add(paneId);
+            const out = new Set(queueState.batch);
+            for (const entry of queue) {
+              if (out.has(entry.item.queueId)) entry.item.sending = false;
+            }
+          } else if (queueState.batch[0] === event.queueId) {
+            this.dropBatch(paneId, queueState);
+          }
           queueState.state = "idle";
           queueState.sawWorking = false;
           queueState.unboundSent = false;
@@ -1419,9 +1461,6 @@ export class WsServer {
           this.sendQueue(paneId);
           this.logger?.(`${this.paneLogLabel(paneId)} queue: send failed ${event.queueId}`);
 
-          const err = event.error;
-          const isOffline =
-            err instanceof HerdrError && (UNREACHABLE_CODES.has(err.code) || err.code === "closed" || err.code === "ERR_UPSTREAM_OFFLINE");
           const code = isOffline
             ? ProtocolErrors.ERR_UPSTREAM_OFFLINE
             : err instanceof HerdrError
@@ -1432,7 +1471,7 @@ export class WsServer {
             error: { code, message: err instanceof Error ? err.message : String(err), details: { queueId: event.queueId, paneId } },
           });
 
-          this.kickQueue(paneId);
+          if (!isOffline) this.kickQueue(paneId);
           return;
         } else {
           // Success
@@ -1477,6 +1516,7 @@ export class WsServer {
   }
 
   private kickQueue(paneId: string): void {
+    if (this.herdrDisconnected || this.offlineQueuedPanes.has(paneId)) return;
     const queueState = this.getQueueState(paneId);
     if (queueState.state !== "idle") return;
     if (this.isQueuePaused(paneId)) return;
@@ -1484,7 +1524,7 @@ export class WsServer {
     if (!queue || queue.length === 0) return;
 
     const herdrStatus = this.herdrClient.getPaneHerdrStatus(paneId);
-    if (herdrStatus !== "idle" && herdrStatus !== "done") return;
+    if (herdrStatus === "working" || herdrStatus === "blocked") return;
 
     // protocol.md §4.2: everything queued goes out as one prompt, in queue order.
     const batch = [...queue];
@@ -1517,12 +1557,14 @@ export class WsServer {
   private sendQueue(paneId: string): void {
     const paused = this.isQueuePaused(paneId);
     this.wasQueuePaused.set(paneId, paused);
+    const items = (this.queues.get(paneId) ?? []).map((q) => q.item);
     this.sendToSubscribers(paneId, {
       type: "prompt_queue",
       payload: {
         paneId,
         paused,
-        items: (this.queues.get(paneId) ?? []).map((q) => q.item),
+        items,
+        queue: items,
       },
     });
   }

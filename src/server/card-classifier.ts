@@ -230,7 +230,7 @@ export function buildUnrecognizedPrompt(rawScreen: string): InteractionCardData 
 }
 
 export class CardClassifier {
-  public classifyScreen(rawScreen: string): { cards: Card[]; pendingInteraction: InteractionCardData | null } {
+  public classifyScreen(rawScreen: string, agentKind?: string | null): { cards: Card[]; pendingInteraction: InteractionCardData | null } {
     const lines = stripAnsi(rawScreen).split("\n").map(unbox);
     const cards: Card[] = [];
     let pendingInteraction: InteractionCardData | null = null;
@@ -242,6 +242,7 @@ export class CardClassifier {
       return computeCardId(kind, anchor, n);
     };
 
+    const questionMenu = parseQuestionMenu(lines);
     let i = 0;
     while (i < lines.length) {
       const trimmed = lines[i].trim();
@@ -323,7 +324,7 @@ export class CardClassifier {
       }
 
       // 4. Prompt at the bottom of the screen
-      if (isQuestionLine(trimmed) || (trimmed.endsWith("?") && this.hasNumberedOptionsAhead(lines, i))) {
+      if (!questionMenu && (isQuestionLine(trimmed) || (trimmed.endsWith("?") && this.hasNumberedOptionsAhead(lines, i)))) {
         const prompt = parseTailPrompt(lines, i);
         if (prompt) {
           const card = buildInteraction(prompt);
@@ -359,17 +360,14 @@ export class CardClassifier {
       }
     }
 
-    if (!pendingInteraction) {
-      const menu = parseQuestionMenu(lines);
-      if (menu) {
-        const card = buildInteraction(menu);
-        pendingInteraction = {
-          ...card,
-          multiSelect: menu.multiSelect,
-          ...(menu.allowsOther ? { allowsOther: true } : {}),
-          options: card.options.map((o, k) => (menu.descriptions[k] ? { ...o, description: menu.descriptions[k] } : o)),
-        };
-      }
+    if (!pendingInteraction && questionMenu && (agentKind === undefined || agentKind === "claude")) {
+      const card = buildInteraction(questionMenu);
+      pendingInteraction = {
+        ...card,
+        multiSelect: questionMenu.multiSelect,
+        ...(questionMenu.allowsOther ? { allowsOther: true } : {}),
+        options: card.options.map((o, k) => (questionMenu.descriptions[k] ? { ...o, description: questionMenu.descriptions[k] } : o)),
+      };
     }
     return { cards, pendingInteraction };
   }

@@ -339,11 +339,17 @@ export class PairingManager extends EventEmitter {
   }
 
   private async handleAdminCommand(line: string, socket: Socket) {
+    let msg: any;
     try {
-      const msg = JSON.parse(line);
-      const id = msg.id || "1";
-      const method = msg.method;
+      msg = JSON.parse(line);
+    } catch (err: any) {
+      socket.write(JSON.stringify({ error: { code: "invalid_json", message: err?.message || "Invalid JSON" } }) + "\n");
+      return;
+    }
 
+    const id = msg?.id || "1";
+    const method = msg?.method;
+    try {
       switch (method) {
         case "usage.rebuild": {
           if (!this.rebuildUsage) throw new Error("This daemon keeps no usage database");
@@ -398,7 +404,7 @@ export class PairingManager extends EventEmitter {
           );
       }
     } catch (err: any) {
-      socket.write(JSON.stringify({ error: { code: "invalid_json", message: err.message } }) + "\n");
+      socket.write(JSON.stringify({ id, error: { code: "internal", message: err?.message || String(err) } }) + "\n");
     }
   }
 

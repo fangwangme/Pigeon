@@ -452,7 +452,7 @@ export function QuotaPage() {
                                 <span>
                                   {t("quota.extraUsage", {
                                     used: fmtAmount(eu().used, cur()),
-                                    limit: fmtAmount(eu().limit, cur()),
+                                    limit: eu().limit !== null ? fmtAmount(eu().limit!, cur()) : "—",
                                   })}
                                 </span>
                               </div>

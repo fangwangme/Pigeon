@@ -138,8 +138,14 @@ function commandFiles(dir: string): Array<{ name: string; file: string }> {
 export class SkillScanner {
   private cache = new Map<string, { at: number; entries: SkillEntry[] }>();
   private ttlMs = 15_000;
+  private pluginError: string | null = null;
 
   constructor(private home: string = homedir()) {}
+
+  /** Error message from the most recent Claude plugin manifest/directory scan, if any. */
+  public getPluginError(): string | null {
+    return this.pluginError;
+  }
 
   /** Entries for one agent kind in one project; empty for agents without a known layout. */
   public listSkills(agentKind: string | null, cwd?: string | null): SkillEntry[] {
@@ -185,19 +191,35 @@ export class SkillScanner {
   /** Claude plugins from `installed_plugins.json`, namespaced `/<plugin>:<name>`. */
   private claudePlugins(): SkillEntry[] {
     const file = join(this.home, ".claude", "plugins", "installed_plugins.json");
-    if (!existsSync(file)) return [];
-    const data = JSON.parse(readFileSync(file, "utf-8"));
+    if (!existsSync(file)) {
+      this.pluginError = null;
+      return [];
+    }
+    let data: any;
+    try {
+      data = JSON.parse(readFileSync(file, "utf-8"));
+      this.pluginError = null;
+    } catch (err) {
+      this.pluginError = err instanceof Error ? err.message : String(err);
+      console.warn(`[pigeon] Failed to read Claude plugin manifest '${file}':`, this.pluginError);
+      return [];
+    }
     const out: SkillEntry[] = [];
     for (const [key, installs] of Object.entries<any>(data.plugins ?? {})) {
       const plugin = key.split("@")[0];
       for (const install of Array.isArray(installs) ? installs : [installs]) {
         const path = typeof install?.installPath === "string" ? install.installPath : null;
         if (!path || !existsSync(path)) continue;
-        for (const { name, file: f } of skillDirs(join(path, "skills"))) {
-          out.push({ name: `${plugin}:${name}`, description: readDescription(f, false), source: "plugin", kind: "skill", invocation: `/${plugin}:${name}` });
-        }
-        for (const { name, file: f } of commandFiles(join(path, "commands"))) {
-          out.push({ name: `${plugin}:${name}`, description: readDescription(f, true), source: "plugin", kind: "command", invocation: `/${plugin}:${name}` });
+        try {
+          for (const { name, file: f } of skillDirs(join(path, "skills"))) {
+            out.push({ name: `${plugin}:${name}`, description: readDescription(f, false), source: "plugin", kind: "skill", invocation: `/${plugin}:${name}` });
+          }
+          for (const { name, file: f } of commandFiles(join(path, "commands"))) {
+            out.push({ name: `${plugin}:${name}`, description: readDescription(f, true), source: "plugin", kind: "command", invocation: `/${plugin}:${name}` });
+          }
+        } catch (err) {
+          this.pluginError = err instanceof Error ? err.message : String(err);
+          console.warn(`[pigeon] Failed to scan plugin '${plugin}':`, this.pluginError);
         }
       }
     }

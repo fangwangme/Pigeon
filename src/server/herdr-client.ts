@@ -647,7 +647,7 @@ export class HerdrClient extends EventEmitter {
           if (!pane.agent) continue;
           workingAgents.push({
             agent: pane.agent,
-            name: pane.name,
+            name: pane.name ?? pane.id,
             status: pane.agentStatus,
             workspaceId: ws.id,
             workspaceLabel: ws.label,
@@ -675,7 +675,7 @@ export class HerdrClient extends EventEmitter {
         const panes = tab.panes.map((pane) => {
           if (pane.id !== paneId) return pane;
           changed = true;
-          return this.buildPaneSummary(pane.id, pane.name, pane.isPrimary, known);
+          return this.buildPaneSummary(pane.id, pane.name ?? pane.id, pane.isPrimary, known);
         });
         const rawName = topoSpace?.tabs.find((t) => t.id === tab.id)?.name;
         const tabLabel = rawName !== undefined ? this.resolveTabLabel(rawName, panes[0], tabIdx) : tab.label;
@@ -758,7 +758,7 @@ export class HerdrClient extends EventEmitter {
     const known = this.knownPanes.get(paneId);
     if (!known) return;
     const existing = this.paneStates.get(paneId);
-    const screenPrompt = existing?.rawScreen ? this.classifier.classifyScreen(existing.rawScreen).pendingInteraction : null;
+    const screenPrompt = existing?.rawScreen ? this.classifier.classifyScreen(existing.rawScreen, known.agentKind).pendingInteraction : null;
     const pendingInteraction = this.pickInteraction(paneId, screenPrompt, known.herdrStatus === "blocked" && existing ? existing.rawScreen : null);
     const agentStatus = pendingInteraction ? "blocked" : this.reportedStatus(paneId);
     const payload: PaneStatePayload = {
@@ -937,7 +937,7 @@ export class HerdrClient extends EventEmitter {
     const classifyKey = `${createHash("sha256").update(rawScreen).digest("hex")}|${known.herdrStatus}|${this.seenPanes.has(paneId)}|${this.transcriptInteractions.get(paneId)?.interactionId ?? ""}`;
     if (existing && this.paneClassifyKeys.get(paneId) === classifyKey) return existing;
 
-    const classified = this.classifier.classifyScreen(rawScreen);
+    const classified = this.classifier.classifyScreen(rawScreen, known.agentKind);
     const cards = classified.cards;
     const pendingInteraction = this.pickInteraction(paneId, classified.pendingInteraction, known.herdrStatus === "blocked" ? rawScreen : null);
 

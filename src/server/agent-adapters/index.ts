@@ -2,7 +2,7 @@ import { Database } from "bun:sqlite";
 import { existsSync, readFileSync, readdirSync, realpathSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
-import { OpenCodeAdapter, type OpenCodeAdapterOptions } from "./opencode";
+import { OPENCODE_PLACEHOLDER_TITLE, OpenCodeAdapter, type OpenCodeAdapterOptions } from "./opencode";
 import { AgyAdapter, agyModelSetting, type AgyAdapterOptions } from "./agy";
 import { isObj, readHeadJsonLines, readTailJsonLines } from "../sessions/common";
 import { ClaudeSource } from "../sessions/claude";
@@ -160,43 +160,36 @@ class AgySource implements SessionSource {
   }
 }
 
-/** OpenCode: sessions are rows of `session_v2` (`agent-session-normalization.md` §2.1). */
-const OPENCODE_PLACEHOLDER_TITLE = /^New session - \d{4}-\d{2}-\d{2}T/;
-
+/** OpenCode: sessions are rows of `session_v2` or legacy `session` (`agent-session-normalization.md` §2.1). */
 class OpenCodeSource implements SessionSource {
   public readonly agent = "opencode";
   constructor(private adapter: OpenCodeAdapter) {}
-  private query<T>(sql: string, ...params: any[]): T[] {
-    if (!this.adapter.isAvailable()) return [];
-    const db = new Database(this.adapter.getDbPath(), { readonly: true });
-    try {
-      db.run("PRAGMA query_only = ON;");
-      db.run("PRAGMA busy_timeout = 2000;");
-      return db.query(sql).all(...params) as T[];
-    } finally {
-      db.close();
-    }
-  }
   public newest(facts: PaneFacts, exclude: Set<string>): string | null {
     if (!facts.cwd) return null;
-    const rows = this.query<{ id: string }>(
-      "SELECT id FROM session_v2 WHERE directory = ? AND time_updated >= ? ORDER BY time_updated DESC LIMIT 20",
-      facts.cwd,
-      facts.createdMs
-    );
+    const rows =
+      this.adapter.withDb((db, table) =>
+        db
+          .query(`SELECT id FROM ${table} WHERE directory = ? AND time_updated >= ? ORDER BY time_updated DESC LIMIT 20`)
+          .all(facts.cwd!, facts.createdMs) as Array<{ id: string }>
+      ) ?? [];
     return rows.find((r) => !exclude.has(r.id))?.id ?? null;
   }
   public lastWritten(sessionId: string): number | null {
-    return this.query<{ time_updated: number }>("SELECT time_updated FROM session_v2 WHERE id = ?", sessionId)[0]?.time_updated ?? null;
+    return (
+      this.adapter.withDb(
+        (db, table) =>
+          (db.query(`SELECT time_updated FROM ${table} WHERE id = ?`).get(sessionId) as { time_updated?: number } | null)
+            ?.time_updated ?? null
+      ) ?? null
+    );
   }
   public watchPath(): string {
     return `${this.adapter.getDbPath()}-wal`;
   }
-  private firstPrompt(sessionId: string): string | undefined {
-    const row = this.query<{ data: string }>(
-      "SELECT data FROM session_message WHERE session_id = ? AND type = 'user' ORDER BY seq ASC, time_created ASC LIMIT 1",
-      sessionId
-    )[0];
+  private firstPrompt(db: Database, sessionId: string): string | undefined {
+    const row = db
+      .query("SELECT data FROM session_message WHERE session_id = ? AND type = 'user' ORDER BY seq ASC, time_created ASC LIMIT 1")
+      .get(sessionId) as { data: string } | undefined;
     if (!row) return undefined;
     try {
       const data = JSON.parse(row.data);
@@ -207,11 +200,12 @@ class OpenCodeSource implements SessionSource {
     }
   }
   /** §2.1: the latest assistant message names the model as `{ providerID, id }`. */
-  private model(sessionId: string): string | undefined {
-    const row = this.query<{ data: string }>(
-      "SELECT data FROM session_message WHERE session_id = ? AND type = 'assistant' ORDER BY seq DESC, time_created DESC LIMIT 1",
-      sessionId
-    )[0];
+  private model(db: Database, sessionId: string): string | undefined {
+    const row = db
+      .query(
+        "SELECT data FROM session_message WHERE session_id = ? AND type = 'assistant' ORDER BY seq DESC, time_created DESC LIMIT 1"
+      )
+      .get(sessionId) as { data: string } | undefined;
     if (!row) return undefined;
     let data: unknown;
     try {
@@ -222,25 +216,26 @@ class OpenCodeSource implements SessionSource {
     const model = (data as any)?.model;
     return typeof model?.providerID === "string" && typeof model?.id === "string" ? `${model.providerID}/${model.id}` : undefined;
   }
-  public read(id: string): SessionRead {
-    const rawTitle = this.query<{ title: string | null }>("SELECT title FROM session_v2 WHERE id = ?", id)[0]?.title;
-    const isPlaceholder = rawTitle ? OPENCODE_PLACEHOLDER_TITLE.test(rawTitle) : false;
-    const title = rawTitle && !isPlaceholder ? rawTitle : undefined;
-    const model = this.model(id);
-    return { ...this.adapter.getTurns(id), ...(title ? { sessionTitle: title } : {}), ...(model ? { model } : {}) };
+  public read(id: string, incremental = false): SessionRead {
+    return this.adapter.getTurns(id, incremental);
   }
   public forget(): void {}
   public list(folder: string): PastSession[] {
-    return this.query<{ id: string; title: string | null; time_updated: number }>(
-      "SELECT id, title, time_updated FROM session_v2 WHERE (directory = ? OR directory LIKE ?) AND time_archived IS NULL ORDER BY time_updated DESC LIMIT 50",
-      folder,
-      `${folder}/%`
-    ).map((r) => {
-      const isPlaceholder = r.title ? OPENCODE_PLACEHOLDER_TITLE.test(r.title) : false;
-      const effectiveTitle = (!isPlaceholder && r.title) || this.firstPrompt(r.id) || r.id;
-      const m = this.model(r.id);
-      return { id: r.id, title: effectiveTitle.slice(0, 120), updatedAt: r.time_updated, ...(m ? { model: m } : {}) };
-    });
+    return (
+      this.adapter.withDb((db, table) => {
+        const rows = db
+          .query(
+            `SELECT id, title, time_updated FROM ${table} WHERE (directory = ? OR directory LIKE ?) AND time_archived IS NULL ORDER BY time_updated DESC LIMIT 50`
+          )
+          .all(folder, `${folder}/%`) as Array<{ id: string; title: string | null; time_updated: number }>;
+        return rows.map((r) => {
+          const isPlaceholder = r.title ? OPENCODE_PLACEHOLDER_TITLE.test(r.title) : false;
+          const effectiveTitle = (!isPlaceholder && r.title) || this.firstPrompt(db, r.id) || r.id;
+          const m = this.model(db, r.id);
+          return { id: r.id, title: effectiveTitle.slice(0, 120), updatedAt: r.time_updated, ...(m ? { model: m } : {}) };
+        });
+      }) ?? []
+    );
   }
 }
 
@@ -251,7 +246,10 @@ export class AgentAdapterManager {
 
   constructor(options: AgentAdapterManagerOptions = {}) {
     const home = options.home ?? homedir();
-    const opencode = new OpenCodeAdapter(options.opencode ?? { dbPath: join(home, ".local", "share", "opencode", "opencode.db") });
+    const homeOcDb = join(home, ".local", "share", "opencode", "opencode.db");
+    const xdgOcDb = process.env.XDG_DATA_HOME ? join(process.env.XDG_DATA_HOME, "opencode", "opencode.db") : null;
+    const defaultOcDb = xdgOcDb && (options.home === undefined || (!existsSync(homeOcDb) && existsSync(xdgOcDb))) ? xdgOcDb : homeOcDb;
+    const opencode = new OpenCodeAdapter(options.opencode ?? { dbPath: defaultOcDb });
     const brainDir = options.agy?.baseBrainDir ?? join(home, ".gemini", "antigravity-cli", "brain");
     const agy = new AgyAdapter({ baseBrainDir: brainDir });
     for (const s of [new ClaudeSource(home), new CodexSource(home), new PiSource(home), new AgySource(agy, brainDir), new OpenCodeSource(opencode)]) {

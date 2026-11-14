@@ -31,6 +31,17 @@ export function isEnoent(err: unknown): boolean {
   return typeof err === "object" && err !== null && (err as NodeJS.ErrnoException).code === "ENOENT";
 }
 
+/** Deterministic fallback timestamp from a session file's creation/modification time. */
+export function fileFallbackTs(path: string): number {
+  try {
+    const st = statSync(path);
+    return st.birthtimeMs || st.mtimeMs || 0;
+  } catch (err) {
+    if (isEnoent(err)) return 0;
+    throw err;
+  }
+}
+
 export class JsonlTail {
   private offset = 0;
   private partial: Buffer = Buffer.alloc(0);
@@ -260,8 +271,22 @@ export class TurnBuilder {
   public title?: string;
   public model?: string;
   public todos?: TodoItem[];
+  public lastTs: number;
   private calls = new Map<string, { call: NormalizedToolCall; startedAt?: number; diffs?: FileDiffSummary[] }>();
   private fileOrder: string[] = [];
+
+  constructor(initialTs = 0) {
+    this.lastTs = initialTs;
+  }
+
+  public resolveTs(raw: unknown): number {
+    const parsed = tsOf(raw, 0);
+    if (parsed > 0) {
+      this.lastTs = parsed;
+      return parsed;
+    }
+    return this.lastTs;
+  }
 
   private current(timestamp: number): NormalizedTurn {
     let turn = this.turns[this.turns.length - 1];

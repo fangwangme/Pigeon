@@ -15,15 +15,15 @@ export function formatModelNameWithRecipes(
 ): string {
   if (!model) return "";
 
-  const agents = Array.isArray(agent)
+  const agents: string[] = Array.isArray(agent)
     ? agent.filter((a): a is string => typeof a === "string" && a.length > 0)
-    : agent
+    : typeof agent === "string" && agent.length > 0
     ? [agent]
     : [];
 
   for (const ag of agents) {
     const models = recipes[ag]?.models ?? [];
-    const exact = models.find((m) => m.id === model || m.label === model);
+    const exact = models.find((m: { id: string; label?: string }) => m.id === model || m.label === model);
     if (exact && exact.label && exact.label !== exact.id) {
       return ag === "agy" ? stripAntigravityTier(exact.label) : exact.label;
     }
@@ -32,12 +32,12 @@ export function formatModelNameWithRecipes(
       const targetKey = normalizeAntigravityKey(model);
       if (targetKey) {
         const tierMatch = models.find(
-          (m) =>
+          (m: { id: string; label?: string }) =>
             m.label &&
             m.label !== m.id &&
             (normalizeAntigravityKey(m.id) === targetKey || normalizeAntigravityKey(m.label) === targetKey)
         );
-        if (tierMatch) {
+        if (tierMatch?.label) {
           return stripAntigravityTier(tierMatch.label);
         }
       }

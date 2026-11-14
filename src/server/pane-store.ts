@@ -17,6 +17,7 @@ export interface PaneSessionState {
   todos?: TodoItem[];
   model?: string;
   watcher?: FSWatcher;
+  reattachTimer?: ReturnType<typeof setTimeout>;
 }
 
 /** What Pigeon launched a pane with (`protocol.md` §4.5). */
@@ -103,12 +104,53 @@ export class PaneStore extends EventEmitter {
   private watch(state: PaneSessionState): boolean {
     const watchPath = this.adapters.getWatchPath(state.agent, state.sessionId);
     if (!watchPath || !existsSync(watchPath)) return false;
+    state.watcher?.close();
+    state.watcher = undefined;
+    if (state.reattachTimer) {
+      clearTimeout(state.reattachTimer);
+      state.reattachTimer = undefined;
+    }
     let timer: ReturnType<typeof setTimeout> | null = null;
-    state.watcher = watch(watchPath, () => {
+    const scheduleRefresh = () => {
       if (timer) clearTimeout(timer);
-      timer = setTimeout(() => this.refreshPaneTurns(state.paneId, true), this.watchDebounceMs);
-    });
-    return true;
+      timer = setTimeout(() => {
+        timer = null;
+        if (this.paneStates.get(state.paneId) === state) {
+          this.refreshPaneTurns(state.paneId, true);
+        }
+      }, this.watchDebounceMs);
+    };
+    const recover = () => {
+      if (this.paneStates.get(state.paneId) !== state) return;
+      state.watcher?.close();
+      state.watcher = undefined;
+      if (state.reattachTimer) clearTimeout(state.reattachTimer);
+      let attempts = 0;
+      const tryReattach = () => {
+        if (this.paneStates.get(state.paneId) !== state) return;
+        if (this.watch(state)) {
+          scheduleRefresh();
+          return;
+        }
+        if (++attempts < 20) {
+          state.reattachTimer = setTimeout(tryReattach, 50);
+        }
+      };
+      state.reattachTimer = setTimeout(tryReattach, 20);
+    };
+    try {
+      const watcher = watch(watchPath, (eventType) => {
+        scheduleRefresh();
+        if (eventType === "rename") {
+          recover();
+        }
+      });
+      watcher.on("error", () => recover());
+      state.watcher = watcher;
+      return true;
+    } catch {
+      return false;
+    }
   }
 
   public unbind(paneId: string): void {
@@ -121,7 +163,12 @@ export class PaneStore extends EventEmitter {
   }
 
   private release(state: PaneSessionState): void {
+    if (state.reattachTimer) {
+      clearTimeout(state.reattachTimer);
+      state.reattachTimer = undefined;
+    }
     state.watcher?.close();
+    state.watcher = undefined;
     this.adapters.forget(state.agent, state.sessionId);
   }
 
@@ -227,7 +274,10 @@ export class PaneStore extends EventEmitter {
   }
 
   public destroy(): void {
-    for (const state of this.paneStates.values()) state.watcher?.close();
+    for (const state of this.paneStates.values()) {
+      if (state.reattachTimer) clearTimeout(state.reattachTimer);
+      state.watcher?.close();
+    }
     this.paneStates.clear();
   }
 }

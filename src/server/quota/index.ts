@@ -98,11 +98,14 @@ export class QuotaService {
     }
   }
 
+  private isProviderEnabled(config: ClientConfig | undefined, key: "claude" | "codex" | "antigravity"): boolean {
+    return config?.quotaProviders?.[key] !== false;
+  }
+
   public async fetchAll(clientConfig?: ClientConfig): Promise<void> {
     const config = clientConfig ?? this.configManager?.getClientConfig();
-    const providersConfig = config?.quotaProviders ?? { claude: true, codex: true, antigravity: true };
     const providerKeys: Array<"claude" | "codex" | "antigravity"> = ["claude", "codex", "antigravity"];
-    const enabledKeys = providerKeys.filter((k) => providersConfig[k] !== false);
+    const enabledKeys = providerKeys.filter((k) => this.isProviderEnabled(config, k));
 
     await Promise.all(
       enabledKeys.map(async (key) => {
@@ -148,11 +151,10 @@ export class QuotaService {
       }
     }
 
-    const providersConfig = config?.quotaProviders ?? { claude: true, codex: true, antigravity: true };
     const providerKeys: Array<"claude" | "codex" | "antigravity"> = ["claude", "codex", "antigravity"];
 
     const results: QuotaProviderState[] = providerKeys.map((key) => {
-      const isEnabled = providersConfig[key] ?? false;
+      const isEnabled = this.isProviderEnabled(config, key);
       if (!isEnabled) {
         return {
           provider: key,

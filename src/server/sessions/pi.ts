@@ -1,7 +1,7 @@
 import { existsSync, readdirSync, realpathSync, statSync } from "node:fs";
 import { join } from "node:path";
 import type { PastSession } from "../../types/protocol";
-import { isObj, JsonlTail, lineDiff, readHeadJsonLines, readTailJsonLines, str, TurnBuilder, tsOf, type SessionRead } from "./common";
+import { fileFallbackTs, isObj, JsonlTail, lineDiff, readHeadJsonLines, readTailJsonLines, str, TurnBuilder, type SessionRead } from "./common";
 import type { PaneFacts, SessionSource } from "./source";
 
 function mtimeOf(path: string | undefined): number | null {
@@ -71,11 +71,11 @@ export class PiSource implements SessionSource {
     if (!path) return { turns: [] };
     let reader = this.readers.get(sessionId);
     if (!reader || !incremental) {
-      reader = { tail: new JsonlTail(path), builder: new TurnBuilder() };
+      reader = { tail: new JsonlTail(path), builder: new TurnBuilder(fileFallbackTs(path)) };
       this.readers.set(sessionId, reader);
     }
     const { records, reset } = reader.tail.read();
-    if (reset) reader.builder = new TurnBuilder();
+    if (reset) reader.builder = new TurnBuilder(fileFallbackTs(path));
     for (const r of records) applyRecord(reader.builder, r);
     return reader.builder.result();
   }
@@ -126,7 +126,7 @@ function applyRecord(b: TurnBuilder, r: unknown): void {
   if (isObj(r) && r.type === "model_change" && str(r.provider) && str(r.modelId)) b.model = `${r.provider}/${r.modelId}`;
   if (!isObj(r) || r.type !== "message" || !isObj(r.message)) return;
   const m = r.message;
-  const ts = tsOf(r.timestamp ?? m.timestamp, Date.now());
+  const ts = b.resolveTs(r.timestamp ?? m.timestamp);
   if (m.role === "user") {
     const text = blocksText(m.content);
     if (text) {

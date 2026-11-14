@@ -1,14 +1,14 @@
-import { existsSync, readdirSync, realpathSync, statSync } from "node:fs";
+import { existsSync, readdirSync, realpathSync, statSync, type Stats } from "node:fs";
 import { join } from "node:path";
 import type { FileDiffSummary, TodoItem } from "../../shared/agent-session";
 import type { PastSession } from "../../types/protocol";
-import { countPatch, isEnoent, isObj, JsonlTail, readFirstJsonLine, readHeadJsonLines, readTailJsonLines, str, todoStatus, TurnBuilder, tsOf, type SessionRead } from "./common";
+import { countPatch, fileFallbackTs, isEnoent, isObj, JsonlTail, readFirstJsonLine, readHeadJsonLines, readTailJsonLines, str, todoStatus, TurnBuilder, type SessionRead } from "./common";
 import type { PaneFacts, SessionSource } from "./source";
 
 const MAX_LISTED_ROLLOUTS = 2000;
 const NOT_PROMPT = /^\s*<(environment_context|user_instructions|user_action)/;
 
-function safeStat(path: string): ReturnType<typeof statSync> | null {
+function safeStat(path: string): Stats | null {
   try {
     return statSync(path);
   } catch (err) {
@@ -120,12 +120,12 @@ export class CodexSource implements SessionSource {
     if (!path) return { turns: [] };
     let reader = this.readers.get(sessionId);
     if (!reader || !incremental) {
-      reader = { tail: new JsonlTail(path), builder: new TurnBuilder(), state: {} };
+      reader = { tail: new JsonlTail(path), builder: new TurnBuilder(fileFallbackTs(path)), state: {} };
       this.readers.set(sessionId, reader);
     }
     const { records, reset } = reader.tail.read();
     if (reset) {
-      reader.builder = new TurnBuilder();
+      reader.builder = new TurnBuilder(fileFallbackTs(path));
       reader.state = {};
     }
     for (const r of records) applyRecord(reader.builder, r, reader.state);
@@ -350,7 +350,7 @@ function applyItemCompleted(b: TurnBuilder, item: Record<string, any>, ts: numbe
 
 function applyRecord(b: TurnBuilder, r: unknown, state: CodexParseState): void {
   if (!isObj(r)) return;
-  const ts = tsOf(r.timestamp, Date.now());
+  const ts = b.resolveTs(r.timestamp);
   const p = r.payload;
   if (!isObj(p)) return;
   if (r.type === "turn_context") {
