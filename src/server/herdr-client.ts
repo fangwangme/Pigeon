@@ -841,6 +841,25 @@ export class HerdrClient extends EventEmitter {
     const state = this.paneStates.get(paneId);
     if (state) this.applyScreen(paneId, state.rawScreen);
     this.scheduleSnapshot();
+    void this.markSeenOnDesktop(paneId);
+  }
+
+  /** §4 "Seen", both ways: the desktop records a look as `herdr.seen` = the turn it saw. */
+  private async markSeenOnDesktop(paneId: string): Promise<void> {
+    try {
+      // The turn known here can be stale (a status event without `turn`), so read the terminal first.
+      const term = await this.coreRequest<HerdrCoreTerminal>("terminal.get", { terminal: paneId });
+      if (term?.status?.state !== "done" || typeof term.turn !== "number" || term.turn <= 0) return;
+      if (term.labels?.["herdr.seen"] === String(term.turn)) return;
+      await this.coreRequest("terminal.label", { terminal: paneId, labels: { "herdr.seen": String(term.turn) } });
+      const known = this.knownPanes.get(paneId);
+      if (known) {
+        known.turn = term.turn;
+        known.desktopSeenTurn = term.turn;
+      }
+    } catch (err) {
+      console.warn(`[pigeon] could not mark ${paneId} seen on the desktop:`, err instanceof Error ? err.message : err);
+    }
   }
 
   /** herdr-adapter.md §4: the Core's `error` needs a person, like `blocked`. */

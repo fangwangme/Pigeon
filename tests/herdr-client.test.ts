@@ -409,6 +409,25 @@ describe("connection lifecycle (herdr-adapter.md §3.2, §3.4)", () => {
     expect(status()).toBe("done");
   });
 
+  test("a pane a phone marks seen is marked seen on the desktop too: herdr.seen = its current turn (§4 Seen)", async () => {
+    herdr.serve([{ paneId: "t1", app: "claude-code", state: "done" }]);
+    herdr.handlers["terminal.get"] = () => ({ result: { address: "t1", state: "live", cwd: "/work", turn: 9, labels: { "herdr.tab": "tab1" }, status: { state: "done", app: "claude-code" } } });
+    await client.connect();
+    await Bun.sleep(50);
+    client.markSeen("t1");
+    await Bun.sleep(50);
+    expect(herdr.callsOf("terminal.label").map((c) => c.params)).toEqual([{ terminal: "t1", labels: { "herdr.seen": "9" } }]);
+
+    // Already seen at this turn on the desktop: nothing is written.
+    herdr.handlers["terminal.get"] = () => ({ result: { address: "t1", state: "live", cwd: "/work", turn: 9, labels: { "herdr.seen": "9" }, status: { state: "done", app: "claude-code" } } });
+    herdr.emitEvent("status", "t1", { status: { state: "working", app: "claude-code" }, records: {}, reported: true });
+    herdr.emitEvent("status", "t1", { status: { state: "done", app: "claude-code" }, records: {}, reported: true });
+    await Bun.sleep(50);
+    client.markSeen("t1");
+    await Bun.sleep(50);
+    expect(herdr.callsOf("terminal.label")).toHaveLength(1);
+  });
+
   test("a status change on an unchanged screen still sends the new status", async () => {
     const updates = await viewPaneThenChangeStatus("$ bun test\n", "working", "idle");
     expect(updates.at(-1)?.agentStatus).toBe("idle");

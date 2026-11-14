@@ -33,6 +33,10 @@ export interface Palette {
   lgShadow: string;
   lgSpec: string;
   scrim: string;
+  /** Segmented control (§11.3): the track, the selected segment, and its lift — the selection must read at a glance. */
+  segTrack: string;
+  segOn: string;
+  segShadow: string;
   agentClaude: string;
   agentCodex: string;
   agentAgy: string;
@@ -86,6 +90,9 @@ export const PALETTES: Record<"light" | "dark", Palette> = {
     lgShadow: "0 10px 30px rgba(0,0,0,.38)",
     lgSpec: "rgba(255,255,255,.16)",
     scrim: "rgba(0,0,0,.42)",
+    segTrack: "#151518",
+    segOn: "#2b2b31",
+    segShadow: "0 2px 6px rgba(0,0,0,.45), 0 0 0 1px rgba(255,255,255,.14)",
     agentClaude: "#FB923C",
     agentCodex: "#34D399",
     agentAgy: "#60A5FA",
@@ -137,6 +144,9 @@ export const PALETTES: Record<"light" | "dark", Palette> = {
     lgShadow: "0 10px 30px rgba(0,0,0,.13)",
     lgSpec: "rgba(255,255,255,.55)",
     scrim: "rgba(0,0,0,.28)",
+    segTrack: "#EAEAEB",
+    segOn: "#FFFFFF",
+    segShadow: "0 2px 5px rgba(0,0,0,.08), 0 0 0 1px rgba(0,0,0,.04)",
     agentClaude: "#C2410C",
     agentCodex: "#047857",
     agentAgy: "#2563EB",
@@ -198,6 +208,9 @@ const KEBAB: Record<keyof Palette, string> = {
   lgShadow: "lg-shadow",
   lgSpec: "lg-spec",
   scrim: "scrim",
+  segTrack: "seg-track",
+  segOn: "seg-on",
+  segShadow: "seg-shadow",
   agentClaude: "agent-claude",
   agentCodex: "agent-codex",
   agentAgy: "agent-agy",

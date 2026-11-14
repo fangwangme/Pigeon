@@ -3,7 +3,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { QuotaSnapshot, QuotaWindow } from "../../types/protocol";
 import { decodeJwtPayload, fileCredentialSource } from "./credentials";
-import { discoverAntigravityLs, isLoopbackAddress } from "../usage/antigravity-ls";
+import { discoverAntigravityLs, isLoopbackAddress, type AntigravityLsConnection } from "../usage/antigravity-ls";
 
 export interface AntigravityQuotaProviderOptions {
   home?: string;
@@ -54,50 +54,39 @@ export class AntigravityQuotaProvider {
     return join(this.home, ".gemini", "antigravity-cli", "antigravity-oauth-token");
   }
 
-  private readAccountEmail(): string | undefined {
-    // 1. Check OAuth token file (antigravity-oauth-token)
-    const tokenPaths = [
-      process.env.TOKENPULSE_ANTIGRAVITY_AUTH_PATH,
-      this.tokenPath(),
-    ].filter(Boolean) as string[];
-
-    for (const tp of tokenPaths) {
-      if (existsSync(tp)) {
-        try {
-          const data = JSON.parse(readFileSync(tp, "utf-8"));
-          if (data?.id_token) {
-            const payload = decodeJwtPayload(data.id_token);
-            if (payload?.email) return payload.email;
-          }
-        } catch {
-          // ignore
-        }
-      }
+  /**
+   * §2.2: the account is the one the answering source is signed in as. The CLI and the desktop app can
+   * be signed in to different Google accounts, so one never supplies the other's.
+   */
+  private cliAccount(): string | undefined {
+    // The CLI logs each sign-in (also the one the `/usage` call just made): the last one is current.
+    const log = join(this.home, ".gemini", "antigravity-cli", "cli.log");
+    if (existsSync(log)) {
+      const matches = [...readFileSync(log, "utf-8").matchAll(/authenticated successfully as (\S+@\S+)/g)];
+      const last = matches.at(-1)?.[1];
+      if (last) return last;
     }
+    return this.storageUsername(join(this.home, ".gemini", "antigravity-cli", "app_storage.json"));
+  }
 
-    // 2. Check Antigravity Desktop / CLI app_storage.json
-    const storagePaths = [
-      join(this.home, ".gemini", "antigravity-cli", "app_storage.json"),
-      join(this.home, ".config", "Antigravity", "app_storage.json"),
-      join(this.home, "Library", "Application Support", "Antigravity", "app_storage.json"),
-    ];
-    for (const sp of storagePaths) {
-      if (existsSync(sp)) {
-        try {
-          const data = JSON.parse(readFileSync(sp, "utf-8"));
-          const username =
-            data?.["agy.onboarding.lastLoginUsername"] ??
-            data?.["jetski.onboarding.lastLoginUsername"];
-          if (typeof username === "string" && username.includes("@")) {
-            return username.trim();
-          }
-        } catch {
-          // ignore
-        }
-      }
+  private desktopAccount(): string | undefined {
+    return (
+      this.storageUsername(join(this.home, ".config", "Antigravity", "app_storage.json")) ??
+      this.storageUsername(join(this.home, "Library", "Application Support", "Antigravity", "app_storage.json"))
+    );
+  }
+
+  /** `app_storage.json` (another program's file): the last sign-in it recorded, when readable. */
+  private storageUsername(path: string): string | undefined {
+    if (!existsSync(path)) return undefined;
+    let data: any;
+    try {
+      data = JSON.parse(readFileSync(path, "utf-8"));
+    } catch {
+      return undefined;
     }
-
-    return undefined;
+    const username = data?.["agy.onboarding.lastLoginUsername"] ?? data?.["jetski.onboarding.lastLoginUsername"];
+    return typeof username === "string" && username.includes("@") ? username.trim() : undefined;
   }
 
   public async fetch(): Promise<QuotaSnapshot> {
@@ -107,7 +96,7 @@ export class AntigravityQuotaProvider {
     try {
       const lsConn = await discoverAntigravityLs(this.home);
       if (lsConn) {
-        const snap = await this.probeLanguageServer(lsConn.address, lsConn.csrfToken);
+        const snap = await this.probeLanguageServer(lsConn.address, lsConn.csrfToken, lsConn.runtimeKind);
         if (snap) return snap;
       }
     } catch (err) {
@@ -133,7 +122,7 @@ export class AntigravityQuotaProvider {
     throw new Error(`Antigravity quota fetch failed: ${errors.join("; ")}`);
   }
 
-  private async probeLanguageServer(address: string, csrfToken?: string): Promise<QuotaSnapshot | null> {
+  private async probeLanguageServer(address: string, csrfToken: string | undefined, runtimeKind: AntigravityLsConnection["runtimeKind"]): Promise<QuotaSnapshot | null> {
     if (!isLoopbackAddress(address)) return null;
     const url = `http://${address}/exa.language_server_pb.LanguageServerService/RetrieveUserQuotaSummary`;
     const headers: Record<string, string> = {
@@ -186,7 +175,9 @@ export class AntigravityQuotaProvider {
       // ignore
     }
 
-    return this.buildSnapshotFromGroups(summary.groups, lsEmail, lsPlan);
+    // The server says who it is signed in as; else the stored sign-in of the program that runs it.
+    const account = lsEmail ?? (runtimeKind === "cli" ? this.cliAccount() : this.desktopAccount());
+    return this.buildSnapshotFromGroups(summary.groups, account, lsPlan);
   }
 
   private async probeAgyCli(): Promise<QuotaSnapshot | null> {
@@ -219,7 +210,7 @@ export class AntigravityQuotaProvider {
     const parsed = JSON.parse(output);
     const groups = parsed?.command?.data?.groups;
     if (!Array.isArray(groups)) return null;
-    return this.buildSnapshotFromGroups(groups);
+    return this.buildSnapshotFromGroups(groups, this.cliAccount());
   }
 
   private async probeCloudCode(): Promise<QuotaSnapshot | null> {
@@ -260,10 +251,11 @@ export class AntigravityQuotaProvider {
     const body = (await res.json()) as any;
     const summary = body?.response || body;
     if (!summary?.groups) return null;
-    return this.buildSnapshotFromGroups(summary.groups);
+    const idEmail = typeof parsed?.id_token === "string" ? decodeJwtPayload(parsed.id_token)?.email : undefined;
+    return this.buildSnapshotFromGroups(summary.groups, typeof idEmail === "string" ? idEmail : this.cliAccount());
   }
 
-  private buildSnapshotFromGroups(groups: any[], preferredEmail?: string, plan?: string): QuotaSnapshot {
+  private buildSnapshotFromGroups(groups: any[], account: string | undefined, plan?: string): QuotaSnapshot {
     const windows: QuotaWindow[] = [];
 
     for (let gIdx = 0; gIdx < groups.length; gIdx++) {
@@ -302,7 +294,6 @@ export class AntigravityQuotaProvider {
       }
     }
 
-    const account = preferredEmail || this.readAccountEmail();
 
     return {
       provider: "antigravity",

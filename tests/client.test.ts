@@ -28,6 +28,13 @@ describe("themes (mobile-ui-and-themes.md §9.1)", () => {
     const p = PALETTES[mode];
     for (const token of [p.fg, p.muted, p.faint]) expect(contrast(p.bg, token)).toBeGreaterThanOrEqual(4.5);
   });
+
+  test.each(["light", "dark"] as const)("%s: the selected segment stands apart from its track, with its own lift", (mode) => {
+    const p = PALETTES[mode];
+    expect(contrast(p.segTrack, p.segOn)).toBeGreaterThanOrEqual(1.15);
+    const css = readFileSync(join(import.meta.dir, "..", "src", "client", "src", "styles.css"), "utf-8");
+    expect(css).toContain(".seg .on, .seg button.on { background: var(--seg-on); color: var(--fg); font-weight: 650; box-shadow: var(--seg-shadow); }");
+  });
 });
 
 describe("Markdown rendering (mobile-ui-and-themes.md §3.1)", () => {

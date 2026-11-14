@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { AntigravityQuotaProvider } from "../src/server/quota/antigravity";
 import { ClaudeQuotaProvider } from "../src/server/quota/claude";
@@ -202,6 +202,25 @@ describe("antigravity & codex quota providers (quota-and-usage.md §2.2, §2.3)"
     const snap = await agy.fetch();
     expect(snap.windows.map((w) => w.id)).toContain("3p-weekly");
     expect(readFileSync(agyTokPath, "utf-8")).toBe(agyTokContent);
+  });
+
+  test("the Antigravity account is the CLI's own sign-in when the CLI answers, never the desktop app's (§2.2)", async () => {
+    const dir = tempDir("quota-agy-account");
+    mkdirSync(join(dir, ".gemini", "antigravity-cli"), { recursive: true });
+    writeFileSync(
+      join(dir, ".gemini", "antigravity-cli", "cli.log"),
+      "I1114 server_oauth.go:226] OAuth: authenticated successfully as old@example.com\nI1114 server_oauth.go:226] OAuth: authenticated successfully as cli@example.com\n",
+      "utf-8"
+    );
+    mkdirSync(join(dir, ".config", "Antigravity"), { recursive: true });
+    writeFileSync(join(dir, ".config", "Antigravity", "app_storage.json"), JSON.stringify({ "agy.onboarding.lastLoginUsername": "desktop@example.com" }), "utf-8");
+    const fixturePath = join(import.meta.dir, "fixtures", "agy-usage-groups.json");
+
+    const agy = new AntigravityQuotaProvider({ home: dir, now: () => 1_700_000_000_000, agyUsageCommand: ["cat", fixturePath] });
+    expect((await agy.fetch()).account).toBe("cli@example.com");
+
+    rmSync(join(dir, ".gemini", "antigravity-cli", "cli.log"));
+    expect((await agy.fetch()).account).toBeUndefined();
   });
 
   test("QuotaService defaults omitted quotaProviders entries to enabled while honoring false", async () => {
