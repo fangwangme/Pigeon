@@ -380,6 +380,35 @@ describe("connection lifecycle (herdr-adapter.md §3.2, §3.4)", () => {
     expect(client.getSnapshot().workspaces[0].tabs[0].panes[0].agentStatus).toBe("idle");
   });
 
+  test("a done pane the desktop already looked at (herdr.seen ≥ turn) is reported idle; a newer done is not (§4 Seen)", async () => {
+    const withLook = (turn: number, seen: string | undefined) => {
+      const topo = topologyOf([{ paneId: "t1", app: "claude-code", state: "done" }]);
+      topo.terminals[0].turn = turn;
+      topo.terminals[0].labels = seen === undefined ? {} : { "herdr.seen": seen };
+      return topo;
+    };
+    const status = () => client.getSnapshot().workspaces[0].tabs[0].panes[0].agentStatus;
+
+    client.applySnapshot(withLook(6, "6"));
+    expect(status()).toBe("idle");
+    client.applySnapshot(withLook(7, "6"));
+    expect(status()).toBe("done");
+    client.applySnapshot(withLook(6, undefined));
+    expect(status()).toBe("done");
+
+    // A status event without `turn` may be a new turn: the old look no longer hides it.
+    herdr.serve([{ paneId: "t1", app: "claude-code", state: "done" }]);
+    await client.connect();
+    client.applySnapshot(withLook(6, "6"));
+    expect(status()).toBe("idle");
+    herdr.emitEvent("status", "t1", { status: { state: "working", app: "claude-code" }, records: {}, reported: true });
+    await Bun.sleep(50);
+    expect(status()).toBe("working");
+    herdr.emitEvent("status", "t1", { status: { state: "done", app: "claude-code" }, records: {}, reported: true });
+    await Bun.sleep(50);
+    expect(status()).toBe("done");
+  });
+
   test("a status change on an unchanged screen still sends the new status", async () => {
     const updates = await viewPaneThenChangeStatus("$ bun test\n", "working", "idle");
     expect(updates.at(-1)?.agentStatus).toBe("idle");

@@ -79,6 +79,16 @@ interface KnownPane {
   pid: number | null;
   program: string | undefined;
   createdMs: number;
+  /** herdr-adapter.md §4 "Seen": Core's `turn` and the desktop's `herdr.seen` label (null when absent or stale). */
+  turn: number;
+  desktopSeenTurn: number | null;
+}
+
+/** herdr-adapter.md §4 "Seen": the turn the desktop last looked at, from the `herdr.seen` label. */
+function desktopSeenTurnOf(term: HerdrCoreTerminal | undefined): number | null {
+  const raw = term?.labels?.["herdr.seen"];
+  if (typeof raw !== "string" || !/^\d+$/.test(raw)) return null;
+  return Number(raw);
 }
 
 /** What a pane's session binding needs (`agent-session-normalization.md` §2.0). */
@@ -448,6 +458,10 @@ export class HerdrClient extends EventEmitter {
       if (status !== "done") {
         if (this.seenPanes.delete(paneId)) this.saveSeenPanes();
       }
+      // §4 "Seen": a desktop look covers the turn it saw. Without `turn` a changed status may be a new turn,
+      // so the look is dropped until the next snapshot reads the label again.
+      if (typeof params.data.turn === "number") known.turn = params.data.turn;
+      else if (status !== known.herdrStatus) known.desktopSeenTurn = null;
       known.herdrStatus = status;
       known.agentKind = this.agentKindOf(params.data.status);
       // relabelTabs() re-applies the last topology before the next snapshot arrives: keep it current.
@@ -521,6 +535,8 @@ export class HerdrClient extends EventEmitter {
             pid: term?.foreground?.pid || null,
             program: term?.foreground?.name || undefined,
             createdMs: term?.created_ms ?? 0,
+            turn: typeof term?.turn === "number" ? term.turn : 0,
+            desktopSeenTurn: desktopSeenTurnOf(term),
           });
           if (ref.pane === topology.status.focused_pane) focusedPaneId = ref.terminal;
         }
@@ -805,8 +821,12 @@ export class HerdrClient extends EventEmitter {
 
   /** Herdr's status, with a seen `done` reported as `idle` (herdr-adapter.md §4). */
   private reportedStatus(paneId: string): AgentStatus {
-    const status = this.knownPanes.get(paneId)?.herdrStatus ?? "unknown";
-    return status === "done" && this.seenPanes.has(paneId) ? "idle" : status;
+    const known = this.knownPanes.get(paneId);
+    const status = known?.herdrStatus ?? "unknown";
+    if (status !== "done") return status;
+    // §4 "Seen": looked at on a phone, or on the desktop since this turn finished.
+    const desktopSeen = known!.desktopSeenTurn !== null && known!.turn > 0 && known!.desktopSeenTurn >= known!.turn;
+    return this.seenPanes.has(paneId) || desktopSeen ? "idle" : status;
   }
 
   /**

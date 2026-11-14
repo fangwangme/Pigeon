@@ -4,6 +4,7 @@ import type { ClientConfig, QuotaProviderState, QuotaSnapshot } from "../../type
 import { ClaudeQuotaProvider } from "./claude";
 import { CodexQuotaProvider } from "./codex";
 import { AntigravityQuotaProvider } from "./antigravity";
+import { orderWindows } from "./order";
 
 export interface QuotaServiceOptions {
   claude?: ClaudeQuotaProvider;
@@ -178,14 +179,10 @@ export class QuotaService {
     return { providers: results, fetchedAt };
   }
 
-  private fetchProvider(key: "claude" | "codex" | "antigravity"): Promise<QuotaSnapshot> {
-    switch (key) {
-      case "claude":
-        return this.claude.fetch();
-      case "codex":
-        return this.codex.fetch();
-      case "antigravity":
-        return this.antigravity.fetch();
-    }
+  private async fetchProvider(key: "claude" | "codex" | "antigravity"): Promise<QuotaSnapshot> {
+    const provider = key === "claude" ? this.claude : key === "codex" ? this.codex : this.antigravity;
+    const snap = await provider.fetch();
+    // §2.1: one window order for every provider.
+    return { ...snap, windows: orderWindows(snap.windows) };
   }
 }

@@ -54,6 +54,10 @@ export interface HerdrCoreTerminal {
   foreground?: { cwd: string; pid?: number; name?: string; argv?: string[] } | null;
   status?: HerdrCoreStatus | null;
   title?: string;
+  /** Labels; the desktop records a look at a finished pane as `herdr.seen` = the `turn` it saw. */
+  labels?: Record<string, string>;
+  /** Counts the agent's turns in this terminal. */
+  turn?: number;
 }
 
 export interface HerdrCoreListResult {

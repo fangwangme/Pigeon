@@ -111,16 +111,34 @@ describe("antigravity & codex quota providers (quota-and-usage.md §2.2, §2.3)"
     writeFileSync(join(agyCliDir, "app_storage.json"), JSON.stringify({ "agy.onboarding.lastLoginUsername": "alice@example.com" }), "utf-8");
 
     const provider = new AntigravityQuotaProvider({ home: dir, now: () => 1_700_000_000_000 });
-    const snap = await provider.fetch();
+    const qs = new QuotaService({ autoScan: false, antigravity: provider, claude: { fetch: async () => ({ provider: "claude", windows: [], credits: [], fetchedAt: 1 }) } as any, codex: { fetch: async () => ({ provider: "codex", windows: [], credits: [], fetchedAt: 1 }) } as any });
+    const res = await qs.getQuota({ ...DEFAULT_CLIENT_CONFIG, quotaProviders: { claude: false, codex: false, antigravity: true } });
+    const snap = res.providers.find((p) => p.provider === "antigravity")!.snapshot!;
     expect(snap.account).toBe("alice@example.com");
     expect(snap.plan).toBe("Pro");
+    // §2.1: groups keep the API's order; within each, 5h comes before 7d although the API lists weekly first.
     expect(snap.windows.map((w) => [w.id, w.label, w.usedPercent])).toEqual([
-      ["gemini-weekly", "Gemini · 7d", 40],
       ["gemini-5h", "Gemini · 5h", 10],
-      ["3p-weekly", "Claude/GPT · 7d", 60],
+      ["gemini-weekly", "Gemini · 7d", 40],
       ["3p-5h", "Claude/GPT · 5h", 15],
+      ["3p-weekly", "Claude/GPT · 7d", 60],
       ["gemini-argon-wtu-weekly", "Gemini 4 Argon · 7d", 25],
     ]);
+  });
+
+  test("every provider's windows are grouped by category, then 5h before 7d before windows without a period (§2.1)", async () => {
+    const H = 3_600_000;
+    const w = (id: string, periodMs: number | null, family?: string) => ({ id, label: id, usedPercent: 0, periodMs, resetsAt: null, ...(family ? { family } : {}) });
+    const qs = new QuotaService({
+      autoScan: false,
+      claude: { fetch: async () => ({ provider: "claude", windows: [w("7d", 168 * H), w("7d-fable", 168 * H, "Fable"), w("5h", 5 * H), w("5h-fable", 5 * H, "Fable")], credits: [], fetchedAt: 1 }) } as any,
+      codex: { fetch: async () => ({ provider: "codex", windows: [w("other", null), w("weekly", 168 * H), w("primary", 5 * H)], credits: [], fetchedAt: 1 }) } as any,
+      antigravity: { fetch: async () => ({ provider: "antigravity", windows: [], credits: [], fetchedAt: 1 }) } as any,
+    });
+    const res = await qs.getQuota(DEFAULT_CLIENT_CONFIG);
+    const ids = (p: string) => res.providers.find((x) => x.provider === p)!.snapshot!.windows.map((x) => x.id);
+    expect(ids("claude")).toEqual(["5h", "7d", "5h-fable", "7d-fable"]);
+    expect(ids("codex")).toEqual(["primary", "weekly", "other"]);
   });
 
   test("Codex and Antigravity expired credentials fail with login expired without mutating credential files", async () => {
