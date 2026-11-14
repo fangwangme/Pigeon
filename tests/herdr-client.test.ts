@@ -380,6 +380,79 @@ describe("connection lifecycle (herdr-adapter.md §3.2, §3.4)", () => {
     expect(client.getSnapshot().workspaces[0].tabs[0].panes[0].agentStatus).toBe("idle");
   });
 
+  test("a done pane the desktop already looked at (herdr.seen ≥ turn) is reported idle; a newer done is not (§4 Seen)", async () => {
+    const withLook = (turn: number, seen: string | undefined) => {
+      const topo = topologyOf([{ paneId: "t1", app: "claude-code", state: "done" }]);
+      topo.terminals[0].turn = turn;
+      topo.terminals[0].labels = seen === undefined ? {} : { "herdr.seen": seen };
+      return topo;
+    };
+    const status = () => client.getSnapshot().workspaces[0].tabs[0].panes[0].agentStatus;
+
+    client.applySnapshot(withLook(6, "6"));
+    expect(status()).toBe("idle");
+    client.applySnapshot(withLook(7, "6"));
+    expect(status()).toBe("done");
+    client.applySnapshot(withLook(6, undefined));
+    expect(status()).toBe("done");
+
+    herdr.serve([{ paneId: "t1", app: "claude-code", state: "done" }]);
+    await client.connect();
+    client.applySnapshot(withLook(6, "6"));
+    expect(status()).toBe("idle");
+    herdr.emitEvent("status", "t1", { status: { state: "working", app: "claude-code" }, records: {}, reported: true });
+    await Bun.sleep(50);
+    expect(status()).toBe("working");
+    herdr.emitEvent("status", "t1", { status: { state: "done", app: "claude-code" }, records: {}, reported: true });
+    await Bun.sleep(50);
+    expect(status()).toBe("done");
+  });
+
+  test("a pane a phone marks seen is marked seen on the desktop too: herdr.seen = its current turn (§4 Seen)", async () => {
+    herdr.serve([{ paneId: "t1", app: "claude-code", state: "done" }]);
+    herdr.handlers["terminal.get"] = () => ({ result: { address: "t1", state: "live", cwd: "/work", turn: 9, labels: { "herdr.tab": "tab1" }, status: { state: "done", app: "claude-code" } } });
+    await client.connect();
+    await Bun.sleep(50);
+    client.markSeen("t1");
+    await Bun.sleep(50);
+    expect(herdr.callsOf("terminal.label").map((c) => c.params)).toEqual([{ terminal: "t1", labels: { "herdr.seen": "9" } }]);
+
+    herdr.handlers["terminal.get"] = () => ({ result: { address: "t1", state: "live", cwd: "/work", turn: 9, labels: { "herdr.seen": "9" }, status: { state: "done", app: "claude-code" } } });
+    herdr.emitEvent("status", "t1", { status: { state: "working", app: "claude-code" }, records: {}, reported: true });
+    herdr.emitEvent("status", "t1", { status: { state: "done", app: "claude-code" }, records: {}, reported: true });
+    await Bun.sleep(50);
+    client.markSeen("t1");
+    await Bun.sleep(50);
+    expect(herdr.callsOf("terminal.label")).toHaveLength(1);
+  });
+
+  test("an attachment prompt the agent left in its input box gets one more enter; a working pane gets none (§6)", async () => {
+    const checking = new HerdrClient({ appSocketPath: herdr.appSocketPath, coreSocketPath: herdr.coreSocketPath, debounceMs: 5, panePollMs: 60_000, attachmentSubmitCheckMs: 30 });
+    try {
+      herdr.serve([{ paneId: "t1", app: "claude-code", state: "idle" }]);
+      herdr.handlers["terminal.read"] = () => ({ result: { text: "╭────╮\n│ > look at this\n│ [Image #1]\n╰────╯\n", how: "screen" } });
+      await checking.connect();
+      await Bun.sleep(50);
+      await checking.sendPrompt("t1", "look at this\n\n@/home/u/.local/share/pigeon/uploads/up_0123456789abcdef-shot.png", true);
+      await Bun.sleep(150);
+      expect(herdr.callsOf("terminal.keys").map((c) => c.params)).toEqual([{ terminal: "t1", keys: ["enter"] }]);
+
+      herdr.emitEvent("status", "t1", { status: { state: "working", app: "claude-code" }, records: {}, reported: true });
+      await Bun.sleep(30);
+      await checking.sendPrompt("t1", "again\n\n@/home/u/.local/share/pigeon/uploads/up_0123456789abcdef-shot.png", true);
+      await Bun.sleep(150);
+      expect(herdr.callsOf("terminal.keys")).toHaveLength(1);
+
+      herdr.emitEvent("status", "t1", { status: { state: "idle", app: "claude-code" }, records: {}, reported: true });
+      await Bun.sleep(30);
+      await checking.sendPrompt("t1", "look at this");
+      await Bun.sleep(150);
+      expect(herdr.callsOf("terminal.keys")).toHaveLength(1);
+    } finally {
+      checking.disconnect();
+    }
+  });
+
   test("a status change on an unchanged screen still sends the new status", async () => {
     const updates = await viewPaneThenChangeStatus("$ bun test\n", "working", "idle");
     expect(updates.at(-1)?.agentStatus).toBe("idle");
@@ -389,5 +462,18 @@ describe("connection lifecycle (herdr-adapter.md §3.2, §3.4)", () => {
     const updates = await viewPaneThenChangeStatus("some custom TUI question\n", "working", "blocked");
     expect(updates.at(-1)?.agentStatus).toBe("blocked");
     expect(updates.at(-1)?.pendingInteraction?.options).toEqual([]);
+  });
+
+  test("a single-pane status event updates the tracked pane agentKind", async () => {
+    herdr.serve([{ paneId: "t1", cwd: "/tmp", state: "idle" }]);
+    await client.connect();
+    await Bun.sleep(50);
+
+    herdr.emitEvent("status", "t1", { status: { state: "working", app: "claude-code" }, records: {}, reported: true });
+    const deadline = Date.now() + 1000;
+    while (client.getPaneFacts("t1")?.agentKind !== "claude" && Date.now() < deadline) {
+      await Bun.sleep(10);
+    }
+    expect(client.getPaneFacts("t1")?.agentKind).toBe("claude");
   });
 });

@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, describe, expect, setSystemTime, test } from "bun:test";
 import { mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { connect } from "node:net";
 import { join } from "node:path";
 import { ConfigManager, resolveInstancePaths, resolveProductionPort } from "../src/server/config-manager";
 import { PigeonDaemon, resolveAccess } from "../src/server/daemon";
@@ -574,6 +575,38 @@ describe("daemon log file (architecture.md §4.6, issue #21)", () => {
       expect(logContent).toContain("notes.txt");
     } finally {
       await daemon.stop();
+    }
+  });
+
+  test("admin socket distinguishes invalid_json from internal errors while preserving request id", async () => {
+    const dir = tempDir("admin-errors");
+    const sock = join(dir, "admin.sock");
+    const p = new PairingManager({ publicBaseUrl: "https://pigeon.example.ts.net", devicesFilePath: join(dir, "devices.json"), adminSocketPath: sock });
+    await p.startAdminSocket();
+    try {
+      const rpc = (line: string) =>
+        new Promise<any>((resolveRpc, rejectRpc) => {
+          const s = connect(sock);
+          let buf = "";
+          s.on("connect", () => s.write(line + "\n"));
+          s.on("data", (d) => {
+            buf += d.toString();
+            if (buf.includes("\n")) {
+              s.end();
+              resolveRpc(JSON.parse(buf.trim()));
+            }
+          });
+          s.on("error", rejectRpc);
+        });
+
+      const badJson = await rpc("{bad");
+      expect(badJson.error.code).toBe("invalid_json");
+
+      const internalErr = await rpc(JSON.stringify({ id: "req-99", method: "usage.rebuild" }));
+      expect(internalErr.id).toBe("req-99");
+      expect(internalErr.error.code).toBe("internal");
+    } finally {
+      await p.stopAdminSocket();
     }
   });
 });

@@ -6,20 +6,20 @@ How to set up Pigeon for daily use, manage paired phones, and ship changes to yo
 
 - The Herdr desktop app (`herdr-app`) running with its window open. Pigeon gets workspaces and tabs from the App socket (`$HERDR_APP_HOME/herdr-app.sock`, or `~/.config/herdr-app/herdr-app.sock` by default) and talks to terminals through Herdr Core (`$HC_TERMINAL_SOCKET`, or `$XDG_RUNTIME_DIR/herdr-core/default.sock` by default). Closing the Herdr window leaves Herdr Core's terminals alive, but Pigeon will show Herdr as offline until the window is open again. The older terminal-only `herdr` TUI is not supported.
 - Tailscale on both this machine and your phone, signed into the same tailnet. Tailscale gives Pigeon a trusted HTTPS origin, which browsers require for PWA installation, service workers, and Web Push. See the [Tailscale Setup Guide](tailscale.md) for step-by-step HTTPS certificate setup, firewall rules, and troubleshooting.
-- Chrome (or another modern Chromium browser) on Android.
+- Chrome on Android, or Safari / Chrome on iOS.
 
 ## One-time setup
 
-1. Expose the daemon port over HTTPS inside your tailnet:
+1. Expose the daemon port over HTTPS inside your tailnet (or let `pigeon start` configure it automatically once operator permissions are granted):
    ```bash
-   tailscale serve --bg 4100
+   tailscale serve --bg --https=8443 4100
    ```
-   This proxies `https://<machine>.<tailnet>.ts.net` to local port `4100`. If `tailscale` asks for root, run `sudo tailscale set --operator=$USER` once.
-2. Optional: pin the address in `~/.config/pigeon/config.json` (or `$XDG_CONFIG_HOME/pigeon/config.json`):
+   This proxies `https://<machine>.<tailnet>.ts.net:8443` to local port `4100`. If `tailscale` asks for root, run `sudo tailscale set --operator=$USER` once.
+2. Optional: pin the address in `~/.local/share/pigeon/config.json` (or `$XDG_DATA_HOME/pigeon/config.json`; legacy `~/.config/pigeon/config.json` is still read if present alone):
    ```json
    {
      "server": {
-       "publicBaseUrl": "https://<machine>.<tailnet>.ts.net"
+       "publicBaseUrl": "https://<machine>.<tailnet>.ts.net:8443"
      }
    }
    ```
@@ -55,8 +55,8 @@ How to set up Pigeon for daily use, manage paired phones, and ship changes to yo
 
 - `pigeon devices` lists every paired browser, and `pigeon devices revoke <deviceId>` disconnects one right away. You can also view and remove paired phones from **Settings → Devices and pairing** in the app.
 - `pigeon pair` rotates the pairing link and prints a fresh QR code (`--ephemeral` makes a single-use link that expires in 10 minutes). Phones that are already paired stay connected.
-- `pigeon status` shows the active session count and public URL.
-- `pigeon rebuild-cache` rebuilds the token usage database from the agents' files (through the daemon when it runs, directly otherwise).
+- `pigeon status` prints Herdr connection state, public URL, active session count, pending queues, last usage scan timestamp, and any adapter or plugin source errors.
+- `pigeon rebuild-cache` rebuilds the token usage database from the agents' files on disk (through the daemon when running, directly otherwise). Non-production ports require `--yes` to confirm rebuilding the usage cache.
 - These commands talk to the daemon on the configured port. A daemon started on another port (a test instance, e.g. `--port 4101`) is reached with the same `--port`, such as `pigeon pair --port 4101`.
 - Clean up any test sessions left over from development before using Pigeon day to day.
 

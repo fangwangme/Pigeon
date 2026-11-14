@@ -12,6 +12,7 @@ import { PushManager } from "../src/server/push";
 import { SkillScanner } from "../src/server/skill-scanner";
 import { UploadStore } from "../src/server/uploads";
 import { WsServer } from "../src/server/ws-server";
+import { ProtocolErrors } from "../src/types/protocol";
 import { FakeHerdr, fakeWs, tempDir, topologyOf, type FakePane } from "./helpers/fixtures";
 
 // protocol.md §4.2 (queue, attachments), §4.5 (first message, resume), §4.9 (model), §4.11 (rename),
@@ -754,5 +755,68 @@ describe("queue state machine (protocol.md §4.2, §4.14)", () => {
     await send(c.ws, { type: "queue_update", id: "v3", payload: { targetPaneId: "p1", queueId, text: "", attachments: [] } });
     expect(c.ofType("error").map((m: any) => m.error.code)).toEqual(["ERR_INVALID_PAYLOAD", "ERR_INVALID_PAYLOAD"]);
     expect(c.ofType("prompt_queue").at(-1).payload.items[0].text).toBe("queued");
+  });
+
+  test("a queued batch Herdr did not receive stays queued with sending: false and goes out after a reconnect snapshot", async () => {
+    let failSend = true;
+    const sentTexts: string[] = [];
+    herdr.handlers["terminal.send"] = (p) => {
+      if (failSend) return { error: "closed" };
+      sentTexts.push(p.text);
+      return { result: { sent: true } };
+    };
+    await client.connect();
+    herdr.emitEvent("status", "p2", { status: { state: "working", app: "codex" }, records: {}, reported: true });
+    await Bun.sleep(30);
+
+    const c = await viewer("p2");
+    await send(c.ws, { type: "agent_prompt", id: "off1", payload: { targetPaneId: "p2", text: "queued offline" } });
+    expect(lastAck(c)).toMatchObject({ queued: true });
+    herdr.emitEvent("status", "p2", { status: { state: "idle", app: "codex" }, records: {}, reported: true });
+
+    await until(() => c.ofType("error").some((m: any) => m.error.code === ProtocolErrors.ERR_UPSTREAM_OFFLINE));
+    await until(() => c.ofType("prompt_queue").at(-1)?.payload.items[0]?.sending === false);
+    expect(c.ofType("prompt_queue").at(-1)?.payload.items).toHaveLength(1);
+    expect(c.ofType("prompt_queue").at(-1)?.payload.items[0]).toMatchObject({ text: "queued offline", sending: false });
+
+    failSend = false;
+    await client.refreshSnapshot();
+    await until(() => sentTexts.length === 1);
+    expect(sentTexts).toEqual(["queued offline"]);
+  });
+
+  test("an immediate send Herdr did not receive is ERR_UPSTREAM_OFFLINE and is not queued", async () => {
+    const sentTexts: string[] = [];
+    herdr.handlers["terminal.send"] = () => ({ error: "closed" });
+    await client.connect();
+    herdr.emitEvent("status", "p2", { status: { state: "idle", app: "codex" }, records: {}, reported: true });
+    await Bun.sleep(30);
+
+    const c = await viewer("p2");
+    await send(c.ws, { type: "agent_prompt", id: "off2", payload: { targetPaneId: "p2", text: "not queued" } });
+    expect(c.ofType("error").some((m: any) => m.error.code === ProtocolErrors.ERR_UPSTREAM_OFFLINE)).toBe(true);
+    expect(c.ofType("prompt_queue").at(-1)?.payload.items ?? []).toHaveLength(0);
+
+    herdr.handlers["terminal.send"] = (p) => {
+      sentTexts.push(p.text);
+      return { result: { sent: true } };
+    };
+    await client.refreshSnapshot();
+    await Bun.sleep(100);
+    expect(sentTexts).toEqual([]);
+  });
+
+  test("a queued prompt waits while the pane has no idle or done status (protocol.md §4.2)", async () => {
+    await client.connect();
+    herdr.emitEvent("status", "p2", { status: { state: "working", app: "codex" }, records: {}, reported: true });
+    await Bun.sleep(30);
+    const c = await viewer("p2");
+    await send(c.ws, { type: "agent_prompt", id: "w1", payload: { targetPaneId: "p2", text: "wait for idle" } });
+    expect(lastAck(c)).toMatchObject({ queued: true });
+    herdr.emitEvent("status", "p2", { status: { state: "starting", app: "codex" }, records: {}, reported: true });
+    await Bun.sleep(100);
+    expect(herdr.callsOf("terminal.send")).toHaveLength(0);
+    herdr.emitEvent("status", "p2", { status: { state: "idle", app: "codex" }, records: {}, reported: true });
+    await until(() => herdr.callsOf("terminal.send").length === 1);
   });
 });

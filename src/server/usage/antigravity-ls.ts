@@ -230,26 +230,29 @@ export async function discoverAntigravityLs(
   // 1. Check daemon hub JSON files
   candidates.push(...discoverDaemonHubFiles(homeDir));
 
-  // 2. Check running processes
-  try {
-    const proc = Bun.spawn(["ps", "-eo", "pid,args"], { stdout: "pipe", stderr: "pipe" });
-    const output = await new Response(proc.stdout).text();
-    candidates.push(...parseProcessListCandidates(output.split("\n")));
-  } catch {}
+  const isDefaultHome = !homeDir || homeDir === (process.env.HOME || "");
+  if (isDefaultHome) {
+    // 2. Check running processes
+    try {
+      const proc = Bun.spawn(["ps", "-eo", "pid,args"], { stdout: "pipe", stderr: "pipe" });
+      const output = await new Response(proc.stdout).text();
+      candidates.push(...parseProcessListCandidates(output.split("\n")));
+    } catch {}
 
-  // 3. Fallback: CLI environment variable
-  const envAddr = process.env.ANTIGRAVITY_LS_ADDRESS;
-  const envCsrf = process.env.ANTIGRAVITY_CSRF_TOKEN;
-  if (envAddr) {
-    const parsed = parseLsAddress(envAddr);
-    if (parsed && isLoopbackAddress(parsed.host)) {
-      candidates.push({
-        pid: 0,
-        address: `${parsed.host}:${parsed.port}`,
-        port: parsed.port,
-        csrfToken: envCsrf,
-        runtimeKind: "cli",
-      });
+    // 3. Fallback: CLI environment variable
+    const envAddr = process.env.ANTIGRAVITY_LS_ADDRESS;
+    const envCsrf = process.env.ANTIGRAVITY_CSRF_TOKEN;
+    if (envAddr) {
+      const parsed = parseLsAddress(envAddr);
+      if (parsed && isLoopbackAddress(parsed.host)) {
+        candidates.push({
+          pid: 0,
+          address: `${parsed.host}:${parsed.port}`,
+          port: parsed.port,
+          csrfToken: envCsrf,
+          runtimeKind: "cli",
+        });
+      }
     }
   }
 

@@ -33,6 +33,18 @@ describe("PricingManager fallback and retry (quota-and-usage.md §3.3)", () => {
     });
   });
 
+  test("an offline retry that reloads the same stale catalog is not a catalog change", async () => {
+    const cachePath = join(testDir, "stale-retry.json");
+    writeFileSync(cachePath, JSON.stringify({ fetchedAt: Date.now() - 48 * 3600 * 1000, entries: { "claude-3-5-sonnet": { inputCostPerToken: 0.000003, outputCostPerToken: 0.000015 } } }));
+    let clock = Date.now();
+    const pm = new PricingManager({ cachePath, fetch: (() => Promise.reject(new Error("offline"))) as any, now: () => clock, retryIntervalMs: 1000 });
+    await pm.initialize();
+    const loaded = pm.getCatalogVersion();
+    clock += 2000;
+    await pm.initialize();
+    expect(pm.getCatalogVersion()).toBe(loaded);
+  });
+
   test("does not set loaded = true permanently on complete failure, allowing retry", async () => {
     const cachePath = join(testDir, "nonexistent-pricing.json");
 
@@ -86,5 +98,45 @@ describe("PricingManager fallback and retry (quota-and-usage.md §3.3)", () => {
     fakeNow += 10 * 60 * 1000 + 1;
     await pm.initialize();
     expect(networkAttempts).toBe(6); // retried after cooldown
+  });
+
+  test("refreshes stale catalog after 24h TTL and prefers first-party models.dev providers", async () => {
+    const cachePath = join(testDir, "ttl-first-party.json");
+    let version = 1;
+    let clock = Date.parse("2026-11-10T10:00:00Z");
+    let fetchCount = 0;
+
+    const mockFetch = (async (input: RequestInfo | URL) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.href : (input as Request).url;
+      if (!url.includes("models.dev")) return new Response("Not Found", { status: 404 });
+      fetchCount++;
+      const scale = version;
+      // Place third-party reseller before first-party provider to verify priority order
+      return Response.json({
+        zenmux: { models: { "claude-sonnet-4-6": { id: "claude-sonnet-4-6", cost: { input: 99, output: 999 } } } },
+        anthropic: { models: { "claude-sonnet-4-6": { id: "claude-sonnet-4-6", cost: { input: 3 * scale, output: 15 * scale } } } },
+      });
+    }) as unknown as typeof fetch;
+
+    const pm = new PricingManager({ cachePath, now: () => clock, fetch: mockFetch });
+    await pm.initialize();
+    expect(fetchCount).toBe(1);
+    expect(pm.getPrice("claude-sonnet-4-6")).toMatchObject({
+      inputCostPerToken: 3 / 1_000_000,
+      outputCostPerToken: 15 / 1_000_000,
+    });
+
+    clock += 12 * 3600_000;
+    await pm.initialize();
+    expect(fetchCount).toBe(1);
+
+    version = 2;
+    clock += 13 * 3600_000;
+    await pm.initialize();
+    expect(fetchCount).toBe(2);
+    expect(pm.getPrice("claude-sonnet-4-6")).toMatchObject({
+      inputCostPerToken: 6 / 1_000_000,
+      outputCostPerToken: 30 / 1_000_000,
+    });
   });
 });

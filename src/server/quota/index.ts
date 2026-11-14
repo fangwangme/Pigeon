@@ -4,6 +4,7 @@ import type { ClientConfig, QuotaProviderState, QuotaSnapshot } from "../../type
 import { ClaudeQuotaProvider } from "./claude";
 import { CodexQuotaProvider } from "./codex";
 import { AntigravityQuotaProvider } from "./antigravity";
+import { orderWindows } from "./order";
 
 export interface QuotaServiceOptions {
   claude?: ClaudeQuotaProvider;
@@ -98,11 +99,14 @@ export class QuotaService {
     }
   }
 
+  private isProviderEnabled(config: ClientConfig | undefined, key: "claude" | "codex" | "antigravity"): boolean {
+    return config?.quotaProviders?.[key] !== false;
+  }
+
   public async fetchAll(clientConfig?: ClientConfig): Promise<void> {
     const config = clientConfig ?? this.configManager?.getClientConfig();
-    const providersConfig = config?.quotaProviders ?? { claude: true, codex: true, antigravity: true };
     const providerKeys: Array<"claude" | "codex" | "antigravity"> = ["claude", "codex", "antigravity"];
-    const enabledKeys = providerKeys.filter((k) => providersConfig[k] !== false);
+    const enabledKeys = providerKeys.filter((k) => this.isProviderEnabled(config, k));
 
     await Promise.all(
       enabledKeys.map(async (key) => {
@@ -148,11 +152,10 @@ export class QuotaService {
       }
     }
 
-    const providersConfig = config?.quotaProviders ?? { claude: true, codex: true, antigravity: true };
     const providerKeys: Array<"claude" | "codex" | "antigravity"> = ["claude", "codex", "antigravity"];
 
     const results: QuotaProviderState[] = providerKeys.map((key) => {
-      const isEnabled = providersConfig[key] ?? false;
+      const isEnabled = this.isProviderEnabled(config, key);
       if (!isEnabled) {
         return {
           provider: key,
@@ -176,14 +179,9 @@ export class QuotaService {
     return { providers: results, fetchedAt };
   }
 
-  private fetchProvider(key: "claude" | "codex" | "antigravity"): Promise<QuotaSnapshot> {
-    switch (key) {
-      case "claude":
-        return this.claude.fetch();
-      case "codex":
-        return this.codex.fetch();
-      case "antigravity":
-        return this.antigravity.fetch();
-    }
+  private async fetchProvider(key: "claude" | "codex" | "antigravity"): Promise<QuotaSnapshot> {
+    const provider = key === "claude" ? this.claude : key === "codex" ? this.codex : this.antigravity;
+    const snap = await provider.fetch();
+    return { ...snap, windows: orderWindows(snap.windows) };
   }
 }

@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, writeFileSync, mkdirSync, chmodSync } from "node:fs";
+import { existsSync, readFileSync, renameSync, writeFileSync, mkdirSync, chmodSync } from "node:fs";
 import { dirname } from "node:path";
 import {
   createCipheriv,
@@ -155,7 +155,6 @@ export class PushManager {
       const tmp = `${this.subscriptionsPath}.${process.pid}.${Math.random().toString(36).slice(2)}.tmp`;
       writeFileSync(tmp, JSON.stringify(obj, null, 2), { encoding: "utf-8", mode: 0o600 });
       chmodSync(tmp, 0o600);
-      const { renameSync } = require("node:fs");
       renameSync(tmp, this.subscriptionsPath);
     } catch (err) {
       console.error("[pigeon] Failed to save push subscriptions:", err);
@@ -247,7 +246,7 @@ export class PushManager {
     return token;
   }
 
-  public sendNotification(message: PushMessage): { suppressed: boolean; delivered: boolean } {
+  public sendNotification(message: PushMessage, onAllFailed?: () => void): { suppressed: boolean; delivered: boolean } {
     if (this.shouldSuppressPush(message.paneId)) {
       return { suppressed: true, delivered: false };
     }
@@ -267,6 +266,8 @@ export class PushManager {
     }
 
     const payloadText = JSON.stringify(message);
+    let settled = 0;
+    let succeeded = 0;
 
     for (const sub of targetSubs) {
       void (async () => {
@@ -290,6 +291,8 @@ export class PushManager {
             this.removeSubscription(sub.endpoint);
           } else if (!res.ok) {
             console.error(`[pigeon] push delivery to ${host} failed: ${res.status}`);
+          } else {
+            succeeded++;
           }
         } catch (err) {
           try {
@@ -297,6 +300,10 @@ export class PushManager {
             console.error(`[pigeon] push delivery to ${host} failed:`, err);
           } catch {
             console.error("[pigeon] push delivery failed:", err);
+          }
+        } finally {
+          if (++settled === targetSubs.length && succeeded === 0) {
+            onAllFailed?.();
           }
         }
       })();

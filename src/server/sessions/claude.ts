@@ -2,7 +2,7 @@ import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import type { FileDiffSummary, TodoItem } from "../../shared/agent-session";
 import type { PastSession } from "../../types/protocol";
-import { claudeSlug, countPatch, isObj, JsonlTail, lineDiff, readHeadJsonLines, readTailJsonLines, str, todoStatus, TurnBuilder, tsOf, type SessionRead } from "./common";
+import { claudeSlug, countPatch, fileFallbackTs, isEnoent, isObj, JsonlTail, lineDiff, readHeadJsonLines, readTailJsonLines, str, todoStatus, TurnBuilder, type SessionRead } from "./common";
 import type { PaneFacts, SessionSource } from "./source";
 
 /** Claude Code (`agent-session-normalization.md` §2.3). */
@@ -40,7 +40,13 @@ export class ClaudeSource implements SessionSource {
 
   public lastWritten(sessionId: string): number | null {
     const path = this.paths.get(sessionId);
-    return path && existsSync(path) ? statSync(path).mtimeMs : null;
+    if (!path) return null;
+    try {
+      return statSync(path).mtimeMs;
+    } catch (err) {
+      if (isEnoent(err)) return null;
+      throw err;
+    }
   }
 
   public newest(facts: PaneFacts, exclude: Set<string>): string | null {
@@ -48,11 +54,24 @@ export class ClaudeSource implements SessionSource {
     const dir = this.projectDir(facts.cwd);
     if (!existsSync(dir)) return null;
     let best: { id: string; mtime: number } | null = null;
-    for (const name of readdirSync(dir)) {
+    let names: string[];
+    try {
+      names = readdirSync(dir);
+    } catch (err) {
+      if (isEnoent(err)) return null;
+      throw err;
+    }
+    for (const name of names) {
       if (!name.endsWith(".jsonl")) continue;
       const id = name.slice(0, -".jsonl".length);
       if (exclude.has(id)) continue;
-      const mtime = statSync(join(dir, name)).mtimeMs;
+      let mtime: number;
+      try {
+        mtime = statSync(join(dir, name)).mtimeMs;
+      } catch (err) {
+        if (isEnoent(err)) continue;
+        throw err;
+      }
       if (mtime < facts.createdMs) continue;
       if (!best || mtime > best.mtime) best = { id, mtime };
     }
@@ -69,12 +88,12 @@ export class ClaudeSource implements SessionSource {
     if (!path) return { turns: [] };
     let reader = this.readers.get(sessionId);
     if (!reader || !incremental) {
-      reader = { tail: new JsonlTail(path), builder: new TurnBuilder() };
+      reader = { tail: new JsonlTail(path), builder: new TurnBuilder(fileFallbackTs(path)) };
       this.readers.set(sessionId, reader);
     }
     const { records, reset } = reader.tail.read();
     if (reset) {
-      reader.builder = new TurnBuilder();
+      reader.builder = new TurnBuilder(fileFallbackTs(path));
     }
     for (const r of records) applyRecord(reader.builder, r);
     return reader.builder.result("AskUserQuestion", "ExitPlanMode");
@@ -88,14 +107,26 @@ export class ClaudeSource implements SessionSource {
     const projects = join(this.root, "projects");
     if (!existsSync(projects)) return [];
     const prefix = claudeSlug(folder);
-    const out: Array<PastSession & { path: string }> = [];
+    const out: Array<PastSession & { path: string; size: number }> = [];
     for (const dirName of readdirSync(projects)) {
       if (!dirName.startsWith(prefix)) continue;
       const dir = join(projects, dirName);
-      for (const name of readdirSync(dir)) {
+      let names: string[];
+      try {
+        names = readdirSync(dir);
+      } catch (err) {
+        if (isEnoent(err)) continue;
+        throw err;
+      }
+      for (const name of names) {
         if (!name.endsWith(".jsonl")) continue;
         const path = join(dir, name);
-        out.push({ id: name.slice(0, -".jsonl".length), title: "", updatedAt: statSync(path).mtimeMs, path });
+        try {
+          const st = statSync(path);
+          out.push({ id: name.slice(0, -".jsonl".length), title: "", updatedAt: st.mtimeMs, path, size: st.size });
+        } catch (err) {
+          if (!isEnoent(err)) throw err;
+        }
       }
     }
     out.sort((a, b) => b.updatedAt - a.updatedAt);
@@ -117,9 +148,11 @@ export class ClaudeSource implements SessionSource {
           model = r.message.model;
         }
       }
-      if (s.path && statSync(s.path).size > 262_144) {
+      if (s.size > 262_144) {
         for (const r of readTailJsonLines(s.path)) {
-          if (isObj(r) && r.type === "assistant" && isObj(r.message) && typeof r.message.model === "string" && r.message.model && r.message.model !== "<synthetic>") {
+          if (!isObj(r)) continue;
+          if (r.type === "custom-title" || r.type === "ai-title") title = str(r.customTitle) ?? str(r.aiTitle) ?? title;
+          if (r.type === "assistant" && isObj(r.message) && typeof r.message.model === "string" && r.message.model && r.message.model !== "<synthetic>") {
             model = r.message.model;
           }
         }
@@ -203,7 +236,7 @@ function describeTool(name: string, input: Record<string, any>) {
 
 function applyRecord(b: TurnBuilder, r: unknown): void {
   if (!isObj(r) || r.isSidechain === true) return;
-  const ts = tsOf(r.timestamp, Date.now());
+  const ts = b.resolveTs(r.timestamp);
   if (r.type === "custom-title" || r.type === "ai-title") {
     b.title = str(r.customTitle) ?? str(r.aiTitle) ?? b.title;
     return;

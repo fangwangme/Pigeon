@@ -1,3 +1,4 @@
+import { reconcile } from "solid-js/store";
 import { state, setState, applySyncedClientConfig, setUnread, showToast, writePref } from "./store";
 import { load, save, remove, clearAll, sweep, meta, migrateLocalStorageCache, getMemoryPaneView, applyPaneTail, type PaneCacheEntry } from "./pane-cache";
 import type { ClientMessage, ServerMessage, SnapshotPayload, PaneStatePayload, ClientConfig, AgentStatus, HaveInfo, QuotaProviderState } from "../../../types/protocol";
@@ -113,6 +114,18 @@ async function isAuthenticated(): Promise<boolean> {
   return !!data.authenticated;
 }
 
+function teardownSocket(ws: WebSocket | null): void {
+  if (pingInterval) clearInterval(pingInterval);
+  pingInterval = null;
+  for (const p of pending.values()) {
+    p.reject(Object.assign(new Error(t("error.disconnected")), { code: "ERR_OFFLINE" }));
+  }
+  pending.clear();
+  setState("connected", false);
+  setState("configReady", false);
+  if (ws && socket === ws) socket = null;
+}
+
 /** Connects unless already paired-and-connected; shows pairing guidance when not paired. */
 export async function initWebSocket(): Promise<void> {
   if (socket && (socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CONNECTING)) return;
@@ -183,12 +196,7 @@ export async function initWebSocket(): Promise<void> {
   ws.onclose = (event) => {
     if (socket !== ws) return;
     socket = null;
-    setState("connected", false);
-    setState("configReady", false);
-    if (pingInterval) clearInterval(pingInterval);
-    pingInterval = null;
-    for (const p of pending.values()) p.reject({ code: "ERR_OFFLINE", message: t("error.disconnected") });
-    pending.clear();
+    teardownSocket(ws);
     if (event.code === 4401 || event.code === 4403) {
       void clearAll();
     }
@@ -290,7 +298,7 @@ export function handleServerMessage(msg: ServerMessage): void {
 
     case "snapshot_update":
       trackUnread(msg.payload);
-      setState("workspaces", msg.payload.workspaces);
+      setState("workspaces", reconcile(msg.payload.workspaces));
       if (state.herdrConnected) {
         const alive = msg.payload.workspaces.flatMap((w) => w.tabs.flatMap((t) => t.panes.map((p) => p.id)));
         const key = alive.slice().sort().join(",");
@@ -319,13 +327,13 @@ export function handleServerMessage(msg: ServerMessage): void {
       }
       if (msg.payload.turns) {
         setState({
-          normalizedTurns: msg.payload.turns.turns,
           sessionStats: msg.payload.turns.sessionStats || null,
           sessionTitle: msg.payload.turns.sessionTitle || null,
           todos: msg.payload.turns.todos || null,
           session: msg.payload.turns.session,
           paneSyncing: false,
         });
+        setState("normalizedTurns", reconcile(msg.payload.turns.turns));
         const metaInfo = meta(msg.payload.paneId);
         if (!msg.payload.turns.session?.bound || (metaInfo && metaInfo.sessionId !== msg.payload.turns.session?.sessionId)) {
           void remove(msg.payload.paneId);
@@ -342,7 +350,7 @@ export function handleServerMessage(msg: ServerMessage): void {
           if (patchLastTurn) current[Math.max(0, sinceTurnIndex - (appendTurns.length > 0 ? 1 : 0))] = patchLastTurn;
           if (appendTurns.length > 0) current = [...current.slice(0, sinceTurnIndex), ...appendTurns];
         }
-        setState("normalizedTurns", current);
+        setState("normalizedTurns", reconcile(current));
         if (sessionStats) setState("sessionStats", sessionStats);
         if (sessionTitle) setState("sessionTitle", sessionTitle);
         if (todos) setState("todos", todos);
@@ -364,13 +372,13 @@ export function handleServerMessage(msg: ServerMessage): void {
         paneSeqs.set(msg.payload.paneId, msg.payload.seq);
       }
       setState({
-        normalizedTurns: msg.payload.turns,
         sessionStats: msg.payload.sessionStats || null,
         sessionTitle: msg.payload.sessionTitle || null,
         todos: msg.payload.todos || null,
         session: msg.payload.session,
         paneSyncing: false,
       });
+      setState("normalizedTurns", reconcile(msg.payload.turns));
       const metaInfo = meta(msg.payload.paneId);
       if (!msg.payload.session?.bound || (metaInfo && metaInfo.sessionId !== msg.payload.session?.sessionId)) {
         void remove(msg.payload.paneId);
@@ -401,7 +409,7 @@ export function handleServerMessage(msg: ServerMessage): void {
         if (patchLastTurn) current[Math.max(0, sinceTurnIndex - (appendTurns.length > 0 ? 1 : 0))] = patchLastTurn;
         if (appendTurns.length > 0) current = [...current.slice(0, sinceTurnIndex), ...appendTurns];
       }
-      setState("normalizedTurns", current);
+      setState("normalizedTurns", reconcile(current));
       if (sessionStats) setState("sessionStats", sessionStats);
       if (sessionTitle) setState("sessionTitle", sessionTitle);
       if (todos) setState("todos", todos);
@@ -738,22 +746,25 @@ export function copyText(text: string): void {
 migrateLocalStorageCache();
 void sweep();
 
+export function handleVisibilityChange(): void {
+  if (document.visibilityState === "hidden" && state.activePaneId) {
+    flushActivePaneSnapshot();
+  }
+  if (document.visibilityState === "visible") {
+    const stale = Date.now() - lastPongTime > 30000;
+    if (!socket || socket.readyState !== WebSocket.OPEN || stale) {
+      const old = socket;
+      socket = null; // detach first so the old socket's close cannot touch the new one
+      teardownSocket(null);
+      old?.close();
+      void initWebSocket();
+    }
+  }
+  reportPresence();
+}
+
 if (typeof document !== "undefined") {
-  document.addEventListener("visibilitychange", () => {
-    if (document.visibilityState === "hidden" && state.activePaneId) {
-      flushActivePaneSnapshot();
-    }
-    if (document.visibilityState === "visible") {
-      const stale = Date.now() - lastPongTime > 30000;
-      if (!socket || socket.readyState !== WebSocket.OPEN || stale) {
-        const old = socket;
-        socket = null; // detach first so the old socket's close cannot touch the new one
-        old?.close();
-        void initWebSocket();
-      }
-    }
-    reportPresence();
-  });
+  document.addEventListener("visibilitychange", handleVisibilityChange);
 }
 
 if (typeof window !== "undefined") {

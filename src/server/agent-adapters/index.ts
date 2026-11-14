@@ -2,7 +2,7 @@ import { Database } from "bun:sqlite";
 import { existsSync, readFileSync, readdirSync, realpathSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
-import { OpenCodeAdapter, type OpenCodeAdapterOptions } from "./opencode";
+import { OPENCODE_PLACEHOLDER_TITLE, OpenCodeAdapter, type OpenCodeAdapterOptions } from "./opencode";
 import { AgyAdapter, agyModelSetting, type AgyAdapterOptions } from "./agy";
 import { isObj, readHeadJsonLines, readTailJsonLines } from "../sessions/common";
 import { ClaudeSource } from "../sessions/claude";
@@ -160,43 +160,36 @@ class AgySource implements SessionSource {
   }
 }
 
-/** OpenCode: sessions are rows of `session_v2` (`agent-session-normalization.md` §2.1). */
-const OPENCODE_PLACEHOLDER_TITLE = /^New session - \d{4}-\d{2}-\d{2}T/;
-
+/** OpenCode: sessions are rows of `session_v2` or legacy `session` (`agent-session-normalization.md` §2.1). */
 class OpenCodeSource implements SessionSource {
   public readonly agent = "opencode";
   constructor(private adapter: OpenCodeAdapter) {}
-  private query<T>(sql: string, ...params: any[]): T[] {
-    if (!this.adapter.isAvailable()) return [];
-    const db = new Database(this.adapter.getDbPath(), { readonly: true });
-    try {
-      db.run("PRAGMA query_only = ON;");
-      db.run("PRAGMA busy_timeout = 2000;");
-      return db.query(sql).all(...params) as T[];
-    } finally {
-      db.close();
-    }
-  }
   public newest(facts: PaneFacts, exclude: Set<string>): string | null {
     if (!facts.cwd) return null;
-    const rows = this.query<{ id: string }>(
-      "SELECT id FROM session_v2 WHERE directory = ? AND time_updated >= ? ORDER BY time_updated DESC LIMIT 20",
-      facts.cwd,
-      facts.createdMs
-    );
+    const rows =
+      this.adapter.withDb((db, table) =>
+        db
+          .query(`SELECT id FROM ${table} WHERE directory = ? AND time_updated >= ? ORDER BY time_updated DESC LIMIT 20`)
+          .all(facts.cwd!, facts.createdMs) as Array<{ id: string }>
+      ) ?? [];
     return rows.find((r) => !exclude.has(r.id))?.id ?? null;
   }
   public lastWritten(sessionId: string): number | null {
-    return this.query<{ time_updated: number }>("SELECT time_updated FROM session_v2 WHERE id = ?", sessionId)[0]?.time_updated ?? null;
+    return (
+      this.adapter.withDb(
+        (db, table) =>
+          (db.query(`SELECT time_updated FROM ${table} WHERE id = ?`).get(sessionId) as { time_updated?: number } | null)
+            ?.time_updated ?? null
+      ) ?? null
+    );
   }
   public watchPath(): string {
     return `${this.adapter.getDbPath()}-wal`;
   }
-  private firstPrompt(sessionId: string): string | undefined {
-    const row = this.query<{ data: string }>(
-      "SELECT data FROM session_message WHERE session_id = ? AND type = 'user' ORDER BY seq ASC, time_created ASC LIMIT 1",
-      sessionId
-    )[0];
+  private firstPrompt(db: Database, sessionId: string): string | undefined {
+    const row = db
+      .query("SELECT data FROM session_message WHERE session_id = ? AND type = 'user' ORDER BY seq ASC, time_created ASC LIMIT 1")
+      .get(sessionId) as { data: string } | undefined;
     if (!row) return undefined;
     try {
       const data = JSON.parse(row.data);
@@ -207,11 +200,12 @@ class OpenCodeSource implements SessionSource {
     }
   }
   /** §2.1: the latest assistant message names the model as `{ providerID, id }`. */
-  private model(sessionId: string): string | undefined {
-    const row = this.query<{ data: string }>(
-      "SELECT data FROM session_message WHERE session_id = ? AND type = 'assistant' ORDER BY seq DESC, time_created DESC LIMIT 1",
-      sessionId
-    )[0];
+  private model(db: Database, sessionId: string): string | undefined {
+    const row = db
+      .query(
+        "SELECT data FROM session_message WHERE session_id = ? AND type = 'assistant' ORDER BY seq DESC, time_created DESC LIMIT 1"
+      )
+      .get(sessionId) as { data: string } | undefined;
     if (!row) return undefined;
     let data: unknown;
     try {
@@ -222,39 +216,65 @@ class OpenCodeSource implements SessionSource {
     const model = (data as any)?.model;
     return typeof model?.providerID === "string" && typeof model?.id === "string" ? `${model.providerID}/${model.id}` : undefined;
   }
-  public read(id: string): SessionRead {
-    const rawTitle = this.query<{ title: string | null }>("SELECT title FROM session_v2 WHERE id = ?", id)[0]?.title;
-    const isPlaceholder = rawTitle ? OPENCODE_PLACEHOLDER_TITLE.test(rawTitle) : false;
-    const title = rawTitle && !isPlaceholder ? rawTitle : undefined;
-    const model = this.model(id);
-    return { ...this.adapter.getTurns(id), ...(title ? { sessionTitle: title } : {}), ...(model ? { model } : {}) };
+  public read(id: string, incremental = false): SessionRead {
+    return this.adapter.getTurns(id, incremental);
   }
   public forget(): void {}
   public list(folder: string): PastSession[] {
-    return this.query<{ id: string; title: string | null; time_updated: number }>(
-      "SELECT id, title, time_updated FROM session_v2 WHERE (directory = ? OR directory LIKE ?) AND time_archived IS NULL ORDER BY time_updated DESC LIMIT 50",
-      folder,
-      `${folder}/%`
-    ).map((r) => {
-      const isPlaceholder = r.title ? OPENCODE_PLACEHOLDER_TITLE.test(r.title) : false;
-      const effectiveTitle = (!isPlaceholder && r.title) || this.firstPrompt(r.id) || r.id;
-      const m = this.model(r.id);
-      return { id: r.id, title: effectiveTitle.slice(0, 120), updatedAt: r.time_updated, ...(m ? { model: m } : {}) };
-    });
+    return (
+      this.adapter.withDb((db, table) => {
+        const rows = db
+          .query(
+            `SELECT id, title, time_updated FROM ${table} WHERE (directory = ? OR directory LIKE ?) AND time_archived IS NULL ORDER BY time_updated DESC LIMIT 50`
+          )
+          .all(folder, `${folder}/%`) as Array<{ id: string; title: string | null; time_updated: number }>;
+        return rows.map((r) => {
+          const isPlaceholder = r.title ? OPENCODE_PLACEHOLDER_TITLE.test(r.title) : false;
+          const effectiveTitle = (!isPlaceholder && r.title) || this.firstPrompt(db, r.id) || r.id;
+          const m = this.model(db, r.id);
+          return { id: r.id, title: effectiveTitle.slice(0, 120), updatedAt: r.time_updated, ...(m ? { model: m } : {}) };
+        });
+      }) ?? []
+    );
   }
 }
 
 /** Every agent's session store behind one interface (`agent-session-normalization.md` §2). */
 export class AgentAdapterManager {
   private sources = new Map<string, SessionSource>();
+  private sourceErrors = new Map<string, { agent: string; op: string; message: string; at: number }>();
 
   constructor(options: AgentAdapterManagerOptions = {}) {
     const home = options.home ?? homedir();
-    const opencode = new OpenCodeAdapter(options.opencode ?? { dbPath: join(home, ".local", "share", "opencode", "opencode.db") });
+    const opencode = new OpenCodeAdapter(options.opencode ?? (options.home === undefined ? {} : { dbPath: join(home, ".local", "share", "opencode", "opencode.db") }));
     const brainDir = options.agy?.baseBrainDir ?? join(home, ".gemini", "antigravity-cli", "brain");
     const agy = new AgyAdapter({ baseBrainDir: brainDir });
     for (const s of [new ClaudeSource(home), new CodexSource(home), new PiSource(home), new AgySource(agy, brainDir), new OpenCodeSource(opencode)]) {
       this.sources.set(s.agent, s);
+    }
+  }
+
+  public getSourceErrors(): Array<{ agent: string; op: string; message: string; at: number }> {
+    return Array.from(this.sourceErrors.values());
+  }
+
+  private callSource<T>(agent: string, op: string, fallback: T, fn: (source: SessionSource) => T): T {
+    const normalized = agent.toLowerCase();
+    const source = this.sources.get(normalized);
+    if (!source) return fallback;
+    const key = `${normalized}:${op}`;
+    try {
+      const value = fn(source);
+      this.sourceErrors.delete(key);
+      return value;
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      const now = Date.now();
+      const previous = this.sourceErrors.get(key);
+      const logged = previous?.message === message && now - previous.at < 60_000 ? previous.at : now;
+      this.sourceErrors.set(key, { agent: normalized, op, message, at: logged });
+      if (logged === now) console.error(`[pigeon] ${normalized} source error (${op}):`, err);
+      return fallback;
     }
   }
 
@@ -267,47 +287,47 @@ export class AgentAdapterManager {
    * session file the process or a descendant holds open.
    */
   public exactSession(facts: PaneFacts): string | null {
-    const source = this.sources.get(facts.agent);
-    if (!source) return null;
-    if (source.exact) return source.exact(facts);
-    if (!source.sessionOfFile || !facts.pid) return null;
-    for (const file of openFilesOf(facts.pid)) {
-      const id = source.sessionOfFile(file);
-      if (id) return id;
-    }
-    return null;
+    return this.callSource(facts.agent, "exact", null, (source) => {
+      if (source.exact) return source.exact(facts);
+      if (!source.sessionOfFile || !facts.pid) return null;
+      for (const file of openFilesOf(facts.pid)) {
+        const id = source.sessionOfFile(file);
+        if (id) return id;
+      }
+      return null;
+    });
   }
 
   /** §2.0 rule 6: when the session was last written. */
   public lastWritten(agent: string, sessionId: string): number | null {
-    return this.sources.get(agent)?.lastWritten(sessionId) ?? null;
+    return this.callSource(agent, "lastWritten", null, (source) => source.lastWritten(sessionId));
   }
 
   /** §2.0 rule 2. */
   public newestSession(facts: PaneFacts, exclude: Set<string>): string | null {
-    return this.sources.get(facts.agent)?.newest(facts, exclude) ?? null;
+    return this.callSource(facts.agent, "newest", null, (source) => source.newest(facts, exclude));
   }
 
-  public getTurns(agent: string, sessionId: string, incremental = false): SessionRead {
-    const source = this.sources.get(agent.toLowerCase());
-    return source ? source.read(sessionId, incremental) : { turns: [] };
+  public getTurns(agent: string, sessionId: string, incremental = false): SessionRead | null {
+    return this.callSource<SessionRead | null>(agent, "read", null, (source) => source.read(sessionId, incremental));
   }
 
   /** File whose changes mean the session has new records; watched instead of polling. */
   public getWatchPath(agent: string, sessionId: string): string | null {
-    return this.sources.get(agent.toLowerCase())?.watchPath(sessionId) ?? null;
+    return this.callSource(agent, "watchPath", null, (source) => source.watchPath(sessionId));
   }
 
   public forget(agent: string, sessionId: string): void {
-    this.sources.get(agent.toLowerCase())?.forget(sessionId);
+    this.callSource(agent, "forget", undefined, (source) => source.forget(sessionId));
   }
 
   public listSessions(agent: string, folder: string): PastSession[] {
-    return this.sources.get(agent.toLowerCase())?.list(folder) ?? [];
+    return this.callSource(agent, "list", [], (source) => source.list(folder));
   }
 
   public resumeTarget(agent: string, sessionId: string, folder: string): string | null {
-    const source = this.sources.get(agent.toLowerCase());
-    return source?.resumeTarget ? source.resumeTarget(sessionId, folder) : sessionId;
+    return this.callSource(agent, "resumeTarget", sessionId, (source) =>
+      source.resumeTarget ? source.resumeTarget(sessionId, folder) : sessionId
+    );
   }
 }

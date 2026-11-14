@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { handleServerMessage, initWebSocket, selectPane } from "../src/client/src/state/ws";
+import { handleServerMessage, handleVisibilityChange, initWebSocket, request, selectPane } from "../src/client/src/state/ws";
 import { setState, setUnread, state } from "../src/client/src/state/store";
 import type { PaneStatePayload } from "../src/types/protocol";
 
@@ -173,5 +173,46 @@ describe("prompt answers (mobile-ui-and-themes.md §4.1)", () => {
     handleServerMessage({ type: "ack", replyTo: "x1", payload: { approved: false, interactionId: "int_1" } } as any);
     expect(state.terminalOpen).toBe(false);
     expect(state.pendingInteraction?.interactionId).toBe("int_1");
+  });
+});
+
+describe("socket teardown on resume (protocol.md §2.2)", () => {
+  test("a closed socket found on resume rejects its pending requests before reconnecting", async () => {
+    const origWs = globalThis.WebSocket;
+    const origDoc = (globalThis as any).document;
+    const origWindow = (globalThis as any).window;
+    const origFetch = globalThis.fetch;
+    let fakeClientWs: any;
+
+    (globalThis as any).document = { visibilityState: "visible" };
+    (globalThis as any).window = { location: { protocol: "http:", host: "localhost", hash: "" } };
+    (globalThis as any).fetch = (async () => Response.json({ authenticated: true })) as any;
+    (globalThis as any).WebSocket = class {
+      readyState = 1;
+      onopen: any;
+      onclose: any;
+      onmessage: any;
+      constructor() {
+        fakeClientWs = this;
+        queueMicrotask(() => this.onopen?.());
+      }
+      send() {}
+      close() {}
+    };
+
+    try {
+      await initWebSocket();
+      const pending = request({ type: "refresh_models", payload: {} } as any);
+      fakeClientWs.readyState = 3; // CLOSED
+      handleVisibilityChange();
+      await expect(pending).rejects.toThrow();
+      await Bun.sleep(20); // the reconnect it started finishes before the stubs go
+      fakeClientWs.readyState = 3; // and its socket does not outlive the test
+    } finally {
+      globalThis.WebSocket = origWs;
+      (globalThis as any).document = origDoc;
+      (globalThis as any).window = origWindow;
+      globalThis.fetch = origFetch;
+    }
   });
 });

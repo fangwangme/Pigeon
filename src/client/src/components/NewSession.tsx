@@ -332,7 +332,7 @@ function ModelPickerSheet(props: {
       }
     >
       <div class="model-pinned-card">
-        <div class="nm">{current()?.label ?? (selectedModel() ? formatModelName(props.agent, selectedModel()) : t("model.model"))}</div>
+        <div class="nm">{selectedModel() ? formatModelName(props.agent, selectedModel()) : (current()?.label ?? t("model.model"))}</div>
         <Show when={selectedModel()}>
           <div class="id mono">{selectedModel()}</div>
         </Show>
@@ -379,7 +379,7 @@ function ModelPickerSheet(props: {
                 onClick={() => selectModel(m.id)}
               >
                 <div class="tx">
-                  <div style={{ "font-weight": 600 }}>{m.label}</div>
+                  <div style={{ "font-weight": 600 }}>{formatModelName(props.agent, m.id)}</div>
                   <small class="mono">{m.id}</small>
                 </div>
                 <Show when={count > 0}>

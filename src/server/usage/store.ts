@@ -12,7 +12,7 @@ import type {
   UsageModelSummary,
   UsageTotals,
 } from "../../types/protocol";
-import { comparisonRange, daysBetween, addDays, resolveRange, type UsagePreset } from "../../shared/usage";
+import { comparisonRange, daysBetween, addDays, formatYMD, resolveRange, type UsagePreset } from "../../shared/usage";
 import { canonical, detectCompany, resolveAntigravityModel } from "./model-id";
 import { PricingManager, type ModelPrice } from "./pricing";
 import {
@@ -42,6 +42,20 @@ function costAt(p: ModelPrice, input: number, output: number, cacheRead: number,
   );
 }
 
+function toRatePerMillion(perToken: number): number {
+  return Math.round(perToken * 1e15) / 1e9;
+}
+
+function fromRateRow(row: any): ModelPrice {
+  return {
+    inputCostPerToken: row.input_rate / 1_000_000,
+    outputCostPerToken: row.output_rate / 1_000_000,
+    cacheReadCostPerToken: row.cache_read_rate != null ? row.cache_read_rate / 1_000_000 : undefined,
+    cacheWriteCostPerToken: row.cache_write_rate != null ? row.cache_write_rate / 1_000_000 : undefined,
+    source: "period",
+  };
+}
+
 export interface UsageStoreOptions {
   dbPath?: string;
   home?: string;
@@ -56,6 +70,7 @@ export class UsageStore {
   private discoverLs: () => Promise<AntigravityLsConnection | null>;
   private agyCacheDbPath: string;
   private lastScannedAt = 0;
+  private pricedCatalogs = new WeakMap<PricingManager, number>();
 
   constructor(options: UsageStoreOptions = {}) {
     this.home = options.home ?? process.env.HOME ?? "";
@@ -106,14 +121,17 @@ export class UsageStore {
         size_bytes INTEGER NOT NULL
       );
 
-      CREATE TABLE IF NOT EXISTS daily_pricing_snapshots (
-        date TEXT NOT NULL,
-        model_id TEXT NOT NULL,
-        input_cost REAL NOT NULL,
-        output_cost REAL NOT NULL,
-        cache_read_cost REAL,
-        cache_write_cost REAL,
-        PRIMARY KEY (date, model_id)
+      DROP TABLE IF EXISTS daily_pricing_snapshots;
+
+      CREATE TABLE IF NOT EXISTS model_price_periods (
+        model TEXT NOT NULL,
+        effective_from TEXT NOT NULL,
+        effective_to TEXT,
+        input_rate REAL NOT NULL,
+        output_rate REAL NOT NULL,
+        cache_read_rate REAL,
+        cache_write_rate REAL,
+        PRIMARY KEY (model, effective_from)
       );
 
       CREATE TABLE IF NOT EXISTS usage_meta (
@@ -213,38 +231,21 @@ export class UsageStore {
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
 
-    const getSnapshot = this.db.prepare("SELECT input_cost, output_cost, cache_read_cost, cache_write_cost FROM daily_pricing_snapshots WHERE date = ? AND model_id = ?");
-    const insertSnapshot = this.db.prepare("INSERT OR IGNORE INTO daily_pricing_snapshots (date, model_id, input_cost, output_cost, cache_read_cost, cache_write_cost) VALUES (?, ?, ?, ?, ?, ?)");
+    const catalogVersion = pricing.getCatalogVersion();
+    const catalogChanged = pricing.arePricesAvailable() && this.pricedCatalogs.get(pricing) !== catalogVersion;
+    if (catalogChanged) {
+      this.syncPricePeriods(pricing);
+    }
 
     const priceCache = new Map<string, { price: ModelPrice | null }>();
-
     const resolvePrice = (date: string, modelId: string): ModelPrice | null => {
       const canon = canonical(modelId);
       const cacheKey = `${date}:${canon}`;
       if (priceCache.has(cacheKey)) return priceCache.get(cacheKey)!.price;
 
-      const snapRow: any = getSnapshot.get(date, canon);
-      if (snapRow) {
-        const p: ModelPrice = {
-          inputCostPerToken: snapRow.input_cost,
-          outputCostPerToken: snapRow.output_cost,
-          cacheReadCostPerToken: snapRow.cache_read_cost ?? undefined,
-          cacheWriteCostPerToken: snapRow.cache_write_cost ?? undefined,
-          source: "snapshot",
-        };
-        priceCache.set(cacheKey, { price: p });
-        return p;
-      }
-
-      const freshPrice = pricing.getPrice(canon);
-      if (freshPrice) {
-        insertSnapshot.run(date, canon, freshPrice.inputCostPerToken, freshPrice.outputCostPerToken, freshPrice.cacheReadCostPerToken ?? null, freshPrice.cacheWriteCostPerToken ?? null);
-        priceCache.set(cacheKey, { price: freshPrice });
-        return freshPrice;
-      }
-
-      priceCache.set(cacheKey, { price: null });
-      return null;
+      const resolved = this.lookupPeriodPrice(date, canon, pricing);
+      priceCache.set(cacheKey, { price: resolved });
+      return resolved;
     };
 
     const processRecords = this.db.transaction((records: RawUsageRecord[]) => {
@@ -339,11 +340,140 @@ export class UsageStore {
     if (pricing.arePricesAvailable()) {
       this.repairAntigravityRecords(pricing);
     }
+    if (catalogChanged) {
+      this.backfillUnpricedRecords(pricing);
+      this.pricedCatalogs.set(pricing, catalogVersion);
+    }
 
     // quota-and-usage.md §3.1: unparseable records are skipped and logged once per scan.
     if (stats.skipped > 0) console.warn(`[Pigeon] usage scan skipped ${stats.skipped} unparseable records`);
     this.setLastScannedAt(this.now());
     return { scannedFiles, recordsAdded };
+  }
+
+  private lookupPeriodPrice(date: string, canon: string, pricing: PricingManager): ModelPrice | null {
+    const row: any = this.db
+      .query(
+        `SELECT input_rate, output_rate, cache_read_rate, cache_write_rate
+         FROM model_price_periods
+         WHERE model = ? AND effective_from <= ? AND (effective_to IS NULL OR effective_to >= ?)
+         ORDER BY effective_from DESC
+         LIMIT 1`
+      )
+      .get(canon, date, date);
+    if (row) return fromRateRow(row);
+
+    const fresh = pricing.getPrice(canon);
+    if (!fresh) return null;
+
+    const existing: any = this.db.query("SELECT COUNT(*) as cnt FROM model_price_periods WHERE model = ?").get(canon);
+    if (!existing?.cnt) {
+      this.db
+        .query(
+          `INSERT OR IGNORE INTO model_price_periods (model, effective_from, effective_to, input_rate, output_rate, cache_read_rate, cache_write_rate)
+           VALUES (?, '0000-01-01', NULL, ?, ?, ?, ?)`
+        )
+        .run(
+          canon,
+          toRatePerMillion(fresh.inputCostPerToken),
+          toRatePerMillion(fresh.outputCostPerToken),
+          fresh.cacheReadCostPerToken != null ? toRatePerMillion(fresh.cacheReadCostPerToken) : null,
+          fresh.cacheWriteCostPerToken != null ? toRatePerMillion(fresh.cacheWriteCostPerToken) : null
+        );
+    }
+    return fresh;
+  }
+
+  private syncPricePeriods(pricing: PricingManager): void {
+    const today = formatYMD(new Date(this.now()));
+    const yesterday = addDays(today, -1);
+    const seen = new Set<string>();
+
+    const getOpen = this.db.prepare(
+      "SELECT effective_from, input_rate, output_rate, cache_read_rate, cache_write_rate FROM model_price_periods WHERE model = ? AND effective_to IS NULL ORDER BY effective_from DESC LIMIT 1"
+    );
+    const countPeriods = this.db.prepare("SELECT COUNT(*) as cnt FROM model_price_periods WHERE model = ?");
+    const insertPeriod = this.db.prepare(
+      `INSERT OR REPLACE INTO model_price_periods (model, effective_from, effective_to, input_rate, output_rate, cache_read_rate, cache_write_rate)
+       VALUES (?, ?, NULL, ?, ?, ?, ?)`
+    );
+    const updateInPlace = this.db.prepare(
+      `UPDATE model_price_periods SET input_rate = ?, output_rate = ?, cache_read_rate = ?, cache_write_rate = ?
+       WHERE model = ? AND effective_from = ?`
+    );
+    const closePeriod = this.db.prepare(
+      "UPDATE model_price_periods SET effective_to = ? WHERE model = ? AND effective_from = ?"
+    );
+
+    this.db.transaction(() => {
+      for (const [rawKey] of pricing.getCatalogEntries()) {
+        if (rawKey.includes("/")) continue;
+        const canon = canonical(rawKey);
+        if (!canon || seen.has(canon)) continue;
+        seen.add(canon);
+
+        const fresh = pricing.getPrice(canon);
+        if (!fresh) continue;
+        const inRate = toRatePerMillion(fresh.inputCostPerToken);
+        const outRate = toRatePerMillion(fresh.outputCostPerToken);
+        const crRate = fresh.cacheReadCostPerToken != null ? toRatePerMillion(fresh.cacheReadCostPerToken) : null;
+        const cwRate = fresh.cacheWriteCostPerToken != null ? toRatePerMillion(fresh.cacheWriteCostPerToken) : null;
+
+        const open: any = getOpen.get(canon);
+        if (!open) {
+          const cntRow: any = countPeriods.get(canon);
+          const from = !cntRow?.cnt ? "0000-01-01" : today;
+          insertPeriod.run(canon, from, inRate, outRate, crRate, cwRate);
+          continue;
+        }
+
+        if (
+          open.input_rate === inRate &&
+          open.output_rate === outRate &&
+          (open.cache_read_rate ?? null) === crRate &&
+          (open.cache_write_rate ?? null) === cwRate
+        ) {
+          continue;
+        }
+
+        if (open.effective_from >= today) {
+          updateInPlace.run(inRate, outRate, crRate, cwRate, canon, open.effective_from);
+        } else {
+          closePeriod.run(yesterday, canon, open.effective_from);
+          insertPeriod.run(canon, today, inRate, outRate, crRate, cwRate);
+        }
+      }
+    })();
+  }
+
+  public backfillUnpricedRecords(pricing: PricingManager): number {
+    if (!pricing.arePricesAvailable()) return 0;
+
+    const rows: any[] = this.db
+      .query(
+        `SELECT agent, message_key, date, canonical_model_id,
+                input_tokens, output_tokens, cache_read_tokens, cache_write_tokens
+         FROM usage_records
+         WHERE unpriced = 1`
+      )
+      .all();
+
+    let updated = 0;
+    const update = this.db.prepare(
+      "UPDATE usage_records SET cost = ?, unpriced = 0 WHERE agent = ? AND message_key = ?"
+    );
+
+    this.db.transaction(() => {
+      for (const row of rows) {
+        const p = this.lookupPeriodPrice(row.date, row.canonical_model_id, pricing);
+        if (!p) continue;
+        const cost = costAt(p, row.input_tokens, row.output_tokens, row.cache_read_tokens, row.cache_write_tokens);
+        update.run(cost, row.agent, row.message_key);
+        updated++;
+      }
+    })();
+
+    return updated;
   }
 
   public repairAntigravityRecords(pricing: PricingManager): number {
@@ -373,7 +503,7 @@ export class UsageStore {
       for (const row of unpricedRows) {
         const resolved = resolveAntigravityModel(row.raw_model_id, row.model_id);
         const canon = resolved.canonicalModelId;
-        const p = pricing.getPrice(canon);
+        const p = this.lookupPeriodPrice(row.date, canon, pricing);
         const cost = p ? costAt(p, row.input_tokens, row.output_tokens, row.cache_read_tokens, row.cache_write_tokens) : 0;
         const unpriced = p ? 0 : 1;
         update.run(
@@ -396,7 +526,6 @@ export class UsageStore {
   public async rebuildAll(pricing: PricingManager): Promise<{ scannedFiles: number; recordsAdded: number }> {
     this.db.run("DELETE FROM usage_records;");
     this.db.run("DELETE FROM scan_file_state;");
-    this.db.run("DELETE FROM daily_pricing_snapshots;");
     this.db.run("VACUUM;");
     return this.scanIncremental(pricing);
   }

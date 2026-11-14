@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.11] - 2026-11-14
+
+### Changed
+- **Stage-based pricing periods & full backfill**: Replaced duplicate daily pricing snapshots with a `model_price_periods` timeline (seeded at `0000-01-01` and split only on observed price changes), refreshed `PricingManager` on a 24-hour TTL with first-party provider priority, and backfilled `unpriced = 1` records across all agents (#23). The old `daily_pricing_snapshots` table is dropped without migration: history keeps its stored costs, but a later `pigeon rebuild-cache` reprices it from the periods, seeded from the current price.
+- **Read-only OAuth credentials**: Stopped refreshing or writing external agent credentials; expired Codex and Antigravity credentials now surface clear read-only re-login prompts (#23).
+- **Usage & Quota UI polish**: Separated `--fig-*` figure tokens, bolded numeric values (`font-weight: 600`) against faint labels on Usage views, gave the dark theme the light theme's heatmap scale (darker always means more), ordered every provider's quota windows by category and then 5h before 7d, made the Quota/Usage switch show its selection, normalized Antigravity tier model matching and `"Claude/GPT"` grouping, showed the Antigravity account of the source that answered, and displayed Anthropic account info alongside dynamic `limits[]` and `extra_usage` (#23).
+- **Seen status follows the desktop**: a finished session opened in desktop Herdr shows as idle on the phone, and one opened on the phone is marked seen on the desktop (#23).
+- **Streaming & hot-path efficiency**: Reconciled WebSocket snapshot/turn updates, switched transcript blocks to `<Index>`, added single-pane snapshot updates on status changes, added bounded LRU caching for Markdown rendering, and removed write transactions from `pane-cache` loads (#23).
+
+### Fixed
+- **Codex & agent session normalization**: Filtered Codex subagent rollouts, handled Codex `0.169.0` `item_completed` (`CommandExecution` / `FileChange`) and `write_stdin` records without duplicating wrapped exec calls, fixed AGY upload-only attachment turns and empty tool outputs, added `>64KB` Claude tail title parsing, reused a single read-only SQLite connection in OpenCode and picked up its streaming message updates, deduplicated Codex messages by id, and made fallback timestamps deterministic (#23).
+- **Reliability & offline resilience**: Preserved offline queued prompts (`sending: false`) with automatic drain upon Herdr reconnect snapshot (a prompt sent at once that Herdr did not receive is reported, not queued), isolated per-source adapter/plugin failures without dropping bound sessions or their last turns or throwing on `ENOENT`, sent the missing Enter when an agent leaves a prompt with attachments in its input box, throttled `codex debug models` refreshes to 24 hours, recovered `PaneStore` file watchers after atomic renames, cleared push dedupe keys when delivery fails, distinguished JSON parse errors from internal errors on the admin socket, and scoped Claude question-menu parsing to Claude panes (#23).
+- **Mobile UI fixes**: Non-overlapping code block copy header (`.cb-hdr`), wrapped message tables, working dot pulse with reduced-motion support, per-pane scroll restoration, tool-row chevron alignment, a chevron on every row of the tool sheet, and tool details that no longer freeze the page before their input loads (#23).
+
 ## [0.1.10] - 2026-11-12
 
 ### Added

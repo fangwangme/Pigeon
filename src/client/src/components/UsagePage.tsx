@@ -233,7 +233,7 @@ export function UsagePage() {
       {
         label: t("usage.tokens"),
         value: fmtTokens(cur.tokens),
-        color: "var(--fig-tokens)",
+        color: "var(--fg)",
         delta: calcDelta(cur.tokens, prev?.tokens),
       },
       {
@@ -505,7 +505,7 @@ export function UsagePage() {
           tokens: fmtTokens(d.tokens),
           cost: fmtCost(d.cost),
           barW,
-          barColor: m === "tokens" ? "var(--fig-tokens)" : "var(--fig-cost)",
+          barColor: m === "tokens" ? "var(--heat-tokens-3)" : "var(--fig-cost)",
           onTap: () => openDaySheet(d.date),
         };
       });
@@ -529,10 +529,10 @@ export function UsagePage() {
       return {
         id: mdl.model,
         type: "model" as const,
-        title: formatModelName(mdl.agents[0], mdl.model),
+        title: formatModelName(mdl.agents, mdl.model),
         titleColor: COMPANY_COLORS[mdl.company] || "var(--co-other)",
         sub,
-        subColor: "var(--accent)",
+        subColor: "var(--muted)",
         tokens: fmtTokens(mdl.tokens),
         cost: fmtCost(mdl.cost),
         barW,
@@ -1347,6 +1347,7 @@ export function UsagePage() {
                         <span
                           style={{
                             color: "var(--fig-cost)",
+                            "font-weight": 600,
                             "white-space": "nowrap",
                             flex: "none",
                             "text-align": "right",
@@ -1357,7 +1358,8 @@ export function UsagePage() {
                         </span>
                         <span
                           style={{
-                            color: "var(--fig-tokens)",
+                            color: "var(--fg)",
+                            "font-weight": 600,
                             "white-space": "nowrap",
                             flex: "none",
                             width: "56px",
@@ -1473,15 +1475,15 @@ export function UsagePage() {
                         "font-variant-numeric": "tabular-nums",
                       }}
                     >
-                      <div style={{ display: "flex" }}><span style={{ flex: 1, color: "var(--faint)" }}>{t("usage.cost")}</span><span style={{ color: "var(--fig-cost)" }}>{fmtCost(d.totals.cost)}</span></div>
-                      <div style={{ display: "flex" }}><span style={{ flex: 1, color: "var(--faint)" }}>{t("usage.tokens")}</span><span style={{ color: "var(--fig-tokens)" }}>{fmtTokens(d.totals.tokens)}</span></div>
-                      <div style={{ display: "flex" }}><span style={{ flex: 1, color: "var(--faint)" }}>{t("usage.input")}</span><span style={{ color: "var(--fig-input)" }}>{fmtTokens(d.totals.input)}</span></div>
-                      <div style={{ display: "flex" }}><span style={{ flex: 1, color: "var(--faint)" }}>{t("usage.output")}</span><span style={{ color: "var(--fig-output)" }}>{fmtTokens(d.totals.output)}</span></div>
-                      <div style={{ display: "flex" }}><span style={{ flex: 1, color: "var(--faint)" }}>{t("usage.cacheRead")}</span><span style={{ color: "var(--fig-cache)" }}>{fmtTokens(d.totals.cacheRead)}</span></div>
-                      <div style={{ display: "flex" }}><span style={{ flex: 1, color: "var(--faint)" }}>{t("usage.cacheWrite")}</span><span style={{ color: "var(--fig-cache)" }}>{d.totals.cacheWrite > 0 ? fmtTokens(d.totals.cacheWrite) : "—"}</span></div>
-                      <div style={{ display: "flex" }}><span style={{ flex: 1, color: "var(--faint)" }}>{t("usage.cacheHit")}</span><span style={{ color: "var(--fig-hit)" }}>{cacheHitPercent(d.totals.cacheRead, d.totals.tokens).toFixed(2)}%</span></div>
-                      <div style={{ display: "flex" }}><span style={{ flex: 1, color: "var(--faint)" }}>{t("usage.messages")}</span><span>{fmtNumber(d.totals.messages)}</span></div>
-                      <div style={{ display: "flex" }}><span style={{ flex: 1, color: "var(--faint)" }}>{t("usage.sessions")}</span><span>{fmtNumber(d.totals.sessions)}</span></div>
+                      <div style={{ display: "flex" }}><span style={{ flex: 1, color: "var(--faint)", "font-weight": 400 }}>{t("usage.cost")}</span><span style={{ color: "var(--fig-cost)", "font-weight": 600 }}>{fmtCost(d.totals.cost)}</span></div>
+                      <div style={{ display: "flex" }}><span style={{ flex: 1, color: "var(--faint)", "font-weight": 400 }}>{t("usage.tokens")}</span><span style={{ color: "var(--fg)", "font-weight": 600 }}>{fmtTokens(d.totals.tokens)}</span></div>
+                      <div style={{ display: "flex" }}><span style={{ flex: 1, color: "var(--faint)", "font-weight": 400 }}>{t("usage.input")}</span><span style={{ color: "var(--fg)", "font-weight": 600 }}>{fmtTokens(d.totals.input)}</span></div>
+                      <div style={{ display: "flex" }}><span style={{ flex: 1, color: "var(--faint)", "font-weight": 400 }}>{t("usage.output")}</span><span style={{ color: "var(--fg)", "font-weight": 600 }}>{fmtTokens(d.totals.output)}</span></div>
+                      <div style={{ display: "flex" }}><span style={{ flex: 1, color: "var(--faint)", "font-weight": 400 }}>{t("usage.cacheRead")}</span><span style={{ color: "var(--fg)", "font-weight": 600 }}>{fmtTokens(d.totals.cacheRead)}</span></div>
+                      <div style={{ display: "flex" }}><span style={{ flex: 1, color: "var(--faint)", "font-weight": 400 }}>{t("usage.cacheWrite")}</span><span style={{ color: "var(--fg)", "font-weight": 600 }}>{d.totals.cacheWrite > 0 ? fmtTokens(d.totals.cacheWrite) : "—"}</span></div>
+                      <div style={{ display: "flex" }}><span style={{ flex: 1, color: "var(--faint)", "font-weight": 400 }}>{t("usage.cacheHit")}</span><span style={{ color: "var(--fg)", "font-weight": 600 }}>{cacheHitPercent(d.totals.cacheRead, d.totals.tokens).toFixed(2)}%</span></div>
+                      <div style={{ display: "flex" }}><span style={{ flex: 1, color: "var(--faint)", "font-weight": 400 }}>{t("usage.messages")}</span><span style={{ color: "var(--fg)", "font-weight": 600 }}>{fmtNumber(d.totals.messages)}</span></div>
+                      <div style={{ display: "flex" }}><span style={{ flex: 1, color: "var(--faint)", "font-weight": 400 }}>{t("usage.sessions")}</span><span style={{ color: "var(--fg)", "font-weight": 600 }}>{fmtNumber(d.totals.sessions)}</span></div>
                     </div>
 
                     {/* Breakdown by Agent */}
@@ -1504,12 +1506,18 @@ export function UsagePage() {
                               <div style={{ padding: "4px 0 0 12px", "font-variant-numeric": "tabular-nums" }}>
                                 <div style={{ display: "flex", gap: "8px", "font-size": "13px" }}>
                                   <span style={{ flex: 1, color: COMPANY_COLORS[m.company || "other"] || "var(--co-other)", "overflow-wrap": "anywhere" }}>
-                                    {m.model}
+                                    {formatModelName(ag.agent, m.model)}
                                   </span>
-                                  <span style={{ color: "var(--fig-cost)" }}>{fmtCost(m.cost)}</span>
+                                  <span style={{ color: "var(--fig-cost)", "font-weight": 600 }}>{fmtCost(m.cost)}</span>
                                 </div>
-                                <div style={{ "font-size": "11.5px", color: "var(--faint)" }}>
-                                  {t("usage.tokens")} {fmtTokens(m.tokens)} · {t("usage.input")} {fmtTokens(m.input)} · {t("usage.output")} {fmtTokens(m.output)} · {t("usage.cacheRead")} {fmtTokens(m.cacheRead)}
+                                <div style={{ "font-size": "11.5px", display: "flex", "flex-wrap": "wrap", gap: "0 6px" }}>
+                                  <span><span style={{ color: "var(--faint)", "font-weight": 400 }}>{t("usage.tokens")} </span><span style={{ color: "var(--fg)", "font-weight": 600 }}>{fmtTokens(m.tokens)}</span></span>
+                                  <span style={{ color: "var(--faint)" }}>·</span>
+                                  <span><span style={{ color: "var(--faint)", "font-weight": 400 }}>{t("usage.input")} </span><span style={{ color: "var(--fg)", "font-weight": 600 }}>{fmtTokens(m.input)}</span></span>
+                                  <span style={{ color: "var(--faint)" }}>·</span>
+                                  <span><span style={{ color: "var(--faint)", "font-weight": 400 }}>{t("usage.output")} </span><span style={{ color: "var(--fg)", "font-weight": 600 }}>{fmtTokens(m.output)}</span></span>
+                                  <span style={{ color: "var(--faint)" }}>·</span>
+                                  <span><span style={{ color: "var(--faint)", "font-weight": 400 }}>{t("usage.cacheRead")} </span><span style={{ color: "var(--fg)", "font-weight": 600 }}>{fmtTokens(m.cacheRead)}</span></span>
                                 </div>
                               </div>
                             )}
@@ -1558,7 +1566,7 @@ export function UsagePage() {
                     "overflow-wrap": "anywhere",
                   }}
                 >
-                  {formatModelName(modelData()?.agents[0]?.agent, selectedModel())}
+                  {formatModelName(modelData()?.agents.map((a) => a.agent), selectedModel())}
                 </div>
                 <div style={{ "font-size": "12.5px", color: "var(--faint)" }}>
                   {modelData()?.company ?? ""} · {rangeText()}
@@ -1596,15 +1604,15 @@ export function UsagePage() {
                         "font-variant-numeric": "tabular-nums",
                       }}
                     >
-                      <div style={{ display: "flex" }}><span style={{ flex: 1, color: "var(--faint)" }}>{t("usage.cost")}</span><span style={{ color: "var(--fig-cost)" }}>{fmtCost(mdl.totals.cost)}</span></div>
-                      <div style={{ display: "flex" }}><span style={{ flex: 1, color: "var(--faint)" }}>{t("usage.tokens")}</span><span style={{ color: "var(--fig-tokens)" }}>{fmtTokens(mdl.totals.tokens)}</span></div>
-                      <div style={{ display: "flex" }}><span style={{ flex: 1, color: "var(--faint)" }}>{t("usage.input")}</span><span style={{ color: "var(--fig-input)" }}>{fmtTokens(mdl.totals.input)}</span></div>
-                      <div style={{ display: "flex" }}><span style={{ flex: 1, color: "var(--faint)" }}>{t("usage.output")}</span><span style={{ color: "var(--fig-output)" }}>{fmtTokens(mdl.totals.output)}</span></div>
-                      <div style={{ display: "flex" }}><span style={{ flex: 1, color: "var(--faint)" }}>{t("usage.cacheRead")}</span><span style={{ color: "var(--fig-cache)" }}>{fmtTokens(mdl.totals.cacheRead)}</span></div>
-                      <div style={{ display: "flex" }}><span style={{ flex: 1, color: "var(--faint)" }}>{t("usage.cacheWrite")}</span><span style={{ color: "var(--fig-cache)" }}>{mdl.totals.cacheWrite > 0 ? fmtTokens(mdl.totals.cacheWrite) : "—"}</span></div>
-                      <div style={{ display: "flex" }}><span style={{ flex: 1, color: "var(--faint)" }}>{t("usage.cacheHit")}</span><span style={{ color: "var(--fig-hit)" }}>{cacheHitPercent(mdl.totals.cacheRead, mdl.totals.tokens).toFixed(2)}%</span></div>
-                      <div style={{ display: "flex" }}><span style={{ flex: 1, color: "var(--faint)" }}>{t("usage.messages")}</span><span>{fmtNumber(mdl.totals.messages)}</span></div>
-                      <div style={{ display: "flex" }}><span style={{ flex: 1, color: "var(--faint)" }}>{t("usage.lastUsed")}</span><span>{mdl.lastUsed || "—"}</span></div>
+                      <div style={{ display: "flex" }}><span style={{ flex: 1, color: "var(--faint)", "font-weight": 400 }}>{t("usage.cost")}</span><span style={{ color: "var(--fig-cost)", "font-weight": 600 }}>{fmtCost(mdl.totals.cost)}</span></div>
+                      <div style={{ display: "flex" }}><span style={{ flex: 1, color: "var(--faint)", "font-weight": 400 }}>{t("usage.tokens")}</span><span style={{ color: "var(--fg)", "font-weight": 600 }}>{fmtTokens(mdl.totals.tokens)}</span></div>
+                      <div style={{ display: "flex" }}><span style={{ flex: 1, color: "var(--faint)", "font-weight": 400 }}>{t("usage.input")}</span><span style={{ color: "var(--fg)", "font-weight": 600 }}>{fmtTokens(mdl.totals.input)}</span></div>
+                      <div style={{ display: "flex" }}><span style={{ flex: 1, color: "var(--faint)", "font-weight": 400 }}>{t("usage.output")}</span><span style={{ color: "var(--fg)", "font-weight": 600 }}>{fmtTokens(mdl.totals.output)}</span></div>
+                      <div style={{ display: "flex" }}><span style={{ flex: 1, color: "var(--faint)", "font-weight": 400 }}>{t("usage.cacheRead")}</span><span style={{ color: "var(--fg)", "font-weight": 600 }}>{fmtTokens(mdl.totals.cacheRead)}</span></div>
+                      <div style={{ display: "flex" }}><span style={{ flex: 1, color: "var(--faint)", "font-weight": 400 }}>{t("usage.cacheWrite")}</span><span style={{ color: "var(--fg)", "font-weight": 600 }}>{mdl.totals.cacheWrite > 0 ? fmtTokens(mdl.totals.cacheWrite) : "—"}</span></div>
+                      <div style={{ display: "flex" }}><span style={{ flex: 1, color: "var(--faint)", "font-weight": 400 }}>{t("usage.cacheHit")}</span><span style={{ color: "var(--fg)", "font-weight": 600 }}>{cacheHitPercent(mdl.totals.cacheRead, mdl.totals.tokens).toFixed(2)}%</span></div>
+                      <div style={{ display: "flex" }}><span style={{ flex: 1, color: "var(--faint)", "font-weight": 400 }}>{t("usage.messages")}</span><span style={{ color: "var(--fg)", "font-weight": 600 }}>{fmtNumber(mdl.totals.messages)}</span></div>
+                      <div style={{ display: "flex" }}><span style={{ flex: 1, color: "var(--faint)", "font-weight": 400 }}>{t("usage.lastUsed")}</span><span style={{ color: "var(--fg)", "font-weight": 600 }}>{mdl.lastUsed || "—"}</span></div>
                     </div>
 
                     {/* Breakdown by Agent */}
@@ -1632,6 +1640,7 @@ export function UsagePage() {
                             style={{
                               "font-size": "13px",
                               color: "var(--fig-cost)",
+                              "font-weight": 600,
                               "white-space": "nowrap",
                               flex: "none",
                               "text-align": "right",
@@ -1643,7 +1652,8 @@ export function UsagePage() {
                           <span
                             style={{
                               "font-size": "13px",
-                              color: "var(--fig-tokens)",
+                              color: "var(--fg)",
+                              "font-weight": 600,
                               "white-space": "nowrap",
                               flex: "none",
                               width: "56px",

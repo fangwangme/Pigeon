@@ -430,6 +430,36 @@ export function QuotaPage() {
                           }}
                         </For>
 
+                        {/* Extra Usage (Claude) */}
+                        <Show when={p.snapshot?.extraUsage}>
+                          {(eu) => {
+                            const fmtAmount = (amount: number, currency: string) =>
+                              currency.toUpperCase() === "USD" ? `$${amount.toFixed(2)}` : `${amount.toFixed(2)} ${currency.toUpperCase()}`;
+                            const cur = () => eu().currency ?? "USD";
+                            return (
+                              <div
+                                style={{
+                                  "border-top": "1px solid var(--line)",
+                                  "margin-top": "8px",
+                                  padding: "10px 0 6px",
+                                  "font-size": "12.5px",
+                                  display: "flex",
+                                  "justify-content": "space-between",
+                                  color: "var(--muted)",
+                                  "font-variant-numeric": "tabular-nums",
+                                }}
+                              >
+                                <span>
+                                  {t("quota.extraUsage", {
+                                    used: fmtAmount(eu().used, cur()),
+                                    limit: eu().limit !== null ? fmtAmount(eu().limit!, cur()) : "—",
+                                  })}
+                                </span>
+                              </div>
+                            );
+                          }}
+                        </Show>
+
                         {/* Reset Credits */}
                         <Show when={p.snapshot?.credits && p.snapshot.credits.length > 0}>
                           <div

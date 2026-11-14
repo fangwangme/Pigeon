@@ -61,6 +61,7 @@ export interface WsServerOptions {
   usageService?: UsageService;
   queueFilePath?: string;
   queueSendTimeoutMs?: number;
+  watchDebounceMs?: number;
   port?: number;
   productionPort?: number;
   environmentKind?: "production" | "dev" | "test";
@@ -133,12 +134,15 @@ export class WsServer {
   private queueStates = new Map<string, QueueState>();
   private restoredPaneIds = new Set<string>();
   private firstSnapshotSeen = false;
+  private lastSavedQueuesJson: string | null = null;
+  private herdrDisconnected = false;
+  private offlineQueuedPanes = new Set<string>();
 
   private environment: { kind: "production" | "dev" | "test"; port: number };
 
   private onHerdrConnected: () => void;
   private onHerdrDisconnected: () => void;
-  private onSnapshotUpdated: (snapshot: any) => void;
+  private onSnapshotUpdated: (snapshot: any, meta?: { paneId?: string }) => void;
   private onCardsUpdated: (state: PaneStatePayload) => void;
   private onPaneStatusChanged: (event: { paneId: string; status: string }) => void;
   private logger?: (msg: string) => void;
@@ -154,7 +158,7 @@ export class WsServer {
     this.modelCatalog = options.modelCatalog ?? new ModelCatalog();
     this.configManager = options.configManager;
     this.agentAdapters = options.agentAdapters || new AgentAdapterManager();
-    this.paneStore = new PaneStore(this.agentAdapters);
+    this.paneStore = new PaneStore(this.agentAdapters, { watchDebounceMs: options.watchDebounceMs });
     this.skillScanner = options.skillScanner || new SkillScanner();
     this.uploadStore = options.uploadStore;
     this.pairingManager = options.pairingManager;
@@ -170,8 +174,15 @@ export class WsServer {
     // security-and-pairing.md §5: a revoked device (from the phone or `pigeon devices revoke`) is cut off at once.
     this.pairingManager?.on("device_revoked", (deviceId: string) => this.closeDevice(deviceId));
 
-    this.onHerdrConnected = () => this.paneStore.setHerdrStatus(true);
-    this.onHerdrDisconnected = () => this.paneStore.setHerdrStatus(false);
+    this.onHerdrConnected = () => {
+      this.herdrDisconnected = false;
+      this.offlineQueuedPanes.clear();
+      this.paneStore.setHerdrStatus(true);
+    };
+    this.onHerdrDisconnected = () => {
+      this.herdrDisconnected = true;
+      this.paneStore.setHerdrStatus(false);
+    };
     this.herdrClient.on("connected", this.onHerdrConnected);
     this.herdrClient.on("disconnected", this.onHerdrDisconnected);
 
@@ -218,7 +229,7 @@ export class WsServer {
     // Titles change while a snapshot is being handled (binding reads the session), so relabel after it.
     this.paneStore.on("title_changed", () => queueMicrotask(() => this.herdrClient.relabelTabs()));
 
-    this.onSnapshotUpdated = (snapshot) => {
+    this.onSnapshotUpdated = (snapshot, meta) => {
       // protocol.md §4.2: restored prompts go out only after binding has read the session, so a
       // pause derived from it holds them.
       const restoredToSend: string[] = [];
@@ -248,26 +259,34 @@ export class WsServer {
         this.restoredPaneIds.clear();
       }
 
-      for (const paneId of this.paneStore.trackedPaneIds()) {
-        if (!this.herdrClient.hasPane(paneId)) this.paneStore.closePane(paneId);
-      }
-      for (const paneId of Array.from(this.queues.keys())) {
-        if (!this.herdrClient.hasPane(paneId)) {
-          this.transitionQueue(paneId, { type: "remove_pane" });
+      if (!meta?.paneId) {
+        for (const paneId of this.paneStore.trackedPaneIds()) {
+          if (!this.herdrClient.hasPane(paneId)) this.paneStore.closePane(paneId);
         }
-      }
-      for (const paneId of Array.from(this.lastStatus.keys())) {
-        if (!this.herdrClient.hasPane(paneId)) {
-          this.lastStatus.delete(paneId);
-          this.lastPaneTailAt.delete(paneId);
-          this.lastPushAt.delete(`${paneId}:blocked`);
-          this.lastPushAt.delete(`${paneId}:done`);
+        for (const paneId of Array.from(this.queues.keys())) {
+          if (!this.herdrClient.hasPane(paneId)) {
+            this.transitionQueue(paneId, { type: "remove_pane" });
+          }
         }
+        for (const paneId of Array.from(this.lastStatus.keys())) {
+          if (!this.herdrClient.hasPane(paneId)) {
+            this.lastStatus.delete(paneId);
+            this.lastPaneTailAt.delete(paneId);
+            this.lastPushAt.delete(`${paneId}:blocked`);
+            this.lastPushAt.delete(`${paneId}:done`);
+          }
+        }
+        this.saveQueues();
       }
-      this.saveQueues();
       this.broadcast({ type: "snapshot_update", payload: snapshot });
-      this.rebindSessions();
-      for (const paneId of restoredToSend) this.kickQueue(paneId);
+      if (!meta?.paneId) {
+        this.herdrDisconnected = false;
+        this.offlineQueuedPanes.clear();
+        this.rebindSessions();
+        for (const paneId of new Set([...restoredToSend, ...this.queues.keys()])) this.kickQueue(paneId);
+      } else {
+        for (const paneId of restoredToSend) this.kickQueue(paneId);
+      }
     };
     this.herdrClient.on("snapshot_updated", this.onSnapshotUpdated);
     this.rebindSessions();
@@ -280,6 +299,7 @@ export class WsServer {
     this.onPaneStatusChanged = ({ paneId, status }: { paneId: string; status: string }) => {
       const previous = this.lastStatus.get(paneId);
       this.lastStatus.set(paneId, status);
+      this.rebindPane(paneId);
       this.transitionQueue(paneId, { type: "status", status });
       // herdr-adapter.md §4: finishing while a phone visibly watches it is finishing seen.
       if (status === "done" && this.pushManager.shouldSuppressPush(paneId)) this.herdrClient.markSeen(paneId);
@@ -300,7 +320,9 @@ export class WsServer {
       const dedupeKey = `${paneId}:${pushEvent}`;
       const now = Date.now();
       if (now - (this.lastPushAt.get(dedupeKey) || 0) < PUSH_DEDUPE_MS) return;
-      const result = this.pushManager.sendNotification(this.pushMessage(paneId, pushEvent));
+      const result = this.pushManager.sendNotification(this.pushMessage(paneId, pushEvent), () => {
+        if (this.lastPushAt.get(dedupeKey) === now) this.lastPushAt.delete(dedupeKey);
+      });
       if (!result.suppressed && result.delivered) {
         this.lastPushAt.set(dedupeKey, now);
       }
@@ -661,7 +683,7 @@ export class WsServer {
           return;
         }
         let steps: AnswerStep[];
-        if (pending.multiSelect !== undefined) {
+        if (pending.multiSelect !== undefined && this.herdrClient.getPaneAgentKind(targetPaneId) === "claude") {
           // herdr-adapter.md §8.2: a question menu, single- or multi-select, maybe with other text.
           const answer = this.menuAnswer(pending, optionId, optionIds, otherTexts ?? {});
           if (!answer) {
@@ -1018,6 +1040,14 @@ export class WsServer {
     this.send(ws, { type: "skills_sync", replyTo, payload: { paneId, skills, recipes: this.recipeSummaries() } });
   }
 
+  public getSourceErrors() {
+    return this.agentAdapters.getSourceErrors();
+  }
+
+  public getPluginError(): string | null {
+    return this.skillScanner.getPluginError();
+  }
+
   /**
    * agent-session-normalization.md §2.0: rule 1 (exact) first, then a resumed or already-bound pane
    * keeps its session (rules 5, 6), then unbound panes take the newest unclaimed session (rule 2), and
@@ -1056,10 +1086,7 @@ export class WsServer {
       const agent = p.facts.agentKind!;
       const current = result.get(p.paneId)!;
       const candidate = this.agentAdapters.newestSession(factsOf(p), claimedOf(agent));
-      if (!candidate) continue;
-      const since = this.agentAdapters.lastWritten(agent, current);
-      const written = this.agentAdapters.lastWritten(agent, candidate);
-      if (written === null || (since !== null && written <= since)) continue;
+      if (!candidate || !this.writtenAfter(agent, candidate, current)) continue;
       claimed.delete(keyOf(agent, current));
       claimed.add(keyOf(agent, candidate));
       result.set(p.paneId, candidate);
@@ -1067,11 +1094,62 @@ export class WsServer {
     for (const p of panes) {
       const id = result.get(p.paneId);
       if (id) this.paneStore.registerPaneSession(p.paneId, p.facts.agentKind!, id);
-      else this.paneStore.unbind(p.paneId);
+      else this.unbindUnlessSourceFailed(p.paneId, p.facts.agentKind!);
     }
     // Rule 7: a pane that no longer runs a supported agent drops its session.
     const live = new Set(panes.map((p) => p.paneId));
     for (const paneId of this.paneStore.trackedPaneIds()) if (!live.has(paneId)) this.paneStore.unbind(paneId);
+  }
+
+  private rebindPane(paneId: string): void {
+    const facts = this.herdrClient.getPaneFacts(paneId);
+    if (!facts?.agentKind || !this.agentAdapters.isSupported(facts.agentKind)) {
+      this.paneStore.unbind(paneId);
+      return;
+    }
+    const agent = facts.agentKind;
+    const claimed = new Set<string>();
+    for (const id of this.paneStore.trackedPaneIds()) {
+      if (id === paneId) continue;
+      const other = this.paneStore.boundSession(id);
+      if (other?.agent === agent) claimed.add(other.sessionId);
+    }
+    const paneFacts = { agent, pid: facts.pid, cwd: facts.cwd, createdMs: facts.createdMs };
+    let selectedId = this.agentAdapters.exactSession(paneFacts);
+    if (selectedId && claimed.has(selectedId)) selectedId = null;
+
+    let isKept = false;
+    if (!selectedId) {
+      const bound = this.paneStore.boundSession(paneId);
+      const launch = this.paneStore.getLaunch(paneId);
+      if (bound?.agent === agent && !claimed.has(bound.sessionId)) {
+        selectedId = bound.sessionId;
+        isKept = true;
+      } else if (launch?.resumeSessionId && launch.agent === agent && !claimed.has(launch.resumeSessionId)) {
+        selectedId = launch.resumeSessionId;
+        isKept = true;
+      }
+    }
+    if (!selectedId) {
+      selectedId = this.agentAdapters.newestSession(paneFacts, claimed);
+    } else if (isKept) {
+      claimed.add(selectedId);
+      const candidate = this.agentAdapters.newestSession(paneFacts, claimed);
+      if (candidate && this.writtenAfter(agent, candidate, selectedId)) selectedId = candidate;
+    }
+
+    if (selectedId) this.paneStore.registerPaneSession(paneId, agent, selectedId);
+    else this.unbindUnlessSourceFailed(paneId, agent);
+  }
+
+  private writtenAfter(agent: string, candidate: string, current: string): boolean {
+    const written = this.agentAdapters.lastWritten(agent, candidate);
+    const since = this.agentAdapters.lastWritten(agent, current);
+    return written !== null && (since === null || written > since);
+  }
+
+  private unbindUnlessSourceFailed(paneId: string, agent: string): void {
+    if (!this.agentAdapters.getSourceErrors().some((e) => e.agent === agent)) this.paneStore.unbind(paneId);
   }
 
   /** protocol.md §4.2: attachments as paths after a blank line, with the recipe's mention prefix. */
@@ -1257,7 +1335,8 @@ export class WsServer {
       return;
     }
     this.logger?.(`${this.paneLogLabel(paneId)} prompt: sent immediate`);
-    await this.herdrClient.sendPrompt(paneId, send);
+    // Not queued on failure: the phone keeps the draft, so a resend would deliver it twice.
+    await this.herdrClient.sendPrompt(paneId, send, shown.attachments.length > 0);
     if (replyTo) this.sendAck(ws, replyTo, { queued: false });
   }
 
@@ -1346,7 +1425,17 @@ export class WsServer {
             clearTimeout(queueState.timer);
             queueState.timer = undefined;
           }
-          if (queueState.batch[0] === event.queueId) this.dropBatch(paneId, queueState);
+          const err = event.error;
+          const isOffline = err instanceof HerdrError && UNREACHABLE_CODES.has(err.code);
+          if (isOffline) {
+            this.offlineQueuedPanes.add(paneId);
+            const out = new Set(queueState.batch);
+            for (const entry of queue) {
+              if (out.has(entry.item.queueId)) entry.item.sending = false;
+            }
+          } else if (queueState.batch[0] === event.queueId) {
+            this.dropBatch(paneId, queueState);
+          }
           queueState.state = "idle";
           queueState.sawWorking = false;
           queueState.unboundSent = false;
@@ -1355,9 +1444,6 @@ export class WsServer {
           this.sendQueue(paneId);
           this.logger?.(`${this.paneLogLabel(paneId)} queue: send failed ${event.queueId}`);
 
-          const err = event.error;
-          const isOffline =
-            err instanceof HerdrError && (UNREACHABLE_CODES.has(err.code) || err.code === "closed" || err.code === "ERR_UPSTREAM_OFFLINE");
           const code = isOffline
             ? ProtocolErrors.ERR_UPSTREAM_OFFLINE
             : err instanceof HerdrError
@@ -1368,7 +1454,7 @@ export class WsServer {
             error: { code, message: err instanceof Error ? err.message : String(err), details: { queueId: event.queueId, paneId } },
           });
 
-          this.kickQueue(paneId);
+          if (!isOffline) this.kickQueue(paneId);
           return;
         } else {
           // Success
@@ -1413,6 +1499,7 @@ export class WsServer {
   }
 
   private kickQueue(paneId: string): void {
+    if (this.herdrDisconnected || this.offlineQueuedPanes.has(paneId)) return;
     const queueState = this.getQueueState(paneId);
     if (queueState.state !== "idle") return;
     if (this.isQueuePaused(paneId)) return;
@@ -1442,7 +1529,7 @@ export class WsServer {
 
     void (async () => {
       try {
-        await this.herdrClient.sendPrompt(paneId, send);
+        await this.herdrClient.sendPrompt(paneId, send, batch.some((e) => e.item.attachments.length > 0));
         this.transitionQueue(paneId, { type: "send_result", success: true, queueId });
       } catch (err) {
         this.transitionQueue(paneId, { type: "send_result", success: false, error: err, queueId });
@@ -1493,11 +1580,18 @@ export class WsServer {
         const notSending = list.filter((e) => !e.item.sending);
         if (notSending.length > 0) obj[paneId] = notSending;
       }
+      const json = JSON.stringify(obj, null, 2);
+      if (json === this.lastSavedQueuesJson) return;
+      if (this.lastSavedQueuesJson === null && Object.keys(obj).length === 0 && !existsSync(this.queueFilePath)) {
+        this.lastSavedQueuesJson = json;
+        return;
+      }
       const dir = dirname(this.queueFilePath);
       mkdirSync(dir, { recursive: true });
       const tmp = `${this.queueFilePath}.${randomBytes(4).toString("hex")}.tmp`;
-      writeFileSync(tmp, JSON.stringify(obj, null, 2), "utf8");
+      writeFileSync(tmp, json, "utf8");
       renameSync(tmp, this.queueFilePath);
+      this.lastSavedQueuesJson = json;
     } catch (e) {
       console.error("[Pigeon] failed to save queues to disk:", e);
     }

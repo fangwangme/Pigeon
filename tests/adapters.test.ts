@@ -36,6 +36,7 @@ describe("structured session adapters (agent-session-normalization.md §2)", () 
           type text NOT NULL,
           seq integer NOT NULL,
           time_created integer NOT NULL,
+          time_updated integer,
           data text NOT NULL
         );
       `);
@@ -186,6 +187,22 @@ describe("structured session adapters (agent-session-normalization.md §2)", () 
         { id: "ses_untitled", title: "First prompt fallback title", updatedAt: 3000 },
         { id: "ses_mock_1", title: "Test Session", updatedAt: 2000 },
       ]);
+    });
+
+    test("an incremental read sees a message row OpenCode updated without touching the session row (agent-session-normalization.md §2.1)", () => {
+      const path = join(testDir, "opencode_streaming.db");
+      const db = new Database(path);
+      db.run("CREATE TABLE session_v2 (id text PRIMARY KEY, directory text, title text, time_updated integer, time_archived integer, summary_additions integer, summary_deletions integer, summary_files integer, summary_diffs text)");
+      db.run("CREATE TABLE session_message (id text PRIMARY KEY, session_id text NOT NULL, type text NOT NULL, seq integer NOT NULL, time_created integer NOT NULL, time_updated integer NOT NULL, data text NOT NULL)");
+      db.run("INSERT INTO session_v2 (id, directory, title, time_updated) VALUES ('ses_s', '/work', 'Streaming', 1000)");
+      db.run("INSERT INTO session_message VALUES ('m_u', 'ses_s', 'user', 1, 1000, 1000, ?)", [JSON.stringify({ text: "go" })]);
+      db.run("INSERT INTO session_message VALUES ('m_a', 'ses_s', 'assistant', 2, 1001, 1001, ?)", [JSON.stringify({ content: [{ type: "text", text: "Hel" }] })]);
+
+      const adapter = new OpenCodeAdapter({ dbPath: path });
+      expect(adapter.getTurns("ses_s").turns[0].assistantResponse?.markdown).toBe("Hel");
+      db.run("UPDATE session_message SET data = ?, time_updated = 1500 WHERE id = 'm_a'", [JSON.stringify({ content: [{ type: "text", text: "Hello there" }] })]);
+      expect(adapter.getTurns("ses_s", true).turns[0].assistantResponse?.markdown).toBe("Hello there");
+      db.close();
     });
 
     test("Gracefully handles non-existent session ID", () => {
@@ -460,6 +477,85 @@ describe("structured session adapters (agent-session-normalization.md §2)", () 
       expect(mgr.isSupported("agy")).toBe(true);
       expect(mgr.isSupported("bash")).toBe(false);
       expect(mgr.isSupported("htop")).toBe(false);
+    });
+
+    test("OpenCode falls back to XDG_DATA_HOME and legacy session table", () => {
+      const dir = tempDir("oc-xdg");
+      const xdg = join(dir, "xdg");
+      const dbDir = join(xdg, "opencode");
+      mkdirSync(dbDir, { recursive: true });
+      const dbPath = join(dbDir, "opencode.db");
+      const db = new Database(dbPath);
+      db.run("CREATE TABLE session (id text PRIMARY KEY, directory text, title text, time_updated integer, time_archived integer)");
+      db.run("CREATE TABLE session_message (id text PRIMARY KEY, session_id text NOT NULL, type text NOT NULL, seq integer NOT NULL, time_created integer NOT NULL, data text NOT NULL)");
+      db.run("INSERT INTO session VALUES ('s1', '/tmp/proj', 'Legacy Title', 1700000000000, NULL)");
+      db.close();
+
+      const oldXdg = process.env.XDG_DATA_HOME;
+      process.env.XDG_DATA_HOME = xdg;
+      try {
+        const adapter = new OpenCodeAdapter();
+        expect(adapter.getDbPath()).toBe(dbPath);
+        const mgr = new AgentAdapterManager();
+        expect(mgr.listSessions("opencode", "/tmp/proj")[0]?.title).toBe("Legacy Title");
+      } finally {
+        if (oldXdg === undefined) delete process.env.XDG_DATA_HOME;
+        else process.env.XDG_DATA_HOME = oldXdg;
+        rmSync(dir, { recursive: true, force: true });
+      }
+    });
+
+    test("AGY strips upload-only attachment turns and completes prior running tools when empty output arrives", () => {
+      const dir = tempDir("agy-tools");
+      try {
+        const logsDir = join(dir, "s1", ".system_generated", "logs");
+        mkdirSync(logsDir, { recursive: true });
+        writeFileSync(
+          join(logsDir, "transcript.jsonl"),
+          [
+            {
+              step_index: 0,
+              type: "USER_INPUT",
+              content: "<USER_REQUEST>[Pigeon user uploaded attachment: /tmp/uploads/a.png]\n</USER_REQUEST>",
+              created_at: "2026-11-10T10:00:00.000Z",
+            },
+            {
+              step_index: 1,
+              type: "USER_INPUT",
+              content: "<USER_REQUEST>Run check</USER_REQUEST>",
+              created_at: "2026-11-10T10:00:01.000Z",
+            },
+            {
+              step_index: 2,
+              type: "PLANNER_RESPONSE",
+              content: "Checking...",
+              tool_calls: [
+                { id: "tc1", name: "run_command", args: { CommandLine: "true" } },
+                { id: "tc2", name: "run_command", args: { CommandLine: "sleep 1" } },
+              ],
+              created_at: "2026-11-10T10:00:02.000Z",
+            },
+            {
+              step_index: 3,
+              type: "GENERIC",
+              content: "",
+              created_at: "2026-11-10T10:00:03.000Z",
+            },
+          ]
+            .map((r) => JSON.stringify(r))
+            .join("\n") + "\n",
+          "utf-8"
+        );
+
+        const agy = new AgyAdapter({ baseBrainDir: dir });
+        const res = agy.getTurns("s1");
+        expect(res.turns).toHaveLength(1);
+        expect(res.turns[0].userPrompt?.text).toBe("Run check");
+        expect(res.turns[0].toolCalls?.[0]?.status).toBe("completed");
+        expect(res.turns[0].toolCalls?.[1]?.status).toBe("running");
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
     });
   });
 });

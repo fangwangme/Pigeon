@@ -1,9 +1,8 @@
 // Issue #13. quota-and-usage.md §2.2, §2.3, §4.
 import { existsSync, readFileSync } from "node:fs";
-import { userInfo } from "node:os";
 import { join } from "node:path";
-import type { QuotaSnapshot, QuotaWindow } from "../../types/protocol";
-import { fileCredentialSource, type CredentialSource } from "./credentials";
+import type { QuotaExtraUsage, QuotaSnapshot, QuotaWindow } from "../../types/protocol";
+import { fileCredentialSource, macKeychainSource, type CredentialSource } from "./credentials";
 
 export interface ClaudeQuotaProviderOptions {
   home?: string;
@@ -14,26 +13,8 @@ export interface ClaudeQuotaProviderOptions {
 }
 
 const DEFAULT_USAGE_URL = "https://api.anthropic.com/api/oauth/usage";
-const KEYCHAIN_SERVICE = "Claude Code-credentials";
 const HOUR_MS = 60 * 60 * 1000;
 const WINDOW_PERIODS: Record<string, number> = { five_hour: 5 * HOUR_MS, seven_day: 7 * 24 * HOUR_MS };
-
-/** The login Keychain item Claude Code keeps on macOS (`security-and-pairing.md` §6). */
-function macKeychainSource(): CredentialSource {
-  const account = userInfo().username;
-  return {
-    read: () => {
-      const res = Bun.spawnSync(["security", "find-generic-password", "-s", KEYCHAIN_SERVICE, "-w"]);
-      return res.exitCode === 0 ? res.stdout.toString().trim() || null : null;
-    },
-    write: (raw) => {
-      // Through `security -i` on stdin, hex-encoded, so the token never appears in a process list.
-      const command = `add-generic-password -U -a "${account}" -s "${KEYCHAIN_SERVICE}" -X "${Buffer.from(raw, "utf-8").toString("hex")}"\n`;
-      const res = Bun.spawnSync(["security", "-i"], { stdin: new TextEncoder().encode(command) });
-      if (res.exitCode !== 0) throw new Error(`Keychain write failed with exit code ${res.exitCode}`);
-    },
-  };
-}
 
 function familyLabel(family: string): string {
   return family
@@ -104,18 +85,73 @@ export class ClaudeQuotaProvider {
     if (!usageRes.ok) throw new Error(`Claude usage request failed with HTTP ${usageRes.status}`);
 
     const usageData = (await usageRes.json()) as Record<string, any>;
+    const extraUsage = this.extraUsageOf(usageData);
     return {
       provider: "claude",
       plan: oauth.subscriptionType,
       account: this.readAccountEmail(),
       windows: this.windowsOf(usageData),
       credits: [],
+      ...(extraUsage ? { extraUsage } : {}),
       fetchedAt: this.now(),
     };
   }
 
-  /** §2.2: `five_hour` → 5 hours, `seven_day` → 7 days, `seven_day_<family>` → 7 days of that family, in the response's order. */
+  private extraUsageOf(usageData: Record<string, any>): QuotaExtraUsage | undefined {
+    const eu = usageData?.extra_usage;
+    if (!eu || typeof eu !== "object" || eu.is_enabled !== true) return undefined;
+    const scale = typeof eu.decimal_places === "number" && eu.decimal_places >= 0 ? 10 ** eu.decimal_places : 100;
+    return {
+      used: typeof eu.used_credits === "number" ? eu.used_credits / scale : 0,
+      limit: typeof eu.monthly_limit === "number" ? eu.monthly_limit / scale : null,
+      ...(typeof eu.currency === "string" && eu.currency ? { currency: eu.currency } : {}),
+    };
+  }
+
   private windowsOf(usageData: Record<string, any>): QuotaWindow[] {
+    if (Array.isArray(usageData.limits) && usageData.limits.length > 0) {
+      const session: QuotaWindow[] = [];
+      const weekly: QuotaWindow[] = [];
+      for (let i = 0; i < usageData.limits.length; i++) {
+        const l = usageData.limits[i];
+        if (!l || typeof l !== "object") continue;
+        const usedPercent = typeof l.percent === "number" ? l.percent : typeof l.utilization === "number" ? l.utilization : null;
+        if (usedPercent === null) continue;
+        const kind = typeof l.kind === "string" ? l.kind : "";
+        const group = typeof l.group === "string" ? l.group : "";
+        const scopeName =
+          typeof l.scope?.model?.display_name === "string" && l.scope.model.display_name
+            ? l.scope.model.display_name
+            : typeof l.scope?.surface === "string" && l.scope.surface
+            ? l.scope.surface
+            : undefined;
+        const resetsAt = l.resets_at ? Date.parse(l.resets_at) : null;
+        if (kind === "session" || group === "session") {
+          session.push({
+            id: typeof l.id === "string" ? l.id : `session_${i}`,
+            label: scopeName ? `5h · ${scopeName}` : "5h",
+            ...(scopeName ? { family: scopeName } : {}),
+            usedPercent,
+            periodMs: WINDOW_PERIODS.five_hour,
+            resetsAt,
+          });
+        } else {
+          const family = scopeName ? scopeName : kind === "weekly_scoped" ? familyLabel(String(l.id || "model")) : undefined;
+          weekly.push({
+            id: typeof l.id === "string" ? l.id : family ? `seven_day_${family.toLowerCase().replace(/[^a-z0-9]+/g, "_")}` : `weekly_${i}`,
+            label: family ? `7d · ${family}` : "7d",
+            ...(family ? { family } : {}),
+            usedPercent,
+            periodMs: WINDOW_PERIODS.seven_day,
+            resetsAt,
+          });
+        }
+      }
+      if (session.length > 0 || weekly.length > 0) {
+        return [...session, ...weekly];
+      }
+    }
+
     const windows: QuotaWindow[] = [];
     for (const [id, w] of Object.entries(usageData)) {
       if (!w || typeof w !== "object" || typeof w.utilization !== "number") continue;

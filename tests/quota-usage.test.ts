@@ -1,4 +1,5 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
+import { Database } from "bun:sqlite";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { ConfigManager } from "../src/server/config-manager";
@@ -515,5 +516,109 @@ describe("quota config and usage request validation (quota-and-usage.md §2.5, p
     const res2 = await qService.getQuota({ quotaProviders: { claude: true, codex: false, antigravity: false } } as any);
     // res2 should return the original server fetch time from cache!
     expect(res2.fetchedAt).toBe(1700000050000);
+  });
+
+  test("UsageStore seeds model_price_periods at 0000-01-01, splits on price change, preserves on rebuildAll, and backfills unpriced records", async () => {
+    const dir = tempDir("usage-periods");
+    const dbPath = join(dir, "usage.db");
+    const home = join(dir, "home");
+
+    const projDir = join(home, ".claude", "projects", "-tmp-proj");
+    mkdirSync(projDir, { recursive: true });
+    writeFileSync(
+      join(projDir, "s1.jsonl"),
+      JSON.stringify({
+        type: "assistant",
+        timestamp: "2026-11-10T10:00:00Z",
+        message: {
+          model: "claude-sonnet-4-6",
+          usage: { input_tokens: 1_000_000, output_tokens: 0 },
+        },
+      }) + "\n",
+      "utf-8"
+    );
+
+    let priceInput = 3;
+    let clock = Date.parse("2026-11-12T10:00:00Z");
+
+    const failPricing = new PricingManager({
+      cachePath: join(dir, "p-empty.json"),
+      now: () => clock,
+      fetch: (async () => new Response("err", { status: 500 })) as unknown as typeof fetch,
+    });
+    const store = new UsageStore({ dbPath, home, now: () => clock, discoverLs: async () => null });
+    await store.scanIncremental(failPricing);
+
+    const db = new Database(dbPath, { readonly: true });
+    const row1 = db.query("SELECT cost, unpriced FROM usage_records WHERE agent = 'claude'").get() as any;
+    expect(row1.unpriced).toBe(1);
+    expect(row1.cost).toBe(0);
+
+    const okPricing = new PricingManager({
+      cachePath: join(dir, "p-ok.json"),
+      now: () => clock,
+      fetch: (async () =>
+        Response.json({
+          anthropic: { models: { "claude-sonnet-4-6": { id: "claude-sonnet-4-6", cost: { input: priceInput, output: 15 } } } },
+        })) as unknown as typeof fetch,
+    });
+    await okPricing.initialize();
+    await store.scanIncremental(okPricing);
+
+    const row2 = db.query("SELECT cost, unpriced FROM usage_records WHERE agent = 'claude'").get() as any;
+    expect(row2.unpriced).toBe(0);
+    expect(row2.cost).toBeCloseTo(3, 5);
+    const periods1 = db.query("SELECT effective_from, effective_to, input_rate FROM model_price_periods").all() as any[];
+    expect(periods1).toEqual([{ effective_from: "0000-01-01", effective_to: null, input_rate: 3 }]);
+
+    const entriesSpy = spyOn(okPricing, "getCatalogEntries");
+    await store.scanIncremental(okPricing);
+    expect(entriesSpy).not.toHaveBeenCalled();
+    entriesSpy.mockRestore();
+
+    clock = Date.parse("2026-11-14T10:00:00Z");
+    priceInput = 6;
+    const pm2 = new PricingManager({
+      cachePath: join(dir, "p-ok2.json"),
+      now: () => clock,
+      fetch: (async () =>
+        Response.json({
+          anthropic: { models: { "claude-sonnet-4-6": { id: "claude-sonnet-4-6", cost: { input: priceInput, output: 15 } } } },
+        })) as unknown as typeof fetch,
+    });
+    await pm2.initialize();
+    writeFileSync(
+      join(projDir, "s2.jsonl"),
+      JSON.stringify({
+        type: "assistant",
+        timestamp: "2026-11-14T09:00:00Z",
+        message: {
+          model: "claude-sonnet-4-6",
+          usage: { input_tokens: 1_000_000, output_tokens: 0 },
+        },
+      }) + "\n",
+      "utf-8"
+    );
+    await store.scanIncremental(pm2);
+
+    const periods2 = db
+      .query("SELECT effective_from, effective_to, input_rate FROM model_price_periods WHERE model = 'claude-sonnet-4-6' ORDER BY effective_from")
+      .all() as any[];
+    expect(periods2).toEqual([
+      { effective_from: "0000-01-01", effective_to: "2026-11-13", input_rate: 3 },
+      { effective_from: "2026-11-14", effective_to: null, input_rate: 6 },
+    ]);
+
+    await store.rebuildAll(pm2);
+    const recordsAfterRebuild = db
+      .query("SELECT date, cost FROM usage_records ORDER BY date")
+      .all() as Array<{ date: string; cost: number }>;
+    expect(recordsAfterRebuild).toEqual([
+      { date: "2026-11-10", cost: 3 },
+      { date: "2026-11-14", cost: 6 },
+    ]);
+
+    db.close();
+    store.close();
   });
 });

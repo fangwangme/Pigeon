@@ -1,6 +1,7 @@
 import { EventEmitter } from "node:events";
 import { watch, type FSWatcher, existsSync } from "node:fs";
 import type { AgentAdapterManager } from "./agent-adapters/index";
+import { isEnoent } from "./sessions/common";
 import type { NormalizedTurn, SessionStats, TodoItem } from "../shared/agent-session";
 import type { NormalizedTurnsPayload, SessionInfo, TurnsDeltaPayload } from "../types/protocol";
 
@@ -17,6 +18,7 @@ export interface PaneSessionState {
   todos?: TodoItem[];
   model?: string;
   watcher?: FSWatcher;
+  reattachTimer?: ReturnType<typeof setTimeout>;
 }
 
 /** What Pigeon launched a pane with (`protocol.md` §4.5). */
@@ -38,10 +40,12 @@ export class PaneStore extends EventEmitter {
   private herdrConnected = false;
   private lastSyncTimestamp = Date.now();
   private modelResolver?: (agent: string, idOrLabel: string) => string;
+  private watchDebounceMs: number;
 
-  constructor(adapters: AgentAdapterManager) {
+  constructor(adapters: AgentAdapterManager, options: { watchDebounceMs?: number } = {}) {
     super();
     this.adapters = adapters;
+    this.watchDebounceMs = options.watchDebounceMs ?? 100;
   }
 
   public setModelResolver(resolver: (agent: string, idOrLabel: string) => string): void {
@@ -97,12 +101,54 @@ export class PaneStore extends EventEmitter {
   private watch(state: PaneSessionState): boolean {
     const watchPath = this.adapters.getWatchPath(state.agent, state.sessionId);
     if (!watchPath || !existsSync(watchPath)) return false;
+    state.watcher?.close();
+    state.watcher = undefined;
+    if (state.reattachTimer) {
+      clearTimeout(state.reattachTimer);
+      state.reattachTimer = undefined;
+    }
     let timer: ReturnType<typeof setTimeout> | null = null;
-    state.watcher = watch(watchPath, () => {
+    const scheduleRefresh = () => {
       if (timer) clearTimeout(timer);
-      timer = setTimeout(() => this.refreshPaneTurns(state.paneId, true), 100);
-    });
-    return true;
+      timer = setTimeout(() => {
+        timer = null;
+        if (this.paneStates.get(state.paneId) === state) {
+          this.refreshPaneTurns(state.paneId, true);
+        }
+      }, this.watchDebounceMs);
+    };
+    const recover = () => {
+      if (this.paneStates.get(state.paneId) !== state) return;
+      state.watcher?.close();
+      state.watcher = undefined;
+      if (state.reattachTimer) clearTimeout(state.reattachTimer);
+      let attempts = 0;
+      const tryReattach = () => {
+        if (this.paneStates.get(state.paneId) !== state) return;
+        if (this.watch(state)) {
+          scheduleRefresh();
+          return;
+        }
+        if (++attempts < 20) {
+          state.reattachTimer = setTimeout(tryReattach, 50);
+        }
+      };
+      state.reattachTimer = setTimeout(tryReattach, 20);
+    };
+    try {
+      const watcher = watch(watchPath, (eventType) => {
+        scheduleRefresh();
+        if (eventType === "rename") {
+          recover();
+        }
+      });
+      watcher.on("error", () => recover());
+      state.watcher = watcher;
+      return true;
+    } catch (err) {
+      if (isEnoent(err)) return false; // removed again since `existsSync`: an atomic rename in progress
+      throw err;
+    }
   }
 
   public unbind(paneId: string): void {
@@ -115,7 +161,12 @@ export class PaneStore extends EventEmitter {
   }
 
   private release(state: PaneSessionState): void {
+    if (state.reattachTimer) {
+      clearTimeout(state.reattachTimer);
+      state.reattachTimer = undefined;
+    }
     state.watcher?.close();
+    state.watcher = undefined;
     this.adapters.forget(state.agent, state.sessionId);
   }
 
@@ -127,13 +178,8 @@ export class PaneStore extends EventEmitter {
     const state = this.paneStates.get(paneId);
     if (!state || !this.adapters.isSupported(state.agent)) return;
 
-    let result: ReturnType<AgentAdapterManager["getTurns"]>;
-    try {
-      result = this.adapters.getTurns(state.agent, state.sessionId, incremental);
-    } catch (err) {
-      console.error(`[pigeon] reading ${state.agent} session ${state.sessionId} failed:`, err);
-      return;
-    }
+    const result = this.adapters.getTurns(state.agent, state.sessionId, incremental);
+    if (!result) return;
     // Builders mutate their turns in place, so compare against a snapshot of the previous read.
     const oldTurns = state.turns;
     const turns = structuredClone(result.turns);
@@ -221,7 +267,10 @@ export class PaneStore extends EventEmitter {
   }
 
   public destroy(): void {
-    for (const state of this.paneStates.values()) state.watcher?.close();
+    for (const state of this.paneStates.values()) {
+      if (state.reattachTimer) clearTimeout(state.reattachTimer);
+      state.watcher?.close();
+    }
     this.paneStates.clear();
   }
 }

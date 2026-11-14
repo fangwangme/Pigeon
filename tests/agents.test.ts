@@ -116,4 +116,14 @@ describe("skills per pane (herdr-adapter.md §8.3)", () => {
     expect(ids("codex")).toEqual([["compact", "compact"], ["new", "new"], ["init", "init_agents_md"], ["review", "review"]]);
     for (const s of scanner.listSkills("codex", tempDir("proj")).filter((s) => s.source === "builtin")) expect(s.description).toMatch(/^[\x20-\x7e]+$/);
   });
+
+  test("corrupt installed_plugins.json records a plugin error while keeping built-in skills", () => {
+    const home = tempDir("corrupt-plugins");
+    mkdirSync(join(home, ".claude", "plugins"), { recursive: true });
+    writeFileSync(join(home, ".claude", "plugins", "installed_plugins.json"), "{corrupt", "utf-8");
+    const scanner = new SkillScanner(home);
+    const entries = scanner.listSkills("claude", tempDir("proj"));
+    expect(entries.some((e) => e.name === "compact")).toBe(true);
+    expect(scanner.getPluginError()).toBeTruthy();
+  });
 });

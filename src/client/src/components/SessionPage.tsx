@@ -163,6 +163,8 @@ function PaneSheet(props: { onClose: () => void }) {
 
 type Panel = "menu" | "changes" | "panes" | "plus" | "skills" | null;
 
+const paneScroll = new Map<string, { scrollTop: number; atBottom: boolean }>();
+
 /** mobile-ui-and-themes.md §3.5: edit a queued prompt in-place on the server without changing queue position. */
 function editQueued(q: QueuedPrompt): void {
   editQueuedPrompt(q.queueId, q.text, q.attachments);
@@ -205,7 +207,16 @@ export function SessionPage() {
     }
   });
 
+  const savePaneScroll = (paneId: string | null) => {
+    if (!paneId || !scroller) return;
+    paneScroll.set(paneId, {
+      scrollTop: scroller.scrollTop,
+      atBottom: scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < 40,
+    });
+  };
+
   onCleanup(() => {
+    savePaneScroll(state.activePaneId);
     if (state.activePaneId) {
       setScreenWatch(state.activePaneId, false);
     }
@@ -223,7 +234,24 @@ export function SessionPage() {
       }
     )
   );
-  createEffect(on(() => state.activePaneId, () => requestAnimationFrame(() => toBottom())));
+  createEffect(
+    on(
+      () => state.activePaneId,
+      (paneId, prevPaneId) => {
+        if (prevPaneId && prevPaneId !== paneId) savePaneScroll(prevPaneId);
+        requestAnimationFrame(() => {
+          const saved = paneId ? paneScroll.get(paneId) : undefined;
+          if (saved && !saved.atBottom && scroller) {
+            scroller.scrollTop = saved.scrollTop;
+            setNearBottom(false);
+          } else {
+            setNearBottom(true);
+            toBottom();
+          }
+        });
+      }
+    )
+  );
   onMount(() => {
     // Content (rendered Markdown, a prompt card, the keyboard) changes height without a store change.
     const ro = new ResizeObserver(() => {

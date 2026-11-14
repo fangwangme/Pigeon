@@ -14,6 +14,7 @@ export interface Palette {
   line2: string;
   warn: string;
   warnbg: string;
+  ok: string;
   danger: string;
   dangerbg: string;
   addbg: string;
@@ -32,6 +33,9 @@ export interface Palette {
   lgShadow: string;
   lgSpec: string;
   scrim: string;
+  segTrack: string;
+  segOn: string;
+  segShadow: string;
   agentClaude: string;
   agentCodex: string;
   agentAgy: string;
@@ -41,12 +45,7 @@ export interface Palette {
   coOpenai: string;
   coGoogle: string;
   coOther: string;
-  figTokens: string;
   figCost: string;
-  figInput: string;
-  figOutput: string;
-  figCache: string;
-  figHit: string;
   heatEmpty: string;
   heatTokens1: string;
   heatTokens2: string;
@@ -72,6 +71,7 @@ export const PALETTES: Record<"light" | "dark", Palette> = {
     line2: "rgba(255,255,255,.14)",
     warn: "#F2B45C",
     warnbg: "rgba(242,180,92,.14)",
+    ok: "#10B981",
     danger: "#FF6B6B",
     dangerbg: "rgba(255,107,107,.13)",
     addbg: "rgba(92,203,117,.15)",
@@ -89,6 +89,9 @@ export const PALETTES: Record<"light" | "dark", Palette> = {
     lgShadow: "0 10px 30px rgba(0,0,0,.38)",
     lgSpec: "rgba(255,255,255,.16)",
     scrim: "rgba(0,0,0,.42)",
+    segTrack: "#151518",
+    segOn: "#2b2b31",
+    segShadow: "0 2px 6px rgba(0,0,0,.45), 0 0 0 1px rgba(255,255,255,.14)",
     agentClaude: "#FB923C",
     agentCodex: "#34D399",
     agentAgy: "#60A5FA",
@@ -98,12 +101,7 @@ export const PALETTES: Record<"light" | "dark", Palette> = {
     coOpenai: "#34D399",
     coGoogle: "#60A5FA",
     coOther: "#A855F7",
-    figTokens: "#34D399",
     figCost: "#FACC15",
-    figInput: "#60A5FA",
-    figOutput: "#A78BFA",
-    figCache: "#FB923C",
-    figHit: "#5FC7B2",
     heatEmpty: "#2a2a2e",
     heatTokens1: "#B8ECFF",
     heatTokens2: "#80E0FF",
@@ -127,6 +125,7 @@ export const PALETTES: Record<"light" | "dark", Palette> = {
     line2: "rgba(0,0,0,.13)",
     warn: "#9A5B00",
     warnbg: "rgba(166,98,0,.1)",
+    ok: "#059669",
     danger: "#C62F2F",
     dangerbg: "rgba(207,52,52,.09)",
     addbg: "rgba(30,138,58,.1)",
@@ -144,6 +143,9 @@ export const PALETTES: Record<"light" | "dark", Palette> = {
     lgShadow: "0 10px 30px rgba(0,0,0,.13)",
     lgSpec: "rgba(255,255,255,.55)",
     scrim: "rgba(0,0,0,.28)",
+    segTrack: "#EAEAEB",
+    segOn: "#FFFFFF",
+    segShadow: "0 2px 5px rgba(0,0,0,.08), 0 0 0 1px rgba(0,0,0,.04)",
     agentClaude: "#C2410C",
     agentCodex: "#047857",
     agentAgy: "#2563EB",
@@ -153,12 +155,7 @@ export const PALETTES: Record<"light" | "dark", Palette> = {
     coOpenai: "#047857",
     coGoogle: "#2563EB",
     coOther: "#9333EA",
-    figTokens: "#047857",
     figCost: "#A16207",
-    figInput: "#2563EB",
-    figOutput: "#7C3AED",
-    figCache: "#C2410C",
-    figHit: "#0F7F6C",
     heatEmpty: "#EBEBE8",
     heatTokens1: "#B8ECFF",
     heatTokens2: "#80E0FF",
@@ -192,6 +189,7 @@ const KEBAB: Record<keyof Palette, string> = {
   line2: "line2",
   warn: "warn",
   warnbg: "warnbg",
+  ok: "ok",
   danger: "danger",
   dangerbg: "dangerbg",
   addbg: "addbg",
@@ -209,6 +207,9 @@ const KEBAB: Record<keyof Palette, string> = {
   lgShadow: "lg-shadow",
   lgSpec: "lg-spec",
   scrim: "scrim",
+  segTrack: "seg-track",
+  segOn: "seg-on",
+  segShadow: "seg-shadow",
   agentClaude: "agent-claude",
   agentCodex: "agent-codex",
   agentAgy: "agent-agy",
@@ -218,12 +219,7 @@ const KEBAB: Record<keyof Palette, string> = {
   coOpenai: "co-openai",
   coGoogle: "co-google",
   coOther: "co-other",
-  figTokens: "fig-tokens",
   figCost: "fig-cost",
-  figInput: "fig-input",
-  figOutput: "fig-output",
-  figCache: "fig-cache",
-  figHit: "fig-hit",
   heatEmpty: "heat-empty",
   heatTokens1: "heat-tokens-1",
   heatTokens2: "heat-tokens-2",

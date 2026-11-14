@@ -1,15 +1,37 @@
-import { existsSync, readdirSync, realpathSync, statSync } from "node:fs";
+import { existsSync, readdirSync, realpathSync, statSync, type Stats } from "node:fs";
 import { join } from "node:path";
 import type { FileDiffSummary, TodoItem } from "../../shared/agent-session";
 import type { PastSession } from "../../types/protocol";
-import { countPatch, isObj, JsonlTail, readFirstJsonLine, readHeadJsonLines, readTailJsonLines, str, todoStatus, TurnBuilder, tsOf, type SessionRead } from "./common";
+import { countPatch, fileFallbackTs, isEnoent, isObj, JsonlTail, readFirstJsonLine, readHeadJsonLines, readTailJsonLines, str, todoStatus, TurnBuilder, type SessionRead } from "./common";
 import type { PaneFacts, SessionSource } from "./source";
 
 const MAX_LISTED_ROLLOUTS = 2000;
 const NOT_PROMPT = /^\s*<(environment_context|user_instructions|user_action)/;
 
+function safeStat(path: string): Stats | null {
+  try {
+    return statSync(path);
+  } catch (err) {
+    if (isEnoent(err)) return null;
+    throw err;
+  }
+}
+
 function mtimeOf(path: string | undefined): number | null {
-  return path && existsSync(path) ? statSync(path).mtimeMs : null;
+  return path ? (safeStat(path)?.mtimeMs ?? null) : null;
+}
+
+interface CodexParseState {
+  pendingExec?: { callId: string; replaced: boolean };
+  messageIds?: Set<string>;
+}
+
+function firstSight(state: CodexParseState, id: string | undefined): boolean {
+  if (!id) return true;
+  state.messageIds ??= new Set();
+  if (state.messageIds.has(id)) return false;
+  state.messageIds.add(id);
+  return true;
 }
 
 /** Codex (`agent-session-normalization.md` §2.4). */
@@ -18,7 +40,7 @@ export class CodexSource implements SessionSource {
   private root: string;
   private realRoot: string;
   private paths = new Map<string, string>();
-  private readers = new Map<string, { tail: JsonlTail; builder: TurnBuilder }>();
+  private readers = new Map<string, { tail: JsonlTail; builder: TurnBuilder; state: CodexParseState }>();
 
   constructor(home: string) {
     this.root = join(home, ".codex", "sessions");
@@ -33,17 +55,24 @@ export class CodexSource implements SessionSource {
   private rollouts(sinceMs?: number): string[] {
     if (!existsSync(this.root)) return [];
     const out: string[] = [];
-    const desc = (dir: string) => readdirSync(dir).sort().reverse();
+    const desc = (dir: string): string[] => {
+      try {
+        return readdirSync(dir).sort().reverse();
+      } catch (err) {
+        if (isEnoent(err)) return [];
+        throw err;
+      }
+    };
     for (const y of desc(this.root)) {
       const yDir = join(this.root, y);
-      if (!statSync(yDir).isDirectory()) continue;
+      if (!safeStat(yDir)?.isDirectory()) continue;
       for (const m of desc(yDir)) {
         const mDir = join(yDir, m);
-        if (!statSync(mDir).isDirectory()) continue;
+        if (!safeStat(mDir)?.isDirectory()) continue;
         for (const d of desc(mDir)) {
           const dDir = join(mDir, d);
-          const st = statSync(dDir);
-          if (!st.isDirectory()) continue;
+          const st = safeStat(dDir);
+          if (!st?.isDirectory()) continue;
           // A session started after `sinceMs` creates its file, which updates its day folder.
           if (sinceMs !== undefined && st.mtimeMs < sinceMs) continue;
           for (const f of desc(dDir)) if (f.startsWith("rollout-") && f.endsWith(".jsonl")) out.push(join(dDir, f));
@@ -56,6 +85,8 @@ export class CodexSource implements SessionSource {
   private meta(path: string): { id: string; cwd: string } | null {
     const first = readFirstJsonLine(path);
     if (!isObj(first) || first.type !== "session_meta" || !isObj(first.payload)) return null;
+    if (isObj(first.payload.source) && "subagent" in first.payload.source) return null;
+    if (typeof first.payload.thread_source === "string" && first.payload.thread_source !== "user") return null;
     const id = str(first.payload.id);
     const cwd = str(first.payload.cwd);
     return id && cwd ? { id, cwd } : null;
@@ -78,8 +109,8 @@ export class CodexSource implements SessionSource {
     if (!facts.cwd) return null;
     let best: { id: string; path: string; mtime: number } | null = null;
     for (const path of this.rollouts(facts.createdMs)) {
-      const mtime = statSync(path).mtimeMs;
-      if (mtime < facts.createdMs || (best && mtime <= best.mtime)) continue;
+      const mtime = safeStat(path)?.mtimeMs;
+      if (mtime === undefined || mtime < facts.createdMs || (best && mtime <= best.mtime)) continue;
       const meta = this.meta(path);
       if (!meta || meta.cwd !== facts.cwd || exclude.has(meta.id)) continue;
       best = { id: meta.id, path, mtime };
@@ -97,12 +128,15 @@ export class CodexSource implements SessionSource {
     if (!path) return { turns: [] };
     let reader = this.readers.get(sessionId);
     if (!reader || !incremental) {
-      reader = { tail: new JsonlTail(path), builder: new TurnBuilder() };
+      reader = { tail: new JsonlTail(path), builder: new TurnBuilder(fileFallbackTs(path)), state: {} };
       this.readers.set(sessionId, reader);
     }
     const { records, reset } = reader.tail.read();
-    if (reset) reader.builder = new TurnBuilder();
-    for (const r of records) applyRecord(reader.builder, r);
+    if (reset) {
+      reader.builder = new TurnBuilder(fileFallbackTs(path));
+      reader.state = {};
+    }
+    for (const r of records) applyRecord(reader.builder, r, reader.state);
     return reader.builder.result();
   }
 
@@ -113,7 +147,8 @@ export class CodexSource implements SessionSource {
   public list(folder: string): PastSession[] {
     const all = this.rollouts()
       .slice(0, MAX_LISTED_ROLLOUTS)
-      .map((path) => ({ path, mtime: statSync(path).mtimeMs }))
+      .map((path) => ({ path, mtime: safeStat(path)?.mtimeMs ?? 0 }))
+      .filter((entry) => entry.mtime > 0)
       .sort((a, b) => b.mtime - a.mtime);
     const out: PastSession[] = [];
     for (const { path, mtime } of all) {
@@ -123,15 +158,19 @@ export class CodexSource implements SessionSource {
       this.paths.set(meta.id, path);
       let title: string | undefined;
       let model: string | undefined;
-      for (const r of readHeadJsonLines(path)) {
-        if (isObj(r)) {
-          if (r.type === "event_msg" && isObj(r.payload) && r.payload.type === "thread_settings_applied" && isObj(r.payload.thread_settings) && str(r.payload.thread_settings.model)) {
-            model = r.payload.thread_settings.model;
-          }
-          if (r.type === "turn_context" && str((r as any).model)) {
-            model = (r as any).model;
-          }
+      const readModelFromRecord = (r: unknown): string | undefined => {
+        if (!isObj(r)) return undefined;
+        if (r.type === "event_msg" && isObj(r.payload) && r.payload.type === "thread_settings_applied" && isObj(r.payload.thread_settings)) {
+          return str(r.payload.thread_settings.model);
         }
+        if (r.type === "turn_context") {
+          return isObj(r.payload) ? str(r.payload.model) : undefined;
+        }
+        return undefined;
+      };
+      for (const r of readHeadJsonLines(path)) {
+        const m = readModelFromRecord(r);
+        if (m) model = m;
         const p = isObj(r) && r.type === "response_item" ? r.payload : null;
         if (!title && isObj(p) && p.type === "message" && p.role === "user") {
           const t = messageText(p.content);
@@ -140,16 +179,10 @@ export class CodexSource implements SessionSource {
           }
         }
       }
-      if (statSync(path).size > 262_144) {
+      if ((safeStat(path)?.size ?? 0) > 262_144) {
         for (const r of readTailJsonLines(path)) {
-          if (isObj(r)) {
-            if (r.type === "event_msg" && isObj(r.payload) && r.payload.type === "thread_settings_applied" && isObj(r.payload.thread_settings) && str(r.payload.thread_settings.model)) {
-              model = r.payload.thread_settings.model;
-            }
-            if (r.type === "turn_context" && str((r as any).model)) {
-              model = (r as any).model;
-            }
-          }
+          const m = readModelFromRecord(r);
+          if (m) model = m;
         }
       }
       out.push({ id: meta.id, title: (title ?? meta.id).slice(0, 120), updatedAt: mtime, ...(model ? { model } : {}) });
@@ -200,9 +233,9 @@ function patchDiffs(patch: string): FileDiffSummary[] {
   return out;
 }
 
-/** Codex shell output is plain text or a JSON object with `output` and `metadata.exit_code`. */
+/** Codex shell output is plain text, content block array, or JSON object with `output` and `metadata.exit_code`. */
 function shellOutput(v: unknown): { output: string; exitCode?: number } {
-  const text = typeof v === "string" ? v : isObj(v) ? JSON.stringify(v) : "";
+  const text = typeof v === "string" ? v : Array.isArray(v) ? messageText(v) : isObj(v) ? JSON.stringify(v) : "";
   const parsed = parseArgs(text);
   if (typeof parsed.output === "string") {
     const code = isObj(parsed.metadata) ? parsed.metadata.exit_code : undefined;
@@ -224,13 +257,111 @@ function commandOf(args: Record<string, any>): string | undefined {
   return undefined;
 }
 
-function applyRecord(b: TurnBuilder, r: unknown): void {
+function durationMsOf(item: Record<string, any>): number | undefined {
+  if (isObj(item.duration) && typeof item.duration.secs === "number") {
+    const nanos = typeof item.duration.nanos === "number" ? item.duration.nanos : 0;
+    return Math.round(item.duration.secs * 1000 + nanos / 1e6);
+  }
+  if (typeof item.duration_ms === "number") return item.duration_ms;
+  return undefined;
+}
+
+function applyItemCompleted(b: TurnBuilder, item: Record<string, any>, ts: number, state: CodexParseState): void {
+  const kind = str(item.type);
+  const dur = durationMsOf(item);
+  switch (kind) {
+    case "CommandExecution": {
+      if (state.pendingExec && !state.pendingExec.replaced) {
+        b.dropTool(state.pendingExec.callId);
+        state.pendingExec.replaced = true;
+      }
+      const id = str(item.id) ?? `cmd_${ts}`;
+      const cmd = str(item.command) ?? commandOf(item);
+      const output = str(item.aggregated_output) ?? str(item.output);
+      const exitCode = typeof item.exit_code === "number" ? item.exit_code : undefined;
+      const isError = item.status === "failed" || (exitCode !== undefined && exitCode !== 0);
+      b.toolUse({ id, name: "exec", input: { ...(cmd ? { command: cmd } : {}), ...(item.cwd ? { cwd: item.cwd } : {}) }, verb: "run", target: cmd, timestamp: ts }, ts);
+      const call = b.toolResult(id, output, isError, ts, exitCode);
+      if (call && dur !== undefined) call.durationMs = dur;
+      return;
+    }
+    case "FileChange": {
+      const id = str(item.id) ?? `fc_${ts}`;
+      const diffs: FileDiffSummary[] = [];
+      const addChange = (filePath: string, ch: Record<string, any>) => {
+        const rawType = (str(ch.type) ?? str(ch.kind) ?? "update").toLowerCase();
+        const status: FileDiffSummary["status"] = rawType.startsWith("add") || rawType.startsWith("creat") ? "created" : rawType.startsWith("del") ? "deleted" : "modified";
+        const patch = str(ch.unified_diff) ?? str(ch.diff);
+        const counts = patch ? countPatch(patch.split("\n")) : { additions: 0, deletions: 0 };
+        diffs.push({ filePath, status, ...counts, ...(patch ? { patch } : {}) });
+      };
+      if (isObj(item.changes)) {
+        for (const [filePath, ch] of Object.entries(item.changes)) {
+          if (isObj(ch)) addChange(filePath, ch);
+        }
+      } else if (Array.isArray(item.changes)) {
+        for (const ch of item.changes) {
+          if (!isObj(ch)) continue;
+          const filePath = str(ch.path) ?? str(ch.file_path);
+          if (filePath) addChange(filePath, ch);
+        }
+      }
+      const first = diffs[0];
+      b.toolUse({ id, name: "file_change", input: item.changes ?? {}, verb: first?.status === "created" ? "create" : "edit", target: first?.filePath, diffs, timestamp: ts }, ts);
+      const call = b.toolResult(id, undefined, item.status === "failed", ts);
+      if (call && dur !== undefined) call.durationMs = dur;
+      return;
+    }
+    case "McpToolCall": {
+      const id = str(item.id) ?? `mcp_${ts}`;
+      const server = str(item.server);
+      const tool = str(item.tool);
+      const name = server && tool ? `${server}:${tool}` : (tool ?? server ?? "mcp");
+      const output =
+        item.result !== undefined
+          ? typeof item.result === "string"
+            ? item.result
+            : JSON.stringify(item.result)
+          : item.error !== undefined
+          ? typeof item.error === "string"
+            ? item.error
+            : JSON.stringify(item.error)
+          : undefined;
+      b.toolUse({ id, name, input: isObj(item.arguments) ? item.arguments : {}, verb: "other", target: tool, timestamp: ts }, ts);
+      const call = b.toolResult(id, output, item.status === "failed" || !!item.error, ts);
+      if (call && dur !== undefined) call.durationMs = dur;
+      return;
+    }
+    case "ContextCompaction": {
+      b.compact(str(item.summary) ?? "Context compacted", ts);
+      return;
+    }
+    case "AgentMessage": {
+      const text = str(item.text) ?? messageText(item.content);
+      if (text && text.trim() && firstSight(state, str(item.id))) b.text(text, ts);
+      return;
+    }
+  }
+}
+
+function applyRecord(b: TurnBuilder, r: unknown, state: CodexParseState): void {
   if (!isObj(r)) return;
-  const ts = tsOf(r.timestamp, Date.now());
+  const ts = b.resolveTs(r.timestamp);
   const p = r.payload;
   if (!isObj(p)) return;
-  if (r.type === "event_msg" && p.type === "thread_settings_applied" && isObj(p.thread_settings) && str(p.thread_settings.model)) {
-    b.model = p.thread_settings.model;
+  if (r.type === "turn_context") {
+    const tm = str(p.model);
+    if (tm) b.model = tm;
+    return;
+  }
+  if (r.type === "event_msg") {
+    if (p.type === "thread_settings_applied" && isObj(p.thread_settings) && str(p.thread_settings.model)) {
+      b.model = p.thread_settings.model;
+      return;
+    }
+    if (p.type === "item_completed" && isObj(p.item)) {
+      applyItemCompleted(b, p.item, ts, state);
+    }
     return;
   }
   if (r.type !== "response_item") return;
@@ -238,10 +369,10 @@ function applyRecord(b: TurnBuilder, r: unknown): void {
     case "message": {
       const text = messageText(p.content);
       if (p.role === "user") {
-        if (text && !NOT_PROMPT.test(text)) {
-          b.prompt(text, ts);
-        }
-      } else if (p.role === "assistant") b.text(text, ts);
+        if (text && !NOT_PROMPT.test(text)) b.prompt(text, ts);
+      } else if (p.role === "assistant") {
+        if (firstSight(state, str(p.id))) b.text(text, ts);
+      }
       return;
     }
     case "reasoning": {
@@ -254,6 +385,13 @@ function applyRecord(b: TurnBuilder, r: unknown): void {
       const id = str(p.call_id);
       const name = str(p.name);
       if (!id || !name) return;
+      if (name === "exec" && p.type === "custom_tool_call") {
+        const input = parseArgs(p.input);
+        const target = commandOf(input) ?? (typeof p.input === "string" ? p.input.trim() : undefined);
+        b.toolUse({ id, name, input: Object.keys(input).length ? input : typeof p.input === "string" ? p.input : {}, verb: "run", target, timestamp: ts }, ts);
+        state.pendingExec = { callId: id, replaced: false };
+        return;
+      }
       if (name === "apply_patch") {
         const patch = p.type === "custom_tool_call" ? str(p.input) ?? "" : str(parseArgs(p.arguments).input) ?? "";
         const diffs = patchDiffs(patch);
@@ -262,8 +400,12 @@ function applyRecord(b: TurnBuilder, r: unknown): void {
         return;
       }
       const args = p.type === "custom_tool_call" ? parseArgs(p.input) : parseArgs(p.arguments);
-      if (name === "shell" || name === "exec_command" || name === "local_shell") {
-        b.toolUse({ id, name, input: args, verb: "run", target: commandOf(args), timestamp: ts }, ts);
+      const rawInput = p.type === "custom_tool_call" ? p.input : p.arguments;
+      const inputVal: Record<string, unknown> | string =
+        Object.keys(args).length > 0 ? args : typeof rawInput === "string" ? rawInput : args;
+      if (name === "shell" || name === "exec_command" || name === "local_shell" || name === "write_stdin") {
+        const target = commandOf(args) ?? (name === "write_stdin" && typeof rawInput === "string" ? rawInput.trim() : undefined);
+        b.toolUse({ id, name, input: inputVal, verb: "run", target, timestamp: ts }, ts);
         return;
       }
       if (name === "update_plan") {
@@ -271,13 +413,18 @@ function applyRecord(b: TurnBuilder, r: unknown): void {
         b.toolUse({ id, name, input: args, verb: "other", todos, timestamp: ts }, ts);
         return;
       }
-      b.toolUse({ id, name, input: args, verb: "other", timestamp: ts }, ts);
+      b.toolUse({ id, name, input: inputVal, verb: "other", timestamp: ts }, ts);
       return;
     }
     case "function_call_output":
     case "custom_tool_call_output": {
       const id = str(p.call_id);
       if (!id) return;
+      if (state.pendingExec?.callId === id) {
+        const { replaced } = state.pendingExec;
+        state.pendingExec = undefined;
+        if (replaced) return; // its commands already carry the results
+      }
       const { output, exitCode } = shellOutput(p.output);
       b.toolResult(id, output, exitCode !== undefined && exitCode !== 0, ts, exitCode);
       return;

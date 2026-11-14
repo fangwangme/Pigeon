@@ -2,7 +2,10 @@ import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { PALETTES } from "../src/client/src/themes";
+import { formatModelNameWithRecipes } from "../src/client/src/utils/model-name";
 import { renderMarkdown } from "../src/client/src/utils/markdown";
+import { callCommand, callInputText } from "../src/client/src/utils/tool-call";
+import type { NormalizedToolCall } from "../src/types/protocol";
 import { state, setState } from "../src/client/src/state/store";
 import { applyClientConfigWithTransitions, sendConfigPatch, handleServerMessage, initWebSocket } from "../src/client/src/state/ws";
 
@@ -26,6 +29,27 @@ describe("themes (mobile-ui-and-themes.md §9.1)", () => {
   test.each(["light", "dark"] as const)("%s: text tokens meet WCAG AA against the background", (mode) => {
     const p = PALETTES[mode];
     for (const token of [p.fg, p.muted, p.faint]) expect(contrast(p.bg, token)).toBeGreaterThanOrEqual(4.5);
+  });
+
+  test.each(["light", "dark"] as const)("%s: the selected segment stands apart from its track, with its own lift", (mode) => {
+    const p = PALETTES[mode];
+    expect(contrast(p.segTrack, p.segOn)).toBeGreaterThanOrEqual(1.15);
+    const css = readFileSync(join(import.meta.dir, "..", "src", "client", "src", "styles.css"), "utf-8");
+    expect(css).toContain(".seg .on, .seg button.on { background: var(--seg-on); color: var(--fg); font-weight: 650; box-shadow: var(--seg-shadow); }");
+  });
+});
+
+describe("tool details (mobile-ui-and-themes.md §3.3)", () => {
+  test("a lightweight call without input shows its target and an empty input instead of throwing", () => {
+    const light = { id: "c1", name: "exec", verb: "run", target: "bun test", status: "completed" } as unknown as NormalizedToolCall;
+    expect(callCommand(light)).toBe("bun test");
+    expect(callInputText(light)).toBe("");
+  });
+
+  test("a loaded call shows its own command and input", () => {
+    const arr = { id: "c2", name: "shell", verb: "run", target: "x", input: { command: ["bash", "-lc", "ls"] }, status: "completed" } as unknown as NormalizedToolCall;
+    expect(callCommand(arr)).toBe("bash -lc ls");
+    expect(callInputText(arr)).toBe(JSON.stringify({ command: ["bash", "-lc", "ls"] }, null, 2));
   });
 });
 
@@ -252,5 +276,44 @@ describe("mobile layout enhancements (mobile-ui-and-themes.md §1.2, §2.1)", ()
       globalThis.fetch = origFetch;
       globalThis.window = origWindow;
     }
+  });
+});
+
+describe("model names (mobile-ui-and-themes.md §6.4)", () => {
+  test("searches multiple agents in order and skips unresolved label === id entries", () => {
+    const recipes = {
+      codex: { models: [{ id: "claude-sonnet-4-6", label: "claude-sonnet-4-6" }] },
+      claude: { models: [{ id: "claude-sonnet-4-6", label: "Claude Sonnet 4.6" }] },
+    };
+    expect(formatModelNameWithRecipes(recipes, ["codex", "claude"], "claude-sonnet-4-6")).toBe("Claude Sonnet 4.6");
+  });
+
+  test("matches Antigravity models across tier suffixes and strips bracketed tiers", () => {
+    const recipes = {
+      agy: {
+        models: [
+          { id: "MODEL_CLAUDE_4_5_SONNET_HIGH", label: "Claude Sonnet 4.5 (High)" },
+          { id: "gemini-3.1-pro-high", label: "Gemini 3.1 Pro (High)" },
+        ],
+      },
+    };
+    expect(formatModelNameWithRecipes(recipes, "agy", "claude-sonnet-4-5-low")).toBe("Claude Sonnet 4.5");
+    expect(formatModelNameWithRecipes(recipes, ["codex", "agy"], "gemini-3.1-pro-low")).toBe("Gemini 3.1 Pro");
+    expect(formatModelNameWithRecipes(recipes, "agy", "google/gemini-3-flash (Minimal)")).toBe("gemini-3-flash");
+  });
+});
+
+describe("code blocks and heatmap scales (mobile-ui-and-themes.md §3.2, §9.1)", () => {
+  test("a code block gets a header bar with its language", () => {
+    const html = renderMarkdown("```ts\nconst x = 1;\n```");
+    expect(html).toMatch(/class="cb-hdr"[^]*ts/);
+  });
+
+  test("both themes share one heatmap scale, light to dark, so more reads darker in either", () => {
+    const keys = Object.keys(PALETTES.light).filter((k) => /^heat(Tokens|Cost)\d$/.test(k)) as Array<keyof typeof PALETTES.light>;
+    expect(keys).toHaveLength(10);
+    for (const k of keys) expect(PALETTES.dark[k]).toBe(PALETTES.light[k]);
+    expect(luminance(PALETTES.light.heatTokens1)).toBeGreaterThan(luminance(PALETTES.light.heatTokens5));
+    expect(luminance(PALETTES.light.heatCost1)).toBeGreaterThan(luminance(PALETTES.light.heatCost5));
   });
 });

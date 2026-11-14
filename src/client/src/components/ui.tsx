@@ -3,6 +3,7 @@ import { ICONS, type IconName } from "../icons";
 import { state } from "../state/store";
 import type { AgentStatus, PaneSummary, TabSummary, WorkspaceSummary } from "../../../types/protocol";
 import { t } from "../i18n";
+import { formatModelNameWithRecipes } from "../utils/model-name";
 
 export function Icon(props: { name: IconName; sm?: boolean; class?: string }) {
   return <svg class={`i${props.sm ? " sm" : ""}${props.class ? ` ${props.class}` : ""}`} viewBox="0 0 24 24" innerHTML={ICONS[props.name]} aria-hidden="true" />;
@@ -71,27 +72,19 @@ export function StatusIcon(props: { status: RowStatus; class?: string }) {
   return <span class={`sdot ${props.status}${props.class ? ` ${props.class}` : ""}`} aria-label={props.status} />;
 }
 
-export function modelLabel(model: string | null | undefined, agent?: string | null): string {
-  if (!model) return "";
-  if (agent && state.recipes[agent]?.models) {
-    const list = state.recipes[agent].models;
-    const exact = list.find((m) => m.id === model || m.label === model);
-    if (exact) return exact.label;
-    const norm = (s: string) => s.toLowerCase().replace(/[-._\s()]/g, "");
-    const target = norm(model);
-    const fuzzy = list.find((m) => norm(m.id) === target || norm(m.label) === target);
-    if (fuzzy) return fuzzy.label;
-  }
-  const slashIdx = model.lastIndexOf("/");
-  if (slashIdx >= 0 && slashIdx < model.length - 1) {
-    return model.slice(slashIdx + 1);
-  }
-  return model;
+export function modelLabel(
+  model: string | null | undefined,
+  agent?: string | ReadonlyArray<string | null | undefined> | null
+): string {
+  return formatModelNameWithRecipes(state.recipes, agent, model);
 }
 
 /** mobile-ui-and-themes.md §6.4 "Model names": the one rule for every place a model is shown. */
-export function formatModelName(agent: string | null | undefined, model: string | null | undefined): string {
-  return model ? modelLabel(model, agent) : "";
+export function formatModelName(
+  agent: string | ReadonlyArray<string | null | undefined> | null | undefined,
+  model: string | null | undefined
+): string {
+  return formatModelNameWithRecipes(state.recipes, agent, model);
 }
 
 /** The pane the session page opens by default: the tab's first pane with an agent (§6.8). */

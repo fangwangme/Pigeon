@@ -265,6 +265,7 @@ export const zh: Messages = {
   "tool.copyPath": "复制路径",
   "tool.changes": "改动",
   "tool.noPatch": "没有记录具体改动。",
+  "tool.renderFailed": "这一项显示不了，其他内容不受影响。",
 
   "transcript.thinkingNow": "思考中…",
   "transcript.readFiles": "读取了 {count} 个文件",
@@ -305,6 +306,7 @@ export const zh: Messages = {
   "quota.behind": "低于节奏 {deficit}%",
   "quota.creditsTitle": "可用的重置次数",
   "quota.creditsExpiry": "到期时间",
+  "quota.extraUsage": "额外用量：{used} / {limit}",
   "quota.errorPrefix": "刷新失败：{error}。下面仍显示上一次的数据。",
 
   "usage.today": "今天",

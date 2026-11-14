@@ -54,6 +54,8 @@ export interface HerdrCoreTerminal {
   foreground?: { cwd: string; pid?: number; name?: string; argv?: string[] } | null;
   status?: HerdrCoreStatus | null;
   title?: string;
+  labels?: Record<string, string>;
+  turn?: number;
 }
 
 export interface HerdrCoreListResult {

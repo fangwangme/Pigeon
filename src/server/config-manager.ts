@@ -109,13 +109,13 @@ function resolveRuntimeServerDefaults(
 ): Pick<ServerConfig, "herdrAppSocketPath" | "herdrCoreSocketPath" | "adminSocketPath" | "stateDir"> {
   const home = env.HOME;
   if (!home) throw new Error("HOME is not set; Pigeon cannot locate its state and the Herdr sockets");
-  const dataDir = env.XDG_DATA_HOME ? join(env.XDG_DATA_HOME, "pigeon") : join(home, ".local", "share", "pigeon");
+  const { stateDir } = resolveInstancePaths({ env, port: DEFAULT_PORT, productionPort: DEFAULT_PORT });
   return {
     herdrAppSocketPath: join(env.HERDR_APP_HOME || join(home, ".config", "herdr-app"), "herdr-app.sock"),
     // Empty when neither is set; the daemon then refuses to start (herdr-adapter.md §2).
     herdrCoreSocketPath: env.HC_TERMINAL_SOCKET || (env.XDG_RUNTIME_DIR ? join(env.XDG_RUNTIME_DIR, "herdr-core", "default.sock") : ""),
-    adminSocketPath: env.XDG_RUNTIME_DIR ? join(env.XDG_RUNTIME_DIR, "pigeon.sock") : join(dataDir, "admin.sock"),
-    stateDir: dataDir,
+    adminSocketPath: env.XDG_RUNTIME_DIR ? join(env.XDG_RUNTIME_DIR, "pigeon.sock") : join(stateDir, "admin.sock"),
+    stateDir,
   };
 }
 

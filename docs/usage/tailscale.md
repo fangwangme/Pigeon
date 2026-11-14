@@ -65,13 +65,11 @@ sudo ufw allow in on tailscale0
 
 ## Step 4: Start Tailscale Serve (HTTPS Reverse Proxy)
 
-Tailscale Serve listens on port 8443 (default for production, or 18443 for test instances) with a trusted SSL certificate and forwards decrypted traffic to Pigeon's local port `4100`:
+`pigeon start` automatically configures Tailscale Serve (`8443` for production on `4100`, or `18443` for test instances on `4101`) when operator permissions are granted. If you want to configure or verify the proxy manually ahead of time:
 
 ```bash
 tailscale serve --bg --https=8443 4100
 ```
-
-> **Note**: `pigeon start` automatically configures this for you if no mapping exists and Tailscale operator permissions are granted.
 
 Verify that the proxy is active:
 ```bash

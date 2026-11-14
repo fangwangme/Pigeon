@@ -283,17 +283,6 @@ export function resolveAccess(
   };
 }
 
-/**
- * Works out where the phone will reach the daemon.
- */
-export function resolvePublicBaseUrl(
-  opts: { configured?: string; insecureDev: boolean; port: number },
-  detectTs?: (port?: number) => string | null
-): string {
-  const probes = detectTs ? { tailscaleServeDns: () => detectTs(opts.port) } : {};
-  return resolveAccess(opts, probes).publicBaseUrl;
-}
-
 function hostOf(hostHeader: string): string | null {
   try {
     return new URL(`http://${hostHeader}`).hostname; // keeps IPv6 brackets: "[::1]"
@@ -428,6 +417,8 @@ export class PigeonDaemon {
           },
           sourceErrors: {
             usageScan: scanInfo.error,
+            agentAdapters: this.wsServer.getSourceErrors(),
+            claudePlugins: this.wsServer.getPluginError(),
           },
         };
       },
@@ -489,7 +480,27 @@ export class PigeonDaemon {
     void this.wsServer.refreshModels();
   }
 
+  private installProcessHandlers(): void {
+    if (PigeonDaemon.processHandlersInstalled) return;
+    PigeonDaemon.processHandlersInstalled = true;
+    process.on("uncaughtException", (err) => {
+      const msg = `uncaughtException: ${err instanceof Error ? err.stack || err.message : String(err)}`;
+      console.error(`[Pigeon] ${msg}`);
+      this.log(msg);
+      process.exit(1);
+    });
+    process.on("unhandledRejection", (reason) => {
+      const msg = `unhandledRejection: ${reason instanceof Error ? reason.stack || reason.message : String(reason)}`;
+      console.error(`[Pigeon] ${msg}`);
+      this.log(msg);
+      process.exit(1);
+    });
+  }
+
+  private static processHandlersInstalled = false;
+
   public async start(): Promise<void> {
+    this.installProcessHandlers();
     if (this.config.logPath) {
       mkdirSync(dirname(this.config.logPath), { recursive: true });
       writeFileSync(this.config.logPath, `[${new Date().toISOString()}] Pigeon daemon ${SERVER_VERSION} on port ${this.config.port}\n`, "utf-8");

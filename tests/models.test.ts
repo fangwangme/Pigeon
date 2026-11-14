@@ -1,5 +1,5 @@
-import { afterEach, describe, expect, test } from "bun:test";
-import { chmodSync, mkdirSync, writeFileSync } from "node:fs";
+import { afterEach, describe, expect, spyOn, test } from "bun:test";
+import { chmodSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { AgentAdapterManager } from "../src/server/agent-adapters/index";
 import { ConfigManager } from "../src/server/config-manager";
@@ -20,6 +20,13 @@ afterEach(async () => {
 function codexCache(home: string, models: object[]) {
   mkdirSync(join(home, ".codex"), { recursive: true });
   writeFileSync(join(home, ".codex", "models_cache.json"), JSON.stringify({ models }));
+  const bin = join(home, "bin");
+  mkdirSync(bin, { recursive: true });
+  writeFileSync(
+    join(bin, "codex"),
+    `#!/bin/sh\n[ "$1" = "debug" ] && [ "$2" = "models" ] && cat "${join(home, ".codex", "models_cache.json")}" && exit 0\nexit 1\n`
+  );
+  chmodSync(join(bin, "codex"), 0o755);
 }
 
 /** A home with every agent's model source, and a PATH whose `opencode models` prints two models. */
@@ -42,7 +49,7 @@ function agentHome() {
     })
   );
   const bin = join(home, "bin");
-  mkdirSync(bin);
+  mkdirSync(bin, { recursive: true });
   writeFileSync(join(bin, "opencode"), "#!/bin/sh\n[ \"$1\" = models ] && printf 'anthropic/claude-x\\nopenai/gpt-y\\n'\n");
   chmodSync(join(bin, "opencode"), 0o755);
   return { home, env: { HOME: home, PATH: `${bin}:/usr/bin:/bin` } };
@@ -321,7 +328,94 @@ describe("Claude and OpenCode model sources (herdr-adapter.md §7.1, issue #21)"
     await catalog.refresh();
     expect(catalog.models("opencode").map((m) => [m.id, m.label])).toEqual([
       ["anthropic/claude-x", "Claude X"],
-      ["openai/gpt-y", "openai/gpt-y"],
+      ["openai/gpt-y", "gpt-y"],
     ]);
+  });
+
+  test("corrupt cache recovers cleanly, legacy label===id entries are cleaned, Codex honors 24h cooldown, and single-agent noteModel isolates fetches", async () => {
+    const dir = tempDir("mc-cache");
+    const home = join(dir, "home");
+    const binDir = join(dir, "bin");
+    mkdirSync(home, { recursive: true });
+    mkdirSync(binDir, { recursive: true });
+
+    const cachePath = join(dir, "models.json");
+    writeFileSync(cachePath, "{corrupt json", "utf-8");
+    const warnSpy = spyOn(console, "warn").mockImplementation(() => {});
+    cleanup.push(() => warnSpy.mockRestore());
+
+    const catalogFromCorrupt = new ModelCatalog({ home, cachePath });
+    expect(catalogFromCorrupt.models("opencode")).toEqual([]);
+    expect(warnSpy).toHaveBeenCalled();
+
+    writeFileSync(
+      cachePath,
+      JSON.stringify({
+        fetchedAt: { opencode: Date.now() },
+        models: {
+          opencode: [{ id: "openrouter/anthropic/claude-opus-4-6", label: "openrouter/anthropic/claude-opus-4-6" }],
+        },
+      }),
+      "utf-8"
+    );
+    const catalog = new ModelCatalog({ home, cachePath });
+    expect(catalog.models("opencode").find((m) => m.id === "openrouter/anthropic/claude-opus-4-6")?.label).toBe("claude-opus-4-6");
+
+    const codexCallsFile = join(dir, "codex-calls.txt");
+    const fakeCodex = join(binDir, "codex");
+    writeFileSync(
+      fakeCodex,
+      `#!/bin/sh\necho "called:$*" >> "${codexCallsFile}"\nif [ "$1" = "debug" ] && [ "$2" = "models" ]; then\n  echo '{"models":[{"slug":"gpt-6-mini","display_name":"GPT-6 Mini","visibility":"list"}]}'\n  exit 0\nfi\nexit 1\n`,
+      "utf-8"
+    );
+    chmodSync(fakeCodex, 0o755);
+
+    let anthropicHits = 0;
+    const srv = Bun.serve({
+      port: 0,
+      fetch() {
+        anthropicHits++;
+        return Response.json({ unexpected: "shape" });
+      },
+    });
+    cleanup.push(() => srv.stop(true));
+
+    mkdirSync(join(home, ".claude"), { recursive: true });
+    writeFileSync(join(home, ".claude", ".credentials.json"), JSON.stringify({ claudeAiOauth: { accessToken: "tok" } }), "utf-8");
+    mkdirSync(join(home, ".codex"), { recursive: true });
+    writeFileSync(join(home, ".codex", "auth.json"), JSON.stringify({ tokens: { access_token: "ctok" } }), "utf-8");
+
+    let clock = 1_700_000_000_000;
+    const c2 = new ModelCatalog({
+      home,
+      cachePath: join(dir, "models-codex.json"),
+      anthropicModelsUrl: `http://127.0.0.1:${srv.port}/models`,
+      env: { ...process.env, PATH: `${binDir}:${process.env.PATH || ""}` },
+      now: () => clock,
+    });
+
+    await c2.refresh();
+    expect(c2.models("codex").some((m) => m.id === "gpt-6-mini" && m.label === "GPT-6 Mini")).toBe(true);
+    expect(readFileSync(codexCallsFile, "utf-8").trim().split("\n")).toHaveLength(1);
+
+    clock += 60_000;
+    await c2.refresh();
+    expect(readFileSync(codexCallsFile, "utf-8").trim().split("\n")).toHaveLength(1);
+
+    const hitsBeforeNote = anthropicHits;
+    c2.noteModel("codex", "openai/gpt-6-custom");
+    await Bun.sleep(20);
+    expect(anthropicHits).toBe(hitsBeforeNote);
+    expect(c2.models("codex").find((m) => m.id === "openai/gpt-6-custom")?.label).toBe("gpt-6-custom");
+
+    const reloaded = new ModelCatalog({
+      home,
+      cachePath: join(dir, "models-codex.json"),
+      anthropicModelsUrl: `http://127.0.0.1:${srv.port}/models`,
+      env: { ...process.env, PATH: `${binDir}:${process.env.PATH || ""}` },
+      now: () => clock,
+    });
+    await reloaded.refresh();
+    expect(readFileSync(codexCallsFile, "utf-8").trim().split("\n")).toHaveLength(1);
   });
 });
