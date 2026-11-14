@@ -12,6 +12,7 @@ import { PushManager } from "../src/server/push";
 import { SkillScanner } from "../src/server/skill-scanner";
 import { UploadStore } from "../src/server/uploads";
 import { WsServer } from "../src/server/ws-server";
+import { ProtocolErrors } from "../src/types/protocol";
 import { FakeHerdr, fakeWs, tempDir, topologyOf, type FakePane } from "./helpers/fixtures";
 
 // protocol.md §4.2 (queue, attachments), §4.5 (first message, resume), §4.9 (model), §4.11 (rename),
@@ -754,5 +755,31 @@ describe("queue state machine (protocol.md §4.2, §4.14)", () => {
     await send(c.ws, { type: "queue_update", id: "v3", payload: { targetPaneId: "p1", queueId, text: "", attachments: [] } });
     expect(c.ofType("error").map((m: any) => m.error.code)).toEqual(["ERR_INVALID_PAYLOAD", "ERR_INVALID_PAYLOAD"]);
     expect(c.ofType("prompt_queue").at(-1).payload.items[0].text).toBe("queued");
+  });
+
+  test("an offline send preserves the prompt in queue with sending: false and flushes after snapshot reconnect", async () => {
+    let failSend = true;
+    const sentTexts: string[] = [];
+    herdr.handlers["terminal.send"] = (p) => {
+      if (failSend) return { error: "closed" };
+      sentTexts.push(p.text);
+      return { result: { sent: true } };
+    };
+    await client.connect();
+    herdr.emitEvent("status", "p2", { status: { state: "idle", app: "codex" }, records: {}, reported: true });
+    await Bun.sleep(30);
+
+    const c = await viewer("p2");
+    await send(c.ws, { type: "agent_prompt", id: "off1", payload: { targetPaneId: "p2", text: "queued offline" } });
+
+    expect(c.ofType("error").some((m: any) => m.error.code === ProtocolErrors.ERR_UPSTREAM_OFFLINE)).toBe(true);
+    const items = c.ofType("prompt_queue").at(-1)?.payload.items;
+    expect(items).toHaveLength(1);
+    expect(items[0]).toMatchObject({ text: "queued offline", sending: false });
+
+    failSend = false;
+    await client.refreshSnapshot();
+    await until(() => sentTexts.length === 1);
+    expect(sentTexts).toEqual(["queued offline"]);
   });
 });

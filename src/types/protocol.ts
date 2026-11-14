@@ -369,8 +369,6 @@ export interface QueuedPrompt {
 export interface PromptQueuePayload {
   paneId: string;
   items: QueuedPrompt[];
-  /** Legacy/test alias for `items`. */
-  queue?: QueuedPrompt[];
   paused?: boolean;
 }
 

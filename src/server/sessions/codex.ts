@@ -77,8 +77,9 @@ export class CodexSource implements SessionSource {
   private meta(path: string): { id: string; cwd: string } | null {
     const first = readFirstJsonLine(path);
     if (!isObj(first) || first.type !== "session_meta" || !isObj(first.payload)) return null;
-    // B18: exclude subagent rollouts (`payload.source: { subagent: ... }`)
+    // Exclude subagent rollouts
     if (isObj(first.payload.source) && "subagent" in first.payload.source) return null;
+    if (typeof first.payload.thread_source === "string" && first.payload.thread_source !== "user") return null;
     const id = str(first.payload.id);
     const cwd = str(first.payload.cwd);
     return id && cwd ? { id, cwd } : null;
@@ -156,7 +157,7 @@ export class CodexSource implements SessionSource {
           return str(r.payload.thread_settings.model);
         }
         if (r.type === "turn_context") {
-          return (isObj(r.payload) ? str(r.payload.model) : undefined) ?? str((r as any).model);
+          return isObj(r.payload) ? str(r.payload.model) : undefined;
         }
         return undefined;
       };
@@ -354,7 +355,7 @@ function applyRecord(b: TurnBuilder, r: unknown, state: CodexParseState): void {
   const p = r.payload;
   if (!isObj(p)) return;
   if (r.type === "turn_context") {
-    const tm = str(p.model) ?? str((r as any).model);
+    const tm = str(p.model);
     if (tm) b.model = tm;
     return;
   }

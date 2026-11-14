@@ -390,4 +390,17 @@ describe("connection lifecycle (herdr-adapter.md §3.2, §3.4)", () => {
     expect(updates.at(-1)?.agentStatus).toBe("blocked");
     expect(updates.at(-1)?.pendingInteraction?.options).toEqual([]);
   });
+
+  test("a single-pane status event updates the tracked pane agentKind", async () => {
+    herdr.serve([{ paneId: "t1", cwd: "/tmp", state: "idle" }]);
+    await client.connect();
+    await Bun.sleep(50);
+
+    herdr.emitEvent("status", "t1", { status: { state: "working", app: "claude-code" }, records: {}, reported: true });
+    const deadline = Date.now() + 1000;
+    while (client.getPaneFacts("t1")?.agentKind !== "claude" && Date.now() < deadline) {
+      await Bun.sleep(10);
+    }
+    expect(client.getPaneFacts("t1")?.agentKind).toBe("claude");
+  });
 });

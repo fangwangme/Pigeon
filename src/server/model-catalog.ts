@@ -3,6 +3,7 @@ import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import type { ModelOption } from "../types/protocol";
 import { fallbackLabel } from "../shared/model-name";
+import { isObj } from "./sessions/common";
 import { fileCredentialSource, macKeychainSource, type CredentialSource } from "./quota/credentials";
 
 const DEFAULT_ANTHROPIC_MODELS_URL = "https://api.anthropic.com/v1/models";
@@ -21,8 +22,6 @@ export interface ModelCatalogOptions {
   cachePath?: string;
   now?: () => number;
 }
-
-const isObj = (v: unknown): v is Record<string, any> => typeof v === "object" && v !== null && !Array.isArray(v);
 
 /**
  * `herdr-adapter.md` §7.1: every agent's model list, filled from the agent's own source. The sources

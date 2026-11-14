@@ -153,4 +153,34 @@ describe("push delivery (push.md §3–§5)", () => {
     const stored = existsSync(join(dir, "push-subscriptions.json")) ? readFileSync(join(dir, "push-subscriptions.json"), "utf-8") : "";
     expect(stored).not.toContain(again.deviceId);
   });
+
+  test("clears notification dedupe on failed delivery so retry succeeds on next transition", async () => {
+    const dir = tempDir("push-retry");
+    const herdr = new FakeHerdr(dir);
+    herdr.serve(PANES);
+    await herdr.listen();
+    cleanup.push(() => herdr.close());
+    const { service, endpoint } = fakePushService();
+    const keys = browserKeys();
+
+    const daemon = await startDaemon(dir, herdr);
+    cleanup.push(() => daemon.stop());
+    const { cookie } = pair(daemon);
+    await fetch(`http://127.0.0.1:${daemon.config.port}/api/push/subscribe`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Cookie: cookie },
+      body: JSON.stringify({ endpoint, keys: { p256dh: keys.p256dh, auth: keys.authB64 }, events: { blocked: true, done: false } }),
+    });
+
+    service.status = 500;
+    herdr.emitEvent("status", "p1", { status: { state: "blocked", app: "claude-code" } });
+    await until(() => service.requests.length === 1);
+
+    service.status = 201;
+    herdr.emitEvent("status", "p1", { status: { state: "working", app: "claude-code" } });
+    await Bun.sleep(30);
+    herdr.emitEvent("status", "p1", { status: { state: "blocked", app: "claude-code" } });
+    await until(() => service.requests.length === 2);
+    expect(service.requests).toHaveLength(2);
+  });
 });

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { appendFileSync, mkdirSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdirSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { AgentAdapterManager } from "../src/server/agent-adapters/index";
 import { PaneStore } from "../src/server/pane-store";
@@ -95,5 +95,35 @@ describe("session log streaming (agent-session-normalization.md §4)", () => {
     expect(deltas.length).toBe(2);
     expect(deltas[1].seq).toBe(2);
     expect(store.getPaneState("p1")?.seqWatermark).toBe(2);
+  });
+
+  test("recovers FSWatcher after atomic file rename (agent-session-normalization.md §4.2)", async () => {
+    const brain = tempDir("watch-rename");
+    const logs = join(brain, "s1", ".system_generated", "logs");
+    mkdirSync(logs, { recursive: true });
+    const log = join(logs, "transcript.jsonl");
+    writeFileSync(log, line({ step_index: 0, type: "USER_INPUT", content: "<USER_REQUEST>one</USER_REQUEST>", created_at: "2026-11-10T10:00:00Z" }), "utf-8");
+
+    store = new PaneStore(new AgentAdapterManager({ agy: { baseBrainDir: brain } }));
+    store.registerPaneSession("p1", "agy", "s1");
+    await Bun.sleep(40);
+
+    const tmp = `${log}.tmp`;
+    writeFileSync(
+      tmp,
+      line({ step_index: 0, type: "USER_INPUT", content: "<USER_REQUEST>one</USER_REQUEST>", created_at: "2026-11-10T10:00:00Z" }) +
+        line({ step_index: 1, type: "USER_INPUT", content: "<USER_REQUEST>two</USER_REQUEST>", created_at: "2026-11-10T10:00:01Z" }),
+      "utf-8"
+    );
+    renameSync(tmp, log);
+    await Bun.sleep(250);
+    expect(store.getPayload("p1", "agy").turns.map((t) => t.userPrompt?.text)).toEqual(["one", "two"]);
+
+    appendFileSync(log, line({ step_index: 2, type: "USER_INPUT", content: "<USER_REQUEST>three</USER_REQUEST>", created_at: "2026-11-10T10:00:02Z" }), "utf-8");
+    const deadline = Date.now() + 2000;
+    while (store.getPayload("p1", "agy").turns.length < 3 && Date.now() < deadline) {
+      await Bun.sleep(30);
+    }
+    expect(store.getPayload("p1", "agy").turns.map((t) => t.userPrompt?.text)).toEqual(["one", "two", "three"]);
   });
 });

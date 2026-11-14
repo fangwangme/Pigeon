@@ -1,8 +1,13 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { existsSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { AntigravityQuotaProvider } from "../src/server/quota/antigravity";
 import { ClaudeQuotaProvider } from "../src/server/quota/claude";
+import { CodexQuotaProvider } from "../src/server/quota/codex";
 import type { CredentialSource } from "../src/server/quota/credentials";
+import { QuotaService } from "../src/server/quota/index";
+import { DEFAULT_CLIENT_CONFIG } from "../src/shared/defaults";
+import type { ClientConfig } from "../src/types/protocol";
 import { tempDir } from "./helpers/fixtures";
 
 // quota-and-usage.md §2.2, §2.3, §4: the Claude provider's Keychain source and its family windows.
@@ -64,5 +69,123 @@ describe("claude quota provider sources and windows (quota-and-usage.md §2.2, �
     const snap = await provider(keychain).fetch();
     expect(snap.windows.map((w) => w.id)).toEqual(["five_hour", "seven_day", "seven_day_oauth_apps"]);
     expect(snap.windows[2]).toMatchObject({ label: "7d · Oauth Apps", family: "Oauth Apps", usedPercent: 30, periodMs: 7 * 24 * 3600_000 });
+  });
+
+  test("maps limits[] array and extra_usage dynamically from usage response", async () => {
+    const keychain: CredentialSource = { read: () => JSON.stringify({ claudeAiOauth: { accessToken: "live", expiresAt: NOW + 3600_000 } }) };
+    acceptedToken = "live";
+    usageBody = JSON.parse(readFileSync(join(import.meta.dir, "fixtures", "claude-usage-limits.json"), "utf-8"));
+    const snap = await provider(keychain).fetch();
+    expect(snap.windows.map((w) => [w.label, w.usedPercent])).toEqual([
+      ["5h", 33],
+      ["7d", 43],
+      ["7d · Fable", 71],
+    ]);
+    expect(snap.extraUsage).toEqual({ used: 0, limit: 50, currency: "USD" });
+  });
+});
+
+describe("antigravity & codex quota providers (quota-and-usage.md §2.2, §2.3)", () => {
+  const servers: Array<ReturnType<typeof Bun.serve>> = [];
+  afterEach(() => {
+    while (servers.length) servers.pop()!.stop(true);
+  });
+
+  test("Antigravity preserves API group order, uses Claude/GPT and bucket.id, and reads onboarding username", async () => {
+    const dir = tempDir("quota-agy");
+    const fixture = JSON.parse(readFileSync(join(import.meta.dir, "fixtures", "agy-usage-groups.json"), "utf-8"));
+    const srv = Bun.serve({
+      port: 0,
+      fetch(req) {
+        const url = new URL(req.url);
+        if (url.pathname.endsWith("/RetrieveUserQuotaSummary")) return Response.json(fixture);
+        if (url.pathname.endsWith("/GetUserStatus")) return Response.json({ userStatus: { tierName: "Pro", email: "" } });
+        return Response.json({});
+      },
+    });
+    servers.push(srv);
+
+    const agyCliDir = join(dir, ".gemini", "antigravity-cli");
+    mkdirSync(join(agyCliDir, "daemon"), { recursive: true });
+    writeFileSync(join(agyCliDir, "daemon", "ls.json"), JSON.stringify({ pid: process.pid, httpPort: srv.port, csrfToken: "csrf-test" }), "utf-8");
+    writeFileSync(join(agyCliDir, "app_storage.json"), JSON.stringify({ "agy.onboarding.lastLoginUsername": "alice@example.com" }), "utf-8");
+
+    const provider = new AntigravityQuotaProvider({ home: dir, now: () => 1_700_000_000_000 });
+    const snap = await provider.fetch();
+    expect(snap.account).toBe("alice@example.com");
+    expect(snap.plan).toBe("Pro");
+    expect(snap.windows.map((w) => [w.id, w.label, w.usedPercent])).toEqual([
+      ["gemini-weekly", "Gemini · 7d", 40],
+      ["gemini-5h", "Gemini · 5h", 10],
+      ["3p-weekly", "Claude/GPT · 7d", 60],
+      ["3p-5h", "Claude/GPT · 5h", 15],
+      ["gemini-argon-wtu-weekly", "Gemini 4 Argon · 7d", 25],
+    ]);
+  });
+
+  test("Codex and Antigravity expired credentials fail with login expired without mutating credential files", async () => {
+    const dir = tempDir("quota-ro");
+    let tokenEndpointCalled = false;
+    const srv = Bun.serve({
+      port: 0,
+      fetch(req) {
+        if (new URL(req.url).pathname.includes("token")) tokenEndpointCalled = true;
+        return new Response("Unauthorized", { status: 401 });
+      },
+    });
+    servers.push(srv);
+
+    mkdirSync(join(dir, ".codex"), { recursive: true });
+    const expiredJwtPayload = Buffer.from(JSON.stringify({ exp: 1_000 })).toString("base64url");
+    const authContent = JSON.stringify({
+      tokens: {
+        access_token: `hdr.${expiredJwtPayload}.sig`,
+        refresh_token: "rt_should_not_refresh",
+      },
+    });
+    const authPath = join(dir, ".codex", "auth.json");
+    writeFileSync(authPath, authContent, "utf-8");
+
+    const codex = new CodexQuotaProvider({
+      home: dir,
+      usageUrl: `http://127.0.0.1:${srv.port}/usage`,
+      creditsUrl: `http://127.0.0.1:${srv.port}/credits`,
+      tokenUrl: `http://127.0.0.1:${srv.port}/token`,
+      env: { ...process.env, CODEX_HOME: join(dir, ".codex") },
+      now: () => 1_700_000_000_000,
+    });
+    await expect(codex.fetch()).rejects.toThrow(/login expired/i);
+    expect(readFileSync(authPath, "utf-8")).toBe(authContent);
+    expect(tokenEndpointCalled).toBe(false);
+
+    mkdirSync(join(dir, ".gemini", "antigravity-cli"), { recursive: true });
+    const agyTokPath = join(dir, ".gemini", "antigravity-cli", "antigravity-oauth-token");
+    const agyTokContent = JSON.stringify({
+      access_token: "old",
+      refresh_token: "rt",
+      expiry_date: 1_000,
+    });
+    writeFileSync(agyTokPath, agyTokContent, "utf-8");
+
+    const agy = new AntigravityQuotaProvider({ home: dir, now: () => 1_700_000_000_000 });
+    await expect(agy.fetch()).rejects.toThrow(/login expired/i);
+    expect(readFileSync(agyTokPath, "utf-8")).toBe(agyTokContent);
+  });
+
+  test("QuotaService defaults omitted quotaProviders entries to enabled while honoring false", async () => {
+    const partialCfg: ClientConfig = {
+      ...DEFAULT_CLIENT_CONFIG,
+      quotaProviders: { claude: false } as any,
+    };
+    const qs = new QuotaService({
+      autoScan: false,
+      claude: { fetch: async () => ({ provider: "claude", windows: [], credits: [], fetchedAt: 1 }) } as any,
+      codex: { fetch: async () => ({ provider: "codex", windows: [], credits: [], fetchedAt: 1 }) } as any,
+      antigravity: { fetch: async () => ({ provider: "antigravity", windows: [], credits: [], fetchedAt: 1 }) } as any,
+    });
+    const res = await qs.getQuota(partialCfg);
+    expect(res.providers.find((p) => p.provider === "claude")?.enabled).toBe(false);
+    expect(res.providers.find((p) => p.provider === "codex")?.enabled).toBe(true);
+    expect(res.providers.find((p) => p.provider === "antigravity")?.enabled).toBe(true);
   });
 });

@@ -279,3 +279,29 @@ describe("formatModelNameWithRecipes (display A1/A2)", () => {
     expect(formatModelNameWithRecipes(recipes, "agy", "google/gemini-3-flash (Minimal)")).toBe("gemini-3-flash");
   });
 });
+
+describe("code headers, LRU markdown cache, and usage palette tokens (mobile-ui-and-themes.md §3.1, §9.1)", () => {
+  test("renders .cb-hdr headers and handles bounded LRU eviction", () => {
+    const html = renderMarkdown("```ts\nconst x = 1;\n```");
+    expect(html).toContain('class="cb-hdr"');
+    expect(html).toContain("ts");
+    for (let i = 0; i < 600; i++) {
+      expect(renderMarkdown(`item ${i}`)).toContain(`item ${i}`);
+    }
+  });
+
+  test("dark heatmap stops ascend in intensity and both themes define figCost", () => {
+    const hexLum = (hex: string) => {
+      const m = /^#([0-9a-f]{6})$/i.exec(hex);
+      if (!m) return 0;
+      const n = parseInt(m[1], 16);
+      return ((n >> 16) & 255) + ((n >> 8) & 255) + (n & 255);
+    };
+    const d = PALETTES.dark;
+    expect(hexLum(d.heatTokens1)).toBeLessThan(hexLum(d.heatTokens5));
+    expect(hexLum(d.heatCost1)).toBeLessThan(hexLum(d.heatCost5));
+    expect(d.figCost).toBeDefined();
+    expect((d as any).figTokens).toBeUndefined();
+    expect(PALETTES.light.figCost).toBeDefined();
+  });
+});

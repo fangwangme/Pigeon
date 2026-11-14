@@ -22,7 +22,20 @@ const MODELSDEV_URL = "https://models.dev/api.json";
 const LITELLM_URL = "https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json";
 const OPENROUTER_URL = "https://openrouter.ai/api/v1/models";
 const DAY_MS = 24 * 60 * 60 * 1000;
-const FIRST_PARTY_PROVIDERS = ["anthropic", "openai", "google", "deepseek", "xai", "mistral", "cohere", "groq", "perplexity"];
+const FIRST_PARTY_PROVIDERS = [
+  "anthropic",
+  "openai",
+  "google",
+  "google-vertex",
+  "deepseek",
+  "zhipuai",
+  "zai",
+  "minimax",
+  "moonshotai",
+  "xai",
+  "mistral",
+  "cohere",
+];
 
 function providerPriority(provider: string): number {
   const idx = FIRST_PARTY_PROVIDERS.indexOf(provider.toLowerCase());

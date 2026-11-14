@@ -170,4 +170,16 @@ describe("question menus (herdr-adapter.md §8.2)", () => {
     const p = classifier.classifyScreen(screen).pendingInteraction!;
     expect([p.question, p.multiSelect, p.options.map((o) => o.label)]).toEqual(["Pick a size", false, ["Small", "Large"]]);
   });
+
+  test("Claude question menus are only extracted for Claude panes", () => {
+    const claudeMenuScreen = [
+      "←  ☐ Auth      ☑ Scope      ✔ Submit",
+      "How should auth work?",
+      "❯ 1. OAuth2",
+      "  2. API Key",
+      "Enter to select · ↑/↓ to navigate",
+    ].join("\n");
+    expect(classifier.classifyScreen(claudeMenuScreen, "claude").pendingInteraction).not.toBeNull();
+    expect(classifier.classifyScreen(claudeMenuScreen, "codex").pendingInteraction).toBeNull();
+  });
 });

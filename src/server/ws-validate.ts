@@ -1,5 +1,6 @@
 import type { ClientMessage, ClientConfig } from "../types/protocol";
 import { ACCENT_NAMES } from "../shared/defaults";
+import { isObj } from "./sessions/common";
 
 // Runtime validation for frames from the phone — the network trust boundary (architecture.md §5).
 // Every handler in ws-server.ts can rely on the shapes checked here.
@@ -14,7 +15,6 @@ const MAX_ATTACHMENTS = 10;
 const RESUME_ID_RE = /^[A-Za-z0-9._-]{1,128}$/;
 const KEY_RE = /^[a-z0-9+_-]{1,24}$/i;
 
-const isObj = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
 const isStr = (v: unknown, max = 512): v is string => typeof v === "string" && v.length > 0 && v.length <= max;
 const optStr = (v: unknown, max = 512) => v === undefined || isStr(v, max);
 

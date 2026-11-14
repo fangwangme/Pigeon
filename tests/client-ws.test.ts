@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { handleServerMessage, initWebSocket, selectPane } from "../src/client/src/state/ws";
+import { handleServerMessage, initWebSocket, request, selectPane } from "../src/client/src/state/ws";
 import { setState, setUnread, state } from "../src/client/src/state/store";
 import type { PaneStatePayload } from "../src/types/protocol";
 
@@ -173,5 +173,48 @@ describe("prompt answers (mobile-ui-and-themes.md §4.1)", () => {
     handleServerMessage({ type: "ack", replyTo: "x1", payload: { approved: false, interactionId: "int_1" } } as any);
     expect(state.terminalOpen).toBe(false);
     expect(state.pendingInteraction?.interactionId).toBe("int_1");
+  });
+});
+
+describe("socket teardown on resume (protocol.md §2.2)", () => {
+  test("teardownSocket rejects pending requests when a closed socket triggers reconnect on visibility", async () => {
+    const origWs = globalThis.WebSocket;
+    const origDoc = (globalThis as any).document;
+    const origFetch = globalThis.fetch;
+    let fakeClientWs: any;
+    let visListener: (() => void) | undefined;
+
+    (globalThis as any).document = {
+      visibilityState: "visible",
+      addEventListener: (_ev: string, fn: () => void) => {
+        visListener = fn;
+      },
+      removeEventListener: () => {},
+    };
+    (globalThis as any).fetch = (async () => Response.json({ authenticated: true })) as any;
+    (globalThis as any).WebSocket = class {
+      readyState = 1;
+      onopen: any;
+      onclose: any;
+      onmessage: any;
+      constructor() {
+        fakeClientWs = this;
+        queueMicrotask(() => this.onopen?.());
+      }
+      send() {}
+      close() {}
+    };
+
+    try {
+      await initWebSocket();
+      const pending = request({ type: "refresh_models", payload: {} } as any);
+      fakeClientWs.readyState = 3; // CLOSED
+      visListener?.();
+      await expect(pending).rejects.toThrow();
+    } finally {
+      globalThis.WebSocket = origWs;
+      (globalThis as any).document = origDoc;
+      globalThis.fetch = origFetch;
+    }
   });
 });

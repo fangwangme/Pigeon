@@ -420,6 +420,7 @@ export class PigeonDaemon {
           sourceErrors: {
             usageScan: scanInfo.error,
             agentAdapters: this.wsServer.getSourceErrors(),
+            claudePlugins: this.wsServer.getPluginError(),
           },
         };
       },
@@ -485,10 +486,16 @@ export class PigeonDaemon {
     if (PigeonDaemon.processHandlersInstalled) return;
     PigeonDaemon.processHandlersInstalled = true;
     process.on("uncaughtException", (err) => {
-      this.log(`uncaughtException: ${err instanceof Error ? err.stack || err.message : String(err)}`);
+      const msg = `uncaughtException: ${err instanceof Error ? err.stack || err.message : String(err)}`;
+      console.error(`[Pigeon] ${msg}`);
+      this.log(msg);
+      process.exit(1);
     });
     process.on("unhandledRejection", (reason) => {
-      this.log(`unhandledRejection: ${reason instanceof Error ? reason.stack || reason.message : String(reason)}`);
+      const msg = `unhandledRejection: ${reason instanceof Error ? reason.stack || reason.message : String(reason)}`;
+      console.error(`[Pigeon] ${msg}`);
+      this.log(msg);
+      process.exit(1);
     });
   }
 

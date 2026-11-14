@@ -95,33 +95,31 @@ export class PairingManager extends EventEmitter {
   /** A corrupt registry stops startup: silently dropping it would unpair every device. */
   private loadDevices(): void {
     if (!existsSync(this.devicesFilePath)) return;
-    {
-      const raw = readFileSync(this.devicesFilePath, "utf-8");
-      let parsed: any;
-      try {
-        parsed = JSON.parse(raw);
-      } catch (err) {
-        throw new Error(`Device registry ${this.devicesFilePath} is not valid JSON: ${(err as Error).message}`);
+    const raw = readFileSync(this.devicesFilePath, "utf-8");
+    let parsed: any;
+    try {
+      parsed = JSON.parse(raw);
+    } catch (err) {
+      throw new Error(`Device registry ${this.devicesFilePath} is not valid JSON: ${(err as Error).message}`);
+    }
+    if (parsed.activeToken) {
+      const at = parsed.activeToken;
+      if (at.permanent || !at.expiresAt || at.expiresAt > Date.now()) {
+        this.activeToken = at;
       }
-      if (parsed.activeToken) {
-        const at = parsed.activeToken;
-        if (at.permanent || !at.expiresAt || at.expiresAt > Date.now()) {
-          this.activeToken = at;
+    }
+    if (Array.isArray(parsed.sessions)) {
+      this.sessions.clear();
+      let expired = false;
+      for (const s of parsed.sessions) {
+        if (!s.tokenHash || !s.deviceId) continue;
+        if (this.isExpired(s)) expired = true;
+        else {
+          this.sessions.set(s.tokenHash, s);
+          this.persistedUse.set(s.tokenHash, s.lastUsedAt);
         }
       }
-      if (Array.isArray(parsed.sessions)) {
-        this.sessions.clear();
-        let expired = false;
-        for (const s of parsed.sessions) {
-          if (!s.tokenHash || !s.deviceId) continue;
-          if (this.isExpired(s)) expired = true;
-          else {
-            this.sessions.set(s.tokenHash, s);
-            this.persistedUse.set(s.tokenHash, s.lastUsedAt);
-          }
-        }
-        if (expired) this.saveDevices();
-      }
+      if (expired) this.saveDevices();
     }
   }
 
@@ -311,30 +309,27 @@ export class PairingManager extends EventEmitter {
       unlinkSync(this.adminSocketPath);
     }
     return new Promise((resolve, reject) => {
-      {
-
-        this.adminServer = createServer((socket: Socket) => {
-          socket.on("error", (err) => console.error("[pigeon] admin socket client error:", err));
-          let buffer = "";
-          socket.on("data", (chunk) => {
-            buffer += chunk.toString("utf-8");
-            let newlineIdx: number;
-            while ((newlineIdx = buffer.indexOf("\n")) !== -1) {
-              const line = buffer.slice(0, newlineIdx).trim();
-              buffer = buffer.slice(newlineIdx + 1);
-              if (line) {
-                this.handleAdminCommand(line, socket);
-              }
+      this.adminServer = createServer((socket: Socket) => {
+        socket.on("error", (err) => console.error("[pigeon] admin socket client error:", err));
+        let buffer = "";
+        socket.on("data", (chunk) => {
+          buffer += chunk.toString("utf-8");
+          let newlineIdx: number;
+          while ((newlineIdx = buffer.indexOf("\n")) !== -1) {
+            const line = buffer.slice(0, newlineIdx).trim();
+            buffer = buffer.slice(newlineIdx + 1);
+            if (line) {
+              this.handleAdminCommand(line, socket);
             }
-          });
+          }
         });
+      });
 
-        this.adminServer.on("error", reject);
-        this.adminServer.listen(this.adminSocketPath, () => {
-          chmodSync(this.adminSocketPath, 0o600);
-          resolve();
-        });
-      }
+      this.adminServer.on("error", reject);
+      this.adminServer.listen(this.adminSocketPath, () => {
+        chmodSync(this.adminSocketPath, 0o600);
+        resolve();
+      });
     });
   }
 

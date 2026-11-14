@@ -1,9 +1,11 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, spyOn, test } from "bun:test";
 import { Database } from "bun:sqlite";
-import { appendFileSync, mkdirSync, readlinkSync, realpathSync, utimesSync, writeFileSync } from "node:fs";
+import { appendFileSync, copyFileSync, mkdirSync, readlinkSync, realpathSync, utimesSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { getAgentRecipe } from "../src/server/agent-recipes";
 import { AgentAdapterManager } from "../src/server/agent-adapters/index";
+import { ClaudeSource } from "../src/server/sessions/claude";
+import { CodexSource } from "../src/server/sessions/codex";
 import { JsonlTail } from "../src/server/sessions/common";
 import { ConfigManager } from "../src/server/config-manager";
 import { HerdrClient } from "../src/server/herdr-client";
@@ -858,6 +860,106 @@ describe("past session models (protocol.md §4.10, issue #21)", () => {
     const sessions = new AgentAdapterManager({ home }).listSessions("claude", proj);
     expect(sessions.find((s) => s.id === "s1")?.model).toBe("claude-opus-5-5");
     expect(sessions.find((s) => s.id === "s2")).not.toHaveProperty("model");
+  });
+});
+
+describe("source robustness and Codex 0.169+ parsing (agent-session-normalization.md §2.3, §2.4)", () => {
+  test("isolates adapter source errors during rebind without dropping bound sessions or crashing on missing reads", async () => {
+    const home = tempDir("iso-home");
+    const herdr = new FakeHerdr(tempDir("herdr"));
+    await herdr.listen();
+    cleanup.push(() => herdr.close());
+
+    const herdrClient = new HerdrClient({
+      appSocketPath: herdr.appSocketPath,
+      coreSocketPath: herdr.coreSocketPath,
+      debounceMs: 5,
+      panePollMs: 60_000,
+    });
+    cleanup.push(() => herdrClient.disconnect());
+    herdrClient.applySnapshot(topologyOf([{ paneId: "p1", app: "claude-code", cwd: home }]));
+
+    const adapters = new AgentAdapterManager({ home });
+    (adapters as any).sources.get("claude").newest = () => {
+      throw new Error("boom in claude");
+    };
+    const errorSpy = spyOn(console, "error").mockImplementation(() => {});
+    cleanup.push(() => errorSpy.mockRestore());
+
+    const server = new WsServer({
+      buildId: "b",
+      herdrClient,
+      pushManager: new PushManager(join(home, "vapid.json")),
+      configManager: new ConfigManager(join(home, "cfg.json"), { HOME: home }),
+      agentAdapters: adapters,
+      skillScanner: new SkillScanner(home),
+    });
+    cleanup.push(() => server.destroy());
+
+    (server as any).paneStore.registerPaneSession("p1", "claude", "keep-me-bound");
+    expect(() => (server as any).rebindSessions()).not.toThrow();
+    expect((server as any).paneStore.getSession("p1")).toBe("keep-me-bound");
+    expect(adapters.getSourceErrors().some((e: any) => e.agent === "claude")).toBe(true);
+
+    const claude = new ClaudeSource(home);
+    expect(() => claude.read("missing-id", false)).not.toThrow();
+  });
+
+  test("Codex excludes subagent rollouts, reads turn_context model, and deduplicates pending tool calls with item_completed", () => {
+    const home = tempDir("codex-0169");
+    const sessionsDir = join(home, ".codex", "sessions", "2026", "11", "10");
+    mkdirSync(sessionsDir, { recursive: true });
+
+    const mainDest = join(sessionsDir, "rollout-2026-11-10T11-18-53-codex-main-0169.jsonl");
+    const subDest = join(sessionsDir, "rollout-2026-11-10T12-00-00-codex-subagent-1.jsonl");
+    const threadSubDest = join(sessionsDir, "rollout-2026-11-10T12-05-00-codex-thread-sub.jsonl");
+    copyFileSync(join(import.meta.dir, "fixtures", "codex-0.169-rollout.jsonl"), mainDest);
+    copyFileSync(join(import.meta.dir, "fixtures", "codex-subagent-rollout.jsonl"), subDest);
+    writeFileSync(
+      threadSubDest,
+      jsonl([{ timestamp: "2026-11-10T12:05:00Z", type: "session_meta", payload: { id: "codex-thread-sub", cwd: "/tmp/project", thread_source: "subagent" } }]),
+      "utf-8"
+    );
+
+    const codex = new CodexSource(home);
+    expect(codex.list("/tmp/project").map((s) => s.id)).toEqual(["codex-main-0169"]);
+    expect(codex.newest({ agent: "codex", pid: 0, cwd: "/tmp/project", createdMs: 0 }, new Set())).toBe("codex-main-0169");
+
+    const read = codex.read("codex-main-0169", false);
+    expect(read.model).toBe("gpt-6-1-cygnus");
+    expect(read.turns).toHaveLength(1);
+    const t = read.turns[0];
+    expect(t.toolCalls?.some((tool) => tool.diff?.filePath === "/tmp/project/hello.ts")).toBe(true);
+    expect(t.toolCalls?.some((tool) => tool.name.includes("search") && (tool.durationMs ?? 0) >= 15)).toBe(true);
+    expect(t.toolCalls?.some((tool) => tool.output?.includes("Confirmed"))).toBe(true);
+    const execTools = t.toolCalls?.filter((tool) => tool.verb === "run") ?? [];
+    expect(execTools).toHaveLength(2);
+    expect(t.assistantResponse?.markdown.trim()).toBe("Updated hello.ts.");
+  });
+
+  test("Claude extracts custom-title from tail beyond 64KB and assigns deterministic fallback timestamps", async () => {
+    const home = tempDir("claude-tail");
+    const proj = join(home, ".claude", "projects", "-tmp-proj");
+    mkdirSync(proj, { recursive: true });
+    const padding = "x".repeat(4000);
+    const lines: string[] = [
+      JSON.stringify({ type: "user", timestamp: "2026-11-10T10:00:00Z", message: { content: "First prompt" } }),
+    ];
+    for (let i = 0; i < 90; i++) {
+      lines.push(JSON.stringify({ type: "assistant", message: { content: [{ type: "text", text: padding }] } }));
+    }
+    lines.push(JSON.stringify({ type: "custom-title", customTitle: "Tail Custom Title" }));
+    writeFileSync(join(proj, "s1.jsonl"), lines.join("\n") + "\n", "utf-8");
+
+    const claude = new ClaudeSource(home);
+    expect(claude.list("/tmp/proj")[0]?.title).toBe("Tail Custom Title");
+
+    writeFileSync(join(proj, "s-no-ts.jsonl"), JSON.stringify({ type: "user", message: { content: "No timestamp" } }) + "\n", "utf-8");
+    claude.newest({ agent: "claude", pid: 0, cwd: "/tmp/proj", createdMs: 0 }, new Set());
+    const r1 = claude.read("s-no-ts", false);
+    await Bun.sleep(15);
+    const r2 = claude.read("s-no-ts", false);
+    expect(r1.turns[0].timestamp).toBe(r2.turns[0].timestamp);
   });
 });
 

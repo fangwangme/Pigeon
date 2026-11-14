@@ -1044,6 +1044,10 @@ export class WsServer {
     return this.agentAdapters.getSourceErrors();
   }
 
+  public getPluginError(): string | null {
+    return this.skillScanner.getPluginError();
+  }
+
   /**
    * agent-session-normalization.md §2.0: rule 1 (exact) first, then a resumed or already-bound pane
    * keeps its session (rules 5, 6), then unbound panes take the newest unclaimed session (rule 2), and
@@ -1564,7 +1568,6 @@ export class WsServer {
         paneId,
         paused,
         items,
-        queue: items,
       },
     });
   }
