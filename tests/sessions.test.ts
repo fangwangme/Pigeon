@@ -956,6 +956,31 @@ describe("source robustness and Codex 0.169+ parsing (agent-session-normalizatio
     expect(done.filter((c) => c.verb === "run").map((c) => c.id)).toEqual(["cmd_1", "call_stdin_1"]);
   });
 
+  test("a Codex message recorded twice under one id shows once; equal text under another id, or an AgentMessage alone, still shows (§2.4)", () => {
+    const home = tempDir("codex-msg-ids");
+    const sessionsDir = join(home, ".codex", "sessions", "2026", "11", "10");
+    mkdirSync(sessionsDir, { recursive: true });
+    const item = (id: string, text: string) => ({ timestamp: "2026-11-10T12:00:01Z", type: "event_msg", payload: { type: "item_completed", item: { type: "AgentMessage", id, text } } });
+    const resp = (id: string, text: string) => ({ timestamp: "2026-11-10T12:00:02Z", type: "response_item", payload: { type: "message", id, role: "assistant", content: [{ type: "output_text", text }] } });
+    writeFileSync(
+      join(sessionsDir, "rollout-2026-11-10T12-00-00-codex-ids.jsonl"),
+      jsonl([
+        { timestamp: "2026-11-10T12:00:00Z", type: "session_meta", payload: { id: "codex-ids", cwd: "/tmp/project" } },
+        { timestamp: "2026-11-10T12:00:00Z", type: "response_item", payload: { type: "message", role: "user", content: [{ type: "input_text", text: "go" }] } },
+        item("m1", "Done."),
+        resp("m1", "Done."),
+        item("m2", "Done."),
+        resp("m2", "Done."),
+        item("q1", "Proceed with the rest?"),
+      ]),
+      "utf-8"
+    );
+    const codex = new CodexSource(home);
+    expect(codex.list("/tmp/project").map((s) => s.id)).toEqual(["codex-ids"]);
+    const texts = (codex.read("codex-ids", false).turns[0].items ?? []).flatMap((i) => (i.kind === "text" ? [i.markdown] : []));
+    expect(texts).toEqual(["Done.", "Done.", "Proceed with the rest?"]);
+  });
+
   test("Claude extracts custom-title from tail beyond 64KB and assigns deterministic fallback timestamps", async () => {
     const home = tempDir("claude-tail");
     const proj = join(home, ".claude", "projects", "-tmp-proj");

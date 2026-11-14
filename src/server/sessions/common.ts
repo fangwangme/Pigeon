@@ -1,4 +1,4 @@
-import { closeSync, existsSync, openSync, readSync, statSync } from "node:fs";
+import { closeSync, existsSync, fstatSync, openSync, readSync, statSync } from "node:fs";
 import type {
   FileDiffSummary,
   NormalizedToolCall,
@@ -152,8 +152,7 @@ export function readTailJsonLines(path: string, maxBytes = 262_144): unknown[] {
     throw err;
   }
   try {
-    const stat = statSync(path);
-    const len = stat.size;
+    const len = fstatSync(fd).size;
     const bytesToRead = Math.min(len, maxBytes);
     const start = len - bytesToRead;
     const buf = Buffer.alloc(bytesToRead);

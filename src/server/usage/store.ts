@@ -471,7 +471,6 @@ export class UsageStore {
         update.run(cost, row.agent, row.message_key);
         updated++;
       }
-      this.db.run("INSERT OR REPLACE INTO usage_meta (key, val) VALUES ('price_periods_migrated', '1')");
     })();
 
     return updated;

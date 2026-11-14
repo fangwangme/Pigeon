@@ -269,8 +269,11 @@ export class AgentAdapterManager {
       return value;
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      this.sourceErrors.set(key, { agent: normalized, op, message, at: Date.now() });
-      console.error(`[pigeon] ${normalized} source error (${op}):`, err);
+      const now = Date.now();
+      const previous = this.sourceErrors.get(key);
+      const logged = previous?.message === message && now - previous.at < 60_000 ? previous.at : now;
+      this.sourceErrors.set(key, { agent: normalized, op, message, at: logged });
+      if (logged === now) console.error(`[pigeon] ${normalized} source error (${op}):`, err);
       return fallback;
     }
   }
@@ -305,8 +308,8 @@ export class AgentAdapterManager {
     return this.callSource(facts.agent, "newest", null, (source) => source.newest(facts, exclude));
   }
 
-  public getTurns(agent: string, sessionId: string, incremental = false): SessionRead {
-    return this.callSource(agent, "read", { turns: [] }, (source) => source.read(sessionId, incremental));
+  public getTurns(agent: string, sessionId: string, incremental = false): SessionRead | null {
+    return this.callSource<SessionRead | null>(agent, "read", null, (source) => source.read(sessionId, incremental));
   }
 
   /** File whose changes mean the session has new records; watched instead of polling. */

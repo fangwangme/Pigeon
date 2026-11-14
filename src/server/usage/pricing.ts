@@ -78,8 +78,12 @@ export class PricingManager {
     const now = this.now();
     if (this.loaded && now - this.lastFetchAt <= DAY_MS) return;
     if (now < this.nextRetryAt) return;
-    this.catalogVersion++;
+    const before = JSON.stringify([...this.catalog]);
+    await this.load(now);
+    if (JSON.stringify([...this.catalog]) !== before) this.catalogVersion++;
+  }
 
+  private async load(now: number): Promise<void> {
     // 1. Try disk cache
     const cacheResult = this.loadFromCache(this.cachePath);
     if (cacheResult.fresh && cacheResult.hasEntries) {

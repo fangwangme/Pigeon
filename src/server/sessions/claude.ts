@@ -107,7 +107,7 @@ export class ClaudeSource implements SessionSource {
     const projects = join(this.root, "projects");
     if (!existsSync(projects)) return [];
     const prefix = claudeSlug(folder);
-    const out: Array<PastSession & { path: string }> = [];
+    const out: Array<PastSession & { path: string; size: number }> = [];
     for (const dirName of readdirSync(projects)) {
       if (!dirName.startsWith(prefix)) continue;
       const dir = join(projects, dirName);
@@ -122,7 +122,8 @@ export class ClaudeSource implements SessionSource {
         if (!name.endsWith(".jsonl")) continue;
         const path = join(dir, name);
         try {
-          out.push({ id: name.slice(0, -".jsonl".length), title: "", updatedAt: statSync(path).mtimeMs, path });
+          const st = statSync(path);
+          out.push({ id: name.slice(0, -".jsonl".length), title: "", updatedAt: st.mtimeMs, path, size: st.size });
         } catch (err) {
           if (!isEnoent(err)) throw err;
         }
@@ -147,7 +148,7 @@ export class ClaudeSource implements SessionSource {
           model = r.message.model;
         }
       }
-      if (s.path && statSync(s.path).size > 262_144) {
+      if (s.size > 262_144) {
         for (const r of readTailJsonLines(s.path)) {
           if (!isObj(r)) continue;
           if (r.type === "custom-title" || r.type === "ai-title") title = str(r.customTitle) ?? str(r.aiTitle) ?? title;

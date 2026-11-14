@@ -33,6 +33,18 @@ describe("PricingManager fallback and retry (quota-and-usage.md §3.3)", () => {
     });
   });
 
+  test("an offline retry that reloads the same stale catalog is not a catalog change", async () => {
+    const cachePath = join(testDir, "stale-retry.json");
+    writeFileSync(cachePath, JSON.stringify({ fetchedAt: Date.now() - 48 * 3600 * 1000, entries: { "claude-3-5-sonnet": { inputCostPerToken: 0.000003, outputCostPerToken: 0.000015 } } }));
+    let clock = Date.now();
+    const pm = new PricingManager({ cachePath, fetch: (() => Promise.reject(new Error("offline"))) as any, now: () => clock, retryIntervalMs: 1000 });
+    await pm.initialize();
+    const loaded = pm.getCatalogVersion();
+    clock += 2000;
+    await pm.initialize();
+    expect(pm.getCatalogVersion()).toBe(loaded);
+  });
+
   test("does not set loaded = true permanently on complete failure, allowing retry", async () => {
     const cachePath = join(testDir, "nonexistent-pricing.json");
 

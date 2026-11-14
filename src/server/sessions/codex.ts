@@ -23,7 +23,15 @@ function mtimeOf(path: string | undefined): number | null {
 
 interface CodexParseState {
   pendingExec?: { callId: string; replaced: boolean };
-  lastAgentMessage?: string;
+  messageIds?: Set<string>;
+}
+
+function firstSight(state: CodexParseState, id: string | undefined): boolean {
+  if (!id) return true;
+  state.messageIds ??= new Set();
+  if (state.messageIds.has(id)) return false;
+  state.messageIds.add(id);
+  return true;
 }
 
 /** Codex (`agent-session-normalization.md` §2.4). */
@@ -330,10 +338,7 @@ function applyItemCompleted(b: TurnBuilder, item: Record<string, any>, ts: numbe
     }
     case "AgentMessage": {
       const text = str(item.text) ?? messageText(item.content);
-      if (text && text.trim() && state.lastAgentMessage !== text) {
-        state.lastAgentMessage = text;
-        b.text(text, ts);
-      }
+      if (text && text.trim() && firstSight(state, str(item.id))) b.text(text, ts);
       return;
     }
   }
@@ -364,15 +369,9 @@ function applyRecord(b: TurnBuilder, r: unknown, state: CodexParseState): void {
     case "message": {
       const text = messageText(p.content);
       if (p.role === "user") {
-        if (text && !NOT_PROMPT.test(text)) {
-          state.lastAgentMessage = undefined;
-          b.prompt(text, ts);
-        }
+        if (text && !NOT_PROMPT.test(text)) b.prompt(text, ts);
       } else if (p.role === "assistant") {
-        if (state.lastAgentMessage !== text) {
-          state.lastAgentMessage = text;
-          b.text(text, ts);
-        }
+        if (firstSight(state, str(p.id))) b.text(text, ts);
       }
       return;
     }

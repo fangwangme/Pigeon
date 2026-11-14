@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, spyOn, test } from "bun:test";
 import { appendFileSync, mkdirSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { AgentAdapterManager } from "../src/server/agent-adapters/index";
@@ -125,5 +125,36 @@ describe("session log streaming (agent-session-normalization.md §4)", () => {
       await Bun.sleep(30);
     }
     expect(store.getPayload("p1", "agy").turns.map((t) => t.userPrompt?.text)).toEqual(["one", "two", "three"]);
+  });
+
+  test("a session read that fails keeps the pane's last turns (architecture.md §5)", async () => {
+    const brain = tempDir("brain");
+    const logs = join(brain, "s1", ".system_generated", "logs");
+    mkdirSync(logs, { recursive: true });
+    const log = join(logs, "transcript.jsonl");
+    writeFileSync(log, line({ step_index: 0, type: "USER_INPUT", content: "<USER_REQUEST>first</USER_REQUEST>", created_at: new Date(1000).toISOString() }));
+    const adapters = new AgentAdapterManager({ agy: { baseBrainDir: brain } });
+    store = new PaneStore(adapters);
+    const deltas: TurnsDeltaPayload[] = [];
+    store.on("turns_delta", (d) => deltas.push(d));
+    store.registerPaneSession("p1", "agy", "s1");
+    await Bun.sleep(50);
+
+    const errorSpy = spyOn(console, "error").mockImplementation(() => {});
+    try {
+      (adapters as any).sources.get("agy").read = () => {
+        throw new Error("EACCES");
+      };
+      const before = deltas.length;
+      appendFileSync(log, line({ step_index: 1, type: "USER_INPUT", content: "<USER_REQUEST>second</USER_REQUEST>", created_at: new Date(2000).toISOString() }));
+      const deadline = Date.now() + 1500;
+      while (!adapters.getSourceErrors().length && Date.now() < deadline) await Bun.sleep(25);
+
+      expect(adapters.getSourceErrors().map((e) => e.op)).toEqual(["read"]);
+      expect(deltas.length).toBe(before);
+      expect(store.getPayload("p1", "agy").turns.map((t) => t.userPrompt?.text)).toEqual(["first"]);
+    } finally {
+      errorSpy.mockRestore();
+    }
   });
 });

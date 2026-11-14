@@ -178,13 +178,8 @@ export class PaneStore extends EventEmitter {
     const state = this.paneStates.get(paneId);
     if (!state || !this.adapters.isSupported(state.agent)) return;
 
-    let result: ReturnType<AgentAdapterManager["getTurns"]>;
-    try {
-      result = this.adapters.getTurns(state.agent, state.sessionId, incremental);
-    } catch (err) {
-      console.error(`[pigeon] reading ${state.agent} session ${state.sessionId} failed:`, err);
-      return;
-    }
+    const result = this.adapters.getTurns(state.agent, state.sessionId, incremental);
+    if (!result) return;
     // Builders mutate their turns in place, so compare against a snapshot of the previous read.
     const oldTurns = state.turns;
     const turns = structuredClone(result.turns);

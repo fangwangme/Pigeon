@@ -11,4 +11,4 @@
 {"timestamp":"2026-11-10T11:19:03.000Z","type":"response_item","payload":{"type":"custom_tool_call","call_id":"call_stdin_1","name":"write_stdin","input":"y\n"}}
 {"timestamp":"2026-11-10T11:19:04.000Z","type":"response_item","payload":{"type":"custom_tool_call_output","call_id":"call_stdin_1","output":[{"type":"input_text","text":"Exit code: 0\nConfirmed"}]}}
 {"timestamp":"2026-11-10T11:19:05.000Z","type":"event_msg","payload":{"type":"item_completed","item":{"type":"AgentMessage","id":"msg_dup","text":"Updated hello.ts."}}}
-{"timestamp":"2026-11-10T11:19:06.000Z","type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"Updated hello.ts."}]}}
+{"timestamp":"2026-11-10T11:19:06.000Z","type":"response_item","payload":{"type":"message","id":"msg_dup","role":"assistant","content":[{"type":"output_text","text":"Updated hello.ts."}]}}
