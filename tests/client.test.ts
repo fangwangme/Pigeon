@@ -309,9 +309,11 @@ describe("code blocks and heatmap scales (mobile-ui-and-themes.md §3.2, §9.1)"
     expect(html).toMatch(/class="cb-hdr"[^]*ts/);
   });
 
-  test("in dark mode the heatmap scales ascend from darkest to brightest", () => {
-    const d = PALETTES.dark;
-    expect(luminance(d.heatTokens1)).toBeLessThan(luminance(d.heatTokens5));
-    expect(luminance(d.heatCost1)).toBeLessThan(luminance(d.heatCost5));
+  test("both themes share one heatmap scale, light to dark, so more reads darker in either", () => {
+    const keys = Object.keys(PALETTES.light).filter((k) => /^heat(Tokens|Cost)\d$/.test(k)) as Array<keyof typeof PALETTES.light>;
+    expect(keys).toHaveLength(10);
+    for (const k of keys) expect(PALETTES.dark[k]).toBe(PALETTES.light[k]);
+    expect(luminance(PALETTES.light.heatTokens1)).toBeGreaterThan(luminance(PALETTES.light.heatTokens5));
+    expect(luminance(PALETTES.light.heatCost1)).toBeGreaterThan(luminance(PALETTES.light.heatCost5));
   });
 });
