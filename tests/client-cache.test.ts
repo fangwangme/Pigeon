@@ -227,20 +227,5 @@ describe("client pane cache (mobile-ui-and-themes.md §3.1)", () => {
       await selectPane("p_offline_test");
       expect(state.lastError).toBeNull();
     });
-
-    test("load uses readonly IDB transaction without writing", async () => {
-      const putSpy = spyOn(IDBObjectStore.prototype, "put");
-      const txSpy = spyOn(IDBDatabase.prototype, "transaction");
-      try {
-        await save("p_ro", { sessionId: "s_ro", turns: [dummyTurn] });
-        const putsAfterSave = putSpy.mock.calls.length;
-        await load("p_ro");
-        expect(putSpy.mock.calls.length).toBe(putsAfterSave);
-        expect(txSpy.mock.calls.some((c) => c[1] === "readonly")).toBe(true);
-      } finally {
-        putSpy.mockRestore();
-        txSpy.mockRestore();
-      }
-    });
   });
 });

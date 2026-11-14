@@ -497,7 +497,7 @@ describe("structured session adapters (agent-session-normalization.md §2)", () 
       try {
         const adapter = new OpenCodeAdapter();
         expect(adapter.getDbPath()).toBe(dbPath);
-        const mgr = new AgentAdapterManager({ home: dir });
+        const mgr = new AgentAdapterManager();
         expect(mgr.listSessions("opencode", "/tmp/proj")[0]?.title).toBe("Legacy Title");
       } finally {
         if (oldXdg === undefined) delete process.env.XDG_DATA_HOME;

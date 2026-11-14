@@ -271,7 +271,8 @@ export class TurnBuilder {
   public title?: string;
   public model?: string;
   public todos?: TodoItem[];
-  public lastTs: number;
+  /** The last record timestamp seen; a record without one takes it (deterministic, unlike now()). */
+  private lastTs: number;
   private calls = new Map<string, { call: NormalizedToolCall; startedAt?: number; diffs?: FileDiffSummary[] }>();
   private fileOrder: string[] = [];
 

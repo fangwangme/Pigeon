@@ -581,8 +581,6 @@ describe("daemon log file (architecture.md §4.6, issue #21)", () => {
   test("admin socket distinguishes invalid_json from internal errors while preserving request id", async () => {
     const dir = tempDir("admin-errors");
     const sock = join(dir, "admin.sock");
-    const pairing = pairingIn(dir);
-    // Start admin socket with a dedicated instance bound to `sock`
     const p = new PairingManager({ publicBaseUrl: "https://pigeon.example.ts.net", devicesFilePath: join(dir, "devices.json"), adminSocketPath: sock });
     await p.startAdminSocket();
     try {
@@ -609,7 +607,6 @@ describe("daemon log file (architecture.md §4.6, issue #21)", () => {
       expect(internalErr.error.code).toBe("internal");
     } finally {
       await p.stopAdminSocket();
-      void pairing;
     }
   });
 });

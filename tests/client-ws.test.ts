@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { handleServerMessage, initWebSocket, request, selectPane } from "../src/client/src/state/ws";
+import { handleServerMessage, handleVisibilityChange, initWebSocket, request, selectPane } from "../src/client/src/state/ws";
 import { setState, setUnread, state } from "../src/client/src/state/store";
 import type { PaneStatePayload } from "../src/types/protocol";
 
@@ -177,20 +177,15 @@ describe("prompt answers (mobile-ui-and-themes.md §4.1)", () => {
 });
 
 describe("socket teardown on resume (protocol.md §2.2)", () => {
-  test("teardownSocket rejects pending requests when a closed socket triggers reconnect on visibility", async () => {
+  test("a closed socket found on resume rejects its pending requests before reconnecting", async () => {
     const origWs = globalThis.WebSocket;
     const origDoc = (globalThis as any).document;
+    const origWindow = (globalThis as any).window;
     const origFetch = globalThis.fetch;
     let fakeClientWs: any;
-    let visListener: (() => void) | undefined;
 
-    (globalThis as any).document = {
-      visibilityState: "visible",
-      addEventListener: (_ev: string, fn: () => void) => {
-        visListener = fn;
-      },
-      removeEventListener: () => {},
-    };
+    (globalThis as any).document = { visibilityState: "visible" };
+    (globalThis as any).window = { location: { protocol: "http:", host: "localhost", hash: "" } };
     (globalThis as any).fetch = (async () => Response.json({ authenticated: true })) as any;
     (globalThis as any).WebSocket = class {
       readyState = 1;
@@ -209,11 +204,14 @@ describe("socket teardown on resume (protocol.md §2.2)", () => {
       await initWebSocket();
       const pending = request({ type: "refresh_models", payload: {} } as any);
       fakeClientWs.readyState = 3; // CLOSED
-      visListener?.();
+      handleVisibilityChange();
       await expect(pending).rejects.toThrow();
+      await Bun.sleep(20); // the reconnect it started finishes before the stubs go
+      fakeClientWs.readyState = 3; // and its socket does not outlive the test
     } finally {
       globalThis.WebSocket = origWs;
       (globalThis as any).document = origDoc;
+      (globalThis as any).window = origWindow;
       globalThis.fetch = origFetch;
     }
   });

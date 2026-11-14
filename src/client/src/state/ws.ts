@@ -128,7 +128,6 @@ function teardownSocket(ws: WebSocket | null): void {
 
 /** Connects unless already paired-and-connected; shows pairing guidance when not paired. */
 export async function initWebSocket(): Promise<void> {
-  ensureVisibilityListener();
   if (socket && (socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CONNECTING)) return;
   let paired: boolean;
   try {
@@ -145,10 +144,8 @@ export async function initWebSocket(): Promise<void> {
   }
   setState("paired", true);
 
-  const loc = typeof window !== "undefined" ? window.location : globalThis.location;
-  const proto = loc?.protocol === "https:" ? "wss:" : "ws:";
-  const host = loc?.host || "localhost";
-  const ws = new WebSocket(`${proto}//${host}/ws`);
+  const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
+  const ws = new WebSocket(`${proto}//${window.location.host}/ws`);
   socket = ws;
 
   // Every handler checks it still belongs to the current socket: a replaced socket's late
@@ -749,30 +746,27 @@ export function copyText(text: string): void {
 migrateLocalStorageCache();
 void sweep();
 
-let registeredDoc: unknown = null;
-
-function ensureVisibilityListener(): void {
-  if (typeof document === "undefined" || registeredDoc === document) return;
-  registeredDoc = document;
-  document.addEventListener("visibilitychange", () => {
-    if (document.visibilityState === "hidden" && state.activePaneId) {
-      flushActivePaneSnapshot();
+/** protocol.md §2.2: flush on hide; on resume, replace a closed or silent socket. */
+export function handleVisibilityChange(): void {
+  if (document.visibilityState === "hidden" && state.activePaneId) {
+    flushActivePaneSnapshot();
+  }
+  if (document.visibilityState === "visible") {
+    const stale = Date.now() - lastPongTime > 30000;
+    if (!socket || socket.readyState !== WebSocket.OPEN || stale) {
+      const old = socket;
+      socket = null; // detach first so the old socket's close cannot touch the new one
+      teardownSocket(null);
+      old?.close();
+      void initWebSocket();
     }
-    if (document.visibilityState === "visible") {
-      const stale = Date.now() - lastPongTime > 30000;
-      if (!socket || socket.readyState !== WebSocket.OPEN || stale) {
-        const old = socket;
-        socket = null; // detach first so the old socket's close cannot touch the new one
-        teardownSocket(null);
-        old?.close();
-        void initWebSocket();
-      }
-    }
-    reportPresence();
-  });
+  }
+  reportPresence();
 }
 
-ensureVisibilityListener();
+if (typeof document !== "undefined") {
+  document.addEventListener("visibilitychange", handleVisibilityChange);
+}
 
 if (typeof window !== "undefined") {
   window.addEventListener("pagehide", () => {

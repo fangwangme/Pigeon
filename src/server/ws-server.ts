@@ -1432,8 +1432,7 @@ export class WsServer {
             queueState.timer = undefined;
           }
           const err = event.error;
-          const isOffline =
-            err instanceof HerdrError && (UNREACHABLE_CODES.has(err.code) || err.code === "closed" || err.code === "ERR_UPSTREAM_OFFLINE");
+          const isOffline = err instanceof HerdrError && UNREACHABLE_CODES.has(err.code);
           if (isOffline) {
             this.offlineQueuedPanes.add(paneId);
             const out = new Set(queueState.batch);
@@ -1548,13 +1547,12 @@ export class WsServer {
   private sendQueue(paneId: string): void {
     const paused = this.isQueuePaused(paneId);
     this.wasQueuePaused.set(paneId, paused);
-    const items = (this.queues.get(paneId) ?? []).map((q) => q.item);
     this.sendToSubscribers(paneId, {
       type: "prompt_queue",
       payload: {
         paneId,
         paused,
-        items,
+        items: (this.queues.get(paneId) ?? []).map((q) => q.item),
       },
     });
   }

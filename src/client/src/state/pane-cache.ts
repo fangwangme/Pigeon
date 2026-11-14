@@ -179,9 +179,6 @@ export async function load(paneId: string): Promise<PaneCacheEntry | null> {
       console.error("[Pigeon] Failed to load pane cache for", paneId, req.error);
       reject(req.error);
     };
-    tx.onerror = () => {
-      reject(tx.error);
-    };
   });
 }
 
@@ -272,7 +269,6 @@ export async function remove(paneId: string): Promise<void> {
       console.error("[Pigeon] Failed to remove pane cache for", paneId, req.error);
       reject(req.error);
     };
-    tx.onerror = () => reject(tx.error);
   });
 }
 
@@ -290,7 +286,6 @@ export async function clearAll(): Promise<void> {
       console.error("[Pigeon] Failed to clear pane cache", req.error);
       reject(req.error);
     };
-    tx.onerror = () => reject(tx.error);
   });
 }
 

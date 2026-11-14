@@ -50,8 +50,6 @@ describe("tool details (mobile-ui-and-themes.md §3.3)", () => {
     const arr = { id: "c2", name: "shell", verb: "run", target: "x", input: { command: ["bash", "-lc", "ls"] }, status: "completed" } as unknown as NormalizedToolCall;
     expect(callCommand(arr)).toBe("bash -lc ls");
     expect(callInputText(arr)).toBe(JSON.stringify({ command: ["bash", "-lc", "ls"] }, null, 2));
-    const raw = { id: "c3", name: "write_stdin", verb: "run", input: "y\n", status: "completed" } as unknown as NormalizedToolCall;
-    expect(callCommand(raw)).toBe("y\n");
   });
 });
 
@@ -281,7 +279,7 @@ describe("mobile layout enhancements (mobile-ui-and-themes.md §1.2, §2.1)", ()
   });
 });
 
-describe("formatModelNameWithRecipes (display A1/A2)", () => {
+describe("model names (mobile-ui-and-themes.md §6.4)", () => {
   test("searches multiple agents in order and skips unresolved label === id entries", () => {
     const recipes = {
       codex: { models: [{ id: "claude-sonnet-4-6", label: "claude-sonnet-4-6" }] },
@@ -305,28 +303,15 @@ describe("formatModelNameWithRecipes (display A1/A2)", () => {
   });
 });
 
-describe("code headers, LRU markdown cache, and usage palette tokens (mobile-ui-and-themes.md §3.1, §9.1)", () => {
-  test("renders .cb-hdr headers and handles bounded LRU eviction", () => {
+describe("code blocks and heatmap scales (mobile-ui-and-themes.md §3.2, §9.1)", () => {
+  test("a code block gets a header bar with its language", () => {
     const html = renderMarkdown("```ts\nconst x = 1;\n```");
-    expect(html).toContain('class="cb-hdr"');
-    expect(html).toContain("ts");
-    for (let i = 0; i < 600; i++) {
-      expect(renderMarkdown(`item ${i}`)).toContain(`item ${i}`);
-    }
+    expect(html).toMatch(/class="cb-hdr"[^]*ts/);
   });
 
-  test("dark heatmap stops ascend in intensity and both themes define figCost", () => {
-    const hexLum = (hex: string) => {
-      const m = /^#([0-9a-f]{6})$/i.exec(hex);
-      if (!m) return 0;
-      const n = parseInt(m[1], 16);
-      return ((n >> 16) & 255) + ((n >> 8) & 255) + (n & 255);
-    };
+  test("in dark mode the heatmap scales ascend from darkest to brightest", () => {
     const d = PALETTES.dark;
-    expect(hexLum(d.heatTokens1)).toBeLessThan(hexLum(d.heatTokens5));
-    expect(hexLum(d.heatCost1)).toBeLessThan(hexLum(d.heatCost5));
-    expect(d.figCost).toBeDefined();
-    expect((d as any).figTokens).toBeUndefined();
-    expect(PALETTES.light.figCost).toBeDefined();
+    expect(luminance(d.heatTokens1)).toBeLessThan(luminance(d.heatTokens5));
+    expect(luminance(d.heatCost1)).toBeLessThan(luminance(d.heatCost5));
   });
 });

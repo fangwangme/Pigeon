@@ -898,7 +898,7 @@ describe("source robustness and Codex 0.169+ parsing (agent-session-normalizatio
 
     (server as any).paneStore.registerPaneSession("p1", "claude", "keep-me-bound");
     expect(() => (server as any).rebindSessions()).not.toThrow();
-    expect((server as any).paneStore.getSession("p1")).toBe("keep-me-bound");
+    expect((server as any).paneStore.boundSession("p1")?.sessionId).toBe("keep-me-bound");
     expect(adapters.getSourceErrors().some((e: any) => e.agent === "claude")).toBe(true);
 
     const claude = new ClaudeSource(home);

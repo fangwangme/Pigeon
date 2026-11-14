@@ -246,10 +246,8 @@ export class AgentAdapterManager {
 
   constructor(options: AgentAdapterManagerOptions = {}) {
     const home = options.home ?? homedir();
-    const homeOcDb = join(home, ".local", "share", "opencode", "opencode.db");
-    const xdgOcDb = process.env.XDG_DATA_HOME ? join(process.env.XDG_DATA_HOME, "opencode", "opencode.db") : null;
-    const defaultOcDb = xdgOcDb && (options.home === undefined || (!existsSync(homeOcDb) && existsSync(xdgOcDb))) ? xdgOcDb : homeOcDb;
-    const opencode = new OpenCodeAdapter(options.opencode ?? { dbPath: defaultOcDb });
+    // agent-session-normalization.md §2.1: the adapter resolves `$XDG_DATA_HOME`; an explicit home means that home.
+    const opencode = new OpenCodeAdapter(options.opencode ?? (options.home === undefined ? {} : { dbPath: join(home, ".local", "share", "opencode", "opencode.db") }));
     const brainDir = options.agy?.baseBrainDir ?? join(home, ".gemini", "antigravity-cli", "brain");
     const agy = new AgyAdapter({ baseBrainDir: brainDir });
     for (const s of [new ClaudeSource(home), new CodexSource(home), new PiSource(home), new AgySource(agy, brainDir), new OpenCodeSource(opencode)]) {
