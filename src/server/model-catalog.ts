@@ -159,20 +159,30 @@ export class ModelCatalog {
 
   /**
    * §7.1: a bound session's records named `model`. When the agent's list lacks it, fill once for that
-   * name; resolves whether a list changed.
+   * agent only; if still absent afterwards, register the model with its fallback label.
    */
   public async noteModel(agent: string, model: string): Promise<boolean> {
     if (this.models(agent).some((m) => m.id === model)) return false;
     const key = `${agent}|${model}`;
     if (this.chased.has(key)) return false;
     this.chased.add(key);
-    return this.refresh();
+    if (this.filling) await this.filling;
+    if (this.models(agent).some((m) => m.id === model)) return false;
+
+    let changed = await this.fill([agent], false);
+    if (!this.models(agent).some((m) => m.id === model)) {
+      const next = [...this.models(agent), { id: model, label: fallbackLabel(model) }];
+      this.lists.set(agent, next);
+      this.saveCache();
+      changed = true;
+    }
+    return changed;
   }
 
   private async fill(agents: string[] | null, asked: boolean): Promise<boolean> {
     const sources: Array<[string, () => Promise<ModelOption[]>]> = [
       ["claude", () => this.claude(asked)],
-      ["codex", async () => this.codex()],
+      ["codex", () => this.codex(asked)],
       ["pi", async () => this.pi()],
       ["opencode", () => this.opencode()],
       ["agy", () => this.agy()],
@@ -187,14 +197,21 @@ export class ModelCatalog {
         }
       })
     );
-    const fetchedBefore = this.fetchedAt.get("claude");
+    const claudeFetchedBefore = this.fetchedAt.get("claude");
+    const codexFetchedBefore = this.fetchedAt.get("codex");
     let changed = false;
     for (const [agent, list] of results) {
       if (!list || JSON.stringify(list) === JSON.stringify(this.lists.get(agent) ?? [])) continue;
       this.lists.set(agent, list);
       changed = true;
     }
-    if (changed || this.fetchedAt.get("claude") !== fetchedBefore) this.saveCache();
+    if (
+      changed ||
+      this.fetchedAt.get("claude") !== claudeFetchedBefore ||
+      this.fetchedAt.get("codex") !== codexFetchedBefore
+    ) {
+      this.saveCache();
+    }
     return changed;
   }
 
@@ -263,7 +280,7 @@ export class ModelCatalog {
       for (const item of body.data) {
         if (!isObj(item) || typeof item.id !== "string") continue;
         const id = item.id;
-        const label = typeof item.display_name === "string" && item.display_name ? item.display_name : id;
+        const label = typeof item.display_name === "string" && item.display_name ? item.display_name : fallbackLabel(id);
         let thinkingLevels: string[] | undefined = undefined;
         const effort = item.capabilities?.effort;
         if (isObj(effort) && effort.supported === true) {
@@ -287,18 +304,31 @@ export class ModelCatalog {
     return out;
   }
 
-  private codex(): ModelOption[] {
-    const data = this.readJson(join(this.home, ".codex", "models_cache.json"));
-    const models = isObj(data) && Array.isArray(data.models) ? data.models : [];
-    return models
+  private async codex(force = false): Promise<ModelOption[]> {
+    const last = this.fetchedAt.get("codex") ?? 0;
+    const ONE_DAY_MS = 24 * 3600 * 1000;
+    if (!force && this.lists.has("codex") && this.now() - last < ONE_DAY_MS) {
+      return this.lists.get("codex")!;
+    }
+
+    const lines = await this.run(["codex", "debug", "models"]);
+    const data = JSON.parse(lines.join("\n"));
+    if (!isObj(data) || !Array.isArray(data.models)) {
+      throw new Error("codex debug models returned unexpected response shape");
+    }
+
+    const out = data.models
       .filter((m: unknown): m is Record<string, any> => isObj(m) && typeof m.slug === "string" && m.visibility !== "hide")
       .map((m) => ({
         id: m.slug,
-        label: typeof m.display_name === "string" && m.display_name ? m.display_name : m.slug,
+        label: typeof m.display_name === "string" && m.display_name ? m.display_name : fallbackLabel(m.slug),
         thinkingLevels: (Array.isArray(m.supported_reasoning_levels) ? m.supported_reasoning_levels : [])
           .map((l: unknown) => (isObj(l) ? l.effort : undefined))
           .filter((e: unknown): e is string => typeof e === "string"),
       }));
+
+    this.fetchedAt.set("codex", this.now());
+    return out;
   }
 
   private pi(): ModelOption[] {
@@ -308,9 +338,10 @@ export class ModelCatalog {
     for (const [provider, entry] of Object.entries(data)) {
       for (const m of isObj(entry) && Array.isArray(entry.models) ? entry.models : []) {
         if (!isObj(m) || typeof m.id !== "string") continue;
+        const fullId = `${provider}/${m.id}`;
         const map = isObj(m.thinkingLevelMap) ? m.thinkingLevelMap : null;
         const levels = m.reasoning === true ? (map ? Object.keys(map).filter((k) => map[k] !== null) : PI_LEVELS) : [];
-        out.push({ id: `${provider}/${m.id}`, label: typeof m.name === "string" && m.name ? m.name : m.id, ...(levels.length ? { thinkingLevels: levels } : {}) });
+        out.push({ id: fullId, label: typeof m.name === "string" && m.name ? m.name : fallbackLabel(fullId), ...(levels.length ? { thinkingLevels: levels } : {}) });
       }
     }
     return out;
@@ -343,7 +374,7 @@ export class ModelCatalog {
       const match = line.match(/^(\S+)(?:\s+(.+))?$/);
       if (match) {
         const id = match[1];
-        const label = match[2]?.trim() || id;
+        const label = match[2]?.trim() || fallbackLabel(id);
         out.push({ id, label });
       }
     }

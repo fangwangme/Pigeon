@@ -21,13 +21,18 @@ function mtimeOf(path: string | undefined): number | null {
   return path ? (safeStat(path)?.mtimeMs ?? null) : null;
 }
 
+interface CodexParseState {
+  pendingExec?: { callId: string; input: Record<string, any>; rawInput: unknown; ts: number };
+  lastAgentMessage?: string;
+}
+
 /** Codex (`agent-session-normalization.md` §2.4). */
 export class CodexSource implements SessionSource {
   public readonly agent = "codex";
   private root: string;
   private realRoot: string;
   private paths = new Map<string, string>();
-  private readers = new Map<string, { tail: JsonlTail; builder: TurnBuilder }>();
+  private readers = new Map<string, { tail: JsonlTail; builder: TurnBuilder; state: CodexParseState }>();
 
   constructor(home: string) {
     this.root = join(home, ".codex", "sessions");
@@ -72,6 +77,8 @@ export class CodexSource implements SessionSource {
   private meta(path: string): { id: string; cwd: string } | null {
     const first = readFirstJsonLine(path);
     if (!isObj(first) || first.type !== "session_meta" || !isObj(first.payload)) return null;
+    // B18: exclude subagent rollouts (`payload.source: { subagent: ... }`)
+    if (isObj(first.payload.source) && "subagent" in first.payload.source) return null;
     const id = str(first.payload.id);
     const cwd = str(first.payload.cwd);
     return id && cwd ? { id, cwd } : null;
@@ -113,12 +120,15 @@ export class CodexSource implements SessionSource {
     if (!path) return { turns: [] };
     let reader = this.readers.get(sessionId);
     if (!reader || !incremental) {
-      reader = { tail: new JsonlTail(path), builder: new TurnBuilder() };
+      reader = { tail: new JsonlTail(path), builder: new TurnBuilder(), state: {} };
       this.readers.set(sessionId, reader);
     }
     const { records, reset } = reader.tail.read();
-    if (reset) reader.builder = new TurnBuilder();
-    for (const r of records) applyRecord(reader.builder, r);
+    if (reset) {
+      reader.builder = new TurnBuilder();
+      reader.state = {};
+    }
+    for (const r of records) applyRecord(reader.builder, r, reader.state);
     return reader.builder.result();
   }
 
@@ -129,7 +139,8 @@ export class CodexSource implements SessionSource {
   public list(folder: string): PastSession[] {
     const all = this.rollouts()
       .slice(0, MAX_LISTED_ROLLOUTS)
-      .map((path) => ({ path, mtime: statSync(path).mtimeMs }))
+      .map((path) => ({ path, mtime: safeStat(path)?.mtimeMs ?? 0 }))
+      .filter((entry) => entry.mtime > 0)
       .sort((a, b) => b.mtime - a.mtime);
     const out: PastSession[] = [];
     for (const { path, mtime } of all) {
@@ -139,15 +150,19 @@ export class CodexSource implements SessionSource {
       this.paths.set(meta.id, path);
       let title: string | undefined;
       let model: string | undefined;
-      for (const r of readHeadJsonLines(path)) {
-        if (isObj(r)) {
-          if (r.type === "event_msg" && isObj(r.payload) && r.payload.type === "thread_settings_applied" && isObj(r.payload.thread_settings) && str(r.payload.thread_settings.model)) {
-            model = r.payload.thread_settings.model;
-          }
-          if (r.type === "turn_context" && str((r as any).model)) {
-            model = (r as any).model;
-          }
+      const readModelFromRecord = (r: unknown): string | undefined => {
+        if (!isObj(r)) return undefined;
+        if (r.type === "event_msg" && isObj(r.payload) && r.payload.type === "thread_settings_applied" && isObj(r.payload.thread_settings)) {
+          return str(r.payload.thread_settings.model);
         }
+        if (r.type === "turn_context") {
+          return (isObj(r.payload) ? str(r.payload.model) : undefined) ?? str((r as any).model);
+        }
+        return undefined;
+      };
+      for (const r of readHeadJsonLines(path)) {
+        const m = readModelFromRecord(r);
+        if (m) model = m;
         const p = isObj(r) && r.type === "response_item" ? r.payload : null;
         if (!title && isObj(p) && p.type === "message" && p.role === "user") {
           const t = messageText(p.content);
@@ -156,16 +171,10 @@ export class CodexSource implements SessionSource {
           }
         }
       }
-      if (statSync(path).size > 262_144) {
+      if ((safeStat(path)?.size ?? 0) > 262_144) {
         for (const r of readTailJsonLines(path)) {
-          if (isObj(r)) {
-            if (r.type === "event_msg" && isObj(r.payload) && r.payload.type === "thread_settings_applied" && isObj(r.payload.thread_settings) && str(r.payload.thread_settings.model)) {
-              model = r.payload.thread_settings.model;
-            }
-            if (r.type === "turn_context" && str((r as any).model)) {
-              model = (r as any).model;
-            }
-          }
+          const m = readModelFromRecord(r);
+          if (m) model = m;
         }
       }
       out.push({ id: meta.id, title: (title ?? meta.id).slice(0, 120), updatedAt: mtime, ...(model ? { model } : {}) });
@@ -216,9 +225,9 @@ function patchDiffs(patch: string): FileDiffSummary[] {
   return out;
 }
 
-/** Codex shell output is plain text or a JSON object with `output` and `metadata.exit_code`. */
+/** Codex shell output is plain text, content block array, or JSON object with `output` and `metadata.exit_code`. */
 function shellOutput(v: unknown): { output: string; exitCode?: number } {
-  const text = typeof v === "string" ? v : isObj(v) ? JSON.stringify(v) : "";
+  const text = typeof v === "string" ? v : Array.isArray(v) ? messageText(v) : isObj(v) ? JSON.stringify(v) : "";
   const parsed = parseArgs(text);
   if (typeof parsed.output === "string") {
     const code = isObj(parsed.metadata) ? parsed.metadata.exit_code : undefined;
@@ -240,13 +249,123 @@ function commandOf(args: Record<string, any>): string | undefined {
   return undefined;
 }
 
-function applyRecord(b: TurnBuilder, r: unknown): void {
+function durationMsOf(item: Record<string, any>): number | undefined {
+  if (isObj(item.duration) && typeof item.duration.secs === "number") {
+    const nanos = typeof item.duration.nanos === "number" ? item.duration.nanos : 0;
+    return Math.round(item.duration.secs * 1000 + nanos / 1e6);
+  }
+  if (typeof item.duration_ms === "number") return item.duration_ms;
+  return undefined;
+}
+
+function flushPendingExec(b: TurnBuilder, state: CodexParseState): void {
+  const pe = state.pendingExec;
+  if (!pe) return;
+  state.pendingExec = undefined;
+  const target = commandOf(pe.input) ?? (typeof pe.rawInput === "string" ? pe.rawInput.trim() : undefined);
+  b.toolUse({ id: pe.callId, name: "exec", input: Object.keys(pe.input).length ? pe.input : typeof pe.rawInput === "string" ? pe.rawInput : {}, verb: "run", target, timestamp: pe.ts }, pe.ts);
+}
+
+function applyItemCompleted(b: TurnBuilder, item: Record<string, any>, ts: number, state: CodexParseState): void {
+  const kind = str(item.type);
+  const dur = durationMsOf(item);
+  switch (kind) {
+    case "CommandExecution": {
+      state.pendingExec = undefined; // deduplicate pending `exec` custom_tool_call
+      const id = str(item.id) ?? `cmd_${ts}`;
+      const cmd = str(item.command) ?? commandOf(item);
+      const output = str(item.aggregated_output) ?? str(item.output);
+      const exitCode = typeof item.exit_code === "number" ? item.exit_code : undefined;
+      const isError = item.status === "failed" || (exitCode !== undefined && exitCode !== 0);
+      b.toolUse({ id, name: "exec", input: { ...(cmd ? { command: cmd } : {}), ...(item.cwd ? { cwd: item.cwd } : {}) }, verb: "run", target: cmd, timestamp: ts }, ts);
+      const call = b.toolResult(id, output, isError, ts, exitCode);
+      if (call && dur !== undefined) call.durationMs = dur;
+      return;
+    }
+    case "FileChange": {
+      flushPendingExec(b, state);
+      const id = str(item.id) ?? `fc_${ts}`;
+      const diffs: FileDiffSummary[] = [];
+      const addChange = (filePath: string, ch: Record<string, any>) => {
+        const rawType = (str(ch.type) ?? str(ch.kind) ?? "update").toLowerCase();
+        const status: FileDiffSummary["status"] = rawType.startsWith("add") || rawType.startsWith("creat") ? "created" : rawType.startsWith("del") ? "deleted" : "modified";
+        const patch = str(ch.unified_diff) ?? str(ch.diff);
+        const counts = patch ? countPatch(patch.split("\n")) : { additions: 0, deletions: 0 };
+        diffs.push({ filePath, status, ...counts, ...(patch ? { patch } : {}) });
+      };
+      if (isObj(item.changes)) {
+        for (const [filePath, ch] of Object.entries(item.changes)) {
+          if (isObj(ch)) addChange(filePath, ch);
+        }
+      } else if (Array.isArray(item.changes)) {
+        for (const ch of item.changes) {
+          if (!isObj(ch)) continue;
+          const filePath = str(ch.path) ?? str(ch.file_path);
+          if (filePath) addChange(filePath, ch);
+        }
+      }
+      const first = diffs[0];
+      b.toolUse({ id, name: "file_change", input: item.changes ?? {}, verb: first?.status === "created" ? "create" : "edit", target: first?.filePath, diffs, timestamp: ts }, ts);
+      const call = b.toolResult(id, undefined, item.status === "failed", ts);
+      if (call && dur !== undefined) call.durationMs = dur;
+      return;
+    }
+    case "McpToolCall": {
+      flushPendingExec(b, state);
+      const id = str(item.id) ?? `mcp_${ts}`;
+      const server = str(item.server);
+      const tool = str(item.tool);
+      const name = server && tool ? `${server}:${tool}` : (tool ?? server ?? "mcp");
+      const output =
+        item.result !== undefined
+          ? typeof item.result === "string"
+            ? item.result
+            : JSON.stringify(item.result)
+          : item.error !== undefined
+          ? typeof item.error === "string"
+            ? item.error
+            : JSON.stringify(item.error)
+          : undefined;
+      b.toolUse({ id, name, input: isObj(item.arguments) ? item.arguments : {}, verb: "other", target: tool, timestamp: ts }, ts);
+      const call = b.toolResult(id, output, item.status === "failed" || !!item.error, ts);
+      if (call && dur !== undefined) call.durationMs = dur;
+      return;
+    }
+    case "ContextCompaction": {
+      flushPendingExec(b, state);
+      b.compact(str(item.summary) ?? "Context compacted", ts);
+      return;
+    }
+    case "AgentMessage": {
+      flushPendingExec(b, state);
+      const text = str(item.text) ?? messageText(item.content);
+      if (text && text.trim() && state.lastAgentMessage !== text) {
+        state.lastAgentMessage = text;
+        b.text(text, ts);
+      }
+      return;
+    }
+  }
+}
+
+function applyRecord(b: TurnBuilder, r: unknown, state: CodexParseState): void {
   if (!isObj(r)) return;
   const ts = tsOf(r.timestamp, Date.now());
   const p = r.payload;
   if (!isObj(p)) return;
-  if (r.type === "event_msg" && p.type === "thread_settings_applied" && isObj(p.thread_settings) && str(p.thread_settings.model)) {
-    b.model = p.thread_settings.model;
+  if (r.type === "turn_context") {
+    const tm = str(p.model) ?? str((r as any).model);
+    if (tm) b.model = tm;
+    return;
+  }
+  if (r.type === "event_msg") {
+    if (p.type === "thread_settings_applied" && isObj(p.thread_settings) && str(p.thread_settings.model)) {
+      b.model = p.thread_settings.model;
+      return;
+    }
+    if (p.type === "item_completed" && isObj(p.item)) {
+      applyItemCompleted(b, p.item, ts, state);
+    }
     return;
   }
   if (r.type !== "response_item") return;
@@ -255,9 +374,17 @@ function applyRecord(b: TurnBuilder, r: unknown): void {
       const text = messageText(p.content);
       if (p.role === "user") {
         if (text && !NOT_PROMPT.test(text)) {
+          flushPendingExec(b, state);
+          state.lastAgentMessage = undefined;
           b.prompt(text, ts);
         }
-      } else if (p.role === "assistant") b.text(text, ts);
+      } else if (p.role === "assistant") {
+        flushPendingExec(b, state);
+        if (state.lastAgentMessage !== text) {
+          state.lastAgentMessage = text;
+          b.text(text, ts);
+        }
+      }
       return;
     }
     case "reasoning": {
@@ -270,6 +397,12 @@ function applyRecord(b: TurnBuilder, r: unknown): void {
       const id = str(p.call_id);
       const name = str(p.name);
       if (!id || !name) return;
+      if (name === "exec" && p.type === "custom_tool_call") {
+        flushPendingExec(b, state);
+        state.pendingExec = { callId: id, input: parseArgs(p.input), rawInput: p.input, ts };
+        return;
+      }
+      flushPendingExec(b, state);
       if (name === "apply_patch") {
         const patch = p.type === "custom_tool_call" ? str(p.input) ?? "" : str(parseArgs(p.arguments).input) ?? "";
         const diffs = patchDiffs(patch);
@@ -278,8 +411,12 @@ function applyRecord(b: TurnBuilder, r: unknown): void {
         return;
       }
       const args = p.type === "custom_tool_call" ? parseArgs(p.input) : parseArgs(p.arguments);
-      if (name === "shell" || name === "exec_command" || name === "local_shell") {
-        b.toolUse({ id, name, input: args, verb: "run", target: commandOf(args), timestamp: ts }, ts);
+      const rawInput = p.type === "custom_tool_call" ? p.input : p.arguments;
+      const inputVal: Record<string, unknown> | string =
+        Object.keys(args).length > 0 ? args : typeof rawInput === "string" ? rawInput : args;
+      if (name === "shell" || name === "exec_command" || name === "local_shell" || name === "write_stdin") {
+        const target = commandOf(args) ?? (name === "write_stdin" && typeof rawInput === "string" ? rawInput.trim() : undefined);
+        b.toolUse({ id, name, input: inputVal, verb: "run", target, timestamp: ts }, ts);
         return;
       }
       if (name === "update_plan") {
@@ -287,13 +424,16 @@ function applyRecord(b: TurnBuilder, r: unknown): void {
         b.toolUse({ id, name, input: args, verb: "other", todos, timestamp: ts }, ts);
         return;
       }
-      b.toolUse({ id, name, input: args, verb: "other", timestamp: ts }, ts);
+      b.toolUse({ id, name, input: inputVal, verb: "other", timestamp: ts }, ts);
       return;
     }
     case "function_call_output":
     case "custom_tool_call_output": {
       const id = str(p.call_id);
       if (!id) return;
+      if (state.pendingExec?.callId === id) {
+        flushPendingExec(b, state);
+      }
       const { output, exitCode } = shellOutput(p.output);
       b.toolResult(id, output, exitCode !== undefined && exitCode !== 0, ts, exitCode);
       return;

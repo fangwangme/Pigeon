@@ -20,6 +20,13 @@ afterEach(async () => {
 function codexCache(home: string, models: object[]) {
   mkdirSync(join(home, ".codex"), { recursive: true });
   writeFileSync(join(home, ".codex", "models_cache.json"), JSON.stringify({ models }));
+  const bin = join(home, "bin");
+  mkdirSync(bin, { recursive: true });
+  writeFileSync(
+    join(bin, "codex"),
+    `#!/bin/sh\n[ "$1" = "debug" ] && [ "$2" = "models" ] && cat "${join(home, ".codex", "models_cache.json")}" && exit 0\nexit 1\n`
+  );
+  chmodSync(join(bin, "codex"), 0o755);
 }
 
 /** A home with every agent's model source, and a PATH whose `opencode models` prints two models. */
@@ -42,7 +49,7 @@ function agentHome() {
     })
   );
   const bin = join(home, "bin");
-  mkdirSync(bin);
+  mkdirSync(bin, { recursive: true });
   writeFileSync(join(bin, "opencode"), "#!/bin/sh\n[ \"$1\" = models ] && printf 'anthropic/claude-x\\nopenai/gpt-y\\n'\n");
   chmodSync(join(bin, "opencode"), 0o755);
   return { home, env: { HOME: home, PATH: `${bin}:/usr/bin:/bin` } };
@@ -321,7 +328,7 @@ describe("Claude and OpenCode model sources (herdr-adapter.md §7.1, issue #21)"
     await catalog.refresh();
     expect(catalog.models("opencode").map((m) => [m.id, m.label])).toEqual([
       ["anthropic/claude-x", "Claude X"],
-      ["openai/gpt-y", "openai/gpt-y"],
+      ["openai/gpt-y", "gpt-y"],
     ]);
   });
 });

@@ -1,9 +1,29 @@
-import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 
 // Isolate HOME / XDG / CODEX_HOME / HERDR_APP_HOME for every test process.
+const origHome = process.env.HOME;
+const bunBinDir = process.execPath ? dirname(process.execPath) : "";
 const testHome = mkdtempSync(join(tmpdir(), "pigeon-test-home-"));
+const stubBin = join(testHome, "stub-bin");
+mkdirSync(stubBin, { recursive: true, mode: 0o700 });
+for (const cli of ["claude", "codex", "opencode", "agy", "pi"]) {
+  const stub = join(stubBin, cli);
+  writeFileSync(stub, "#!/bin/sh\nexit 127\n", "utf-8");
+  chmodSync(stub, 0o755);
+}
+if (process.env.PATH) {
+  const parts = process.env.PATH.split(":").filter((p) => {
+    if (!p) return false;
+    if (bunBinDir && p === bunBinDir) return true;
+    return !origHome || (p !== origHome && !p.startsWith(origHome + "/"));
+  });
+  process.env.PATH = [stubBin, ...parts].join(":");
+} else {
+  process.env.PATH = stubBin;
+}
+
 const dataHome = join(testHome, ".local", "share");
 const configHome = join(testHome, ".config");
 const stateHome = join(testHome, ".local", "state");
