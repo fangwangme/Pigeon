@@ -1086,19 +1086,15 @@ export class WsServer {
       const agent = p.facts.agentKind!;
       const current = result.get(p.paneId)!;
       const candidate = this.agentAdapters.newestSession(factsOf(p), claimedOf(agent));
-      if (!candidate) continue;
-      const since = this.agentAdapters.lastWritten(agent, current);
-      const written = this.agentAdapters.lastWritten(agent, candidate);
-      if (written === null || (since !== null && written <= since)) continue;
+      if (!candidate || !this.writtenAfter(agent, candidate, current)) continue;
       claimed.delete(keyOf(agent, current));
       claimed.add(keyOf(agent, candidate));
       result.set(p.paneId, candidate);
     }
-    const erroredAgents = new Set(this.agentAdapters.getSourceErrors().map((e) => e.agent));
     for (const p of panes) {
       const id = result.get(p.paneId);
       if (id) this.paneStore.registerPaneSession(p.paneId, p.facts.agentKind!, id);
-      else if (!erroredAgents.has(p.facts.agentKind!)) this.paneStore.unbind(p.paneId);
+      else this.unbindUnlessSourceFailed(p.paneId, p.facts.agentKind!);
     }
     // Rule 7: a pane that no longer runs a supported agent drops its session.
     const live = new Set(panes.map((p) => p.paneId));
@@ -1139,21 +1135,21 @@ export class WsServer {
     } else if (isKept) {
       claimed.add(selectedId);
       const candidate = this.agentAdapters.newestSession(paneFacts, claimed);
-      if (candidate) {
-        const since = this.agentAdapters.lastWritten(agent, selectedId);
-        const written = this.agentAdapters.lastWritten(agent, candidate);
-        if (written !== null && (since === null || written > since)) {
-          selectedId = candidate;
-        }
-      }
+      if (candidate && this.writtenAfter(agent, candidate, selectedId)) selectedId = candidate;
     }
 
-    if (selectedId) {
-      this.paneStore.registerPaneSession(paneId, agent, selectedId);
-    } else {
-      const erroredAgents = new Set(this.agentAdapters.getSourceErrors().map((e) => e.agent));
-      if (!erroredAgents.has(agent)) this.paneStore.unbind(paneId);
-    }
+    if (selectedId) this.paneStore.registerPaneSession(paneId, agent, selectedId);
+    else this.unbindUnlessSourceFailed(paneId, agent);
+  }
+
+  private writtenAfter(agent: string, candidate: string, current: string): boolean {
+    const written = this.agentAdapters.lastWritten(agent, candidate);
+    const since = this.agentAdapters.lastWritten(agent, current);
+    return written !== null && (since === null || written > since);
+  }
+
+  private unbindUnlessSourceFailed(paneId: string, agent: string): void {
+    if (!this.agentAdapters.getSourceErrors().some((e) => e.agent === agent)) this.paneStore.unbind(paneId);
   }
 
   /** protocol.md §4.2: attachments as paths after a blank line, with the recipe's mention prefix. */

@@ -1,7 +1,7 @@
 import { fallbackLabel, normalizeAntigravityKey, stripAntigravityTier } from "../../../shared/model-name";
 import type { AgentRecipeSummary } from "../../../types/protocol";
 
-export type ModelRecipeMap = Record<string, Pick<AgentRecipeSummary, "models"> | undefined>;
+type ModelRecipeMap = Record<string, Pick<AgentRecipeSummary, "models"> | undefined>;
 
 export function formatModelNameWithRecipes(
   recipes: ModelRecipeMap,
@@ -18,7 +18,7 @@ export function formatModelNameWithRecipes(
 
   for (const ag of agents) {
     const models = recipes[ag]?.models ?? [];
-    const exact = models.find((m: { id: string; label?: string }) => m.id === model || m.label === model);
+    const exact = models.find((m) => m.id === model || m.label === model);
     if (exact && exact.label && exact.label !== exact.id) {
       return ag === "agy" ? stripAntigravityTier(exact.label) : exact.label;
     }
@@ -27,14 +27,9 @@ export function formatModelNameWithRecipes(
       const targetKey = normalizeAntigravityKey(model);
       if (targetKey) {
         const tierMatch = models.find(
-          (m: { id: string; label?: string }) =>
-            m.label &&
-            m.label !== m.id &&
-            (normalizeAntigravityKey(m.id) === targetKey || normalizeAntigravityKey(m.label) === targetKey)
+          (m) => m.label && m.label !== m.id && (normalizeAntigravityKey(m.id) === targetKey || normalizeAntigravityKey(m.label) === targetKey)
         );
-        if (tierMatch?.label) {
-          return stripAntigravityTier(tierMatch.label);
-        }
+        if (tierMatch?.label) return stripAntigravityTier(tierMatch.label);
       }
     }
   }
