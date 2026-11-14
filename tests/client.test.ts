@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { PALETTES } from "../src/client/src/themes";
+import { formatModelNameWithRecipes } from "../src/client/src/utils/model-name";
 import { renderMarkdown } from "../src/client/src/utils/markdown";
 import { state, setState } from "../src/client/src/state/store";
 import { applyClientConfigWithTransitions, sendConfigPatch, handleServerMessage, initWebSocket } from "../src/client/src/state/ws";
@@ -252,5 +253,29 @@ describe("mobile layout enhancements (mobile-ui-and-themes.md §1.2, §2.1)", ()
       globalThis.fetch = origFetch;
       globalThis.window = origWindow;
     }
+  });
+});
+
+describe("formatModelNameWithRecipes (display A1/A2)", () => {
+  test("searches multiple agents in order and skips unresolved label === id entries", () => {
+    const recipes = {
+      codex: { models: [{ id: "claude-sonnet-4-6", label: "claude-sonnet-4-6" }] },
+      claude: { models: [{ id: "claude-sonnet-4-6", label: "Claude Sonnet 4.6" }] },
+    };
+    expect(formatModelNameWithRecipes(recipes, ["codex", "claude"], "claude-sonnet-4-6")).toBe("Claude Sonnet 4.6");
+  });
+
+  test("matches Antigravity models across tier suffixes and strips bracketed tiers", () => {
+    const recipes = {
+      agy: {
+        models: [
+          { id: "MODEL_CLAUDE_4_5_SONNET_HIGH", label: "Claude Sonnet 4.5 (High)" },
+          { id: "gemini-3.1-pro-high", label: "Gemini 3.1 Pro (High)" },
+        ],
+      },
+    };
+    expect(formatModelNameWithRecipes(recipes, "agy", "claude-sonnet-4-5-low")).toBe("Claude Sonnet 4.5");
+    expect(formatModelNameWithRecipes(recipes, ["codex", "agy"], "gemini-3.1-pro-low")).toBe("Gemini 3.1 Pro");
+    expect(formatModelNameWithRecipes(recipes, "agy", "google/gemini-3-flash (Minimal)")).toBe("gemini-3-flash");
   });
 });

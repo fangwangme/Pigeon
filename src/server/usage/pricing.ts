@@ -21,6 +21,13 @@ export interface PricingManagerOptions {
 const MODELSDEV_URL = "https://models.dev/api.json";
 const LITELLM_URL = "https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json";
 const OPENROUTER_URL = "https://openrouter.ai/api/v1/models";
+const DAY_MS = 24 * 60 * 60 * 1000;
+const FIRST_PARTY_PROVIDERS = ["anthropic", "openai", "google", "deepseek", "xai", "mistral", "cohere", "groq", "perplexity"];
+
+function providerPriority(provider: string): number {
+  const idx = FIRST_PARTY_PROVIDERS.indexOf(provider.toLowerCase());
+  return idx >= 0 ? idx : FIRST_PARTY_PROVIDERS.length;
+}
 
 export class PricingManager {
   private cachePath: string;
@@ -28,6 +35,7 @@ export class PricingManager {
   private fetchFn: (input: any, init?: any) => Promise<Response>;
   private catalog = new Map<string, ModelPrice>();
   private loaded = false;
+  private lastFetchAt = 0;
   private pricesAvailable = false;
   private nextRetryAt = 0;
   private retryIntervalMs: number;
@@ -44,23 +52,30 @@ export class PricingManager {
     return this.pricesAvailable;
   }
 
+  public getCatalogEntries(): Array<[string, ModelPrice]> {
+    return Array.from(this.catalog.entries());
+  }
+
   public async initialize(): Promise<void> {
-    if (this.loaded) return;
-    if (this.now() < this.nextRetryAt) return;
+    const now = this.now();
+    if (this.loaded && now - this.lastFetchAt <= DAY_MS) return;
+    if (now < this.nextRetryAt) return;
 
     // 1. Try disk cache
     const cacheResult = this.loadFromCache(this.cachePath);
     if (cacheResult.fresh && cacheResult.hasEntries) {
       this.loaded = true;
       this.pricesAvailable = true;
+      this.lastFetchAt = cacheResult.fetchedAt;
       return;
     }
 
     // Fallback seed cache from pigeon if present
     const pigeonPricing = join(dirname(this.cachePath), "pricing.json");
-    if (!cacheResult.hasEntries && existsSync(pigeonPricing) && this.loadFromSeedCache(pigeonPricing)) {
+    if (!this.loaded && !cacheResult.hasEntries && existsSync(pigeonPricing) && this.loadFromSeedCache(pigeonPricing)) {
       this.loaded = true;
       this.pricesAvailable = true;
+      this.lastFetchAt = now;
       return;
     }
 
@@ -73,33 +88,35 @@ export class PricingManager {
     if (networkOk) {
       this.pricesAvailable = this.catalog.size > 0;
       this.loaded = true;
+      this.lastFetchAt = now;
       this.nextRetryAt = 0;
     } else {
       // Network failed: if we loaded stale or seed cache, use it as offline fallback
       this.pricesAvailable = this.catalog.size > 0;
       // Do not mark loaded = true permanently so future scans retry, but throttle retries to avoid hanging scans
       this.loaded = false;
-      this.nextRetryAt = this.now() + this.retryIntervalMs;
+      this.nextRetryAt = now + this.retryIntervalMs;
     }
   }
 
-  private loadFromCache(path: string): { fresh: boolean; hasEntries: boolean } {
-    if (!existsSync(path)) return { fresh: false, hasEntries: false };
+  private loadFromCache(path: string): { fresh: boolean; hasEntries: boolean; fetchedAt: number } {
+    if (!existsSync(path)) return { fresh: false, hasEntries: false, fetchedAt: 0 };
     try {
       const raw = readFileSync(path, "utf-8");
       const data = JSON.parse(raw);
       const fetchedAt = data.fetchedAt || 0;
-      const fresh = this.now() - fetchedAt <= 24 * 60 * 60 * 1000;
+      const fresh = this.now() - fetchedAt <= DAY_MS;
       if (data.entries) {
         for (const [k, v] of Object.entries(data.entries)) {
+          if (k.includes("/")) continue;
           this.catalog.set(k, v as ModelPrice);
         }
-        return { fresh, hasEntries: this.catalog.size > 0 };
+        return { fresh, hasEntries: this.catalog.size > 0, fetchedAt };
       }
     } catch {
-      return { fresh: false, hasEntries: false };
+      return { fresh: false, hasEntries: false, fetchedAt: 0 };
     }
-    return { fresh: false, hasEntries: false };
+    return { fresh: false, hasEntries: false, fetchedAt: 0 };
   }
 
   private loadFromSeedCache(path: string): boolean {
@@ -147,7 +164,10 @@ export class PricingManager {
           const res = await this.fetchFn(MODELSDEV_URL, { signal: AbortSignal.timeout(TIMEOUT_MS) });
           if (res.ok) {
             const providers = (await res.json()) as any;
-            for (const [provider, providerData] of Object.entries(providers)) {
+            const orderedProviders = Object.entries(providers).sort(
+              ([a], [b]) => providerPriority(a) - providerPriority(b)
+            );
+            for (const [_provider, providerData] of orderedProviders) {
               const models = (providerData as any)?.models || {};
               for (const m of Object.values(models)) {
                 const cost = (m as any)?.cost;
@@ -160,10 +180,8 @@ export class PricingManager {
                   source: "models.dev",
                 };
                 const id = (m as any).id || "";
-                const key1 = canonical(`${provider}/${id}`);
-                const key2 = canonical(id);
-                if (!modelsDevCatalog.has(key1)) modelsDevCatalog.set(key1, price);
-                if (!modelsDevCatalog.has(key2)) modelsDevCatalog.set(key2, price);
+                const key = canonical(id);
+                if (key && !modelsDevCatalog.has(key)) modelsDevCatalog.set(key, price);
               }
             }
           }

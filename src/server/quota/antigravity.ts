@@ -2,7 +2,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { QuotaSnapshot, QuotaWindow } from "../../types/protocol";
-import { decodeJwtPayload, fileCredentialSource, storeRefreshed } from "./credentials";
+import { decodeJwtPayload, fileCredentialSource } from "./credentials";
 import { discoverAntigravityLs, isLoopbackAddress } from "../usage/antigravity-ls";
 
 export interface AntigravityQuotaProviderOptions {
@@ -18,8 +18,8 @@ function cleanGroupLabel(displayName: string): string {
   const lower = trimmed.toLowerCase();
   if (lower === "gemini models" || lower === "gemini") {
     return "Gemini";
-  } else if (lower.includes("claude") || lower.includes("gpt")) {
-    return "Claude";
+  } else if (lower.includes("claude") || lower.includes("gpt") || lower.startsWith("3p")) {
+    return "Claude/GPT";
   } else {
     let cleaned = trimmed;
     if (lower.endsWith(" models")) {
@@ -29,17 +29,11 @@ function cleanGroupLabel(displayName: string): string {
   }
 }
 
-function groupRank(groupLabel: string): number {
-  if (groupLabel === "Gemini") return 0;
-  if (groupLabel === "Claude") return 1;
-  return 2;
-}
-
-function windowDescriptor(window: string): { suffix: string; rank: number; periodMs: number | null } {
+function windowDescriptor(window: string): { suffix: string; periodMs: number | null } {
   const lower = window.toLowerCase();
-  if (lower === "5h") return { suffix: "5h", rank: 0, periodMs: FIVE_HOURS_MS };
-  if (lower === "weekly") return { suffix: "7d", rank: 1, periodMs: SEVEN_DAYS_MS };
-  return { suffix: window, rank: 2, periodMs: null };
+  if (lower === "5h") return { suffix: "5h", periodMs: FIVE_HOURS_MS };
+  if (lower === "weekly") return { suffix: "7d", periodMs: SEVEN_DAYS_MS };
+  return { suffix: window, periodMs: null };
 }
 
 export class AntigravityQuotaProvider {
@@ -76,8 +70,9 @@ export class AntigravityQuotaProvider {
       }
     }
 
-    // 2. Check Antigravity Desktop app_storage.json
+    // 2. Check Antigravity Desktop / CLI app_storage.json
     const storagePaths = [
+      join(this.home, ".gemini", "antigravity-cli", "app_storage.json"),
       join(this.home, ".config", "Antigravity", "app_storage.json"),
       join(this.home, "Library", "Application Support", "Antigravity", "app_storage.json"),
     ];
@@ -85,7 +80,9 @@ export class AntigravityQuotaProvider {
       if (existsSync(sp)) {
         try {
           const data = JSON.parse(readFileSync(sp, "utf-8"));
-          const username = data?.["jetski.onboarding.lastLoginUsername"];
+          const username =
+            data?.["agy.onboarding.lastLoginUsername"] ??
+            data?.["jetski.onboarding.lastLoginUsername"];
           if (typeof username === "string" && username.includes("@")) {
             return username.trim();
           }
@@ -101,9 +98,9 @@ export class AntigravityQuotaProvider {
   public async fetch(): Promise<QuotaSnapshot> {
     const errors: string[] = [];
 
-    // Source 1: Language Server RPC (auto discovery or override)
+    // Source 1: Language Server RPC (auto discovery in this.home)
     try {
-      const lsConn = await discoverAntigravityLs();
+      const lsConn = await discoverAntigravityLs(this.home);
       if (lsConn) {
         const snap = await this.probeLanguageServer(lsConn.address, lsConn.csrfToken);
         if (snap) return snap;
@@ -112,12 +109,17 @@ export class AntigravityQuotaProvider {
       errors.push(`Language server RPC: ${(err as Error).message}`);
     }
 
-    // Source 2: agy -p /usage --output-format json
-    try {
-      const snap = await this.probeAgyCli();
-      if (snap) return snap;
-    } catch (err) {
-      errors.push(`agy CLI: ${(err as Error).message}`);
+    // Source 2: Cloud Code OAuth expiry fast-fail + agy CLI fallback
+    const expiredMsg = this.checkExpiredOAuthToken();
+    if (expiredMsg) {
+      errors.push(`Cloud Code API: ${expiredMsg}`);
+    } else {
+      try {
+        const snap = await this.probeAgyCli();
+        if (snap) return snap;
+      } catch (err) {
+        errors.push(`agy CLI: ${(err as Error).message}`);
+      }
     }
 
     // Source 3: Cloud Code API
@@ -155,10 +157,11 @@ export class AntigravityQuotaProvider {
     });
     if (!res.ok) return null;
     const data = (await res.json()) as any;
-    const summary = data?.response || data;
+    const summary = data?.command?.data || data?.response || data;
     if (!summary?.groups) return null;
 
     let lsEmail: string | undefined;
+    let lsPlan: string | undefined;
     try {
       const statusRes = await fetch(`http://${address}/exa.language_server_pb.LanguageServerService/GetUserStatus`, {
         method: "POST",
@@ -174,18 +177,51 @@ export class AntigravityQuotaProvider {
         if (typeof email === "string" && email.trim()) {
           lsEmail = email.trim();
         }
+        const plan = sData?.userStatus?.tierName ?? sData?.userStatus?.planName ?? sData?.userStatus?.plan;
+        if (typeof plan === "string" && plan.trim()) {
+          lsPlan = plan.trim();
+        }
       }
     } catch {
       // ignore
     }
 
-    return this.buildSnapshotFromGroups(summary.groups, lsEmail);
+    return this.buildSnapshotFromGroups(summary.groups, lsEmail, lsPlan);
+  }
+
+  private checkExpiredOAuthToken(): string | null {
+    const raw = fileCredentialSource(this.tokenPath()).read();
+    if (raw === null) return null;
+    try {
+      const parsed = JSON.parse(raw);
+      const tokenObj = parsed?.token ?? parsed;
+      const expiry =
+        typeof tokenObj?.expiry_date === "number"
+          ? tokenObj.expiry_date
+          : typeof parsed?.expiry_date === "number"
+          ? parsed.expiry_date
+          : tokenObj?.expiry
+          ? Date.parse(tokenObj.expiry)
+          : 0;
+      if (expiry && this.now() >= expiry) {
+        return "Antigravity login expired — open Antigravity to refresh it";
+      }
+    } catch {
+      // let probeCloudCode surface parse error if needed
+    }
+    return null;
   }
 
   private async probeAgyCli(): Promise<QuotaSnapshot | null> {
     const proc = Bun.spawn(["agy", "-p", "/usage", "--output-format", "json"], {
       stdout: "pipe",
       stderr: "pipe",
+      env: {
+        ...process.env,
+        HOME: this.home,
+        XDG_CONFIG_HOME: join(this.home, ".config"),
+        XDG_DATA_HOME: join(this.home, ".local", "share"),
+      },
     });
 
     const timeout = new Promise<never>((_, reject) =>
@@ -209,39 +245,23 @@ export class AntigravityQuotaProvider {
   }
 
   private async probeCloudCode(): Promise<QuotaSnapshot | null> {
-    const source = fileCredentialSource(this.tokenPath());
-    let raw = source.read();
+    const raw = fileCredentialSource(this.tokenPath()).read();
     if (raw === null) return null;
-    let tokenObj = JSON.parse(raw)?.token;
+    const parsed = JSON.parse(raw);
+    const tokenObj = parsed?.token ?? parsed;
     if (!tokenObj?.access_token) return null;
 
-    const expiry = tokenObj.expiry ? Date.parse(tokenObj.expiry) : 0;
-    if (expiry && this.now() >= expiry - 5 * 60 * 1000 && tokenObj.refresh_token) {
-      const clientId = "1071006060591-tmhssin2h21lcre235vtolojh4g403ep.apps.googleusercontent.com";
-      const clientSecret = ["GOCSPX-", "K58FWR486LdLJ1mLB8sXC4z6qDAf"].join("");
-      const refreshRes = await fetch("https://oauth2.googleapis.com/token", {
-        method: "POST",
-        headers: { "Content-Type": "application/x-www-form-urlencoded" },
-        body: new URLSearchParams({
-          client_id: clientId,
-          client_secret: clientSecret,
-          refresh_token: tokenObj.refresh_token,
-          grant_type: "refresh_token",
-        }),
-        signal: AbortSignal.timeout(10000),
-      });
-      if (!refreshRes.ok) throw new Error(`Antigravity token refresh rejected with status ${refreshRes.status}`);
-      const refreshData = (await refreshRes.json()) as any;
-      // §2.3: written back only when the CLI did not rotate the token file meanwhile.
-      raw = storeRefreshed(source, raw, (data) => {
-        data.token = {
-          ...data.token,
-          access_token: refreshData.access_token,
-          expiry: new Date(this.now() + (refreshData.expires_in || 3600) * 1000).toISOString(),
-          refresh_token: refreshData.refresh_token || data.token.refresh_token,
-        };
-      });
-      tokenObj = JSON.parse(raw).token;
+    // A6: Read-only credentials. Do not refresh or overwrite antigravity-oauth-token.
+    const expiry =
+      typeof tokenObj.expiry_date === "number"
+        ? tokenObj.expiry_date
+        : typeof parsed?.expiry_date === "number"
+        ? parsed.expiry_date
+        : tokenObj.expiry
+        ? Date.parse(tokenObj.expiry)
+        : 0;
+    if (expiry && this.now() >= expiry) {
+      throw new Error("Antigravity login expired — open Antigravity to refresh it");
     }
     const accessToken = tokenObj.access_token;
 
@@ -255,6 +275,9 @@ export class AntigravityQuotaProvider {
       body: JSON.stringify({}),
       signal: AbortSignal.timeout(10000),
     });
+    if (res.status === 401 || res.status === 403) {
+      throw new Error("Antigravity login expired — open Antigravity to refresh it");
+    }
     if (!res.ok) return null;
     const body = (await res.json()) as any;
     const summary = body?.response || body;
@@ -262,21 +285,13 @@ export class AntigravityQuotaProvider {
     return this.buildSnapshotFromGroups(summary.groups);
   }
 
-  private buildSnapshotFromGroups(groups: any[], preferredEmail?: string): QuotaSnapshot {
-    interface WindowSortItem {
-      gRank: number;
-      gIdx: number;
-      wRank: number;
-      window: QuotaWindow;
-    }
-
-    const items: WindowSortItem[] = [];
+  private buildSnapshotFromGroups(groups: any[], preferredEmail?: string, plan?: string): QuotaSnapshot {
+    const windows: QuotaWindow[] = [];
 
     for (let gIdx = 0; gIdx < groups.length; gIdx++) {
       const group = groups[gIdx];
       const gName = group.displayName || group.name || "";
       const groupLabel = cleanGroupLabel(gName);
-      const gRank = groupRank(groupLabel);
 
       const buckets = group.buckets || [];
       for (const bucket of buckets) {
@@ -287,41 +302,33 @@ export class AntigravityQuotaProvider {
           ? bucket.remainingFraction
           : 1.0;
         const clampedFraction = Math.max(0, Math.min(1, remFraction));
-        const usedPercent = (1.0 - clampedFraction) * 100;
+        const usedPercent = Math.round((1.0 - clampedFraction) * 1000) / 10;
         const resetStr = bucket.reset_time || bucket.resetTime;
         const resetsAt = resetStr ? Date.parse(resetStr) : null;
 
-        const id = `${groupLabel.toLowerCase().replace(/[^a-z0-9]+/g, "_")}_${desc.suffix}`;
-        const label = `${groupLabel} (${desc.suffix})`;
+        const id =
+          typeof bucket.id === "string" && bucket.id
+            ? bucket.id
+            : `${groupLabel.toLowerCase().replace(/[^a-z0-9]+/g, "_")}_${desc.suffix}`;
+        const label = `${groupLabel} · ${desc.suffix}`;
         const family = groupLabel === "Usage" ? undefined : groupLabel;
 
-        items.push({
-          gRank,
-          gIdx,
-          wRank: desc.rank,
-          window: {
-            id,
-            label,
-            family,
-            usedPercent,
-            periodMs: desc.periodMs,
-            resetsAt,
-          },
+        windows.push({
+          id,
+          label,
+          family,
+          usedPercent,
+          periodMs: desc.periodMs,
+          resetsAt,
         });
       }
     }
 
-    items.sort((a, b) => {
-      if (a.gRank !== b.gRank) return a.gRank - b.gRank;
-      if (a.gIdx !== b.gIdx) return a.gIdx - b.gIdx;
-      return a.wRank - b.wRank;
-    });
-
-    const windows = items.map((i) => i.window);
     const account = preferredEmail || this.readAccountEmail();
 
     return {
       provider: "antigravity",
+      ...(plan ? { plan } : {}),
       account,
       windows,
       credits: [],

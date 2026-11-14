@@ -379,7 +379,7 @@ function ModelPickerSheet(props: {
                 onClick={() => selectModel(m.id)}
               >
                 <div class="tx">
-                  <div style={{ "font-weight": 600 }}>{m.label}</div>
+                  <div style={{ "font-weight": 600 }}>{formatModelName(props.agent, m.id)}</div>
                   <small class="mono">{m.id}</small>
                 </div>
                 <Show when={count > 0}>

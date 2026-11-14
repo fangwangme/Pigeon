@@ -176,12 +176,19 @@ export interface QuotaCredit {
   [key: string]: any;
 }
 
+export interface QuotaExtraUsage {
+  used: number;
+  limit: number | null;
+  currency?: string;
+}
+
 export interface QuotaSnapshot {
   provider: "claude" | "codex" | "antigravity";
   plan?: string;
   account?: string;
   windows: QuotaWindow[];
   credits: QuotaCredit[];
+  extraUsage?: QuotaExtraUsage;
   fetchedAt: number;
 }
 

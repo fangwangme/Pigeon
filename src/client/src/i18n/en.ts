@@ -304,6 +304,7 @@ export const en = {
   "quota.behind": "Behind {deficit}%",
   "quota.creditsTitle": "Available reset credits",
   "quota.creditsExpiry": "Expires",
+  "quota.extraUsage": "Extra usage: {used} / {limit}",
   "quota.errorPrefix": "Refresh failed: {error}. Previous data is shown below.",
 
   "usage.today": "Today",

@@ -2,7 +2,7 @@
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import type { QuotaCredit, QuotaSnapshot, QuotaWindow } from "../../types/protocol";
-import { decodeJwtPayload, fileCredentialSource, storeRefreshed } from "./credentials";
+import { decodeJwtPayload, fileCredentialSource } from "./credentials";
 
 export interface CodexQuotaProviderOptions {
   home?: string;
@@ -52,83 +52,34 @@ export class CodexQuotaProvider {
     return null;
   }
 
-  private async refreshToken(refreshToken: string): Promise<{ accessToken: string; refreshToken?: string; idToken?: string }> {
-    const params = new URLSearchParams({
-      grant_type: "refresh_token",
-      client_id: CODEX_CLIENT_ID,
-      refresh_token: refreshToken,
-    });
-
-    let res: Response;
-    try {
-      res = await fetch(this.tokenUrl, {
-        method: "POST",
-        headers: { "Content-Type": "application/x-www-form-urlencoded" },
-        body: params.toString(),
-        signal: AbortSignal.timeout(10000),
-      });
-    } catch (err) {
-      throw new Error(`Codex token refresh failed: ${(err as Error).message}`);
-    }
-
-    if (!res.ok) {
-      throw new Error(`Codex token refresh rejected with status ${res.status}`);
-    }
-
-    const data = (await res.json()) as any;
-    if (!data.access_token) {
-      throw new Error("Codex token refresh returned no access token");
-    }
-
-    return {
-      accessToken: data.access_token,
-      refreshToken: data.refresh_token,
-      idToken: data.id_token,
-    };
-  }
-
   public async fetch(): Promise<QuotaSnapshot> {
     const credPath = this.findCredPath();
     if (!credPath) {
       throw new Error("Codex credentials not found");
     }
 
-    const source = fileCredentialSource(credPath);
-    let raw = source.read()!;
-    const parseTokens = (text: string) => {
-      let creds: any;
-      try {
-        creds = JSON.parse(text);
-      } catch (err) {
-        throw new Error(`Failed to parse Codex credentials: ${(err as Error).message}`);
-      }
-      if (!creds?.tokens?.access_token) throw new Error("Codex credentials missing tokens.access_token");
-      return creds.tokens as { access_token: string; refresh_token?: string; id_token?: string };
-    };
-    let tokens = parseTokens(raw);
-    let refreshed = false;
+    const raw = fileCredentialSource(credPath).read();
+    if (raw === null) {
+      throw new Error("Codex credentials not found");
+    }
+    let creds: any;
+    try {
+      creds = JSON.parse(raw);
+    } catch (err) {
+      throw new Error(`Failed to parse Codex credentials: ${(err as Error).message}`);
+    }
+    if (!creds?.tokens?.access_token) throw new Error("Codex credentials missing tokens.access_token");
+    const tokens = creds.tokens as { access_token: string; refresh_token?: string; id_token?: string };
 
-    // §2.3: at most one refresh per fetch, written back only when the agent did not rotate the file.
-    const refresh = async () => {
-      refreshed = true;
-      const fresh = await this.refreshToken(tokens.refresh_token!);
-      raw = storeRefreshed(source, raw, (creds) => {
-        creds.tokens = creds.tokens || {};
-        creds.tokens.access_token = fresh.accessToken;
-        if (fresh.refreshToken) creds.tokens.refresh_token = fresh.refreshToken;
-        if (fresh.idToken) creds.tokens.id_token = fresh.idToken;
-      });
-      tokens = parseTokens(raw);
-    };
-
-    // Expiry from the access token's JWT `exp`, a minute early.
+    // A6: Read-only credentials. Check JWT expiry before making any network call.
     const exp = decodeJwtPayload(tokens.access_token)?.exp;
-    if (typeof exp === "number" && exp <= Math.floor(this.now() / 1000) + 60 && tokens.refresh_token) await refresh();
+    if (typeof exp === "number" && exp <= Math.floor(this.now() / 1000)) {
+      throw new Error("Codex login expired — open Codex to refresh it");
+    }
 
-    let usageRes = await this.callUsage(tokens.access_token);
-    if ((usageRes.status === 401 || usageRes.status === 403) && !refreshed && tokens.refresh_token) {
-      await refresh();
-      usageRes = await this.callUsage(tokens.access_token);
+    const usageRes = await this.callUsage(tokens.access_token);
+    if (usageRes.status === 401 || usageRes.status === 403) {
+      throw new Error("Codex login expired — open Codex to refresh it");
     }
     const accessToken = tokens.access_token;
     const idToken = tokens.id_token;

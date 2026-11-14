@@ -418,7 +418,9 @@ export function Settings() {
                   const sub = () => {
                     if (!isOn()) return t("settings.providerDisabled");
                     const s = snap();
-                    if (s?.snapshot?.plan) return t("settings.providerPlan", { plan: s.snapshot.plan });
+                    if (state.quotaShowAccount !== false && s?.snapshot?.plan) {
+                      return t("settings.providerPlan", { plan: s.snapshot.plan });
+                    }
                     if (s?.snapshot) return t("settings.providerActive");
                     return t("settings.providerActive");
                   };

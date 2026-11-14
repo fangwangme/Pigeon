@@ -1,10 +1,10 @@
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
-import { homedir, userInfo } from "node:os";
+import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import type { ModelOption } from "../types/protocol";
-import { fileCredentialSource, type CredentialSource } from "./quota/credentials";
+import { fallbackLabel } from "../shared/model-name";
+import { macKeychainSource, type CredentialSource } from "./quota/credentials";
 
-const KEYCHAIN_SERVICE = "Claude Code-credentials";
 const DEFAULT_ANTHROPIC_MODELS_URL = "https://api.anthropic.com/v1/models";
 
 
@@ -23,21 +23,6 @@ export interface ModelCatalogOptions {
 }
 
 const isObj = (v: unknown): v is Record<string, any> => typeof v === "object" && v !== null && !Array.isArray(v);
-
-function macKeychainSource(): CredentialSource {
-  const account = userInfo().username;
-  return {
-    read: () => {
-      const res = Bun.spawnSync(["security", "find-generic-password", "-s", KEYCHAIN_SERVICE, "-w"]);
-      return res.exitCode === 0 ? res.stdout.toString().trim() || null : null;
-    },
-    write: (raw) => {
-      const command = `add-generic-password -U -a "${account}" -s "${KEYCHAIN_SERVICE}" -X "${Buffer.from(raw, "utf-8").toString("hex")}"\n`;
-      const res = Bun.spawnSync(["security", "-i"], { stdin: new TextEncoder().encode(command) });
-      if (res.exitCode !== 0) throw new Error(`Keychain write failed with exit code ${res.exitCode}`);
-    },
-  };
-}
 
 /**
  * `herdr-adapter.md` §7.1: every agent's model list, filled from the agent's own source. The sources
@@ -72,10 +57,34 @@ export class ModelCatalog {
 
   private loadCache(): void {
     if (!this.cachePath || !existsSync(this.cachePath)) return;
-    const data: Record<string, { models: ModelOption[]; fetchedAt?: number }> = JSON.parse(readFileSync(this.cachePath, "utf-8"));
+    let data: unknown;
+    try {
+      data = JSON.parse(readFileSync(this.cachePath, "utf-8"));
+    } catch (err) {
+      console.warn(`[pigeon] failed to parse model cache '${this.cachePath}':`, err);
+      return;
+    }
+    if (!isObj(data)) return;
+    const cleanList = (arr: unknown[]): ModelOption[] =>
+      arr
+        .filter((m: unknown): m is ModelOption => isObj(m) && typeof m.id === "string")
+        .map((m) => ({
+          ...m,
+          label: typeof m.label === "string" && m.label && m.label !== m.id ? m.label : fallbackLabel(m.id),
+        }));
+    if (isObj(data.models)) {
+      const fetched = isObj(data.fetchedAt) ? data.fetchedAt : {};
+      for (const [agent, list] of Object.entries(data.models)) {
+        if (!Array.isArray(list)) continue;
+        this.lists.set(agent, cleanList(list));
+        if (typeof fetched[agent] === "number") this.fetchedAt.set(agent, fetched[agent]);
+      }
+      return;
+    }
     for (const [agent, entry] of Object.entries(data)) {
-      this.lists.set(agent, entry.models);
-      if (entry.fetchedAt !== undefined) this.fetchedAt.set(agent, entry.fetchedAt);
+      if (!isObj(entry) || !Array.isArray(entry.models)) continue;
+      this.lists.set(agent, cleanList(entry.models));
+      if (typeof entry.fetchedAt === "number") this.fetchedAt.set(agent, entry.fetchedAt);
     }
   }
 
@@ -312,8 +321,8 @@ export class ModelCatalog {
     return ids.map((id) => {
       const slash = id.indexOf("/");
       const entry = isObj(cache) && isObj(cache[id.slice(0, slash)]?.models) ? cache[id.slice(0, slash)].models[id.slice(slash + 1)] : undefined;
-      if (!isObj(entry)) return { id, label: id };
-      const label = typeof entry.name === "string" && entry.name ? entry.name : id;
+      if (!isObj(entry)) return { id, label: fallbackLabel(id) };
+      const label = typeof entry.name === "string" && entry.name ? entry.name : fallbackLabel(id);
       const effort = Array.isArray(entry.reasoning_options) ? entry.reasoning_options.find((o: unknown) => isObj(o) && o.type === "effort") : undefined;
       const levels = isObj(effort) && Array.isArray(effort.values) ? effort.values.filter((v: unknown): v is string => typeof v === "string") : undefined;
       return { id, label, ...(levels ? { thinkingLevels: levels } : {}) };

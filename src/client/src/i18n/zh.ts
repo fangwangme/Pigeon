@@ -305,6 +305,7 @@ export const zh: Messages = {
   "quota.behind": "低于节奏 {deficit}%",
   "quota.creditsTitle": "可用的重置次数",
   "quota.creditsExpiry": "到期时间",
+  "quota.extraUsage": "额外用量：{used} / {limit}",
   "quota.errorPrefix": "刷新失败：{error}。下面仍显示上一次的数据。",
 
   "usage.today": "今天",

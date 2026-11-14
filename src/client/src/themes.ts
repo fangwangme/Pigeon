@@ -41,12 +41,7 @@ export interface Palette {
   coOpenai: string;
   coGoogle: string;
   coOther: string;
-  figTokens: string;
   figCost: string;
-  figInput: string;
-  figOutput: string;
-  figCache: string;
-  figHit: string;
   heatEmpty: string;
   heatTokens1: string;
   heatTokens2: string;
@@ -98,23 +93,18 @@ export const PALETTES: Record<"light" | "dark", Palette> = {
     coOpenai: "#34D399",
     coGoogle: "#60A5FA",
     coOther: "#A855F7",
-    figTokens: "#34D399",
     figCost: "#FACC15",
-    figInput: "#60A5FA",
-    figOutput: "#A78BFA",
-    figCache: "#FB923C",
-    figHit: "#5FC7B2",
     heatEmpty: "#2a2a2e",
-    heatTokens1: "#B8ECFF",
-    heatTokens2: "#80E0FF",
+    heatTokens1: "#005C86",
+    heatTokens2: "#0094D1",
     heatTokens3: "#20BEFF",
-    heatTokens4: "#0094D1",
-    heatTokens5: "#005C86",
-    heatCost1: "#9BE9A8",
-    heatCost2: "#40C463",
+    heatTokens4: "#80E0FF",
+    heatTokens5: "#B8ECFF",
+    heatCost1: "#0E4429",
+    heatCost2: "#216E39",
     heatCost3: "#30A14E",
-    heatCost4: "#216E39",
-    heatCost5: "#0E4429",
+    heatCost4: "#40C463",
+    heatCost5: "#9BE9A8",
   },
   light: {
     bg: "#F8F8F6",
@@ -153,12 +143,7 @@ export const PALETTES: Record<"light" | "dark", Palette> = {
     coOpenai: "#047857",
     coGoogle: "#2563EB",
     coOther: "#9333EA",
-    figTokens: "#047857",
     figCost: "#A16207",
-    figInput: "#2563EB",
-    figOutput: "#7C3AED",
-    figCache: "#C2410C",
-    figHit: "#0F7F6C",
     heatEmpty: "#EBEBE8",
     heatTokens1: "#B8ECFF",
     heatTokens2: "#80E0FF",
@@ -218,12 +203,7 @@ const KEBAB: Record<keyof Palette, string> = {
   coOpenai: "co-openai",
   coGoogle: "co-google",
   coOther: "co-other",
-  figTokens: "fig-tokens",
   figCost: "fig-cost",
-  figInput: "fig-input",
-  figOutput: "fig-output",
-  figCache: "fig-cache",
-  figHit: "fig-hit",
   heatEmpty: "heat-empty",
   heatTokens1: "heat-tokens-1",
   heatTokens2: "heat-tokens-2",

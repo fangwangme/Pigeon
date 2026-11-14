@@ -52,7 +52,7 @@ describe("claude quota provider sources and windows (quota-and-usage.md ยง2.2, ย
   });
 
   test("seven_day_<family> becomes a 7-day window of that family; null and unknown entries are not windows", async () => {
-    const keychain: CredentialSource = { read: () => JSON.stringify({ claudeAiOauth: { accessToken: "live", expiresAt: NOW + 3600_000 } }), write: () => {} };
+    const keychain: CredentialSource = { read: () => JSON.stringify({ claudeAiOauth: { accessToken: "live", expiresAt: NOW + 3600_000 } }) };
     acceptedToken = "live";
     usageBody = {
       five_hour: { utilization: 10, resets_at: null },
