@@ -61,6 +61,7 @@ export interface WsServerOptions {
   usageService?: UsageService;
   queueFilePath?: string;
   queueSendTimeoutMs?: number;
+  watchDebounceMs?: number;
   port?: number;
   productionPort?: number;
   environmentKind?: "production" | "dev" | "test";
@@ -154,7 +155,7 @@ export class WsServer {
     this.modelCatalog = options.modelCatalog ?? new ModelCatalog();
     this.configManager = options.configManager;
     this.agentAdapters = options.agentAdapters || new AgentAdapterManager();
-    this.paneStore = new PaneStore(this.agentAdapters);
+    this.paneStore = new PaneStore(this.agentAdapters, { watchDebounceMs: options.watchDebounceMs });
     this.skillScanner = options.skillScanner || new SkillScanner();
     this.uploadStore = options.uploadStore;
     this.pairingManager = options.pairingManager;

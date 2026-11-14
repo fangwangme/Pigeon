@@ -38,10 +38,12 @@ export class PaneStore extends EventEmitter {
   private herdrConnected = false;
   private lastSyncTimestamp = Date.now();
   private modelResolver?: (agent: string, idOrLabel: string) => string;
+  private watchDebounceMs: number;
 
-  constructor(adapters: AgentAdapterManager) {
+  constructor(adapters: AgentAdapterManager, options: { watchDebounceMs?: number } = {}) {
     super();
     this.adapters = adapters;
+    this.watchDebounceMs = options.watchDebounceMs ?? 100;
   }
 
   public setModelResolver(resolver: (agent: string, idOrLabel: string) => string): void {
@@ -100,7 +102,7 @@ export class PaneStore extends EventEmitter {
     let timer: ReturnType<typeof setTimeout> | null = null;
     state.watcher = watch(watchPath, () => {
       if (timer) clearTimeout(timer);
-      timer = setTimeout(() => this.refreshPaneTurns(state.paneId, true), 100);
+      timer = setTimeout(() => this.refreshPaneTurns(state.paneId, true), this.watchDebounceMs);
     });
     return true;
   }

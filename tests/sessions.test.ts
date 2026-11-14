@@ -42,6 +42,7 @@ async function setup(
     configManager: new ConfigManager(join(home, "config.json"), { HOME: home }),
     skillScanner: new SkillScanner(home),
     agentAdapters: new AgentAdapterManager({ home }),
+    watchDebounceMs: 0,
     ...extra,
   });
   cleanup.push(async () => {
@@ -722,8 +723,7 @@ describe("transcript questions, agent errors and turn times (issue #21)", () => 
     const { herdr, open } = await setup(home, [{ paneId: "p1", app: "claude-code", cwd: proj, pid: 4242, state: "blocked" }]);
     herdr.handlers["terminal.read"] = () => ({ result: { text: "Which database?\n❯ 1. SQLite\n  2. Postgres\nEnter to select · ↑/↓ to navigate · Esc to cancel", how: "screen" } });
     const c = await open("p1");
-    await until(() => herdr.calls.some((call) => call.method === "terminal.read"));
-    await Bun.sleep(100);
+    await until(() => c.ofType("pane_state").at(-1)?.payload.pendingInteraction?.source === "transcript");
     expect(c.ofType("pane_state").at(-1)?.payload.pendingInteraction?.source).toBe("transcript");
   });
 
