@@ -1019,6 +1019,10 @@ export class WsServer {
     this.send(ws, { type: "skills_sync", replyTo, payload: { paneId, skills, recipes: this.recipeSummaries() } });
   }
 
+  public getSourceErrors() {
+    return this.agentAdapters.getSourceErrors();
+  }
+
   /**
    * agent-session-normalization.md §2.0: rule 1 (exact) first, then a resumed or already-bound pane
    * keeps its session (rules 5, 6), then unbound panes take the newest unclaimed session (rule 2), and
@@ -1065,10 +1069,11 @@ export class WsServer {
       claimed.add(keyOf(agent, candidate));
       result.set(p.paneId, candidate);
     }
+    const erroredAgents = new Set(this.agentAdapters.getSourceErrors().map((e) => e.agent));
     for (const p of panes) {
       const id = result.get(p.paneId);
       if (id) this.paneStore.registerPaneSession(p.paneId, p.facts.agentKind!, id);
-      else this.paneStore.unbind(p.paneId);
+      else if (!erroredAgents.has(p.facts.agentKind!)) this.paneStore.unbind(p.paneId);
     }
     // Rule 7: a pane that no longer runs a supported agent drops its session.
     const live = new Set(panes.map((p) => p.paneId));

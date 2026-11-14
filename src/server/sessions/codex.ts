@@ -2,14 +2,23 @@ import { existsSync, readdirSync, realpathSync, statSync } from "node:fs";
 import { join } from "node:path";
 import type { FileDiffSummary, TodoItem } from "../../shared/agent-session";
 import type { PastSession } from "../../types/protocol";
-import { countPatch, isObj, JsonlTail, readFirstJsonLine, readHeadJsonLines, readTailJsonLines, str, todoStatus, TurnBuilder, tsOf, type SessionRead } from "./common";
+import { countPatch, isEnoent, isObj, JsonlTail, readFirstJsonLine, readHeadJsonLines, readTailJsonLines, str, todoStatus, TurnBuilder, tsOf, type SessionRead } from "./common";
 import type { PaneFacts, SessionSource } from "./source";
 
 const MAX_LISTED_ROLLOUTS = 2000;
 const NOT_PROMPT = /^\s*<(environment_context|user_instructions|user_action)/;
 
+function safeStat(path: string): ReturnType<typeof statSync> | null {
+  try {
+    return statSync(path);
+  } catch (err) {
+    if (isEnoent(err)) return null;
+    throw err;
+  }
+}
+
 function mtimeOf(path: string | undefined): number | null {
-  return path && existsSync(path) ? statSync(path).mtimeMs : null;
+  return path ? (safeStat(path)?.mtimeMs ?? null) : null;
 }
 
 /** Codex (`agent-session-normalization.md` §2.4). */
@@ -33,17 +42,24 @@ export class CodexSource implements SessionSource {
   private rollouts(sinceMs?: number): string[] {
     if (!existsSync(this.root)) return [];
     const out: string[] = [];
-    const desc = (dir: string) => readdirSync(dir).sort().reverse();
+    const desc = (dir: string): string[] => {
+      try {
+        return readdirSync(dir).sort().reverse();
+      } catch (err) {
+        if (isEnoent(err)) return [];
+        throw err;
+      }
+    };
     for (const y of desc(this.root)) {
       const yDir = join(this.root, y);
-      if (!statSync(yDir).isDirectory()) continue;
+      if (!safeStat(yDir)?.isDirectory()) continue;
       for (const m of desc(yDir)) {
         const mDir = join(yDir, m);
-        if (!statSync(mDir).isDirectory()) continue;
+        if (!safeStat(mDir)?.isDirectory()) continue;
         for (const d of desc(mDir)) {
           const dDir = join(mDir, d);
-          const st = statSync(dDir);
-          if (!st.isDirectory()) continue;
+          const st = safeStat(dDir);
+          if (!st?.isDirectory()) continue;
           // A session started after `sinceMs` creates its file, which updates its day folder.
           if (sinceMs !== undefined && st.mtimeMs < sinceMs) continue;
           for (const f of desc(dDir)) if (f.startsWith("rollout-") && f.endsWith(".jsonl")) out.push(join(dDir, f));
@@ -78,8 +94,8 @@ export class CodexSource implements SessionSource {
     if (!facts.cwd) return null;
     let best: { id: string; path: string; mtime: number } | null = null;
     for (const path of this.rollouts(facts.createdMs)) {
-      const mtime = statSync(path).mtimeMs;
-      if (mtime < facts.createdMs || (best && mtime <= best.mtime)) continue;
+      const mtime = safeStat(path)?.mtimeMs;
+      if (mtime === undefined || mtime < facts.createdMs || (best && mtime <= best.mtime)) continue;
       const meta = this.meta(path);
       if (!meta || meta.cwd !== facts.cwd || exclude.has(meta.id)) continue;
       best = { id: meta.id, path, mtime };

@@ -247,6 +247,7 @@ class OpenCodeSource implements SessionSource {
 /** Every agent's session store behind one interface (`agent-session-normalization.md` §2). */
 export class AgentAdapterManager {
   private sources = new Map<string, SessionSource>();
+  private sourceErrors = new Map<string, { agent: string; op: string; message: string; at: number }>();
 
   constructor(options: AgentAdapterManagerOptions = {}) {
     const home = options.home ?? homedir();
@@ -255,6 +256,27 @@ export class AgentAdapterManager {
     const agy = new AgyAdapter({ baseBrainDir: brainDir });
     for (const s of [new ClaudeSource(home), new CodexSource(home), new PiSource(home), new AgySource(agy, brainDir), new OpenCodeSource(opencode)]) {
       this.sources.set(s.agent, s);
+    }
+  }
+
+  public getSourceErrors(): Array<{ agent: string; op: string; message: string; at: number }> {
+    return Array.from(this.sourceErrors.values());
+  }
+
+  private callSource<T>(agent: string, op: string, fallback: T, fn: (source: SessionSource) => T): T {
+    const normalized = agent.toLowerCase();
+    const source = this.sources.get(normalized);
+    if (!source) return fallback;
+    const key = `${normalized}:${op}`;
+    try {
+      const value = fn(source);
+      this.sourceErrors.delete(key);
+      return value;
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      this.sourceErrors.set(key, { agent: normalized, op, message, at: Date.now() });
+      console.error(`[pigeon] ${normalized} source error (${op}):`, err);
+      return fallback;
     }
   }
 
@@ -267,47 +289,47 @@ export class AgentAdapterManager {
    * session file the process or a descendant holds open.
    */
   public exactSession(facts: PaneFacts): string | null {
-    const source = this.sources.get(facts.agent);
-    if (!source) return null;
-    if (source.exact) return source.exact(facts);
-    if (!source.sessionOfFile || !facts.pid) return null;
-    for (const file of openFilesOf(facts.pid)) {
-      const id = source.sessionOfFile(file);
-      if (id) return id;
-    }
-    return null;
+    return this.callSource(facts.agent, "exact", null, (source) => {
+      if (source.exact) return source.exact(facts);
+      if (!source.sessionOfFile || !facts.pid) return null;
+      for (const file of openFilesOf(facts.pid)) {
+        const id = source.sessionOfFile(file);
+        if (id) return id;
+      }
+      return null;
+    });
   }
 
   /** §2.0 rule 6: when the session was last written. */
   public lastWritten(agent: string, sessionId: string): number | null {
-    return this.sources.get(agent)?.lastWritten(sessionId) ?? null;
+    return this.callSource(agent, "lastWritten", null, (source) => source.lastWritten(sessionId));
   }
 
   /** §2.0 rule 2. */
   public newestSession(facts: PaneFacts, exclude: Set<string>): string | null {
-    return this.sources.get(facts.agent)?.newest(facts, exclude) ?? null;
+    return this.callSource(facts.agent, "newest", null, (source) => source.newest(facts, exclude));
   }
 
   public getTurns(agent: string, sessionId: string, incremental = false): SessionRead {
-    const source = this.sources.get(agent.toLowerCase());
-    return source ? source.read(sessionId, incremental) : { turns: [] };
+    return this.callSource(agent, "read", { turns: [] }, (source) => source.read(sessionId, incremental));
   }
 
   /** File whose changes mean the session has new records; watched instead of polling. */
   public getWatchPath(agent: string, sessionId: string): string | null {
-    return this.sources.get(agent.toLowerCase())?.watchPath(sessionId) ?? null;
+    return this.callSource(agent, "watchPath", null, (source) => source.watchPath(sessionId));
   }
 
   public forget(agent: string, sessionId: string): void {
-    this.sources.get(agent.toLowerCase())?.forget(sessionId);
+    this.callSource(agent, "forget", undefined, (source) => source.forget(sessionId));
   }
 
   public listSessions(agent: string, folder: string): PastSession[] {
-    return this.sources.get(agent.toLowerCase())?.list(folder) ?? [];
+    return this.callSource(agent, "list", [], (source) => source.list(folder));
   }
 
   public resumeTarget(agent: string, sessionId: string, folder: string): string | null {
-    const source = this.sources.get(agent.toLowerCase());
-    return source?.resumeTarget ? source.resumeTarget(sessionId, folder) : sessionId;
+    return this.callSource(agent, "resumeTarget", sessionId, (source) =>
+      source.resumeTarget ? source.resumeTarget(sessionId, folder) : sessionId
+    );
   }
 }

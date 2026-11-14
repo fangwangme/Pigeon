@@ -113,6 +113,16 @@ async function isAuthenticated(): Promise<boolean> {
   return !!data.authenticated;
 }
 
+function teardownSocket(ws: WebSocket | null): void {
+  if (pingInterval) clearInterval(pingInterval);
+  pingInterval = null;
+  for (const p of pending.values()) p.reject({ code: "ERR_OFFLINE", message: t("error.disconnected") });
+  pending.clear();
+  setState("connected", false);
+  setState("configReady", false);
+  if (ws && socket === ws) socket = null;
+}
+
 /** Connects unless already paired-and-connected; shows pairing guidance when not paired. */
 export async function initWebSocket(): Promise<void> {
   if (socket && (socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CONNECTING)) return;
@@ -183,12 +193,7 @@ export async function initWebSocket(): Promise<void> {
   ws.onclose = (event) => {
     if (socket !== ws) return;
     socket = null;
-    setState("connected", false);
-    setState("configReady", false);
-    if (pingInterval) clearInterval(pingInterval);
-    pingInterval = null;
-    for (const p of pending.values()) p.reject({ code: "ERR_OFFLINE", message: t("error.disconnected") });
-    pending.clear();
+    teardownSocket(ws);
     if (event.code === 4401 || event.code === 4403) {
       void clearAll();
     }
@@ -748,6 +753,7 @@ if (typeof document !== "undefined") {
       if (!socket || socket.readyState !== WebSocket.OPEN || stale) {
         const old = socket;
         socket = null; // detach first so the old socket's close cannot touch the new one
+        teardownSocket(null);
         old?.close();
         void initWebSocket();
       }

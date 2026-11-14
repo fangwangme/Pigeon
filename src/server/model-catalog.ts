@@ -3,7 +3,7 @@ import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import type { ModelOption } from "../types/protocol";
 import { fallbackLabel } from "../shared/model-name";
-import { macKeychainSource, type CredentialSource } from "./quota/credentials";
+import { fileCredentialSource, macKeychainSource, type CredentialSource } from "./quota/credentials";
 
 const DEFAULT_ANTHROPIC_MODELS_URL = "https://api.anthropic.com/v1/models";
 
@@ -250,8 +250,15 @@ export class ModelCatalog {
       });
 
       if (!res.ok) throw new Error(`Anthropic Models API returned ${res.status}`);
-      const body = (await res.json()) as any;
-      if (!isObj(body) || !Array.isArray(body.data)) break;
+      let body: any;
+      try {
+        body = await res.json();
+      } catch {
+        throw new Error("Anthropic Models API returned invalid JSON");
+      }
+      if (!isObj(body) || !Array.isArray(body.data)) {
+        throw new Error("Anthropic Models API returned unexpected response shape");
+      }
 
       for (const item of body.data) {
         if (!isObj(item) || typeof item.id !== "string") continue;

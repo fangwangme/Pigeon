@@ -2,7 +2,7 @@ import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import type { FileDiffSummary, TodoItem } from "../../shared/agent-session";
 import type { PastSession } from "../../types/protocol";
-import { claudeSlug, countPatch, isObj, JsonlTail, lineDiff, readHeadJsonLines, readTailJsonLines, str, todoStatus, TurnBuilder, tsOf, type SessionRead } from "./common";
+import { claudeSlug, countPatch, isEnoent, isObj, JsonlTail, lineDiff, readHeadJsonLines, readTailJsonLines, str, todoStatus, TurnBuilder, tsOf, type SessionRead } from "./common";
 import type { PaneFacts, SessionSource } from "./source";
 
 /** Claude Code (`agent-session-normalization.md` §2.3). */
@@ -40,7 +40,13 @@ export class ClaudeSource implements SessionSource {
 
   public lastWritten(sessionId: string): number | null {
     const path = this.paths.get(sessionId);
-    return path && existsSync(path) ? statSync(path).mtimeMs : null;
+    if (!path) return null;
+    try {
+      return statSync(path).mtimeMs;
+    } catch (err) {
+      if (isEnoent(err)) return null;
+      throw err;
+    }
   }
 
   public newest(facts: PaneFacts, exclude: Set<string>): string | null {
@@ -48,11 +54,24 @@ export class ClaudeSource implements SessionSource {
     const dir = this.projectDir(facts.cwd);
     if (!existsSync(dir)) return null;
     let best: { id: string; mtime: number } | null = null;
-    for (const name of readdirSync(dir)) {
+    let names: string[];
+    try {
+      names = readdirSync(dir);
+    } catch (err) {
+      if (isEnoent(err)) return null;
+      throw err;
+    }
+    for (const name of names) {
       if (!name.endsWith(".jsonl")) continue;
       const id = name.slice(0, -".jsonl".length);
       if (exclude.has(id)) continue;
-      const mtime = statSync(join(dir, name)).mtimeMs;
+      let mtime: number;
+      try {
+        mtime = statSync(join(dir, name)).mtimeMs;
+      } catch (err) {
+        if (isEnoent(err)) continue;
+        throw err;
+      }
       if (mtime < facts.createdMs) continue;
       if (!best || mtime > best.mtime) best = { id, mtime };
     }
@@ -92,10 +111,21 @@ export class ClaudeSource implements SessionSource {
     for (const dirName of readdirSync(projects)) {
       if (!dirName.startsWith(prefix)) continue;
       const dir = join(projects, dirName);
-      for (const name of readdirSync(dir)) {
+      let names: string[];
+      try {
+        names = readdirSync(dir);
+      } catch (err) {
+        if (isEnoent(err)) continue;
+        throw err;
+      }
+      for (const name of names) {
         if (!name.endsWith(".jsonl")) continue;
         const path = join(dir, name);
-        out.push({ id: name.slice(0, -".jsonl".length), title: "", updatedAt: statSync(path).mtimeMs, path });
+        try {
+          out.push({ id: name.slice(0, -".jsonl".length), title: "", updatedAt: statSync(path).mtimeMs, path });
+        } catch (err) {
+          if (!isEnoent(err)) throw err;
+        }
       }
     }
     out.sort((a, b) => b.updatedAt - a.updatedAt);

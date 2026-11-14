@@ -428,6 +428,7 @@ export class PigeonDaemon {
           },
           sourceErrors: {
             usageScan: scanInfo.error,
+            agentAdapters: this.wsServer.getSourceErrors(),
           },
         };
       },
@@ -489,7 +490,21 @@ export class PigeonDaemon {
     void this.wsServer.refreshModels();
   }
 
+  private installProcessHandlers(): void {
+    if (Daemon.processHandlersInstalled) return;
+    Daemon.processHandlersInstalled = true;
+    process.on("uncaughtException", (err) => {
+      this.log(`uncaughtException: ${err instanceof Error ? err.stack || err.message : String(err)}`);
+    });
+    process.on("unhandledRejection", (reason) => {
+      this.log(`unhandledRejection: ${reason instanceof Error ? reason.stack || reason.message : String(reason)}`);
+    });
+  }
+
+  private static processHandlersInstalled = false;
+
   public async start(): Promise<void> {
+    this.installProcessHandlers();
     if (this.config.logPath) {
       mkdirSync(dirname(this.config.logPath), { recursive: true });
       writeFileSync(this.config.logPath, `[${new Date().toISOString()}] Pigeon daemon ${SERVER_VERSION} on port ${this.config.port}\n`, "utf-8");

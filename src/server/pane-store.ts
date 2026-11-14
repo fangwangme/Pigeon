@@ -77,6 +77,10 @@ export class PaneStore extends EventEmitter {
     return s ? { agent: s.agent, sessionId: s.sessionId } : null;
   }
 
+  public getSession(paneId: string): string | null {
+    return this.boundSession(paneId)?.sessionId ?? null;
+  }
+
   /** Binds a pane to a session; a different session replaces the old one. Returns whether it changed. */
   public registerPaneSession(paneId: string, agent: string, sessionId: string): boolean {
     const existing = this.paneStates.get(paneId);

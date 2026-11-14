@@ -27,6 +27,10 @@ export function claudeSlug(path: string): string {
  * line until its newline arrives (`agent-session-normalization.md` §4). `reset` is true when the
  * file shrank, so the caller must rebuild from the returned records.
  */
+export function isEnoent(err: unknown): boolean {
+  return typeof err === "object" && err !== null && (err as NodeJS.ErrnoException).code === "ENOENT";
+}
+
 export class JsonlTail {
   private offset = 0;
   private partial: Buffer = Buffer.alloc(0);
@@ -34,8 +38,13 @@ export class JsonlTail {
   constructor(public readonly path: string) {}
 
   public read(): { records: unknown[]; reset: boolean } {
-    if (!existsSync(this.path)) return { records: [], reset: false };
-    const size = statSync(this.path).size;
+    let size: number;
+    try {
+      size = statSync(this.path).size;
+    } catch (err) {
+      if (isEnoent(err)) return { records: [], reset: false };
+      throw err;
+    }
     let reset = false;
     if (size < this.offset) {
       this.offset = 0;
@@ -44,7 +53,13 @@ export class JsonlTail {
     }
     if (size === this.offset) return { records: [], reset };
     const buf = Buffer.alloc(size - this.offset);
-    const fd = openSync(this.path, "r");
+    let fd: number;
+    try {
+      fd = openSync(this.path, "r");
+    } catch (err) {
+      if (isEnoent(err)) return { records: [], reset: false };
+      throw err;
+    }
     try {
       readSync(fd, buf, 0, buf.length, this.offset);
     } finally {
@@ -80,7 +95,13 @@ function parseJsonLines(text: string): unknown[] {
 
 /** Reads the first line of a JSONL file without loading the rest. */
 export function readFirstJsonLine(path: string, maxBytes = 65_536): any {
-  const fd = openSync(path, "r");
+  let fd: number;
+  try {
+    fd = openSync(path, "r");
+  } catch (err) {
+    if (isEnoent(err)) return undefined;
+    throw err;
+  }
   try {
     const buf = Buffer.alloc(maxBytes);
     const n = readSync(fd, buf, 0, maxBytes, 0);
@@ -94,7 +115,13 @@ export function readFirstJsonLine(path: string, maxBytes = 65_536): any {
 
 /** Reads the head of a file as JSONL records (used for titles in listings). */
 export function readHeadJsonLines(path: string, maxBytes = 262_144): unknown[] {
-  const fd = openSync(path, "r");
+  let fd: number;
+  try {
+    fd = openSync(path, "r");
+  } catch (err) {
+    if (isEnoent(err)) return [];
+    throw err;
+  }
   try {
     const buf = Buffer.alloc(maxBytes);
     const n = readSync(fd, buf, 0, maxBytes, 0);
@@ -107,7 +134,13 @@ export function readHeadJsonLines(path: string, maxBytes = 262_144): unknown[] {
 }
 
 export function readTailJsonLines(path: string, maxBytes = 262_144): unknown[] {
-  const fd = openSync(path, "r");
+  let fd: number;
+  try {
+    fd = openSync(path, "r");
+  } catch (err) {
+    if (isEnoent(err)) return [];
+    throw err;
+  }
   try {
     const stat = statSync(path);
     const len = stat.size;
