@@ -156,7 +156,7 @@ export async function load(paneId: string): Promise<PaneCacheEntry | null> {
   const db = await openDb();
   if (!db) return null;
   return new Promise<PaneCacheEntry | null>((resolve, reject) => {
-    const tx = db.transaction(STORE_NAME, "readwrite");
+    const tx = db.transaction(STORE_NAME, "readonly");
     const store = tx.objectStore(STORE_NAME);
     const req = store.get(paneId);
     req.onsuccess = () => {
@@ -167,13 +167,10 @@ export async function load(paneId: string): Promise<PaneCacheEntry | null> {
         return resolve(null);
       }
       if (Date.now() - val.savedAt > PANE_CACHE_TTL_MS) {
-        store.delete(paneId);
         metaIndex.delete(paneId);
         inMemoryViews.delete(paneId);
         return resolve(null);
       }
-      val.lastAccess = Date.now();
-      store.put(val);
       updateMeta(val);
       inMemoryViews.set(paneId, val);
       resolve(val);
@@ -181,6 +178,9 @@ export async function load(paneId: string): Promise<PaneCacheEntry | null> {
     req.onerror = () => {
       console.error("[Pigeon] Failed to load pane cache for", paneId, req.error);
       reject(req.error);
+    };
+    tx.onerror = () => {
+      reject(tx.error);
     };
   });
 }
@@ -272,6 +272,7 @@ export async function remove(paneId: string): Promise<void> {
       console.error("[Pigeon] Failed to remove pane cache for", paneId, req.error);
       reject(req.error);
     };
+    tx.onerror = () => reject(tx.error);
   });
 }
 
@@ -289,6 +290,7 @@ export async function clearAll(): Promise<void> {
       console.error("[Pigeon] Failed to clear pane cache", req.error);
       reject(req.error);
     };
+    tx.onerror = () => reject(tx.error);
   });
 }
 

@@ -1,3 +1,4 @@
+import { reconcile } from "solid-js/store";
 import { state, setState, applySyncedClientConfig, setUnread, showToast, writePref } from "./store";
 import { load, save, remove, clearAll, sweep, meta, migrateLocalStorageCache, getMemoryPaneView, applyPaneTail, type PaneCacheEntry } from "./pane-cache";
 import type { ClientMessage, ServerMessage, SnapshotPayload, PaneStatePayload, ClientConfig, AgentStatus, HaveInfo, QuotaProviderState } from "../../../types/protocol";
@@ -116,7 +117,9 @@ async function isAuthenticated(): Promise<boolean> {
 function teardownSocket(ws: WebSocket | null): void {
   if (pingInterval) clearInterval(pingInterval);
   pingInterval = null;
-  for (const p of pending.values()) p.reject({ code: "ERR_OFFLINE", message: t("error.disconnected") });
+  for (const p of pending.values()) {
+    p.reject(Object.assign(new Error(t("error.disconnected")), { code: "ERR_OFFLINE" }));
+  }
   pending.clear();
   setState("connected", false);
   setState("configReady", false);
@@ -125,6 +128,7 @@ function teardownSocket(ws: WebSocket | null): void {
 
 /** Connects unless already paired-and-connected; shows pairing guidance when not paired. */
 export async function initWebSocket(): Promise<void> {
+  ensureVisibilityListener();
   if (socket && (socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CONNECTING)) return;
   let paired: boolean;
   try {
@@ -141,8 +145,10 @@ export async function initWebSocket(): Promise<void> {
   }
   setState("paired", true);
 
-  const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
-  const ws = new WebSocket(`${proto}//${window.location.host}/ws`);
+  const loc = typeof window !== "undefined" ? window.location : globalThis.location;
+  const proto = loc?.protocol === "https:" ? "wss:" : "ws:";
+  const host = loc?.host || "localhost";
+  const ws = new WebSocket(`${proto}//${host}/ws`);
   socket = ws;
 
   // Every handler checks it still belongs to the current socket: a replaced socket's late
@@ -295,7 +301,7 @@ export function handleServerMessage(msg: ServerMessage): void {
 
     case "snapshot_update":
       trackUnread(msg.payload);
-      setState("workspaces", msg.payload.workspaces);
+      setState("workspaces", reconcile(msg.payload.workspaces));
       if (state.herdrConnected) {
         const alive = msg.payload.workspaces.flatMap((w) => w.tabs.flatMap((t) => t.panes.map((p) => p.id)));
         const key = alive.slice().sort().join(",");
@@ -324,13 +330,13 @@ export function handleServerMessage(msg: ServerMessage): void {
       }
       if (msg.payload.turns) {
         setState({
-          normalizedTurns: msg.payload.turns.turns,
           sessionStats: msg.payload.turns.sessionStats || null,
           sessionTitle: msg.payload.turns.sessionTitle || null,
           todos: msg.payload.turns.todos || null,
           session: msg.payload.turns.session,
           paneSyncing: false,
         });
+        setState("normalizedTurns", reconcile(msg.payload.turns.turns));
         const metaInfo = meta(msg.payload.paneId);
         if (!msg.payload.turns.session?.bound || (metaInfo && metaInfo.sessionId !== msg.payload.turns.session?.sessionId)) {
           void remove(msg.payload.paneId);
@@ -347,7 +353,7 @@ export function handleServerMessage(msg: ServerMessage): void {
           if (patchLastTurn) current[Math.max(0, sinceTurnIndex - (appendTurns.length > 0 ? 1 : 0))] = patchLastTurn;
           if (appendTurns.length > 0) current = [...current.slice(0, sinceTurnIndex), ...appendTurns];
         }
-        setState("normalizedTurns", current);
+        setState("normalizedTurns", reconcile(current));
         if (sessionStats) setState("sessionStats", sessionStats);
         if (sessionTitle) setState("sessionTitle", sessionTitle);
         if (todos) setState("todos", todos);
@@ -369,13 +375,13 @@ export function handleServerMessage(msg: ServerMessage): void {
         paneSeqs.set(msg.payload.paneId, msg.payload.seq);
       }
       setState({
-        normalizedTurns: msg.payload.turns,
         sessionStats: msg.payload.sessionStats || null,
         sessionTitle: msg.payload.sessionTitle || null,
         todos: msg.payload.todos || null,
         session: msg.payload.session,
         paneSyncing: false,
       });
+      setState("normalizedTurns", reconcile(msg.payload.turns));
       const metaInfo = meta(msg.payload.paneId);
       if (!msg.payload.session?.bound || (metaInfo && metaInfo.sessionId !== msg.payload.session?.sessionId)) {
         void remove(msg.payload.paneId);
@@ -406,7 +412,7 @@ export function handleServerMessage(msg: ServerMessage): void {
         if (patchLastTurn) current[Math.max(0, sinceTurnIndex - (appendTurns.length > 0 ? 1 : 0))] = patchLastTurn;
         if (appendTurns.length > 0) current = [...current.slice(0, sinceTurnIndex), ...appendTurns];
       }
-      setState("normalizedTurns", current);
+      setState("normalizedTurns", reconcile(current));
       if (sessionStats) setState("sessionStats", sessionStats);
       if (sessionTitle) setState("sessionTitle", sessionTitle);
       if (todos) setState("todos", todos);
@@ -743,7 +749,11 @@ export function copyText(text: string): void {
 migrateLocalStorageCache();
 void sweep();
 
-if (typeof document !== "undefined") {
+let registeredDoc: unknown = null;
+
+function ensureVisibilityListener(): void {
+  if (typeof document === "undefined" || registeredDoc === document) return;
+  registeredDoc = document;
   document.addEventListener("visibilitychange", () => {
     if (document.visibilityState === "hidden" && state.activePaneId) {
       flushActivePaneSnapshot();
@@ -761,6 +771,8 @@ if (typeof document !== "undefined") {
     reportPresence();
   });
 }
+
+ensureVisibilityListener();
 
 if (typeof window !== "undefined") {
   window.addEventListener("pagehide", () => {

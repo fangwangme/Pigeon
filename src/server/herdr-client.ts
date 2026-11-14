@@ -449,6 +449,7 @@ export class HerdrClient extends EventEmitter {
         if (this.seenPanes.delete(paneId)) this.saveSeenPanes();
       }
       known.herdrStatus = status;
+      known.agentKind = this.agentKindOf(params.data.status);
       // relabelTabs() re-applies the last topology before the next snapshot arrives: keep it current.
       const term = this.lastTopology?.terminals.find((t) => t.address === paneId);
       if (term) term.status = params.data.status;
@@ -456,7 +457,11 @@ export class HerdrClient extends EventEmitter {
       this.checkReportedStatusChange(paneId);
       // The read re-classifies under the new status, which reaches viewers as a new pane_state.
       if (status === "blocked" || this.paneStates.has(paneId)) this.scheduleDebouncedRead(paneId);
-      if (this.lastTopology) this.applySnapshot(this.lastTopology);
+      if (this.currentSnapshot.workspaces.length > 0) {
+        this.updateSinglePaneSnapshot(paneId);
+      } else if (this.lastTopology) {
+        this.applySnapshot(this.lastTopology);
+      }
       return;
     }
     if (TOPOLOGY_EVENTS.has(params.type)) this.scheduleSnapshot();
@@ -564,59 +569,21 @@ export class HerdrClient extends EventEmitter {
       return branches.get(folder);
     };
 
-    const workingAgents: WorkingAgentSummary[] = [];
     const workspaces: WorkspaceSummary[] = topology.ls.spaces.map((space) => {
-      let hasWarn = false;
-      let hasWorking = false;
       const folder = this.workspaceFolders.get(space.id)!;
       const workspaceLabel = space.name || basename(folder);
 
       const tabs: TabSummary[] = space.tabs.map((tab, tabIdx) => {
-        const panes: PaneSummary[] = tab.terminals.map((ref, idx) => {
-          const known = nextKnown.get(ref.terminal)!;
-          const agentStatus = this.effectiveStatus(ref.terminal);
-          if (agentStatus === "blocked") hasWarn = true;
-          if (agentStatus === "working") hasWorking = true;
-          const name = ref.name || terminals.get(ref.terminal)?.name || ref.terminal;
-          const { summary, summaryKind } = this.summarizePane(ref.terminal, known.title);
-          if (known.agentKind) {
-            workingAgents.push({
-              agent: known.agentKind,
-              name,
-              status: agentStatus,
-              workspaceId: space.id,
-              workspaceLabel,
-              tabId: tab.id,
-              paneId: ref.terminal,
-              summary,
-              summaryKind,
-            });
-          }
-          const model = this.sessionModelOf(ref.terminal);
-          return {
-            id: ref.terminal,
-            agent: known.agentKind,
-            agentStatus,
-            isPrimary: idx === 0,
-            name,
-            ...(known.program ? { program: known.program } : {}),
-            ...(model ? { model } : {}),
-            ...(summaryKind ? { summary, summaryKind } : {}),
-          };
-        });
-
-        // protocol.md §5.3: a name the user gave the tab, else the bound session's title, else the agent.
-        let tabLabel = tab.name;
-        if (!tabLabel || /^\d+$/.test(tabLabel.trim())) {
-          const primary = panes[0];
-          const recipe = primary?.agent ? getAgentRecipe(primary.agent) : undefined;
-          tabLabel = (primary && this.sessionTitleOf(primary.id)) || recipe?.label || `Tab ${tabIdx + 1}`;
-        }
+        const panes: PaneSummary[] = tab.terminals.map((ref, idx) =>
+          this.buildPaneSummary(ref.terminal, ref.name || terminals.get(ref.terminal)?.name || ref.terminal, idx === 0, nextKnown.get(ref.terminal)!)
+        );
+        const tabLabel = this.resolveTabLabel(tab.name, panes[0], tabIdx);
         const tabBranch = branchOf(nextKnown.get(tab.terminals[0]?.terminal ?? "")?.cwd);
         return { id: tab.id, label: tabLabel, ...(tabBranch ? { branch: tabBranch } : {}), paneCount: panes.length, panes };
       });
 
       const branch = branchOf(folder);
+      const { hasWarn, hasWorking } = this.workspaceFlags(tabs);
       return {
         id: space.id,
         label: workspaceLabel,
@@ -631,9 +598,95 @@ export class HerdrClient extends EventEmitter {
       };
     });
 
+    const workingAgents = this.collectWorkingAgents(workspaces);
     this.currentSnapshot = { workspaces, workingAgents };
     this.emit("snapshot_updated", this.currentSnapshot);
     return this.currentSnapshot;
+  }
+
+  private buildPaneSummary(paneId: string, name: string, isPrimary: boolean, known: KnownPane): PaneSummary {
+    const agentStatus = this.effectiveStatus(paneId);
+    const { summary, summaryKind } = this.summarizePane(paneId, known.title);
+    const model = this.sessionModelOf(paneId);
+    return {
+      id: paneId,
+      agent: known.agentKind,
+      agentStatus,
+      isPrimary,
+      name,
+      ...(known.program ? { program: known.program } : {}),
+      ...(model ? { model } : {}),
+      ...(summaryKind ? { summary, summaryKind } : {}),
+    };
+  }
+
+  /** protocol.md §5.3: a name the user gave the tab, else the bound session's title, else the agent. */
+  private resolveTabLabel(rawName: string | undefined, primary: PaneSummary | undefined, tabIdx: number): string {
+    if (rawName && !/^\d+$/.test(rawName.trim())) return rawName;
+    const recipe = primary?.agent ? getAgentRecipe(primary.agent) : undefined;
+    return (primary && this.sessionTitleOf(primary.id)) || recipe?.label || `Tab ${tabIdx + 1}`;
+  }
+
+  private workspaceFlags(tabs: TabSummary[]): { hasWarn: boolean; hasWorking: boolean } {
+    let hasWarn = false;
+    let hasWorking = false;
+    for (const tab of tabs) {
+      for (const pane of tab.panes) {
+        if (pane.agentStatus === "blocked") hasWarn = true;
+        if (pane.agentStatus === "working") hasWorking = true;
+      }
+    }
+    return { hasWarn, hasWorking };
+  }
+
+  private collectWorkingAgents(workspaces: WorkspaceSummary[]): WorkingAgentSummary[] {
+    const workingAgents: WorkingAgentSummary[] = [];
+    for (const ws of workspaces) {
+      for (const tab of ws.tabs) {
+        for (const pane of tab.panes) {
+          if (!pane.agent) continue;
+          workingAgents.push({
+            agent: pane.agent,
+            name: pane.name,
+            status: pane.agentStatus,
+            workspaceId: ws.id,
+            workspaceLabel: ws.label,
+            tabId: tab.id,
+            paneId: pane.id,
+            summary: pane.summary,
+            summaryKind: pane.summaryKind,
+          });
+        }
+      }
+    }
+    return workingAgents;
+  }
+
+  /** Updates only the workspace/tab/pane affected by a single-pane `status` event. */
+  private updateSinglePaneSnapshot(paneId: string): void {
+    const known = this.knownPanes.get(paneId);
+    if (!known) return;
+    let changed = false;
+    const workspaces = this.currentSnapshot.workspaces.map((ws) => {
+      if (ws.id !== known.workspaceId) return ws;
+      const topoSpace = this.lastTopology?.ls.spaces.find((s) => s.id === ws.id);
+      const tabs = ws.tabs.map((tab, tabIdx) => {
+        if (tab.id !== known.tabId) return tab;
+        const panes = tab.panes.map((pane) => {
+          if (pane.id !== paneId) return pane;
+          changed = true;
+          return this.buildPaneSummary(pane.id, pane.name, pane.isPrimary, known);
+        });
+        const rawName = topoSpace?.tabs.find((t) => t.id === tab.id)?.name;
+        const tabLabel = rawName !== undefined ? this.resolveTabLabel(rawName, panes[0], tabIdx) : tab.label;
+        return { ...tab, label: tabLabel, panes };
+      });
+      const { hasWarn, hasWorking } = this.workspaceFlags(tabs);
+      return { ...ws, hasWarn, hasWorking, tabs };
+    });
+    if (!changed) return;
+    this.currentSnapshot = { workspaces, workingAgents: this.collectWorkingAgents(workspaces) };
+    this.emit("snapshot_updated", this.currentSnapshot, { paneId });
   }
 
   /** herdr-adapter.md §4: a terminal is an agent while its program reports a status. */

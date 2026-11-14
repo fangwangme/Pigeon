@@ -1,4 +1,4 @@
-import { createSignal, For, Match, Show, Switch } from "solid-js";
+import { createSignal, For, Index, Match, Show, Switch } from "solid-js";
 import { state } from "../state/store";
 import { copyText, getDetail } from "../state/ws";
 import { renderMarkdown } from "../utils/markdown";
@@ -20,18 +20,20 @@ const VERB_COUNT: Record<ToolVerb, MessageId> = {
 };
 const VERB_ORDER: ToolVerb[] = ["read", "search", "edit", "create", "run", "other"];
 
-/** Wraps code blocks with a copy button (§3.2); clicks are handled by `onMarkdownClick`. */
+/** Injects the copy button into code block headers (§3.2); clicks are handled by `onMarkdownClick`. */
 function markdownHtml(md: string): string {
+  const btn = `<button class="cpy" data-copy type="button">${t("common.copy")}</button>`;
   return renderMarkdown(md)
-    .replace(/<pre>/g, `<div class="cb"><button class="cpy" data-copy type="button">${t("common.copy")}</button><pre>`)
-    .replace(/<\/pre>/g, "</pre></div>");
+    .replace(/<div class="cb-hdr">([\s\S]*?)<\/div>/g, `<div class="cb-hdr">$1${btn}</div>`)
+    .replace(/(?<!<\/div>)<pre>/g, `<div class="cb"><div class="cb-hdr"><span class="cb-lang"></span>${btn}</div><pre>`)
+    .replace(/<\/pre>(?!<\/div>)/g, "</pre></div>");
 }
 
 function onMarkdownClick(e: MouseEvent): void {
   const target = e.target instanceof Element ? e.target : (e.target as Node | null)?.parentElement;
   const btn = target?.closest("[data-copy]");
   if (!btn) return;
-  const pre = btn.parentElement?.querySelector("pre");
+  const pre = btn.closest(".cb")?.querySelector("pre") ?? btn.parentElement?.querySelector("pre");
   if (pre) copyText(pre.textContent ?? "");
 }
 
@@ -573,35 +575,35 @@ export function Turn(props: { turn: NormalizedTurn; last: boolean; working: bool
       <Show when={props.turn.reasoning?.text}>
         <Reasoning text={props.turn.reasoning!.text} durationMs={props.turn.reasoning!.durationMs} streaming={props.turn.reasoning!.isStreaming} />
       </Show>
-      <For each={blocks()}>
+      <Index each={blocks()}>
         {(b) => (
           <Switch>
-            <Match when={b.kind === "text"}>
-              <Markdown md={(b as { markdown: string }).markdown} />
+            <Match when={b().kind === "text"}>
+              <Markdown md={(b() as { markdown: string }).markdown} />
             </Match>
-            <Match when={b.kind === "tools"}>
-              <ToolLine calls={(b as { calls: NormalizedToolCall[] }).calls} />
+            <Match when={b().kind === "tools"}>
+              <ToolLine calls={(b() as { calls: NormalizedToolCall[] }).calls} />
             </Match>
-            <Match when={b.kind === "todo"}>
+            <Match when={b().kind === "todo"}>
               <button class="tool" onClick={openTodos}>
                 <Icon name="list" sm />
                 <span class="lab">
-                  {t("todo.progress", { done: (b as { done: number }).done, total: (b as { total: number }).total })}
+                  {t("todo.progress", { done: (b() as { done: number }).done, total: (b() as { total: number }).total })}
                 </span>
                 <Icon name="chevR" sm class="chev" />
               </button>
             </Match>
-            <Match when={b.kind === "compact"}>
-              <Compaction summary={(b as { summary: string }).summary} />
+            <Match when={b().kind === "compact"}>
+              <Compaction summary={(b() as { summary: string }).summary} />
             </Match>
-            <Match when={b.kind === "error"}>
+            <Match when={b().kind === "error"}>
               <div class="turn-error" style={{ color: "var(--danger)", margin: "8px 0", "font-size": "14px", "line-height": "1.5" }}>
-                {(b as { text: string }).text}
+                {(b() as { text: string }).text}
               </div>
             </Match>
           </Switch>
         )}
-      </For>
+      </Index>
       <Show when={finished()}>
         <div class="acts" style={{ display: "flex", "align-items": "center", "justify-content": "space-between" }}>
           <div style={{ display: "flex", gap: "6px" }}>
