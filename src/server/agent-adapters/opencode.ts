@@ -17,7 +17,8 @@ export interface OpenCodeAdapterOptions {
 export const OPENCODE_PLACEHOLDER_TITLE = /^New session - \d{4}-\d{2}-\d{2}T/;
 
 interface CachedOpenCodeSession {
-  timeUpdated: number | null;
+  /** The session row's and its messages' update marks; OpenCode updates message rows without touching the session row. */
+  changeKey: string | null;
   turns: NormalizedTurn[];
   stats?: SessionStats;
   sessionTitle?: string;
@@ -87,8 +88,12 @@ export class OpenCodeAdapter {
         const sessionRow: any = db.query(sessionSelect).get(sessionId);
 
         const timeUpdated: number | null = typeof sessionRow?.time_updated === "number" ? sessionRow.time_updated : null;
+        const marks = db
+          .query("SELECT COUNT(*) AS n, MAX(time_updated) AS t FROM session_message WHERE session_id = ?")
+          .get(sessionId) as { n: number; t: number | null } | null;
+        const changeKey = timeUpdated === null ? null : `${timeUpdated}|${marks?.n ?? 0}|${marks?.t ?? ""}`;
         const cached = this.cache.get(sessionId);
-        if (incremental && cached && timeUpdated !== null && cached.timeUpdated === timeUpdated) {
+        if (incremental && cached && changeKey !== null && cached.changeKey === changeKey) {
           return {
             turns: cached.turns,
             stats: cached.stats,
@@ -290,7 +295,7 @@ export class OpenCodeAdapter {
         const isPlaceholder = typeof sessionRow?.title === "string" && OPENCODE_PLACEHOLDER_TITLE.test(sessionRow.title);
         const sessionTitle = typeof sessionRow?.title === "string" && sessionRow.title && !isPlaceholder ? sessionRow.title : undefined;
         const result = { turns, stats, sessionTitle, ...(model ? { model } : {}) };
-        this.cache.set(sessionId, { timeUpdated, ...result });
+        this.cache.set(sessionId, { changeKey, ...result });
         return result;
       }) ?? { turns: [] }
     );

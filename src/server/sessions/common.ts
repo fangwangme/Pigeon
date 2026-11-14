@@ -366,6 +366,15 @@ export class TurnBuilder {
     }
   }
 
+  /** Removes a call that later records replace (a Codex `exec` wrapper once its commands arrive). */
+  public dropTool(id: string): void {
+    if (!this.calls.delete(id)) return;
+    for (const turn of this.turns) {
+      turn.toolCalls = turn.toolCalls?.filter((c) => c.id !== id);
+      turn.items = turn.items?.filter((i) => i.kind !== "tool" || i.call.id !== id);
+    }
+  }
+
   /** Attaches a result; `verb`/`diffStatus` let the result refine what the call did. */
   public toolResult(id: string, output: string | undefined, isError: boolean, timestamp?: number, exitCode?: number): NormalizedToolCall | undefined {
     const entry = this.calls.get(id);

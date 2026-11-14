@@ -49,6 +49,7 @@ export class PricingManager {
   private catalog = new Map<string, ModelPrice>();
   private loaded = false;
   private lastFetchAt = 0;
+  private catalogVersion = 0;
   private pricesAvailable = false;
   private nextRetryAt = 0;
   private retryIntervalMs: number;
@@ -69,10 +70,16 @@ export class PricingManager {
     return Array.from(this.catalog.entries());
   }
 
+  /** Changes whenever the catalog may have been (re)loaded, so callers redo price-derived work only then. */
+  public getCatalogVersion(): number {
+    return this.catalogVersion;
+  }
+
   public async initialize(): Promise<void> {
     const now = this.now();
     if (this.loaded && now - this.lastFetchAt <= DAY_MS) return;
     if (now < this.nextRetryAt) return;
+    this.catalogVersion++;
 
     // 1. Try disk cache
     const cacheResult = this.loadFromCache(this.cachePath);

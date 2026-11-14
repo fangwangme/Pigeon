@@ -8,8 +8,11 @@ import { discoverAntigravityLs, isLoopbackAddress } from "../usage/antigravity-l
 export interface AntigravityQuotaProviderOptions {
   home?: string;
   now?: () => number;
+  /** The `/usage` command; tests replace it so no real agy runs. */
+  agyUsageCommand?: string[];
 }
 
+const DEFAULT_AGY_USAGE_COMMAND = ["agy", "-p", "/usage", "--output-format", "json"];
 const FIVE_HOURS_MS = 5 * 60 * 60 * 1000;
 const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000;
 
@@ -39,10 +42,12 @@ function windowDescriptor(window: string): { suffix: string; periodMs: number | 
 export class AntigravityQuotaProvider {
   private home: string;
   private now: () => number;
+  private agyUsageCommand: string[];
 
   constructor(options: AntigravityQuotaProviderOptions = {}) {
     this.home = options.home ?? process.env.HOME ?? "";
     this.now = options.now ?? (() => Date.now());
+    this.agyUsageCommand = options.agyUsageCommand ?? DEFAULT_AGY_USAGE_COMMAND;
   }
 
   private tokenPath(): string {
@@ -109,20 +114,15 @@ export class AntigravityQuotaProvider {
       errors.push(`Language server RPC: ${(err as Error).message}`);
     }
 
-    // Source 2: Cloud Code OAuth expiry fast-fail + agy CLI fallback
-    const expiredMsg = this.checkExpiredOAuthToken();
-    if (expiredMsg) {
-      errors.push(`Cloud Code API: ${expiredMsg}`);
-    } else {
-      try {
-        const snap = await this.probeAgyCli();
-        if (snap) return snap;
-      } catch (err) {
-        errors.push(`agy CLI: ${(err as Error).message}`);
-      }
+    // Source 2: agy CLI. The CLI refreshes its own login, so an expired token file does not skip it (§2.3).
+    try {
+      const snap = await this.probeAgyCli();
+      if (snap) return snap;
+    } catch (err) {
+      errors.push(`agy CLI: ${(err as Error).message}`);
     }
 
-    // Source 3: Cloud Code API
+    // Source 3: Cloud Code API (read-only token; expired → "login expired")
     try {
       const snap = await this.probeCloudCode();
       if (snap) return snap;
@@ -189,31 +189,8 @@ export class AntigravityQuotaProvider {
     return this.buildSnapshotFromGroups(summary.groups, lsEmail, lsPlan);
   }
 
-  private checkExpiredOAuthToken(): string | null {
-    const raw = fileCredentialSource(this.tokenPath()).read();
-    if (raw === null) return null;
-    try {
-      const parsed = JSON.parse(raw);
-      const tokenObj = parsed?.token ?? parsed;
-      const expiry =
-        typeof tokenObj?.expiry_date === "number"
-          ? tokenObj.expiry_date
-          : typeof parsed?.expiry_date === "number"
-          ? parsed.expiry_date
-          : tokenObj?.expiry
-          ? Date.parse(tokenObj.expiry)
-          : 0;
-      if (expiry && this.now() >= expiry) {
-        return "Antigravity login expired — open Antigravity to refresh it";
-      }
-    } catch {
-      // let probeCloudCode surface parse error if needed
-    }
-    return null;
-  }
-
   private async probeAgyCli(): Promise<QuotaSnapshot | null> {
-    const proc = Bun.spawn(["agy", "-p", "/usage", "--output-format", "json"], {
+    const proc = Bun.spawn(this.agyUsageCommand, {
       stdout: "pipe",
       stderr: "pipe",
       env: {
@@ -224,14 +201,15 @@ export class AntigravityQuotaProvider {
       },
     });
 
-    const timeout = new Promise<never>((_, reject) =>
-      setTimeout(() => {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const timeout = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => {
         proc.kill();
         reject(new Error("agy CLI timed out after 15s"));
-      }, 15000)
-    );
+      }, 15000);
+    });
 
-    const result = await Promise.race([proc.exited, timeout]);
+    const result = await Promise.race([proc.exited, timeout]).finally(() => clearTimeout(timer));
     if (result !== 0) {
       const err = await new Response(proc.stderr).text();
       throw new Error(`agy CLI exited with code ${result}: ${err}`);

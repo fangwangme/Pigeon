@@ -1340,24 +1340,10 @@ export class WsServer {
       return;
     }
     this.logger?.(`${this.paneLogLabel(paneId)} prompt: sent immediate`);
-    try {
-      await this.herdrClient.sendPrompt(paneId, send);
-      if (replyTo) this.sendAck(ws, replyTo, { queued: false });
-    } catch (err) {
-      const isOffline =
-        err instanceof HerdrError && (UNREACHABLE_CODES.has(err.code) || err.code === "closed" || err.code === "ERR_UPSTREAM_OFFLINE");
-      if (isOffline) {
-        this.offlineQueuedPanes.add(paneId);
-        const facts = this.herdrClient.getPaneFacts(paneId);
-        const created_ms = facts?.createdMs ?? 0;
-        const item: QueuedPrompt = { queueId: `q_${randomBytes(6).toString("hex")}`, ...shown, sending: false, createdAt: Date.now() };
-        queue.push({ item, send, created_ms });
-        this.queues.set(paneId, queue);
-        this.saveQueues();
-        this.sendQueue(paneId);
-      }
-      throw err;
-    }
+    // protocol.md §4.2: an immediate send Herdr did not receive is answered with the error and not queued;
+    // the phone keeps the draft, so queueing it too would deliver it twice once the user resends.
+    await this.herdrClient.sendPrompt(paneId, send);
+    if (replyTo) this.sendAck(ws, replyTo, { queued: false });
   }
 
   public clearSendingPrompt(paneId: string, queueId?: string): void {
@@ -1528,7 +1514,8 @@ export class WsServer {
     if (!queue || queue.length === 0) return;
 
     const herdrStatus = this.herdrClient.getPaneHerdrStatus(paneId);
-    if (herdrStatus === "working" || herdrStatus === "blocked") return;
+    // protocol.md §4.2: a batch goes out only while the pane is `idle` or `done`.
+    if (herdrStatus !== "idle" && herdrStatus !== "done") return;
 
     // protocol.md §4.2: everything queued goes out as one prompt, in queue order.
     const batch = [...queue];

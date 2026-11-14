@@ -167,8 +167,22 @@ describe("antigravity & codex quota providers (quota-and-usage.md §2.2, §2.3)"
     });
     writeFileSync(agyTokPath, agyTokContent, "utf-8");
 
-    const agy = new AntigravityQuotaProvider({ home: dir, now: () => 1_700_000_000_000 });
+    const agy = new AntigravityQuotaProvider({ home: dir, now: () => 1_700_000_000_000, agyUsageCommand: ["sh", "-c", "exit 1"] });
     await expect(agy.fetch()).rejects.toThrow(/login expired/i);
+    expect(readFileSync(agyTokPath, "utf-8")).toBe(agyTokContent);
+  });
+
+  test("Antigravity still asks the agy CLI when its token file has expired (the CLI refreshes its own login)", async () => {
+    const dir = tempDir("quota-agy-cli");
+    mkdirSync(join(dir, ".gemini", "antigravity-cli"), { recursive: true });
+    const agyTokPath = join(dir, ".gemini", "antigravity-cli", "antigravity-oauth-token");
+    const agyTokContent = JSON.stringify({ access_token: "old", refresh_token: "rt", expiry_date: 1_000 });
+    writeFileSync(agyTokPath, agyTokContent, "utf-8");
+    const fixturePath = join(import.meta.dir, "fixtures", "agy-usage-groups.json");
+
+    const agy = new AntigravityQuotaProvider({ home: dir, now: () => 1_700_000_000_000, agyUsageCommand: ["cat", fixturePath] });
+    const snap = await agy.fetch();
+    expect(snap.windows.map((w) => w.id)).toContain("3p-weekly");
     expect(readFileSync(agyTokPath, "utf-8")).toBe(agyTokContent);
   });
 

@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, spyOn, test } from "bun:test";
 import { Database } from "bun:sqlite";
-import { appendFileSync, copyFileSync, mkdirSync, readlinkSync, realpathSync, utimesSync, writeFileSync } from "node:fs";
+import { appendFileSync, copyFileSync, mkdirSync, readFileSync, readlinkSync, realpathSync, utimesSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { getAgentRecipe } from "../src/server/agent-recipes";
 import { AgentAdapterManager } from "../src/server/agent-adapters/index";
@@ -935,6 +935,26 @@ describe("source robustness and Codex 0.169+ parsing (agent-session-normalizatio
     const execTools = t.toolCalls?.filter((tool) => tool.verb === "run") ?? [];
     expect(execTools).toHaveLength(2);
     expect(t.assistantResponse?.markdown.trim()).toBe("Updated hello.ts.");
+  });
+
+  test("a Codex exec wrapper shows as running until its CommandExecution items replace it", () => {
+    const home = tempDir("codex-exec-live");
+    const sessionsDir = join(home, ".codex", "sessions", "2026", "11", "10");
+    mkdirSync(sessionsDir, { recursive: true });
+    const path = join(sessionsDir, "rollout-2026-11-10T11-18-53-codex-main-0169.jsonl");
+    const lines = readFileSync(join(import.meta.dir, "fixtures", "codex-0.169-rollout.jsonl"), "utf-8").trimEnd().split("\n");
+    // Up to and including the `exec` custom_tool_call: the command is still running.
+    writeFileSync(path, lines.slice(0, 5).join("\n") + "\n", "utf-8");
+
+    const codex = new CodexSource(home);
+    expect(codex.newest({ agent: "codex", pid: 0, cwd: "/tmp/project", createdMs: 0 }, new Set())).toBe("codex-main-0169");
+    const running = codex.read("codex-main-0169", false).turns[0].toolCalls ?? [];
+    expect(running.map((c) => [c.id, c.status])).toEqual([["call_exec_1", "running"]]);
+
+    appendFileSync(path, lines.slice(5).join("\n") + "\n", "utf-8");
+    const done = codex.read("codex-main-0169", true).turns[0].toolCalls ?? [];
+    expect(done.some((c) => c.id === "call_exec_1")).toBe(false);
+    expect(done.filter((c) => c.verb === "run").map((c) => c.id)).toEqual(["cmd_1", "call_stdin_1"]);
   });
 
   test("Claude extracts custom-title from tail beyond 64KB and assigns deterministic fallback timestamps", async () => {

@@ -36,6 +36,7 @@ describe("structured session adapters (agent-session-normalization.md §2)", () 
           type text NOT NULL,
           seq integer NOT NULL,
           time_created integer NOT NULL,
+          time_updated integer,
           data text NOT NULL
         );
       `);
@@ -186,6 +187,23 @@ describe("structured session adapters (agent-session-normalization.md §2)", () 
         { id: "ses_untitled", title: "First prompt fallback title", updatedAt: 3000 },
         { id: "ses_mock_1", title: "Test Session", updatedAt: 2000 },
       ]);
+    });
+
+    test("an incremental read sees a message row OpenCode updated without touching the session row (agent-session-normalization.md §2.1)", () => {
+      const path = join(testDir, "opencode_streaming.db");
+      const db = new Database(path);
+      db.run("CREATE TABLE session_v2 (id text PRIMARY KEY, directory text, title text, time_updated integer, time_archived integer, summary_additions integer, summary_deletions integer, summary_files integer, summary_diffs text)");
+      db.run("CREATE TABLE session_message (id text PRIMARY KEY, session_id text NOT NULL, type text NOT NULL, seq integer NOT NULL, time_created integer NOT NULL, time_updated integer NOT NULL, data text NOT NULL)");
+      db.run("INSERT INTO session_v2 (id, directory, title, time_updated) VALUES ('ses_s', '/work', 'Streaming', 1000)");
+      db.run("INSERT INTO session_message VALUES ('m_u', 'ses_s', 'user', 1, 1000, 1000, ?)", [JSON.stringify({ text: "go" })]);
+      db.run("INSERT INTO session_message VALUES ('m_a', 'ses_s', 'assistant', 2, 1001, 1001, ?)", [JSON.stringify({ content: [{ type: "text", text: "Hel" }] })]);
+
+      const adapter = new OpenCodeAdapter({ dbPath: path });
+      expect(adapter.getTurns("ses_s").turns[0].assistantResponse?.markdown).toBe("Hel");
+      // Streaming: the assistant row grows; the session row keeps its time_updated.
+      db.run("UPDATE session_message SET data = ?, time_updated = 1500 WHERE id = 'm_a'", [JSON.stringify({ content: [{ type: "text", text: "Hello there" }] })]);
+      expect(adapter.getTurns("ses_s", true).turns[0].assistantResponse?.markdown).toBe("Hello there");
+      db.close();
     });
 
     test("Gracefully handles non-existent session ID", () => {

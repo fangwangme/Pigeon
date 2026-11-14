@@ -22,7 +22,8 @@ function mtimeOf(path: string | undefined): number | null {
 }
 
 interface CodexParseState {
-  pendingExec?: { callId: string; input: Record<string, any>; rawInput: unknown; ts: number };
+  /** The open `exec` wrapper call: shown running until its `CommandExecution` items replace it or its output arrives. */
+  pendingExec?: { callId: string; replaced: boolean };
   lastAgentMessage?: string;
 }
 
@@ -259,20 +260,16 @@ function durationMsOf(item: Record<string, any>): number | undefined {
   return undefined;
 }
 
-function flushPendingExec(b: TurnBuilder, state: CodexParseState): void {
-  const pe = state.pendingExec;
-  if (!pe) return;
-  state.pendingExec = undefined;
-  const target = commandOf(pe.input) ?? (typeof pe.rawInput === "string" ? pe.rawInput.trim() : undefined);
-  b.toolUse({ id: pe.callId, name: "exec", input: Object.keys(pe.input).length ? pe.input : typeof pe.rawInput === "string" ? pe.rawInput : {}, verb: "run", target, timestamp: pe.ts }, pe.ts);
-}
-
 function applyItemCompleted(b: TurnBuilder, item: Record<string, any>, ts: number, state: CodexParseState): void {
   const kind = str(item.type);
   const dur = durationMsOf(item);
   switch (kind) {
     case "CommandExecution": {
-      state.pendingExec = undefined; // deduplicate pending `exec` custom_tool_call
+      // The commands the `exec` wrapper ran replace the wrapper, so nothing shows twice.
+      if (state.pendingExec && !state.pendingExec.replaced) {
+        b.dropTool(state.pendingExec.callId);
+        state.pendingExec.replaced = true;
+      }
       const id = str(item.id) ?? `cmd_${ts}`;
       const cmd = str(item.command) ?? commandOf(item);
       const output = str(item.aggregated_output) ?? str(item.output);
@@ -284,7 +281,6 @@ function applyItemCompleted(b: TurnBuilder, item: Record<string, any>, ts: numbe
       return;
     }
     case "FileChange": {
-      flushPendingExec(b, state);
       const id = str(item.id) ?? `fc_${ts}`;
       const diffs: FileDiffSummary[] = [];
       const addChange = (filePath: string, ch: Record<string, any>) => {
@@ -312,7 +308,6 @@ function applyItemCompleted(b: TurnBuilder, item: Record<string, any>, ts: numbe
       return;
     }
     case "McpToolCall": {
-      flushPendingExec(b, state);
       const id = str(item.id) ?? `mcp_${ts}`;
       const server = str(item.server);
       const tool = str(item.tool);
@@ -333,12 +328,10 @@ function applyItemCompleted(b: TurnBuilder, item: Record<string, any>, ts: numbe
       return;
     }
     case "ContextCompaction": {
-      flushPendingExec(b, state);
       b.compact(str(item.summary) ?? "Context compacted", ts);
       return;
     }
     case "AgentMessage": {
-      flushPendingExec(b, state);
       const text = str(item.text) ?? messageText(item.content);
       if (text && text.trim() && state.lastAgentMessage !== text) {
         state.lastAgentMessage = text;
@@ -375,12 +368,10 @@ function applyRecord(b: TurnBuilder, r: unknown, state: CodexParseState): void {
       const text = messageText(p.content);
       if (p.role === "user") {
         if (text && !NOT_PROMPT.test(text)) {
-          flushPendingExec(b, state);
           state.lastAgentMessage = undefined;
           b.prompt(text, ts);
         }
       } else if (p.role === "assistant") {
-        flushPendingExec(b, state);
         if (state.lastAgentMessage !== text) {
           state.lastAgentMessage = text;
           b.text(text, ts);
@@ -399,11 +390,12 @@ function applyRecord(b: TurnBuilder, r: unknown, state: CodexParseState): void {
       const name = str(p.name);
       if (!id || !name) return;
       if (name === "exec" && p.type === "custom_tool_call") {
-        flushPendingExec(b, state);
-        state.pendingExec = { callId: id, input: parseArgs(p.input), rawInput: p.input, ts };
+        const input = parseArgs(p.input);
+        const target = commandOf(input) ?? (typeof p.input === "string" ? p.input.trim() : undefined);
+        b.toolUse({ id, name, input: Object.keys(input).length ? input : typeof p.input === "string" ? p.input : {}, verb: "run", target, timestamp: ts }, ts);
+        state.pendingExec = { callId: id, replaced: false };
         return;
       }
-      flushPendingExec(b, state);
       if (name === "apply_patch") {
         const patch = p.type === "custom_tool_call" ? str(p.input) ?? "" : str(parseArgs(p.arguments).input) ?? "";
         const diffs = patchDiffs(patch);
@@ -433,7 +425,9 @@ function applyRecord(b: TurnBuilder, r: unknown, state: CodexParseState): void {
       const id = str(p.call_id);
       if (!id) return;
       if (state.pendingExec?.callId === id) {
-        flushPendingExec(b, state);
+        const { replaced } = state.pendingExec;
+        state.pendingExec = undefined;
+        if (replaced) return; // its commands already carry the results
       }
       const { output, exitCode } = shellOutput(p.output);
       b.toolResult(id, output, exitCode !== undefined && exitCode !== 0, ts, exitCode);

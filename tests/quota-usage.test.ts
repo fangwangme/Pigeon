@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { Database } from "bun:sqlite";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -570,6 +570,12 @@ describe("quota config and usage request validation (quota-and-usage.md §2.5, p
     expect(row2.cost).toBeCloseTo(3, 5);
     const periods1 = db.query("SELECT effective_from, effective_to, input_rate FROM model_price_periods").all() as any[];
     expect(periods1).toEqual([{ effective_from: "0000-01-01", effective_to: null, input_rate: 3 }]);
+
+    // §3.3: an unchanged catalog does not re-walk the price periods on the next scan.
+    const entriesSpy = spyOn(okPricing, "getCatalogEntries");
+    await store.scanIncremental(okPricing);
+    expect(entriesSpy).not.toHaveBeenCalled();
+    entriesSpy.mockRestore();
 
     clock = Date.parse("2026-11-14T10:00:00Z");
     priceInput = 6;
