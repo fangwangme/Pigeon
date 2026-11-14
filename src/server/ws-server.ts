@@ -1342,7 +1342,7 @@ export class WsServer {
     this.logger?.(`${this.paneLogLabel(paneId)} prompt: sent immediate`);
     // protocol.md §4.2: an immediate send Herdr did not receive is answered with the error and not queued;
     // the phone keeps the draft, so queueing it too would deliver it twice once the user resends.
-    await this.herdrClient.sendPrompt(paneId, send);
+    await this.herdrClient.sendPrompt(paneId, send, shown.attachments.length > 0);
     if (replyTo) this.sendAck(ws, replyTo, { queued: false });
   }
 
@@ -1537,7 +1537,7 @@ export class WsServer {
 
     void (async () => {
       try {
-        await this.herdrClient.sendPrompt(paneId, send);
+        await this.herdrClient.sendPrompt(paneId, send, batch.some((e) => e.item.attachments.length > 0));
         this.transitionQueue(paneId, { type: "send_result", success: true, queueId });
       } catch (err) {
         this.transitionQueue(paneId, { type: "send_result", success: false, error: err, queueId });

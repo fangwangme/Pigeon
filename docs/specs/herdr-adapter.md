@@ -105,6 +105,7 @@ The `terminal` recipe sends no `argv`, so the tab starts the machine's shell.
 ## 6. Prompting and Command Execution
 
 - **Prompt**: Core `terminal.send { terminal, text }` for every pane. It pastes the text and presses Enter once nobody has typed for about 3 seconds.
+- **Attachment submit check** (2026-11-14): an agent can still be turning pasted file paths into attachments (Claude Code shows `[Image #n]`) when the Enter arrives, and then drops it: the prompt stays in its input box until the next send. So about a second after a prompt with attachments is sent, the daemon checks the pane once: when its Core status is neither `working` nor `blocked` and the bottom of its screen still shows the prompt (`[Image #`, an attachment's file name, or the text's last line), it presses `enter` once (`terminal.keys`). Nothing is pressed while the pane works or waits on a question, so the check never answers a dialog.
 - **Keys**: Core `terminal.keys { terminal, keys }`. Key names are the Core's (`enter`, `esc`, `up`, `ctrl+c`, `1`, …).
 - **Interrupt**: The phone sends the recipe's interrupt keys (`esc` for agents, `ctrl+c` for a terminal) as keys, the same key the Core's own `terminal.interrupt` would choose.
 - **Answer**: The option's digit is sent with `terminal.keys`, exactly once. A failed or timed-out send is **not retried**, because it may already have landed. The screen is re-read after about 300 ms to report whether the prompt went away (`protocol.md` §4.1).

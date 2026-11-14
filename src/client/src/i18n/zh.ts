@@ -265,6 +265,7 @@ export const zh: Messages = {
   "tool.copyPath": "复制路径",
   "tool.changes": "改动",
   "tool.noPatch": "没有记录具体改动。",
+  "tool.renderFailed": "这一项显示不了，其他内容不受影响。",
 
   "transcript.thinkingNow": "思考中…",
   "transcript.readFiles": "读取了 {count} 个文件",

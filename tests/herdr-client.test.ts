@@ -428,6 +428,35 @@ describe("connection lifecycle (herdr-adapter.md §3.2, §3.4)", () => {
     expect(herdr.callsOf("terminal.label")).toHaveLength(1);
   });
 
+  test("an attachment prompt the agent left in its input box gets one more enter; a working pane gets none (§6)", async () => {
+    const checking = new HerdrClient({ appSocketPath: herdr.appSocketPath, coreSocketPath: herdr.coreSocketPath, debounceMs: 5, panePollMs: 60_000, attachmentSubmitCheckMs: 30 });
+    try {
+      herdr.serve([{ paneId: "t1", app: "claude-code", state: "idle" }]);
+      herdr.handlers["terminal.read"] = () => ({ result: { text: "╭────╮\n│ > look at this\n│ [Image #1]\n╰────╯\n", how: "screen" } });
+      await checking.connect();
+      await Bun.sleep(50);
+      await checking.sendPrompt("t1", "look at this\n\n@/home/u/.local/share/pigeon/uploads/up_0123456789abcdef-shot.png", true);
+      await Bun.sleep(150);
+      expect(herdr.callsOf("terminal.keys").map((c) => c.params)).toEqual([{ terminal: "t1", keys: ["enter"] }]);
+
+      // Submitted: the pane works, so nothing is pressed (a dialog could be waiting for Enter).
+      herdr.emitEvent("status", "t1", { status: { state: "working", app: "claude-code" }, records: {}, reported: true });
+      await Bun.sleep(30);
+      await checking.sendPrompt("t1", "again\n\n@/home/u/.local/share/pigeon/uploads/up_0123456789abcdef-shot.png", true);
+      await Bun.sleep(150);
+      expect(herdr.callsOf("terminal.keys")).toHaveLength(1);
+
+      // Without attachments there is no check.
+      herdr.emitEvent("status", "t1", { status: { state: "idle", app: "claude-code" }, records: {}, reported: true });
+      await Bun.sleep(30);
+      await checking.sendPrompt("t1", "look at this");
+      await Bun.sleep(150);
+      expect(herdr.callsOf("terminal.keys")).toHaveLength(1);
+    } finally {
+      checking.disconnect();
+    }
+  });
+
   test("a status change on an unchanged screen still sends the new status", async () => {
     const updates = await viewPaneThenChangeStatus("$ bun test\n", "working", "idle");
     expect(updates.at(-1)?.agentStatus).toBe("idle");

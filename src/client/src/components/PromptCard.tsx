@@ -6,6 +6,7 @@ import { focusComposer } from "./Composer";
 import { Markdown, openToolDetail } from "./Transcript";
 import { DiffBadge, Icon, Sheet } from "./ui";
 import { t } from "../i18n";
+import { callCommand } from "../utils/tool-call";
 
 /** Options that hand the turn back to the user to write something (§4.1, §4.3). */
 const TELL_RE = /tell|keep planning|告诉|说明|继续规划/i;
@@ -94,7 +95,7 @@ function PermissionCard(props: { p: InteractionCardData }) {
   const command = () => {
     const c = call();
     if (!c) return props.p.payload || "";
-    if (c.verb === "run") return c.target || (typeof c.input === "string" ? c.input : String(c.input.command ?? ""));
+    if (c.verb === "run") return callCommand(c);
     return "";
   };
   return (

@@ -4,7 +4,7 @@ import { createHash } from "node:crypto";
 import { basename, dirname } from "node:path";
 import { readFileSync, writeFileSync, existsSync, mkdirSync, renameSync } from "node:fs";
 import { readGitBranch } from "./git-branch";
-import { CardClassifier, buildUnrecognizedPrompt } from "./card-classifier";
+import { CardClassifier, buildUnrecognizedPrompt, stripAnsi } from "./card-classifier";
 import { getAgentRecipe, type AnswerStep } from "./agent-recipes";
 import type {
   AgentStatus,
@@ -39,6 +39,8 @@ export interface HerdrClientOptions {
   requestTimeoutMs?: number;
   logger?: (msg: string) => void;
   seenPanesFilePath?: string;
+  /** herdr-adapter.md §6: how long after an attachment prompt its submission is checked. */
+  attachmentSubmitCheckMs?: number;
 }
 
 /**
@@ -103,6 +105,7 @@ export class HerdrClient extends EventEmitter {
   private appSocketPath: string;
   private coreSocketPath: string;
   private debounceMs: number;
+  private attachmentSubmitCheckMs: number;
   private panePollMs: number;
   private answeredHoldMs: number;
   private requestTimeoutMs: number;
@@ -156,6 +159,7 @@ export class HerdrClient extends EventEmitter {
     this.appSocketPath = options.appSocketPath;
     this.coreSocketPath = options.coreSocketPath;
     this.debounceMs = options.debounceMs ?? 200;
+    this.attachmentSubmitCheckMs = options.attachmentSubmitCheckMs ?? 1000;
     this.panePollMs = options.panePollMs ?? 1000;
     this.answeredHoldMs = options.answeredHoldMs ?? 10_000;
     this.requestTimeoutMs = options.requestTimeoutMs ?? REQUEST_TIMEOUT_MS;
@@ -1003,9 +1007,40 @@ export class HerdrClient extends EventEmitter {
   }
 
   /** herdr-adapter.md §6: the Core pastes the text and presses Enter, for agents and shells alike. */
-  public async sendPrompt(paneId: string, text: string): Promise<void> {
+  public async sendPrompt(paneId: string, text: string, hasAttachments = false): Promise<void> {
     await this.coreRequest("terminal.send", { terminal: paneId, text });
     this.scheduleDebouncedRead(paneId);
+    if (hasAttachments) {
+      setTimeout(() => void this.confirmAttachmentSubmit(paneId, text), this.attachmentSubmitCheckMs);
+    }
+  }
+
+  /**
+   * §6 "Attachment submit check": presses Enter once when the agent dropped the one that came with the
+   * paste. The composed prompt ends with the attachment paths, so its last line names one of them.
+   */
+  private async confirmAttachmentSubmit(paneId: string, text: string): Promise<void> {
+    const status = this.knownPanes.get(paneId)?.herdrStatus;
+    if (!status || status === "working" || status === "blocked") return;
+    try {
+      const res = await this.coreRequest<HerdrCoreReadResult>("terminal.read", { terminal: paneId, lines: 0 });
+      const bottom = stripAnsi(res.text)
+        .split("\n")
+        .map((l) => l.trim())
+        .filter(Boolean)
+        .slice(-12)
+        .join("\n");
+      const lastLine = text.trim().split("\n").filter((l) => l.trim()).at(-1)?.trim() ?? "";
+      const markers = ["[Image #", basename(lastLine.split(/\s+/).at(-1) ?? ""), lastLine.slice(0, 40)].filter((m) => m.length >= 3);
+      if (!markers.some((m) => bottom.includes(m))) return;
+      // Re-check: the pane may have started working while the screen was read.
+      const now = this.knownPanes.get(paneId)?.herdrStatus;
+      if (!now || now === "working" || now === "blocked") return;
+      this.logger?.(`${paneId} prompt: attachment paste left unsubmitted, pressing enter`);
+      await this.coreRequest("terminal.keys", { terminal: paneId, keys: ["enter"] });
+    } catch (err) {
+      console.warn(`[pigeon] attachment submit check for ${paneId} failed:`, err instanceof Error ? err.message : err);
+    }
   }
 
   /**

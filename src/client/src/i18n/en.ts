@@ -264,6 +264,7 @@ export const en = {
   "tool.copyPath": "Copy path",
   "tool.changes": "Changes",
   "tool.noPatch": "The exact change wasn't recorded.",
+  "tool.renderFailed": "This item can't be shown; the rest is unaffected.",
 
   "transcript.thinkingNow": "Thinking…",
   "transcript.readFiles": { one: "Read {count} file", other: "Read {count} files" },

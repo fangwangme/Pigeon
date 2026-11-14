@@ -95,8 +95,8 @@ A sheet shared by §2.1 and §2.2: status (等待你, 工作中, 已完成, 空�
 
 ### 3.3 Tool calls
 - Consecutive tool calls of a turn collapse into one summary line that counts them by verb, e.g. "读取了 4 个文件，编辑了 3 个文件", with the added/removed line totals of its edits. A group of one shows that call's own icon and label and opens its detail directly.
-- **Group sheet**: the summary as its title, then a timeline of the calls. The sheet shows a scroll indicator, and while it is not scrolled to its end a round ↓ button scrolls to the last call. Each item shows its verb (运行, 编辑, 创建, 读取, 搜索, or the tool name) and its object; a command shows the agent's own description of it when the transcript has one, else the command.
-- **Detail** (pushed inside the sheet, with back instead of close):
+- **Group sheet**: the summary as its title, then a timeline of the calls. The sheet shows a scroll indicator, and while it is not scrolled to its end a round ↓ button scrolls to the last call. Each item shows its verb (运行, 编辑, 创建, 读取, 搜索, or the tool name) and its object; a command shows the agent's own description of it when the transcript has one, else the command. Each item ends with a right chevron, so it reads as something to open (user decision, 2026-11-14, after Claude Code's iOS app).
+- **Detail** (pushed inside the sheet, with back instead of close). It opens at once from the transcript's lightweight call, which carries no `input`/`output` (`protocol.md` §4.20): until `detail_get` answers, the command shows the call's target and the input is empty. A detail that fails to render shows one line saying so inside the sheet; the rest of the app keeps updating.
   - Command: description, command (wrapped, copyable), output (monospace, wrapped, copyable, truncated with "展开" past 40 lines), then exit code and duration; a non-zero exit code is red.
   - Edit / write: the file path (copyable, displayed with reverse truncation anchored to the file name so the tail is always visible and leading paths truncate first) and the change as a diff with line numbers and add/remove bars. Diff lines do not wrap; the block scrolls horizontally.
   - Other tools: parameters above, result below.

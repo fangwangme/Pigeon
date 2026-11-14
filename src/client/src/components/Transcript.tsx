@@ -1,7 +1,8 @@
-import { createSignal, For, Index, Match, Show, Switch } from "solid-js";
+import { createSignal, ErrorBoundary, For, Index, Match, Show, Switch } from "solid-js";
 import { state } from "../state/store";
 import { copyText, getDetail } from "../state/ws";
 import { renderMarkdown } from "../utils/markdown";
+import { callCommand, callInputText } from "../utils/tool-call";
 import type { Card, FileDiffSummary, NormalizedToolCall, NormalizedTurn, ToolVerb, TurnItem } from "../../../types/protocol";
 import type { IconName } from "../icons";
 import { DiffBadge, Icon, Sheet } from "./ui";
@@ -192,23 +193,16 @@ export function DiffView(props: { patch: string }) {
   );
 }
 
-function stringify(v: unknown): string {
-  return typeof v === "string" ? v : JSON.stringify(v, null, 2);
-}
-
 function ToolDetail(props: { call: NormalizedToolCall }) {
   const c = () => props.call;
-  const command = () => {
-    const input = c().input;
-    if (typeof input === "string") return input;
-    return typeof input.command === "string" ? input.command : Array.isArray(input.command) ? input.command.join(" ") : c().target || "";
-  };
+  // The call can still be the transcript's lightweight copy, without `input`/`output` (protocol.md §4.20).
+  const command = () => callCommand(c());
   const patches = () => fileDiffs() ?? (c().diff ? [c().diff!] : []);
   return (
     <Switch
       fallback={
         <>
-          <Lines label={t("tool.input")} text={stringify(c().input)} />
+          <Lines label={t("tool.input")} text={callInputText(c())} />
           <Show when={c().output}>
             <Lines label={t("tool.result")} text={c().output!} />
           </Show>
@@ -260,7 +254,7 @@ function ToolDetail(props: { call: NormalizedToolCall }) {
           )}
         </For>
         <Show when={patches().length === 0}>
-          <Lines label={t("tool.input")} text={stringify(c().input)} />
+          <Lines label={t("tool.input")} text={callInputText(c())} />
         </Show>
       </Match>
     </Switch>
@@ -333,12 +327,22 @@ export function ToolSheet() {
                           </div>
                         </div>
                         <DiffBadge add={c.diff?.additions ?? 0} del={c.diff?.deletions ?? 0} />
+                        {/* §3.2: every row opens its details; the chevron says so. */}
+                        <Icon name="chevR" sm class="tli-chev" />
                       </button>
                     )}
                   </For>
                 }
               >
-                <ToolDetail call={s.detail!} />
+                {/* A render error stays inside the sheet instead of halting every later update. */}
+                <ErrorBoundary
+                  fallback={(err) => {
+                    console.error("[Pigeon] tool detail failed to render:", err);
+                    return <p class="note">{t("tool.renderFailed")}</p>;
+                  }}
+                >
+                  <ToolDetail call={s.detail!} />
+                </ErrorBoundary>
               </Show>
             </div>
             <Show when={!atBottom()}>

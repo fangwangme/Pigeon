@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import type { Card, CardKind, InteractionCardData } from "../types/protocol";
 
-function stripAnsi(str: string): string {
+export function stripAnsi(str: string): string {
   // Herdr already strips ANSI by default (`strip_ansi: true`); this only removes leftovers.
   return str
     .replace(/\x1B\][^\x07\x1B]*(\x07|\x1B\\)/g, "") // OSC (any number, BEL or ST terminated)

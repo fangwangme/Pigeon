@@ -4,6 +4,8 @@ import { join } from "node:path";
 import { PALETTES } from "../src/client/src/themes";
 import { formatModelNameWithRecipes } from "../src/client/src/utils/model-name";
 import { renderMarkdown } from "../src/client/src/utils/markdown";
+import { callCommand, callInputText } from "../src/client/src/utils/tool-call";
+import type { NormalizedToolCall } from "../src/types/protocol";
 import { state, setState } from "../src/client/src/state/store";
 import { applyClientConfigWithTransitions, sendConfigPatch, handleServerMessage, initWebSocket } from "../src/client/src/state/ws";
 
@@ -34,6 +36,22 @@ describe("themes (mobile-ui-and-themes.md §9.1)", () => {
     expect(contrast(p.segTrack, p.segOn)).toBeGreaterThanOrEqual(1.15);
     const css = readFileSync(join(import.meta.dir, "..", "src", "client", "src", "styles.css"), "utf-8");
     expect(css).toContain(".seg .on, .seg button.on { background: var(--seg-on); color: var(--fg); font-weight: 650; box-shadow: var(--seg-shadow); }");
+  });
+});
+
+describe("tool details (mobile-ui-and-themes.md §3.3)", () => {
+  test("a lightweight call without input shows its target and an empty input instead of throwing", () => {
+    const light = { id: "c1", name: "exec", verb: "run", target: "bun test", status: "completed" } as unknown as NormalizedToolCall;
+    expect(callCommand(light)).toBe("bun test");
+    expect(callInputText(light)).toBe("");
+  });
+
+  test("a loaded call shows its own command and input", () => {
+    const arr = { id: "c2", name: "shell", verb: "run", target: "x", input: { command: ["bash", "-lc", "ls"] }, status: "completed" } as unknown as NormalizedToolCall;
+    expect(callCommand(arr)).toBe("bash -lc ls");
+    expect(callInputText(arr)).toBe(JSON.stringify({ command: ["bash", "-lc", "ls"] }, null, 2));
+    const raw = { id: "c3", name: "write_stdin", verb: "run", input: "y\n", status: "completed" } as unknown as NormalizedToolCall;
+    expect(callCommand(raw)).toBe("y\n");
   });
 });
 
