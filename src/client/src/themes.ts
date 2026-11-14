@@ -14,6 +14,7 @@ export interface Palette {
   line2: string;
   warn: string;
   warnbg: string;
+  ok: string;
   danger: string;
   dangerbg: string;
   addbg: string;
@@ -67,6 +68,7 @@ export const PALETTES: Record<"light" | "dark", Palette> = {
     line2: "rgba(255,255,255,.14)",
     warn: "#F2B45C",
     warnbg: "rgba(242,180,92,.14)",
+    ok: "#10B981",
     danger: "#FF6B6B",
     dangerbg: "rgba(255,107,107,.13)",
     addbg: "rgba(92,203,117,.15)",
@@ -117,6 +119,7 @@ export const PALETTES: Record<"light" | "dark", Palette> = {
     line2: "rgba(0,0,0,.13)",
     warn: "#9A5B00",
     warnbg: "rgba(166,98,0,.1)",
+    ok: "#059669",
     danger: "#C62F2F",
     dangerbg: "rgba(207,52,52,.09)",
     addbg: "rgba(30,138,58,.1)",
@@ -177,6 +180,7 @@ const KEBAB: Record<keyof Palette, string> = {
   line2: "line2",
   warn: "warn",
   warnbg: "warnbg",
+  ok: "ok",
   danger: "danger",
   dangerbg: "dangerbg",
   addbg: "addbg",
