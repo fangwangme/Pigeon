@@ -8,7 +8,6 @@ import { discoverAntigravityLs, isLoopbackAddress, type AntigravityLsConnection 
 export interface AntigravityQuotaProviderOptions {
   home?: string;
   now?: () => number;
-  /** The `/usage` command; tests replace it so no real agy runs. */
   agyUsageCommand?: string[];
 }
 
@@ -54,12 +53,7 @@ export class AntigravityQuotaProvider {
     return join(this.home, ".gemini", "antigravity-cli", "antigravity-oauth-token");
   }
 
-  /**
-   * §2.2: the account is the one the answering source is signed in as. The CLI and the desktop app can
-   * be signed in to different Google accounts, so one never supplies the other's.
-   */
   private cliAccount(): string | undefined {
-    // The CLI logs each sign-in (also the one the `/usage` call just made): the last one is current.
     const log = join(this.home, ".gemini", "antigravity-cli", "cli.log");
     if (existsSync(log)) {
       const matches = [...readFileSync(log, "utf-8").matchAll(/authenticated successfully as (\S+@\S+)/g)];
@@ -76,7 +70,6 @@ export class AntigravityQuotaProvider {
     );
   }
 
-  /** `app_storage.json` (another program's file): the last sign-in it recorded, when readable. */
   private storageUsername(path: string): string | undefined {
     if (!existsSync(path)) return undefined;
     let data: any;
@@ -103,7 +96,7 @@ export class AntigravityQuotaProvider {
       errors.push(`Language server RPC: ${(err as Error).message}`);
     }
 
-    // Source 2: agy CLI. The CLI refreshes its own login, so an expired token file does not skip it (§2.3).
+    // Source 2: agy CLI
     try {
       const snap = await this.probeAgyCli();
       if (snap) return snap;
@@ -175,7 +168,6 @@ export class AntigravityQuotaProvider {
       // ignore
     }
 
-    // The server says who it is signed in as; else the stored sign-in of the program that runs it.
     const account = lsEmail ?? (runtimeKind === "cli" ? this.cliAccount() : this.desktopAccount());
     return this.buildSnapshotFromGroups(summary.groups, account, lsPlan);
   }
@@ -220,7 +212,6 @@ export class AntigravityQuotaProvider {
     const tokenObj = parsed?.token ?? parsed;
     if (!tokenObj?.access_token) return null;
 
-    // A6: Read-only credentials. Do not refresh or overwrite antigravity-oauth-token.
     const expiry =
       typeof tokenObj.expiry_date === "number"
         ? tokenObj.expiry_date

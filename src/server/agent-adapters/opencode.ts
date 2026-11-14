@@ -17,7 +17,6 @@ export interface OpenCodeAdapterOptions {
 export const OPENCODE_PLACEHOLDER_TITLE = /^New session - \d{4}-\d{2}-\d{2}T/;
 
 interface CachedOpenCodeSession {
-  /** The session row's and its messages' update marks; OpenCode updates message rows without touching the session row. */
   changeKey: string | null;
   turns: NormalizedTurn[];
   stats?: SessionStats;
@@ -46,7 +45,6 @@ export class OpenCodeAdapter {
     return existsSync(this.dbPath);
   }
 
-  /** Opens a single read-only SQLite connection to detect schema (`session_v2` vs legacy `session`). */
   public withDb<T>(fn: (db: Database, sessionTable: "session_v2" | "session") => T): T | null {
     if (!this.isAvailable()) return null;
     const db = new Database(this.dbPath, { readonly: true });
@@ -131,7 +129,7 @@ export class OpenCodeAdapter {
           };
         }
 
-        // 2. Fetch messages for the session inside the same DB connection
+        // 2. Fetch messages for the session
         const messages: any[] = db
           .query(
             "SELECT id, type, seq, time_created, data FROM session_message WHERE session_id = ? ORDER BY seq ASC, time_created ASC"

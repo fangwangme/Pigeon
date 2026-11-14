@@ -1105,7 +1105,6 @@ export class WsServer {
     for (const paneId of this.paneStore.trackedPaneIds()) if (!live.has(paneId)) this.paneStore.unbind(paneId);
   }
 
-  /** Rebinds only `paneId` on single-pane status changes without re-scanning all panes. */
   private rebindPane(paneId: string): void {
     const facts = this.herdrClient.getPaneFacts(paneId);
     if (!facts?.agentKind || !this.agentAdapters.isSupported(facts.agentKind)) {
@@ -1340,8 +1339,7 @@ export class WsServer {
       return;
     }
     this.logger?.(`${this.paneLogLabel(paneId)} prompt: sent immediate`);
-    // protocol.md §4.2: an immediate send Herdr did not receive is answered with the error and not queued;
-    // the phone keeps the draft, so queueing it too would deliver it twice once the user resends.
+    // Not queued on failure: the phone keeps the draft, so a resend would deliver it twice.
     await this.herdrClient.sendPrompt(paneId, send, shown.attachments.length > 0);
     if (replyTo) this.sendAck(ws, replyTo, { queued: false });
   }
@@ -1513,7 +1511,6 @@ export class WsServer {
     if (!queue || queue.length === 0) return;
 
     const herdrStatus = this.herdrClient.getPaneHerdrStatus(paneId);
-    // protocol.md §4.2: a batch goes out only while the pane is `idle` or `done`.
     if (herdrStatus !== "idle" && herdrStatus !== "done") return;
 
     // protocol.md §4.2: everything queued goes out as one prompt, in queue order.

@@ -200,7 +200,6 @@ describe("structured session adapters (agent-session-normalization.md §2)", () 
 
       const adapter = new OpenCodeAdapter({ dbPath: path });
       expect(adapter.getTurns("ses_s").turns[0].assistantResponse?.markdown).toBe("Hel");
-      // Streaming: the assistant row grows; the session row keeps its time_updated.
       db.run("UPDATE session_message SET data = ?, time_updated = 1500 WHERE id = 'm_a'", [JSON.stringify({ content: [{ type: "text", text: "Hello there" }] })]);
       expect(adapter.getTurns("ses_s", true).turns[0].assistantResponse?.markdown).toBe("Hello there");
       db.close();

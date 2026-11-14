@@ -142,7 +142,6 @@ export class SkillScanner {
 
   constructor(private home: string = homedir()) {}
 
-  /** Error message from the most recent Claude plugin manifest/directory scan, if any. */
   public getPluginError(): string | null {
     return this.pluginError;
   }

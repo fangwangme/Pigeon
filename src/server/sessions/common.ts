@@ -31,7 +31,6 @@ export function isEnoent(err: unknown): boolean {
   return typeof err === "object" && err !== null && (err as NodeJS.ErrnoException).code === "ENOENT";
 }
 
-/** Deterministic fallback timestamp from a session file's creation/modification time. */
 export function fileFallbackTs(path: string): number {
   try {
     const st = statSync(path);
@@ -271,7 +270,6 @@ export class TurnBuilder {
   public title?: string;
   public model?: string;
   public todos?: TodoItem[];
-  /** The last record timestamp seen; a record without one takes it (deterministic, unlike now()). */
   private lastTs: number;
   private calls = new Map<string, { call: NormalizedToolCall; startedAt?: number; diffs?: FileDiffSummary[] }>();
   private fileOrder: string[] = [];
@@ -367,7 +365,6 @@ export class TurnBuilder {
     }
   }
 
-  /** Removes a call that later records replace (a Codex `exec` wrapper once its commands arrive). */
   public dropTool(id: string): void {
     if (!this.calls.delete(id)) return;
     for (const turn of this.turns) {

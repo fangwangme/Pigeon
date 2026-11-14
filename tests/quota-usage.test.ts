@@ -571,7 +571,6 @@ describe("quota config and usage request validation (quota-and-usage.md §2.5, p
     const periods1 = db.query("SELECT effective_from, effective_to, input_rate FROM model_price_periods").all() as any[];
     expect(periods1).toEqual([{ effective_from: "0000-01-01", effective_to: null, input_rate: 3 }]);
 
-    // §3.3: an unchanged catalog does not re-walk the price periods on the next scan.
     const entriesSpy = spyOn(okPricing, "getCatalogEntries");
     await store.scanIncremental(okPricing);
     expect(entriesSpy).not.toHaveBeenCalled();

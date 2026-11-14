@@ -283,8 +283,6 @@ export function resolveAccess(
   };
 }
 
-// Server startup & HTTP/WS orchestration.
-
 function hostOf(hostHeader: string): string | null {
   try {
     return new URL(`http://${hostHeader}`).hostname; // keeps IPv6 brackets: "[::1]"

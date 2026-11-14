@@ -33,7 +33,6 @@ export interface Palette {
   lgShadow: string;
   lgSpec: string;
   scrim: string;
-  /** Segmented control (§11.3): the track, the selected segment, and its lift — the selection must read at a glance. */
   segTrack: string;
   segOn: string;
   segShadow: string;

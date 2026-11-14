@@ -70,7 +70,6 @@ export class UsageStore {
   private discoverLs: () => Promise<AntigravityLsConnection | null>;
   private agyCacheDbPath: string;
   private lastScannedAt = 0;
-  /** The catalog version each pricing source last synced periods and backfilled at. */
   private pricedCatalogs = new WeakMap<PricingManager, number>();
 
   constructor(options: UsageStoreOptions = {}) {
@@ -232,7 +231,6 @@ export class UsageStore {
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
 
-    // quota-and-usage.md §3.3: periods and the backfill follow the catalog, so they run only after it changed.
     const catalogVersion = pricing.getCatalogVersion();
     const catalogChanged = pricing.arePricesAvailable() && this.pricedCatalogs.get(pricing) !== catalogVersion;
     if (catalogChanged) {

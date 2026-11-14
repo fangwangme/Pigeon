@@ -246,7 +246,6 @@ export class AgentAdapterManager {
 
   constructor(options: AgentAdapterManagerOptions = {}) {
     const home = options.home ?? homedir();
-    // agent-session-normalization.md §2.1: the adapter resolves `$XDG_DATA_HOME`; an explicit home means that home.
     const opencode = new OpenCodeAdapter(options.opencode ?? (options.home === undefined ? {} : { dbPath: join(home, ".local", "share", "opencode", "opencode.db") }));
     const brainDir = options.agy?.baseBrainDir ?? join(home, ".gemini", "antigravity-cli", "brain");
     const agy = new AgyAdapter({ baseBrainDir: brainDir });

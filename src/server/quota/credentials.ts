@@ -1,4 +1,4 @@
-// Issue #13 & #23. quota-and-usage.md §2.3, security-and-pairing.md §6: read-only credential helpers.
+// Issue #13. quota-and-usage.md §2.3, security-and-pairing.md §6: shared credential handling of the quota providers.
 import { existsSync, readFileSync } from "node:fs";
 
 const CLAUDE_KEYCHAIN_SERVICE = "Claude Code-credentials";
@@ -15,7 +15,6 @@ export function fileCredentialSource(path: string): CredentialSource {
   };
 }
 
-/** Read-only macOS Keychain source for Claude Code credentials. */
 export function macKeychainSource(): CredentialSource {
   return {
     read: () => {

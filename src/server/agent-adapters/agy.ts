@@ -266,12 +266,10 @@ export class AgyAdapter {
             promptText = match[1].trim();
           }
 
-          // Strip Pigeon upload markers (`[Pigeon user uploaded attachment: ...]`) and trailing Pigeon upload paths only.
           const files: string[] = [...pendingAttachmentFiles];
           pendingAttachmentFiles = [];
           const keptLines: string[] = [];
           const rawLines = promptText.split("\n");
-          // Remove trailing upload-directory path lines (keeping paths typed intentionally inside prompt prose).
           let end = rawLines.length;
           while (end > 0) {
             const candidate = rawLines[end - 1].trim();
@@ -304,7 +302,6 @@ export class AgyAdapter {
           }
           const cleanText = keptLines.join("\n").trim();
 
-          // Upload-only USER_INPUT step precedes the actual prompt step: merge its files onto the next prompt.
           if (!cleanText && files.length > 0) {
             pendingAttachmentFiles.push(...files);
             continue;
@@ -389,7 +386,6 @@ export class AgyAdapter {
             };
           }
         } else if (recType === "GENERIC") {
-          // Tool outputs arrive in call order; attach each (even empty "") to the first call without output.
           const pending = currentTurn?.toolCalls?.find((tc) => tc.output === undefined);
           if (pending) {
             const out = typeof record.content === "string" ? record.content : "";

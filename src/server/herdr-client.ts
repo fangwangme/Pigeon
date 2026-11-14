@@ -39,7 +39,6 @@ export interface HerdrClientOptions {
   requestTimeoutMs?: number;
   logger?: (msg: string) => void;
   seenPanesFilePath?: string;
-  /** herdr-adapter.md §6: how long after an attachment prompt its submission is checked. */
   attachmentSubmitCheckMs?: number;
 }
 
@@ -81,12 +80,10 @@ interface KnownPane {
   pid: number | null;
   program: string | undefined;
   createdMs: number;
-  /** herdr-adapter.md §4 "Seen": Core's `turn` and the desktop's `herdr.seen` label (null when absent or stale). */
   turn: number;
   desktopSeenTurn: number | null;
 }
 
-/** herdr-adapter.md §4 "Seen": the turn the desktop last looked at, from the `herdr.seen` label. */
 function desktopSeenTurnOf(term: HerdrCoreTerminal | undefined): number | null {
   const raw = term?.labels?.["herdr.seen"];
   if (typeof raw !== "string" || !/^\d+$/.test(raw)) return null;
@@ -462,8 +459,7 @@ export class HerdrClient extends EventEmitter {
       if (status !== "done") {
         if (this.seenPanes.delete(paneId)) this.saveSeenPanes();
       }
-      // §4 "Seen": a desktop look covers the turn it saw. Without `turn` a changed status may be a new turn,
-      // so the look is dropped until the next snapshot reads the label again.
+      // Without `turn`, a changed status may be a new turn: drop the desktop look until the next snapshot.
       if (typeof params.data.turn === "number") known.turn = params.data.turn;
       else if (status !== known.herdrStatus) known.desktopSeenTurn = null;
       known.herdrStatus = status;
@@ -682,7 +678,6 @@ export class HerdrClient extends EventEmitter {
     return workingAgents;
   }
 
-  /** Updates only the workspace/tab/pane affected by a single-pane `status` event. */
   private updateSinglePaneSnapshot(paneId: string): void {
     const known = this.knownPanes.get(paneId);
     if (!known) return;
@@ -828,7 +823,6 @@ export class HerdrClient extends EventEmitter {
     const known = this.knownPanes.get(paneId);
     const status = known?.herdrStatus ?? "unknown";
     if (status !== "done") return status;
-    // §4 "Seen": looked at on a phone, or on the desktop since this turn finished.
     const desktopSeen = known!.desktopSeenTurn !== null && known!.turn > 0 && known!.desktopSeenTurn >= known!.turn;
     return this.seenPanes.has(paneId) || desktopSeen ? "idle" : status;
   }
@@ -848,10 +842,8 @@ export class HerdrClient extends EventEmitter {
     void this.markSeenOnDesktop(paneId);
   }
 
-  /** §4 "Seen", both ways: the desktop records a look as `herdr.seen` = the turn it saw. */
   private async markSeenOnDesktop(paneId: string): Promise<void> {
     try {
-      // The turn known here can be stale (a status event without `turn`), so read the terminal first.
       const term = await this.coreRequest<HerdrCoreTerminal>("terminal.get", { terminal: paneId });
       if (term?.status?.state !== "done" || typeof term.turn !== "number" || term.turn <= 0) return;
       if (term.labels?.["herdr.seen"] === String(term.turn)) return;
@@ -1015,10 +1007,6 @@ export class HerdrClient extends EventEmitter {
     }
   }
 
-  /**
-   * §6 "Attachment submit check": presses Enter once when the agent dropped the one that came with the
-   * paste. The composed prompt ends with the attachment paths, so its last line names one of them.
-   */
   private async confirmAttachmentSubmit(paneId: string, text: string): Promise<void> {
     const status = this.knownPanes.get(paneId)?.herdrStatus;
     if (!status || status === "working" || status === "blocked") return;
@@ -1033,7 +1021,6 @@ export class HerdrClient extends EventEmitter {
       const lastLine = text.trim().split("\n").filter((l) => l.trim()).at(-1)?.trim() ?? "";
       const markers = ["[Image #", basename(lastLine.split(/\s+/).at(-1) ?? ""), lastLine.slice(0, 40)].filter((m) => m.length >= 3);
       if (!markers.some((m) => bottom.includes(m))) return;
-      // Re-check: the pane may have started working while the screen was read.
       const now = this.knownPanes.get(paneId)?.herdrStatus;
       if (!now || now === "working" || now === "blocked") return;
       this.logger?.(`${paneId} prompt: attachment paste left unsubmitted, pressing enter`);

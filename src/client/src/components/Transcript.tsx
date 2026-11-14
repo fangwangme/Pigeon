@@ -21,7 +21,6 @@ const VERB_COUNT: Record<ToolVerb, MessageId> = {
 };
 const VERB_ORDER: ToolVerb[] = ["read", "search", "edit", "create", "run", "other"];
 
-/** Injects the copy button into code block headers (§3.2); clicks are handled by `onMarkdownClick`. */
 function markdownHtml(md: string): string {
   const btn = `<button class="cpy" data-copy type="button">${t("common.copy")}</button>`;
   return renderMarkdown(md)
@@ -195,7 +194,6 @@ export function DiffView(props: { patch: string }) {
 
 function ToolDetail(props: { call: NormalizedToolCall }) {
   const c = () => props.call;
-  // The call can still be the transcript's lightweight copy, without `input`/`output` (protocol.md §4.20).
   const command = () => callCommand(c());
   const patches = () => fileDiffs() ?? (c().diff ? [c().diff!] : []);
   return (
@@ -327,14 +325,12 @@ export function ToolSheet() {
                           </div>
                         </div>
                         <DiffBadge add={c.diff?.additions ?? 0} del={c.diff?.deletions ?? 0} />
-                        {/* §3.2: every row opens its details; the chevron says so. */}
                         <Icon name="chevR" sm class="tli-chev" />
                       </button>
                     )}
                   </For>
                 }
               >
-                {/* A render error stays inside the sheet instead of halting every later update. */}
                 <ErrorBoundary
                   fallback={(err) => {
                     console.error("[Pigeon] tool detail failed to render:", err);

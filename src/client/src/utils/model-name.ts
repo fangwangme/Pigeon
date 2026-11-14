@@ -3,11 +3,6 @@ import type { AgentRecipeSummary } from "../../../types/protocol";
 
 export type ModelRecipeMap = Record<string, Pick<AgentRecipeSummary, "models"> | undefined>;
 
-/**
- * Formats a model identifier into a friendly label using the known recipes.
- * Supports multi-agent lookup (skipping unresolved `label === id` entries) and
- * Antigravity tierless canonical ID matching / display tier stripping.
- */
 export function formatModelNameWithRecipes(
   recipes: ModelRecipeMap,
   agent: string | ReadonlyArray<string | null | undefined> | null | undefined,

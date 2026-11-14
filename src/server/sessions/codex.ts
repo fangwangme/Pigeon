@@ -22,7 +22,6 @@ function mtimeOf(path: string | undefined): number | null {
 }
 
 interface CodexParseState {
-  /** The open `exec` wrapper call: shown running until its `CommandExecution` items replace it or its output arrives. */
   pendingExec?: { callId: string; replaced: boolean };
   lastAgentMessage?: string;
 }
@@ -78,7 +77,6 @@ export class CodexSource implements SessionSource {
   private meta(path: string): { id: string; cwd: string } | null {
     const first = readFirstJsonLine(path);
     if (!isObj(first) || first.type !== "session_meta" || !isObj(first.payload)) return null;
-    // Exclude subagent rollouts
     if (isObj(first.payload.source) && "subagent" in first.payload.source) return null;
     if (typeof first.payload.thread_source === "string" && first.payload.thread_source !== "user") return null;
     const id = str(first.payload.id);
@@ -265,7 +263,6 @@ function applyItemCompleted(b: TurnBuilder, item: Record<string, any>, ts: numbe
   const dur = durationMsOf(item);
   switch (kind) {
     case "CommandExecution": {
-      // The commands the `exec` wrapper ran replace the wrapper, so nothing shows twice.
       if (state.pendingExec && !state.pendingExec.replaced) {
         b.dropTool(state.pendingExec.callId);
         state.pendingExec.replaced = true;

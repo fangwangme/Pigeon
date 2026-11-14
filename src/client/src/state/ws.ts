@@ -746,7 +746,6 @@ export function copyText(text: string): void {
 migrateLocalStorageCache();
 void sweep();
 
-/** protocol.md §2.2: flush on hide; on resume, replace a closed or silent socket. */
 export function handleVisibilityChange(): void {
   if (document.visibilityState === "hidden" && state.activePaneId) {
     flushActivePaneSnapshot();

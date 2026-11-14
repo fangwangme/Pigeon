@@ -230,8 +230,6 @@ export async function discoverAntigravityLs(
   // 1. Check daemon hub JSON files
   candidates.push(...discoverDaemonHubFiles(homeDir));
 
-  // Only inspect host-wide processes / global env when using the active HOME directory;
-  // isolated home directories passed by callers/tests must not leak host LS processes.
   const isDefaultHome = !homeDir || homeDir === (process.env.HOME || "");
   if (isDefaultHome) {
     // 2. Check running processes

@@ -396,7 +396,6 @@ describe("connection lifecycle (herdr-adapter.md §3.2, §3.4)", () => {
     client.applySnapshot(withLook(6, undefined));
     expect(status()).toBe("done");
 
-    // A status event without `turn` may be a new turn: the old look no longer hides it.
     herdr.serve([{ paneId: "t1", app: "claude-code", state: "done" }]);
     await client.connect();
     client.applySnapshot(withLook(6, "6"));
@@ -418,7 +417,6 @@ describe("connection lifecycle (herdr-adapter.md §3.2, §3.4)", () => {
     await Bun.sleep(50);
     expect(herdr.callsOf("terminal.label").map((c) => c.params)).toEqual([{ terminal: "t1", labels: { "herdr.seen": "9" } }]);
 
-    // Already seen at this turn on the desktop: nothing is written.
     herdr.handlers["terminal.get"] = () => ({ result: { address: "t1", state: "live", cwd: "/work", turn: 9, labels: { "herdr.seen": "9" }, status: { state: "done", app: "claude-code" } } });
     herdr.emitEvent("status", "t1", { status: { state: "working", app: "claude-code" }, records: {}, reported: true });
     herdr.emitEvent("status", "t1", { status: { state: "done", app: "claude-code" }, records: {}, reported: true });
@@ -439,14 +437,12 @@ describe("connection lifecycle (herdr-adapter.md §3.2, §3.4)", () => {
       await Bun.sleep(150);
       expect(herdr.callsOf("terminal.keys").map((c) => c.params)).toEqual([{ terminal: "t1", keys: ["enter"] }]);
 
-      // Submitted: the pane works, so nothing is pressed (a dialog could be waiting for Enter).
       herdr.emitEvent("status", "t1", { status: { state: "working", app: "claude-code" }, records: {}, reported: true });
       await Bun.sleep(30);
       await checking.sendPrompt("t1", "again\n\n@/home/u/.local/share/pigeon/uploads/up_0123456789abcdef-shot.png", true);
       await Bun.sleep(150);
       expect(herdr.callsOf("terminal.keys")).toHaveLength(1);
 
-      // Without attachments there is no check.
       herdr.emitEvent("status", "t1", { status: { state: "idle", app: "claude-code" }, records: {}, reported: true });
       await Bun.sleep(30);
       await checking.sendPrompt("t1", "look at this");

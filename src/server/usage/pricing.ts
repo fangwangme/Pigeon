@@ -70,7 +70,6 @@ export class PricingManager {
     return Array.from(this.catalog.entries());
   }
 
-  /** Changes whenever the catalog may have been (re)loaded, so callers redo price-derived work only then. */
   public getCatalogVersion(): number {
     return this.catalogVersion;
   }

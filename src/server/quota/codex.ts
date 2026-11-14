@@ -71,7 +71,6 @@ export class CodexQuotaProvider {
     if (!creds?.tokens?.access_token) throw new Error("Codex credentials missing tokens.access_token");
     const tokens = creds.tokens as { access_token: string; refresh_token?: string; id_token?: string };
 
-    // A6: Read-only credentials. Check JWT expiry before making any network call.
     const exp = decodeJwtPayload(tokens.access_token)?.exp;
     if (typeof exp === "number" && exp <= Math.floor(this.now() / 1000)) {
       throw new Error("Codex login expired — open Codex to refresh it");

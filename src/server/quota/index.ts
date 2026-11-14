@@ -182,7 +182,6 @@ export class QuotaService {
   private async fetchProvider(key: "claude" | "codex" | "antigravity"): Promise<QuotaSnapshot> {
     const provider = key === "claude" ? this.claude : key === "codex" ? this.codex : this.antigravity;
     const snap = await provider.fetch();
-    // §2.1: one window order for every provider.
     return { ...snap, windows: orderWindows(snap.windows) };
   }
 }

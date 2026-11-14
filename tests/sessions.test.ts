@@ -943,7 +943,6 @@ describe("source robustness and Codex 0.169+ parsing (agent-session-normalizatio
     mkdirSync(sessionsDir, { recursive: true });
     const path = join(sessionsDir, "rollout-2026-11-10T11-18-53-codex-main-0169.jsonl");
     const lines = readFileSync(join(import.meta.dir, "fixtures", "codex-0.169-rollout.jsonl"), "utf-8").trimEnd().split("\n");
-    // Up to and including the `exec` custom_tool_call: the command is still running.
     writeFileSync(path, lines.slice(0, 5).join("\n") + "\n", "utf-8");
 
     const codex = new CodexSource(home);

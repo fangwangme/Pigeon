@@ -1,4 +1,4 @@
-// Issue #13 & #23. quota-and-usage.md §2.2, §2.3, §4.
+// Issue #13. quota-and-usage.md §2.2, §2.3, §4.
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { QuotaExtraUsage, QuotaSnapshot, QuotaWindow } from "../../types/protocol";
@@ -108,7 +108,6 @@ export class ClaudeQuotaProvider {
     };
   }
 
-  /** §2.2: `limits[]` takes precedence (session before weekly), falling back to legacy `five_hour`/`seven_day*` keys. */
   private windowsOf(usageData: Record<string, any>): QuotaWindow[] {
     if (Array.isArray(usageData.limits) && usageData.limits.length > 0) {
       const session: QuotaWindow[] = [];

@@ -116,7 +116,6 @@ describe("antigravity & codex quota providers (quota-and-usage.md §2.2, §2.3)"
     const snap = res.providers.find((p) => p.provider === "antigravity")!.snapshot!;
     expect(snap.account).toBe("alice@example.com");
     expect(snap.plan).toBe("Pro");
-    // §2.1: groups keep the API's order; within each, 5h comes before 7d although the API lists weekly first.
     expect(snap.windows.map((w) => [w.id, w.label, w.usedPercent])).toEqual([
       ["gemini-5h", "Gemini · 5h", 10],
       ["gemini-weekly", "Gemini · 7d", 40],
