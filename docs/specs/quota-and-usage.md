@@ -36,6 +36,7 @@ A provider's quota is one snapshot:
 | `account` | The account's email, when the provider exposes it |
 | `windows` | Rate-limit windows, in the provider's order |
 | `credits` | Reset credits with their expiry, when the provider reports any (Codex); empty otherwise |
+| `extraUsage` | Optional `{ used, limit, currency }` when Claude's `extra_usage.is_enabled` is true |
 | `fetchedAt` | When the snapshot was fetched (ms since epoch) |
 
 A window has `id`, `label`, an optional model `family` (e.g. `Gemini`, `Claude`, `Gemini 4 Argon`), `usedPercent` (0–100, as reported), `periodMs` (the window length, when known) and `resetsAt` (ms since epoch, or null when the provider gives none). Pigeon shows exactly the windows a provider reports; it never adds a window the response does not contain.
@@ -44,14 +45,14 @@ A window has `id`, `label`, an optional model `family` (e.g. `Gemini`, `Claude`,
 
 Each provider reads the agent's own credentials (`security-and-pairing.md` §6) and calls the provider's usage endpoint.
 
-- **Claude Code.** Credentials: `~/.claude/.credentials.json` (`claudeAiOauth`), and on macOS also the login Keychain item `Claude Code-credentials`. Usage: `GET https://api.anthropic.com/api/oauth/usage` with the access token and the `anthropic-beta: oauth-2025-04-20` header. `five_hour` maps to a 5-hour window, `seven_day` to a 7-day window, `seven_day_<family>` to a 7-day window of that family. The plan is the credential's `subscriptionType`.
+- **Claude Code.** Credentials: `~/.claude/.credentials.json` (`claudeAiOauth`), and on macOS also the login Keychain item `Claude Code-credentials` (read-only). Usage: `GET https://api.anthropic.com/api/oauth/usage` with the access token and the `anthropic-beta: oauth-2025-04-20` header. When `limits[]` is present, each entry maps to a window (`group === "session"` → 5-hour period, `group === "weekly"` → 7-day period, unknown group preserves its label with `periodMs: null`; `scope.model.display_name` sets `family` and label `"7d · <display_name>"`, with `session` entries ordered first); when `limits[]` is absent, legacy top-level keys (`five_hour`, `seven_day`, `seven_day_<family>`) are read instead. When `extra_usage.is_enabled` is true, `extraUsage` carries `used` and `limit` scaled by `10 ** (decimal_places ?? 2)` and `currency` (shown even when `$0`). The plan is the credential's `subscriptionType`.
 - **Codex.** Credentials: `$CODEX_HOME/auth.json`, then `~/.config/codex/auth.json`, then `~/.codex/auth.json`; the first readable one is used. Usage: `GET https://chatgpt.com/backend-api/wham/usage`; reset credits: `GET https://chatgpt.com/backend-api/wham/rate-limit-reset-credits`. The account is the email in the ID token.
 - **Antigravity.** Three sources, tried in order; the first that answers wins:
-  1. the running Antigravity language server (desktop app first, then the CLI's), over its local RPC. The language server is discovered by inspecting running processes for arguments (`--app_data_dir`) or process environment variables (`ANTIGRAVITY_LS_ADDRESS`, `ANTIGRAVITY_CSRF_TOKEN`). Connections are strictly restricted to local loopback addresses (`127.0.0.1` or `::1`) with a 10-second timeout; `ANTIGRAVITY_LS_ADDRESS` in daemon environment acts as a test override;
-  2. `agy -p /usage` when the installed `agy` version supports it, parsing its JSON output;
+  1. the running Antigravity language server (desktop app first, then the CLI's), over its local RPC (`RetrieveUserQuotaSummary`, plus `GetUserStatus` for account email and subscription plan). The language server is discovered by inspecting running processes for arguments (`--app_data_dir`) or process environment variables (`ANTIGRAVITY_LS_ADDRESS`, `ANTIGRAVITY_CSRF_TOKEN`). Connections are strictly restricted to local loopback addresses (`127.0.0.1` or `::1`) with a 10-second timeout; `ANTIGRAVITY_LS_ADDRESS` in daemon environment acts as a test override;
+  2. `agy -p /usage --output-format json` when the installed `agy` version supports it, parsing its JSON output;
   3. the Cloud Code API, with the CLI's cached OAuth token (`~/.gemini/antigravity-cli/antigravity-oauth-token`) while it has not expired.
 
-  Window labels come from the model group (`Gemini`, `Claude`, specialized models by name) and the window length.
+  Groups keep the API's order; within a group, 5h precedes weekly, followed by any other window (with `periodMs: null`). Bucket IDs starting with `3p` or group names containing both `claude` and `gpt` label as `"Claude/GPT"`; other group names strip a trailing `" models"` (case-insensitive). Window `id` uses `bucket.id` directly when present. Account email prefers `GetUserStatus`, falling back to the OAuth `id_token` or `app_storage.json` (`agy.onboarding.lastLoginUsername`, then `jetski.onboarding.lastLoginUsername`).
 
 ### 2.3 Expired credentials
 
@@ -116,10 +117,14 @@ The daemon keeps an index of records under its state directory and reads only wh
 
 Cost is an estimate at public API prices; subscription users are not billed this way, and the pages say so.
 
-- Prices come from models.dev, then LiteLLM's price list, then OpenRouter's model list, for the first source that knows the model; they are cached on disk for a day. A running daemon loads them again once a day, and after every load re-prices the stored records that were unpriced, so a model released after the daemon started gets a cost.
-- Each day's cost uses that day's price snapshot once one has been recorded, so an old day's cost does not move when prices change.
+- Prices come from `models.dev`, then LiteLLM's price list, then OpenRouter's model list, for the first source that knows the model; they are cached on disk for 24 hours (`fetchedAt` TTL). Within `models.dev`, first-party official providers (`anthropic`, `openai`, `google`, `google-vertex`, `deepseek`, `zhipuai`, `zai`, `minimax`, `moonshotai`, `xai`, `mistral`, `cohere`) take precedence over third-party resellers when populating unprefixed canonical model IDs. A running daemon checks the 24-hour TTL on `PricingManager.initialize()` (never permanently short-circuiting after first load) and re-fetches once stale.
+- Prices are stored as stage-based **price periods** (`model_price_periods (model_id, start_date, end_date, input_cost, output_cost, cache_read_cost, cache_write_cost)`):
+  - When a model has no period yet and a price source first provides price $P_1$, it is recorded with `start_date = '0000-01-01'` and `end_date = NULL` so it covers release-day and earlier unpriced records.
+  - On subsequent syncs, unchanged prices produce no database write. When an upstream price changes from the active (`end_date IS NULL`) period: if `active.start_date >= today`, the active row is updated in place; otherwise the active row is closed with `end_date = addDays(today, -1)` and a new active row opens with `start_date = today` and `end_date = NULL`. Earlier days continue to resolve to their historical period so past costs do not shift.
+  - After every scan while prices are available, Antigravity codenames/aliases are repaired first, and then **all** `unpriced = 1` records across **every** agent are looked up by `(canonical_model_id, date)` (`start_date <= date AND (end_date IS NULL OR end_date >= date)`) and backfilled with their period's cost and `unpriced = 0`.
+  - `pigeon rebuild-cache` clears `usage_records` and `scan_file_state`, preserving `model_price_periods`.
 - Cache reads and writes use the model's cache prices when it has them, else its input price.
-- A model no source knows is **unpriced**: its tokens count, its cost is 0, and the reply marks it. When network sources cannot be reached, previously cached prices on disk (even if older than 24 hours) serve as an offline fallback; when no cache exists, every model is unpriced and the reply says prices are unavailable. A failed price initialization does not permanently mark pricing loaded; subsequent background scans continue to retry.
+- A model no source knows is **unpriced**: its tokens count, its cost is 0, and the reply marks it. When network sources cannot be reached, previously cached prices on disk (even if older than 24 hours) serve as an offline fallback; when no cache exists, every model is unpriced and the reply says prices are unavailable. A failed price initialization does not permanently mark pricing loaded; subsequent background scans continue to retry after `retryIntervalMs`.
 
 ### 3.4 Ranges
 

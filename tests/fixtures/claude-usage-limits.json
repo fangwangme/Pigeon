@@ -1,0 +1,23 @@
+{
+  "limits": [
+    { "kind": "session", "group": "session", "percent": 33, "resets_at": "2026-11-14T15:00:00Z", "scope": null },
+    { "kind": "weekly_all", "group": "weekly", "percent": 43, "resets_at": "2026-11-18T00:00:00Z", "scope": null },
+    {
+      "kind": "weekly_scoped",
+      "group": "weekly",
+      "percent": 71,
+      "resets_at": "2026-11-18T00:00:00Z",
+      "scope": { "model": { "id": null, "display_name": "Fable" }, "surface": null }
+    }
+  ],
+  "five_hour": null,
+  "seven_day": null,
+  "seven_day_sonnet": null,
+  "extra_usage": {
+    "is_enabled": true,
+    "monthly_limit": 5000,
+    "used_credits": 0,
+    "currency": "USD",
+    "decimal_places": 2
+  }
+}

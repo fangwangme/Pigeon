@@ -1,0 +1,2 @@
+{"timestamp":"2026-11-10T12:00:00.000Z","type":"session_meta","payload":{"id":"codex-subagent-1","cwd":"/tmp/project","source":{"subagent":"review"}}}
+{"timestamp":"2026-11-10T12:00:01.000Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"Review diff"}]}}

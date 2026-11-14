@@ -18,7 +18,7 @@ To prevent manual input errors, brute-force enumeration, and accidental disclosu
    - **No manual code entry**: Pairing is completed exclusively by scanning this QR code with the mobile camera. The app offers no field to type a code (user decision, 2026-10-25).
 2. **Pairing Token Security**:
    - Time-to-Live (TTL): By default for personal Tailscale/LAN remote control, pairing links are non-expiring (permanent until manually rotated via `pigeon pair`). Ephemeral tokens with explicit TTL can be requested on demand.
-   - Brute-Force Limit: After 5 failed attempts against the active token (counted globally, not per IP), the token is revoked. A new one needs `pigeon pair` on the machine.
+   - Brute-Force Limit: After 5 failed attempts against the active token (counted globally, not per IP), the token is revoked. A new one needs `pigeon pair` on the machine. Note: `POST /api/pair` does not enforce Host or Origin checks (§4), so any device on the same network could trigger 5 failed attempts to revoke a permanent pairing link (without being able to pair through it); this is accepted under the personal-network threat model and recovered by regenerating a code with `pigeon pair`.
    - Verification: Constant-time comparison (`crypto.timingSafeEqual`) to prevent timing side-channel attacks.
    - Credential Exchange: Scanned URL Fragment `#code=` exchanged for a 1-year persistent session cookie `__Host-pigeon_session`.
 3. **URL Fragment Confidentiality**:
