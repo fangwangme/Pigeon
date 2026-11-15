@@ -2,7 +2,7 @@ import { createSignal, For, onCleanup, onMount, Show } from "solid-js";
 import { navigate, state } from "../state/store";
 import { fetchQuota } from "../state/ws";
 import { quotaLevel, quotaPace } from "../../../shared/quota";
-import { Icon } from "./ui";
+import { FeatureDisabledNotice, Icon, QuotaUsageTabs } from "./ui";
 import { t } from "../i18n";
 
 const ORDERED_PROVIDERS = ["claude", "codex", "antigravity"] as const;
@@ -32,7 +32,7 @@ export function QuotaPage() {
   const [now, setNow] = createSignal(Date.now());
 
   onMount(() => {
-    if (state.configReady && (!state.quotaSnapshots || state.quotaSnapshots.length === 0)) {
+    if (state.quotaEnabled && state.configReady && (!state.quotaSnapshots || state.quotaSnapshots.length === 0)) {
       setInitialLoading(true);
       void fetchQuota().finally(() => {
         setInitialLoading(false);
@@ -43,7 +43,7 @@ export function QuotaPage() {
   });
 
   const doRefresh = async () => {
-    if (refreshing()) return;
+    if (!state.quotaEnabled || refreshing()) return;
     setRefreshing(true);
     try {
       await fetchQuota();
@@ -89,46 +89,37 @@ export function QuotaPage() {
         <div class="ht">
           <div class="t">{t("quota.title")}</div>
           <div class="s">
-            {isLoading()
-              ? (refreshing() ? t("quota.refreshing") : t("quota.loading"))
-              : state.quotaUpdated
-              ? t("quota.refreshedAt", { time: formatTime(state.quotaUpdated) })
+            {state.quotaEnabled
+              ? (isLoading()
+                ? (refreshing() ? t("quota.refreshing") : t("quota.loading"))
+                : state.quotaUpdated
+                ? t("quota.refreshedAt", { time: formatTime(state.quotaUpdated) })
+                : "")
               : ""}
           </div>
         </div>
-        <button class="cbtn" aria-label={t("app.reload")} onClick={doRefresh}>
-          <span
-            style={{
-              display: "inline-flex",
-              "align-items": "center",
-              "justify-content": "center",
-              animation: isLoading() ? "spin .8s linear infinite" : "none",
-            }}
-          >
-            <Icon name="refresh" />
-          </span>
-        </button>
+        <Show when={state.quotaEnabled} fallback={<div style={{ width: "38px" }} />}>
+          <button class="cbtn" aria-label={t("app.reload")} onClick={doRefresh}>
+            <span
+              style={{
+                display: "inline-flex",
+                "align-items": "center",
+                "justify-content": "center",
+                animation: isLoading() ? "spin .8s linear infinite" : "none",
+              }}
+            >
+              <Icon name="refresh" />
+            </span>
+          </button>
+        </Show>
       </div>
 
       <div class="scroll">
         <div style={{ padding: "0 16px calc(30px + env(safe-area-inset-bottom))" }}>
           {/* Segmented switch */}
-          <div style={{ "margin-top": "6px" }}>
-            <div class="seg" style={{ display: "grid", "grid-template-columns": "repeat(2, minmax(0, 1fr))", padding: "3px" }}>
-              <button
-                class="on"
-                style={{ height: "38px", "font-size": "14.5px" }}
-              >
-                {t("quota.tabQuota")}
-              </button>
-              <button
-                style={{ height: "38px", "font-size": "14.5px" }}
-                onClick={() => navigate({ name: "usage", from: backTarget() })}
-              >
-                {t("quota.tabUsage")}
-              </button>
-            </div>
-          </div>
+          <QuotaUsageTabs active="quota" from={backTarget()} />
+
+          <Show when={state.quotaEnabled} fallback={<FeatureDisabledNotice message={t("quota.disabledNotice")} />}>
 
           {/* Skeleton Template when loading without data */}
           <Show when={showSkeleton()}>
@@ -291,7 +282,7 @@ export function QuotaPage() {
                             {PROVIDER_NAMES[p.provider] || p.provider.toUpperCase()}
                           </span>
                         </div>
-                        <Show when={state.quotaShowAccount !== false && (p.snapshot?.plan || p.snapshot?.account)}>
+                        <Show when={state.quotaShowAccount === true && (p.snapshot?.plan || p.snapshot?.account)}>
                           <div style={{ "font-size": "12.5px", color: "var(--muted)", "margin-top": "2px" }}>
                             <Show when={p.snapshot?.plan}>
                               <b style={{ color: "var(--fg)", "font-weight": 600 }}>{p.snapshot?.plan} · </b>
@@ -517,6 +508,7 @@ export function QuotaPage() {
                 {t("quota.manageProviders")}
               </button>
             </div>
+          </Show>
           </Show>
         </div>
       </div>

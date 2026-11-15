@@ -1,10 +1,12 @@
-import { closeSync, existsSync, fstatSync, openSync, readSync, statSync } from "node:fs";
+import { closeSync, fstatSync, openSync, readSync, statSync } from "node:fs";
 import type {
   FileDiffSummary,
   NormalizedToolCall,
   NormalizedTurn,
   SessionStats,
+  SubagentInfo,
   TodoItem,
+  TurnItem,
   ToolVerb,
 } from "../../shared/agent-session";
 
@@ -15,6 +17,19 @@ export interface SessionRead {
   sessionTitle?: string;
   todos?: TodoItem[];
   model?: string;
+  subagents?: SubagentInfo[];
+}
+
+/** `agent-session-normalization.md` §3: consecutive error items fold in place with newest details and count. */
+export function pushFoldedError(items: TurnItem[], errorKind: string, text: string): void {
+  const last = items[items.length - 1];
+  if (last?.kind === "error") {
+    last.errorKind = errorKind;
+    last.text = text;
+    last.count = (last.count ?? 1) + 1;
+    return;
+  }
+  items.push({ kind: "error", errorKind, text });
 }
 
 /** `agent-session-normalization.md` §2.0: path → project slug used by Claude Code. */
@@ -326,7 +341,7 @@ export class TurnBuilder {
 
   public error(errorKind: string, text: string, timestamp: number): void {
     const turn = this.current(timestamp);
-    turn.items!.push({ kind: "error", errorKind, text });
+    pushFoldedError(turn.items!, errorKind, text);
     turn.updatedAt = Math.max(turn.updatedAt ?? turn.timestamp, timestamp);
   }
 

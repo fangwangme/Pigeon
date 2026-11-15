@@ -85,10 +85,11 @@ A sheet shared by §2.1 and §2.2: status (等待你, 工作中, 已完成, 空�
   Nothing is written while turns stream in, and reading an entry does not write it back: `lastAccess` is kept in memory and saved with the next write.
 
 ### 3.2 Messages
-- A user message is a right-aligned bubble; attachments show as thumbnails above it. A tap on an image thumbnail opens the image full-screen inside the app (pinch to zoom; a tap or ✕ closes it). The page never navigates away for it, because a page opened outside the home-screen app does not carry its session cookie.
+- A user message is a right-aligned bubble; attachments show as thumbnails above it. A tap on an image thumbnail opens the image full-screen inside the app (pinch to zoom; a tap or ✕ closes it). The page never navigates away for it, because a page opened outside the home-screen app does not carry its session cookie. An image pasted into AGY itself loads through `protocol.md` §7.1 (issue #25).
+- Under a user message with text, a copy button (right-aligned, matching the reply's copy button) copies the prompt's text (issue #25).
 - Assistant text is GitHub-flavored Markdown laid out on the page, not in a card: headings, lists, inline code, code blocks with a non-overlapping header bar (language label on the left, copy button on the right), links that open outside the app. Table cells wrap cleanly (`white-space: normal; overflow-wrap: break-word; max-width: 280px`) while keeping horizontal scroll fallback for wide tables.
 - The last reply of a finished turn has a copy button and its time (`agent-session-normalization.md` §3 `updatedAt`): `HH:mm` on the same day, else `MM-DD HH:mm`.
-- An agent error (`agent-session-normalization.md` §3, item `error`) shows in its turn as one line in `--danger` with the agent's own text, for example "You've hit your session limit · resets 4:40pm". Pigeon adds no explanation of its own.
+- An agent error (`agent-session-normalization.md` §3, item `error`) shows in its turn as one warning line in `--warn` (amber, for every agent; issue #25, user decision 2026-11-15) with the agent's own text, for example "You've hit your session limit · resets 4:40pm". An item with `count` ends with " ×N". Pigeon adds no explanation of its own.
 - Reasoning collapses to one line, "思考了 N 秒" (or "思考" when no duration is known); a tap shows the full text.
 - A compaction (`agent-session-normalization.md` §3 `compact` item) is one line on the agent's side, "上下文已压缩", on a tinted background that sets it apart from messages; a tap shows the summary in a box of limited height that scrolls (user decision, 2026-11-13).
 - Agent output is untrusted: Markdown is sanitized (`architecture.md` §5).
@@ -114,12 +115,18 @@ When the session has a todo list (`agent-session-normalization.md` §3), a capsu
 ### 3.6 Screen-card fallback
 A pane with an agent but no bound session shows the classified screen cards (`herdr-adapter.md` §8.1) in the same message style: markdown text, tool lines, diffs, thoughts. While waiting for the initial screen data (`!paneLoaded`), the view displays "正在读取这个 pane… / Reading this pane…". Once the initial screen state has loaded and no cards could be classified, the view displays the terminal raw screen fallback or an empty-session state ("无结构化会话") with an "打开终端 / Open terminal" button, rather than continuing to display "Reading this pane…".
 
+### 3.7 Sub-agents
+A session with sub-agents (`agent-session-normalization.md` §3.4, `protocol.md` §5.6) shows them; it never offers to stop one (issue #25, user decision 2026-11-15).
+- The ⋯ menu (§6.5) shows **子代理 (n)**. While any of them runs, a capsule **n 个子代理运行中** sits at the bottom left beside the todo capsule (§3.4).
+- Either opens a sheet listing each sub-agent in start order: its title, its type and model in small text, and its state (**运行中** with the running dot, **已完成**, **失败**).
+- A tap pushes its conversation inside the sheet (back instead of close), fetched with `detail_get` `kind: "subagent"` (`protocol.md` §4.20) each time it is opened, and rendered read-only with the message rules of §3.2–§3.3: no composer, no prompt card, no queue. The fetched state also refreshes that row of the list. A sub-agent without a conversation shows "没有可显示的记录".
+
 ## 4. Prompt cards
 
 When the pane has a `pendingInteraction` (`protocol.md` §5.4), a floating card appears above the composer, which stays mounted and usable, the header shows the amber dot and, if this phone is not viewing the pane, a push is sent (`push.md`). Text sent from the composer goes to the pane like any prompt; while Herdr reports `blocked`, Herdr refuses it (`ERR_AGENT_BLOCKED`, `protocol.md` §4.2), and the phone shows that error and keeps the draft.
 
 ### 4.1 Permission
-- Title "需要授权", the question, and the tool call it is about when the transcript has it pending: the command, or a mini diff for an edit (a tap opens §3.3's detail).
+- Title "需要授权", the question, and the tool call it is about when the transcript has it pending: the command, or a mini diff for an edit (a tap opens §3.3's detail). When the pending call is neither (for example AGY's `ask_question` read from the screen), the card shows the prompt's payload lines instead, so the question and its options stay visible (issue #25).
 - One button per numbered option, labels and order exactly as on screen. A tap sends that option (`interaction_respond`); the button shows "发送中…" and further taps do nothing until the answer is acked. The card goes away when the prompt leaves the screen.
 - An option whose label asks to tell the agent something ("No, and tell …") is sent, then the composer gets focus so the user can write the reason.
 - **No terminal action** (user decision, 2026-11-13): no prompt card offers the terminal view. What the card cannot answer with a tap shows the question and the hint **在下方输入框回复**, and the user answers by typing in the composer. An ack with `approved: false` keeps the card and shows the toast "提示仍在等待，可在下方输入框回复".
@@ -162,7 +169,7 @@ Chosen only when a session is created (§7.1; user decision, 2026-11-12). A runn
 - **Model names** everywhere (home and All agents rows, the 恢复 list, the session header, the picker, the usage model rows and day/model sheets; one rule for all of them) show the model's catalog label (`herdr-adapter.md` §7.1). When a model is shared across multiple agents, each agent's catalog is checked in order (skipping entries whose `label === id`); a tierless canonical ID (e.g. `gemini-3-8-flash`) that matches a tiered catalog entry (e.g. `gemini-3.8-flash-high`, `"Gemini 3.8 Flash (High)"`) strips the trailing thinking-tier parenthetical (`"Gemini 3.8 Flash"`). A model no catalog names shows the part of its id after the last `/`, or the whole id when it has none.
 
 ### 6.5 ⋯ menu
-重命名 (renames the Herdr tab), 复制分支 (copies the tab's git branch; shown when there is one), 本会话的变更 (§6.6), 切换 pane (shown with several panes, §6.8), 查看终端 (§5), and **关闭会话** in red (§6.7).
+重命名 (renames the Herdr tab), 复制分支 (copies the tab's git branch; shown when there is one), 本会话的变更 (§6.6), 子代理 (§3.7; shown when the session has sub-agents), 切换 pane (shown with several panes, §6.8), 查看终端 (§5), and **关闭会话** in red (§6.7).
 
 ### 6.6 Session changes
 Every edit in the session's transcript, summed per file: path, added and removed lines. A tap expands that file's diffs in place (§3.3 diff view). Empty when the pane has no bound session.
@@ -238,11 +245,12 @@ Without a valid pairing only the pairing guide shows: scan the QR code from `pig
 
 ## 11. Quota and usage
 
-Behavior and numbers come from `quota-and-usage.md`; this section is the presentation. The approved mockups are kept with issue #13's notes. Both pages share a header (back, the title **额度与用量** with the last refresh time, a refresh button; the standard page header with the top safe area of §1.1) and a segmented **额度 | 用量** switch below it.
+Behavior and numbers come from `quota-and-usage.md`; this section is the presentation. The approved mockups are kept with issue #13's notes. Both pages share a header (back, the title **额度与用量**, the last refresh/scan time when that tab's feature is on, and a refresh button when on; the standard page header with the top safe area of §1.1) and, whenever at least one of `client.quotaEnabled` or `client.usageEnabled` is on, a segmented **额度 | 用量** switch below it (issue #25). Switching onto a disabled feature's tab stays on that page instead of returning home, shows an amber (`--warn`) notice telling where to enable it (**设置 › 额度与用量**) with a button opening Settings, and sends no requests for that feature.
 
 ### 11.1 Quota button
-- A gauge icon in the home capsule (left of settings) and in the All Agents capsule (left of filter); both open §11.2. The button shows when both `client.quotaUsageEnabled` and `client.quotaButton` are on (`architecture.md` §4.7); when either is off the button is hidden on both pages.
-- A dot on the button: amber when any enabled provider's last snapshot has a window at level warn, red when one is exhausted (`quota-and-usage.md` §2.4); none otherwise.
+- A gauge icon in the home capsule (left of settings) and in the All Agents capsule (left of filter). The button shows whenever `(client.quotaEnabled || client.usageEnabled) && client.quotaButton` is true; when both switches are off or `quotaButton` is off, the button is hidden on both pages (issue #25).
+- Target on tap: opens §11.2 (Quota) when `client.quotaEnabled` is on (including when both are on), and opens §11.3 (Usage) when only `client.usageEnabled` is on.
+- A dot on the button: shown only when `client.quotaEnabled` is on and any enabled provider's last snapshot has a window at level warn (amber) or exhausted (red) (`quota-and-usage.md` §2.4); hidden when `client.quotaEnabled` is off or otherwise.
 
 ### 11.2 Quota page
 - One card per enabled provider, in the order Claude Code, Codex, Antigravity: the provider name in its agent color, then `plan · account` (plan omitted when there is none).
@@ -251,7 +259,7 @@ Behavior and numbers come from `quota-and-usage.md`; this section is the present
 - Colors (`quota-and-usage.md` §2.4): the bar uses the provider's agent color at level normal, `--warn` at warn, `--danger` when exhausted; the primary figure is `--fg` at normal and the level color otherwise. Pace text: **节奏正常**, **超出 N% · 约 <eta> 后用完**, **低于节奏 N%**, muted, except **超出**, which is `--warn`. A window with no pace shows no marker.
 - Reset credits and Claude extra usage (`extraUsage`, when enabled, even at `$0`) are listed under a provider's windows.
 - A provider error shows as a red line naming the provider and the cause, above its card; the card keeps the previous snapshot. No enabled provider with data: an empty state with a link to **管理查询的服务** (§11.4).
-- Loading state: while querying initial quota, the page renders pulsing skeleton cards for enabled providers with a loading spinner and message, hiding the empty state until loading finishes. The header subtitle reflects the server's actual fetch timestamp.
+- Loading state: while querying initial quota, the page renders pulsing skeleton cards for enabled providers with a loading spinner and message, hiding the empty state until loading finishes. The header subtitle reflects the server's actual fetch timestamp; tapping Refresh reads the daemon's cached state (`protocol.md` §4.16) without triggering upstream provider requests, while background refreshes push `quota_updated` (§5.11) silently.
 - Under the cards: **管理查询的服务**, and one line explaining the colors.
 
 ### 11.3 Usage page
@@ -267,10 +275,15 @@ Behavior and numbers come from `quota-and-usage.md`; this section is the present
 - Under the list: costs are estimates at public API prices, which subscriptions are not billed by; unpriced models and unavailable prices are named (`quota-and-usage.md` §3.3).
 
 ### 11.4 Settings group
-- The **额度与用量** card begins with the master toggle **启用额度与用量查询** (`client.quotaUsageEnabled`, default `true`). When off, all following items in the card and the **查询额度的服务** card are hidden. If the client route is on quota or usage when the toggle turns off (including broadcasts from other phones or route restored on reload), it redirects immediately to home.
-- **订阅额度** (summary: one short item per enabled provider following **额度显示**, e.g. **Claude 5h 剩 48%**) and **Token 用量** (summary: **今日 $x · 近 7 天 $y**).
-- **额度显示**: 剩余 / 已用 (`client.quotaDisplay`).
-- **列表页显示额度按钮** (`client.quotaButton`).
-- **显示账号信息** (`client.quotaShowAccount`, 默认开启；关闭时额度卡片不显示套餐级别与账号邮箱，设置页「查询额度的服务」副标题也不显示套餐).
-- **用量统计模式**: 定时扫描 / 实时扫描 (`client.usageScanMode`, 默认 `scheduled`)；在定时扫描模式下提供扫描间隔选择 (**1m**, **2m**, **5m**, **10m**, **15m**，`client.usageScanInterval`，默认 `15m`)。
-- **查询额度的服务**: Claude Code, Codex, Antigravity, each a switch (`client.quotaProviders`) with a subtitle (**已登录 · <plan>** when `quotaShowAccount` is on and a plan is known, **已登录** otherwise, or **不查询** when off).
+- The **额度与用量** card has two independent switches: **启用订阅额度查询** (`client.quotaEnabled`, default `false`) and **启用 Token 用量统计** (`client.usageEnabled`, default `true`). Turning one off hides only its own entry row, feature-specific sub-settings, and provider list; only when **both** switches are off do `/quota` and `/usage` redirect to home.
+- When `quotaEnabled` is on:
+  - **订阅额度** (summary: one short item per enabled provider following **额度显示**, e.g. **Claude 5h 剩 48%**)
+  - **额度显示**: 剩余 / 已用 (`client.quotaDisplay`)
+  - **显示账号信息** (`client.quotaShowAccount`, 默认关闭，issue #25；关闭时额度卡片不显示套餐级别与账号邮箱，设置页「查询额度的服务」副标题也不显示套餐)
+  - **查询额度的服务** card: Claude Code, Codex, Antigravity, each a switch (`client.quotaProviders`) with a subtitle (**已登录 · <plan>** when `quotaShowAccount` is on and a plan is known, **已登录** otherwise, or **不查询** when off).
+- When `usageEnabled` is on:
+  - **Token 用量** (summary: **今日 $x · 近 7 天 $y**)
+  - **用量统计模式**: 定时扫描 / 实时扫描 (`client.usageScanMode`, 默认 `scheduled`)
+- Shared items visible whenever `quotaEnabled` or `usageEnabled` is on:
+  - **列表页显示额度按钮** (`client.quotaButton`, issue #25: shared entry button for Quota/Usage on Home and All Agents)
+  - Shared background refresh interval (`client.usageScanInterval`: **1m**, **2m**, **5m** default, **10m**, **15m**; shown when `quotaEnabled` is on, OR when `usageEnabled` is on with `usageScanMode` set to `scheduled`).

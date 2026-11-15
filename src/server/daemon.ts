@@ -1,7 +1,7 @@
 import { join, dirname } from "node:path";
-import { networkInterfaces } from "node:os";
+import { homedir, networkInterfaces } from "node:os";
 import { createHash } from "node:crypto";
-import { mkdirSync, writeFileSync, appendFileSync } from "node:fs";
+import { mkdirSync, writeFileSync, appendFileSync, realpathSync, statSync } from "node:fs";
 import type { Server } from "bun";
 import { HerdrClient } from "./herdr-client";
 import { PairingManager } from "./pairing";
@@ -39,6 +39,7 @@ export interface DaemonConfig {
   vapidPath?: string;
   pushSubscriptionsPath?: string;
   uploadsDir?: string;
+  agyBrainDir?: string;
   embeddedHtml?: string;
   logPath?: string;
   productionPort?: number;
@@ -58,12 +59,20 @@ export interface ResolvedDaemonConfig {
   vapidPath: string;
   pushSubscriptionsPath: string;
   uploadsDir: string;
+  agyBrainDir: string;
   logPath: string;
 }
 
 const VIRTUAL_IFACE_RE = /^(docker|br-|veth|virbr|vmnet|vboxnet|lo|tailscale|tun|tap|wg)/;
 const VITE_DEV_PORT = 5173;
 const COOKIE_MAX_AGE_S = 31536000; // security-and-pairing.md §2: 1-year session cookie
+const AGENT_IMAGE_MIME: Record<string, string> = {
+  png: "image/png",
+  jpg: "image/jpeg",
+  jpeg: "image/jpeg",
+  gif: "image/gif",
+  webp: "image/webp",
+};
 
 function isPrivateIPv4(addr: string): boolean {
   const [a, b] = addr.split(".").map(Number);
@@ -347,6 +356,7 @@ export class PigeonDaemon {
       vapidPath: opts.vapidPath || (isProduction ? join(serverCfg.stateDir, "vapid.json") : instancePaths.vapidPath),
       pushSubscriptionsPath: opts.pushSubscriptionsPath || (isProduction ? join(serverCfg.stateDir, "push-subscriptions.json") : instancePaths.pushSubscriptionsPath),
       uploadsDir: opts.uploadsDir || (isProduction ? join(serverCfg.stateDir, "uploads") : instancePaths.uploadsDir),
+      agyBrainDir: opts.agyBrainDir || join(homedir(), ".gemini", "antigravity-cli", "brain"),
       logPath: opts.logPath || (isProduction ? join(serverCfg.stateDir, "pigeon.log") : instancePaths.logPath),
     };
 
@@ -669,6 +679,51 @@ export class PigeonDaemon {
         headers: {
           "Content-Type": info.mime || "application/octet-stream",
           "Content-Disposition": `${disposition}; filename="${encodeURIComponent(info.name)}"`,
+          "Cache-Control": "private, max-age=86400",
+          "X-Content-Type-Options": "nosniff",
+          "Content-Security-Policy": "default-src 'none'; sandbox",
+        },
+      });
+    }
+
+    const agyMediaMatch = url.pathname.match(/^\/api\/agent-media\/agy\/([^/]+)\/([^/]+)$/);
+    if (agyMediaMatch && req.method === "GET") {
+      const rejected = this.checkHostAndOrigin(req, false);
+      if (rejected) return rejected;
+      if (!sessionOf(req)) return new Response("Unauthorized", { status: 401 });
+      let sessionId: string;
+      let name: string;
+      try {
+        sessionId = decodeURIComponent(agyMediaMatch[1]);
+        name = decodeURIComponent(agyMediaMatch[2]);
+      } catch {
+        return new Response("Not found", { status: 404 });
+      }
+      if (
+        !/^[A-Za-z0-9_-]{1,64}$/.test(sessionId) ||
+        !/^[A-Za-z0-9._-]{1,200}$/.test(name) ||
+        name.startsWith(".")
+      ) {
+        return new Response("Not found", { status: 404 });
+      }
+      const extMatch = /\.([a-z0-9]+)$/i.exec(name);
+      const mime = extMatch ? AGENT_IMAGE_MIME[extMatch[1].toLowerCase()] : undefined;
+      if (!mime) return new Response("Not found", { status: 404 });
+      const uploadedDir = join(this.config.agyBrainDir, sessionId, ".user_uploaded");
+      let realFile: string;
+      try {
+        const realDir = realpathSync(uploadedDir);
+        realFile = realpathSync(join(uploadedDir, name));
+        if (dirname(realFile) !== realDir || !statSync(realFile).isFile()) {
+          return new Response("Not found", { status: 404 });
+        }
+      } catch {
+        return new Response("Not found", { status: 404 });
+      }
+      return new Response(Bun.file(realFile), {
+        headers: {
+          "Content-Type": mime,
+          "Content-Disposition": `inline; filename="${encodeURIComponent(name)}"`,
           "Cache-Control": "private, max-age=86400",
           "X-Content-Type-Options": "nosniff",
           "Content-Security-Policy": "default-src 'none'; sandbox",

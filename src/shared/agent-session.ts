@@ -43,7 +43,7 @@ export type TurnItem =
   | { kind: "tool"; call: NormalizedToolCall }
   | { kind: "todo"; done: number; total: number }
   | { kind: "reasoning"; text?: string; hasText?: boolean; durationMs?: number; isStreaming?: boolean }
-  | { kind: "error"; errorKind: string; text: string }
+  | { kind: "error"; errorKind: string; text: string; count?: number }
   | { kind: "compact"; summary: string };
 
 export interface NormalizedTurn {
@@ -65,6 +65,14 @@ export interface NormalizedTurn {
 export interface TodoItem {
   text: string;
   status: "pending" | "in_progress" | "completed";
+}
+
+export interface SubagentInfo {
+  id: string;
+  title: string;
+  type?: string;
+  model?: string;
+  status: "running" | "completed" | "failed";
 }
 
 export interface SessionStats {

@@ -135,7 +135,6 @@ describe("claude quota provider (quota-and-usage.md §2.2, §2.3)", () => {
         mcpOAuth: { keep: "me" },
       }),
     );
-  const readCreds = () => JSON.parse(readFileSync(credPath, "utf-8"));
 
   beforeEach(() => {
     home = tempDir("quota-claude");
@@ -361,116 +360,305 @@ describe("quota config and usage request validation (quota-and-usage.md §2.5, p
     }
   });
 
-  test("quotaUsageEnabled master switch: config validation, preservation, and command gating (quota-and-usage.md §1.1, protocol.md §4.16–§4.19, §6.3)", async () => {
-    // 1. Fresh config has quotaUsageEnabled: true
-    const cfgMgr = new ConfigManager(join(dir, "config.json"), { HOME: dir });
-    expect(cfgMgr.getClientConfig().quotaUsageEnabled).toBe(true);
+  test("split quotaEnabled & usageEnabled: defaults, legacy config drop, validation, and independent command gating (quota-and-usage.md §1.1, protocol.md §4.16–§4.19, §6.3)", async () => {
+    // 1. Fresh config has quotaEnabled: false, usageEnabled: true, usageScanInterval: "5m"
+    const freshCfg = new ConfigManager(join(dir, "fresh-config.json"), { HOME: dir }).getClientConfig();
+    expect(freshCfg.quotaEnabled).toBe(false);
+    expect(freshCfg.usageEnabled).toBe(true);
+    expect(freshCfg.usageScanInterval).toBe("5m");
+    expect((freshCfg as any).quotaUsageEnabled).toBeUndefined();
 
-    // 2. Patch with invalid value is rejected
-    const badWs = fakeWs();
-    await send(badWs.ws, { type: "config_patch", id: "p_bad", payload: { client: { quotaUsageEnabled: "no" } } });
-    expect(lastError(badWs.sent)).toBe(ProtocolErrors.ERR_INVALID_PAYLOAD);
+    // 2. Legacy config with quotaUsageEnabled drops it and never inherits into new switches
+    const legacyPath = join(dir, "legacy-config.json");
+    writeFileSync(
+      legacyPath,
+      JSON.stringify({ client: { quotaUsageEnabled: true, quotaDisplay: "used" } }),
+      "utf-8"
+    );
+    const legacyCfg = new ConfigManager(legacyPath, { HOME: dir }).getClientConfig();
+    expect(legacyCfg.quotaEnabled).toBe(false);
+    expect(legacyCfg.usageEnabled).toBe(true);
+    expect(legacyCfg.quotaDisplay).toBe("used");
+    expect((legacyCfg as any).quotaUsageEnabled).toBeUndefined();
 
-    // 3. Patch with quotaUsageEnabled: false is accepted, preserving other fields
-    const patchWs = fakeWs();
-    await send(patchWs.ws, { type: "config_patch", id: "p_ok", payload: { client: { quotaUsageEnabled: false, quotaDisplay: "used" } } });
-    expect(lastError(patchWs.sent)).toBeUndefined();
-    expect(server.configManager.getClientConfig().quotaUsageEnabled).toBe(false);
-    expect(server.configManager.getClientConfig().quotaDisplay).toBe("used");
-    const diskClient = JSON.parse(readFileSync(join(dir, "config.json"), "utf-8")).client;
-    expect(diskClient.quotaUsageEnabled).toBe(false);
-    expect(diskClient.quotaDisplay).toBe("used");
+    const legacyOffPath = join(dir, "legacy-off-config.json");
+    writeFileSync(legacyOffPath, JSON.stringify({ client: { quotaUsageEnabled: false } }), "utf-8");
+    const legacyOffCfg = new ConfigManager(legacyOffPath, { HOME: dir }).getClientConfig();
+    expect(legacyOffCfg.quotaEnabled).toBe(false);
+    expect(legacyOffCfg.usageEnabled).toBe(true);
+    expect((legacyOffCfg as any).quotaUsageEnabled).toBeUndefined();
 
-    // Check usage.db before rejected commands
+    // 3. Patch with legacy quotaUsageEnabled or bad types is rejected with ERR_INVALID_PAYLOAD
+    for (const client of [{ quotaUsageEnabled: true }, { quotaEnabled: "no" }, { usageEnabled: 1 }]) {
+      const badWs = fakeWs();
+      await send(badWs.ws, { type: "config_patch", id: "p_bad", payload: { client } });
+      expect(lastError(badWs.sent)).toBe(ProtocolErrors.ERR_INVALID_PAYLOAD);
+    }
+
+    // 4. Default state (quotaEnabled: false, usageEnabled: true): quota_get -> ERR_FEATURE_DISABLED; usage_* -> ok
+    const qOffWs = fakeWs();
+    await send(qOffWs.ws, { type: "quota_get", id: "q_off", payload: {} });
+    expect(lastError(qOffWs.sent)).toBe(ProtocolErrors.ERR_FEATURE_DISABLED);
+
+    const uOnWs = fakeWs();
+    await send(uOnWs.ws, { type: "usage_get", id: "u_on", payload: { preset: "7d", agents: ["claude"] } });
+    expect(lastError(uOnWs.sent)).toBeUndefined();
+
+    // 5. Flip to quotaEnabled: true, usageEnabled: false -> usage_* rejected, quota_get succeeds
     const stateDir = server.configManager.getServerConfig().stateDir;
     const dbPath = join(stateDir, "usage.db");
     const dbBefore = existsSync(dbPath) ? readFileSync(dbPath) : null;
 
-    // 4. When quotaUsageEnabled is false, quota_get, usage_get, usage_day, usage_model are all rejected with ERR_FEATURE_DISABLED
-    const qWs = fakeWs();
-    await send(qWs.ws, { type: "quota_get", id: "q1", payload: {} });
-    expect(lastError(qWs.sent)).toBe(ProtocolErrors.ERR_FEATURE_DISABLED);
+    const patchWs = fakeWs();
+    await send(patchWs.ws, {
+      type: "config_patch",
+      id: "p_flip",
+      payload: { client: { quotaEnabled: true, usageEnabled: false } },
+    });
+    expect(lastError(patchWs.sent)).toBeUndefined();
+    expect(server.configManager.getClientConfig().quotaEnabled).toBe(true);
+    expect(server.configManager.getClientConfig().usageEnabled).toBe(false);
 
-    const uWs = fakeWs();
-    await send(uWs.ws, { type: "usage_get", id: "u1", payload: { preset: "7d", agents: ["claude"] } });
-    expect(lastError(uWs.sent)).toBe(ProtocolErrors.ERR_FEATURE_DISABLED);
+    const qOnWs = fakeWs();
+    await send(qOnWs.ws, { type: "quota_get", id: "q_on", payload: {} });
+    expect(lastError(qOnWs.sent)).toBeUndefined();
 
-    const udWs = fakeWs();
-    await send(udWs.ws, { type: "usage_day", id: "ud1", payload: { date: "2026-11-10", agents: ["claude"] } });
-    expect(lastError(udWs.sent)).toBe(ProtocolErrors.ERR_FEATURE_DISABLED);
-
-    const umWs = fakeWs();
-    await send(umWs.ws, { type: "usage_model", id: "um1", payload: { model: "claude-3-opus", from: "2026-11-01", to: "2026-11-10", agents: ["claude"] } });
-    expect(lastError(umWs.sent)).toBe(ProtocolErrors.ERR_FEATURE_DISABLED);
-
-    // Assert usage.db is completely untouched by rejected commands while switch is off
+    for (const msg of [
+      { type: "usage_get", id: "u1", payload: { preset: "7d", agents: ["claude"] } },
+      { type: "usage_day", id: "ud1", payload: { date: "2026-11-10", agents: ["claude"] } },
+      { type: "usage_model", id: "um1", payload: { model: "claude-3-opus", from: "2026-11-01", to: "2026-11-10", agents: ["claude"] } },
+    ]) {
+      const uOffWs = fakeWs();
+      await send(uOffWs.ws, msg);
+      expect(lastError(uOffWs.sent)).toBe(ProtocolErrors.ERR_FEATURE_DISABLED);
+    }
     const dbAfter = existsSync(dbPath) ? readFileSync(dbPath) : null;
     expect(dbAfter).toEqual(dbBefore);
-
-    // 5. Re-enabling the switch restores command access and preserves previous quotaDisplay
-    const reenableWs = fakeWs();
-    await send(reenableWs.ws, { type: "config_patch", id: "p_on", payload: { client: { quotaUsageEnabled: true } } });
-    expect(lastError(reenableWs.sent)).toBeUndefined();
-    expect(server.configManager.getClientConfig().quotaUsageEnabled).toBe(true);
-    expect(server.configManager.getClientConfig().quotaDisplay).toBe("used");
-
-    const qWs2 = fakeWs();
-    await send(qWs2.ws, { type: "quota_get", id: "q2", payload: {} });
-    expect(lastError(qWs2.sent)).toBeUndefined();
   });
 
-  test("UsageService background timer and transition scan respects quotaUsageEnabled (quota-and-usage.md §1.1)", async () => {
-    const d = tempDir("usage-service-toggle");
+  test("online phone gating, read-only quota_get, connect stale catch-up, toggle refresh, and push notifications (quota-and-usage.md §1.1, §2.6, protocol.md §5.11–§5.12)", async () => {
+    const d = tempDir("quota-online-lifecycle");
+    const fakeHome = join(d, "home");
+    mkdirSync(fakeHome, { recursive: true });
+    let fakeNow = 1_700_000_000_000;
+    const nowFn = () => fakeNow;
+
+    const cfgMgr = new ConfigManager(join(d, "config.json"), { HOME: fakeHome });
+    cfgMgr.patchClientConfig({
+      quotaEnabled: true,
+      usageEnabled: true,
+      usageScanInterval: "5m",
+      quotaProviders: { claude: true, codex: false, antigravity: false },
+    });
+
+    let fetchCount = 0;
+    let shouldFail = false;
+    const qService = new QuotaService({
+      configManager: cfgMgr,
+      now: nowFn,
+      claude: {
+        fetch: async () => {
+          fetchCount++;
+          if (shouldFail) throw new Error("429 rate limited");
+          return {
+            provider: "claude",
+            windows: [{ id: "5h", label: "5h", usedPercent: fetchCount * 10, periodMs: 18_000_000, resetsAt: fakeNow + 3_600_000 }],
+            credits: [],
+            fetchedAt: fakeNow,
+          };
+        },
+      } as any,
+      codex: { fetch: async () => ({ provider: "codex", windows: [], credits: [], fetchedAt: fakeNow }) } as any,
+      antigravity: { fetch: async () => ({ provider: "antigravity", windows: [], credits: [], fetchedAt: fakeNow }) } as any,
+    });
+
+    let scanCount = 0;
+    const store = new UsageStore({ dbPath: join(d, "usage.db"), home: fakeHome, now: nowFn, discoverLs: async () => null });
+    const uService = new UsageService({
+      configManager: cfgMgr,
+      store,
+      pricing: new PricingManager({ cachePath: join(d, "pricing.json"), fetch: (() => Promise.reject()) as any }),
+      now: nowFn,
+    });
+    const origScan = store.scanIncremental.bind(store);
+    store.scanIncremental = async (pricing) => {
+      scanCount++;
+      return origScan(pricing);
+    };
+
+    const wsSrv = new WsServer({
+      buildId: "build_lifecycle",
+      herdrClient: client,
+      pushManager: new PushManager(join(d, "vapid.json")),
+      configManager: cfgMgr,
+      skillScanner: new SkillScanner(fakeHome),
+      quotaService: qService,
+      usageService: uService,
+    });
+
+    try {
+      // 1. No phone WS online: 0 provider fetches, 0 usage scans, and timers are inactive
+      await new Promise((r) => setTimeout(r, 15));
+      expect(fetchCount).toBe(0);
+      expect(scanCount).toBe(0);
+      expect((qService as any).backgroundTimer).toBeNull();
+      expect((uService as any).backgroundTimer).toBeNull();
+
+      // 2. First phone WS connects while cache never refreshed -> immediate 1 fetch + 1 scan, timers armed, push emitted
+      const phone1 = fakeWs();
+      wsSrv.handleOpen(phone1.ws);
+      await (qService as any).refreshAllPromise;
+      await (uService as any).scanPromise;
+      expect(fetchCount).toBe(1);
+      expect(scanCount).toBe(1);
+      expect((qService as any).backgroundTimer).not.toBeNull();
+      expect((uService as any).backgroundTimer).not.toBeNull();
+
+      const qPush1 = phone1.sent.find((m) => m.type === "quota_updated");
+      const uPush1 = phone1.sent.find((m) => m.type === "usage_updated");
+      expect(qPush1?.payload?.fetchedAt).toBe(fakeNow);
+      expect(uPush1?.payload?.scannedAt).toBe(fakeNow);
+
+      // 3. Multiple quota_get calls within one interval invoke fetch at most once (total stays 1)
+      fakeNow += 60_000; // +1m (< 5m interval)
+      for (let i = 0; i < 3; i++) {
+        await wsSrv.handleMessage(phone1.ws, JSON.stringify({ type: "quota_get", id: `qg_${i}`, payload: {} }));
+      }
+      expect(fetchCount).toBe(1);
+      const qAck = phone1.sent.filter((m) => m.type === "ack" && m.replyTo?.startsWith("qg_")).at(-1);
+      expect(qAck?.payload?.providers?.[0]?.snapshot?.windows?.[0]?.usedPercent).toBe(10);
+
+      // Second phone connects within same interval -> cache is fresh, so still no extra fetch
+      const phone2 = fakeWs();
+      wsSrv.handleOpen(phone2.ws);
+      expect(fetchCount).toBe(1);
+
+      // Disconnecting phone1 keeps timers alive while phone2 is online
+      wsSrv.handleClose(phone1.ws);
+      expect((qService as any).backgroundTimer).not.toBeNull();
+
+      // Disconnecting phone2 leaves 0 online clients -> timers stop cleanly
+      wsSrv.handleClose(phone2.ws);
+      expect((qService as any).backgroundTimer).toBeNull();
+      expect((uService as any).backgroundTimer).toBeNull();
+
+      // 4. Phone reconnects after > 5m interval (stale) -> immediately refreshes once
+      fakeNow += 301_000; // > 5m (300_000ms)
+      const phone3 = fakeWs();
+      wsSrv.handleOpen(phone3.ws);
+      await (qService as any).refreshAllPromise;
+      await (uService as any).scanPromise;
+      expect(fetchCount).toBe(2);
+      expect(scanCount).toBe(2);
+
+      // 5. Provider failure retains previous snapshot next to the error and does not extra-retry
+      shouldFail = true;
+      fakeNow += 310_000;
+      await qService.fetchAll();
+      expect(fetchCount).toBe(3);
+
+      await wsSrv.handleMessage(phone3.ws, JSON.stringify({ type: "quota_get", id: "qg_err", payload: {} }));
+      expect(fetchCount).toBe(3);
+      const errAck = phone3.sent.filter((m) => m.type === "ack" && m.replyTo === "qg_err").at(-1);
+      const claudeState = errAck?.payload?.providers?.find((p: any) => p.provider === "claude");
+      expect(claudeState?.snapshot?.windows?.[0]?.usedPercent).toBe(20);
+      expect(claudeState?.error?.message).toMatch(/429 rate limited/);
+
+      // 6. Toggling a switch off -> on triggers immediate refresh only for that item
+      shouldFail = false;
+      await wsSrv.handleMessage(phone3.ws, JSON.stringify({ type: "config_patch", id: "p_qoff", payload: { client: { quotaEnabled: false } } }));
+      expect((qService as any).backgroundTimer).toBeNull();
+      expect((uService as any).backgroundTimer).not.toBeNull();
+
+      const scansBeforeToggle = scanCount;
+      await wsSrv.handleMessage(phone3.ws, JSON.stringify({ type: "config_patch", id: "p_qon", payload: { client: { quotaEnabled: true } } }));
+      await (qService as any).refreshAllPromise;
+      expect(fetchCount).toBe(4);
+      expect(scanCount).toBe(scansBeforeToggle);
+    } finally {
+      wsSrv.destroy();
+    }
+  });
+
+  test("repeated phone connects within an interval keep the running background timer without pushing the next refresh back", async () => {
+    const d = tempDir("timer-stability");
     const fakeHome = join(d, "home");
     mkdirSync(fakeHome, { recursive: true });
 
-    let scanCount = 0;
-    const mockStore = {
-      close: () => {},
-      scanIncremental: async () => {
-        scanCount++;
-        return { scannedFiles: 0, recordsAdded: 0 };
-      },
-    } as unknown as UsageStore;
-
-    // 1. Initialized with quotaUsageEnabled: false
-    const cfgPath = join(d, "config.json");
-    const cfgMgr = new ConfigManager(cfgPath, { HOME: fakeHome });
-    cfgMgr.patchClientConfig({ quotaUsageEnabled: false });
-
-    const service = new UsageService({
-      configManager: cfgMgr,
-      store: mockStore,
-      autoScan: true,
+    const cfgMgr = new ConfigManager(join(d, "config.json"), { HOME: fakeHome });
+    cfgMgr.patchClientConfig({
+      quotaEnabled: true,
+      usageEnabled: true,
+      usageScanMode: "scheduled",
+      usageScanInterval: "5m",
+      quotaProviders: { claude: true, codex: false, antigravity: false },
     });
 
-    // When quotaUsageEnabled is false, autoScan / startBackgroundTimer does not scan and sets no timer
-    expect(scanCount).toBe(0);
-    expect((service as any).backgroundTimer).toBeNull();
+    let fetchCount = 0;
+    const qService = new QuotaService({
+      configManager: cfgMgr,
+      claude: {
+        fetch: async () => {
+          fetchCount++;
+          return { provider: "claude", windows: [], credits: [], fetchedAt: Date.now() };
+        },
+      } as any,
+      codex: { fetch: async () => ({ provider: "codex", windows: [], credits: [], fetchedAt: Date.now() }) } as any,
+      antigravity: { fetch: async () => ({ provider: "antigravity", windows: [], credits: [], fetchedAt: Date.now() }) } as any,
+    });
+    const store = new UsageStore({ dbPath: join(d, "usage.db"), home: fakeHome, discoverLs: async () => null });
+    const uService = new UsageService({
+      configManager: cfgMgr,
+      store,
+      pricing: new PricingManager({ cachePath: join(d, "pricing.json"), fetch: (() => Promise.reject()) as any }),
+    });
+    let scanCount = 0;
+    const origScan = store.scanIncremental.bind(store);
+    store.scanIncremental = async (pricing) => {
+      scanCount++;
+      return origScan(pricing);
+    };
 
-    // Calling startBackgroundTimer explicitly also early-exits
-    service.startBackgroundTimer();
-    expect(scanCount).toBe(0);
-    expect((service as any).backgroundTimer).toBeNull();
+    const qIntervalSpy = spyOn(qService, "getScanIntervalMs").mockReturnValue(50);
+    const uIntervalSpy = spyOn(uService, "getScanIntervalMs").mockReturnValue(50);
 
-    // 2. Toggling quotaUsageEnabled to true via updateConfig triggers exactly one scan and arms the timer
-    cfgMgr.patchClientConfig({ quotaUsageEnabled: true });
-    service.updateConfig();
-    expect((service as any).backgroundTimer).not.toBeNull();
-    // Wait for the async scan to settle
-    await (service as any).scanPromise;
-    expect(scanCount).toBe(1);
+    try {
+      qService.setClientOnline(true);
+      uService.setClientOnline(true);
+      await (qService as any).refreshAllPromise;
+      await (uService as any).scanPromise;
+      expect(fetchCount).toBe(1);
+      expect(scanCount).toBe(1);
 
-    // Calling updateConfig again while already enabled does not trigger extra scan
-    service.updateConfig();
-    expect(scanCount).toBe(1);
+      const qTimer = (qService as any).backgroundTimer;
+      const uTimer = (uService as any).backgroundTimer;
 
-    // 3. Toggling off disarms timer and stops background scans
-    cfgMgr.patchClientConfig({ quotaUsageEnabled: false });
-    service.updateConfig();
-    expect((service as any).backgroundTimer).toBeNull();
+      // Repeatedly reconnect/open additional phones every 15ms (< 50ms interval):
+      // without the guard, clearInterval+setInterval each time would starve the 50ms timer indefinitely.
+      for (let i = 0; i < 12; i++) {
+        await new Promise((r) => setTimeout(r, 15));
+        qService.setClientOnline(true);
+        uService.setClientOnline(true);
+        expect((qService as any).backgroundTimer).toBe(qTimer);
+        expect((uService as any).backgroundTimer).toBe(uTimer);
+        if (fetchCount >= 2 && scanCount >= 2) break;
+      }
+      expect(fetchCount).toBeGreaterThanOrEqual(2);
+      expect(scanCount).toBeGreaterThanOrEqual(2);
 
-    service.destroy();
+      // Changing the configured interval replaces the running timers cleanly.
+      qIntervalSpy.mockReturnValue(120);
+      uIntervalSpy.mockReturnValue(120);
+      qService.updateConfig();
+      uService.updateConfig();
+      expect((qService as any).backgroundTimer).not.toBe(qTimer);
+      expect((uService as any).backgroundTimer).not.toBe(uTimer);
+    } finally {
+      qIntervalSpy.mockRestore();
+      uIntervalSpy.mockRestore();
+      qService.destroy();
+      uService.destroy();
+    }
   });
 
   test("server accurately tracks and returns actual scan and fetch timestamps for usage and quota", async () => {
@@ -485,37 +673,40 @@ describe("quota config and usage request validation (quota-and-usage.md §2.5, p
     const store = new UsageStore({ dbPath: join(d, "usage.db"), home: fakeHome, now: nowFn, discoverLs: async () => null });
     const pricing = new PricingManager({ cachePath: join(d, "pricing.json"), fetch: (() => Promise.reject()) as any });
 
-    // Initial state before scan
     expect(store.getLastScannedAt()).toBe(0);
 
-    // Perform scan at t = 1700000000000
     await store.scanIncremental(pricing);
     expect(store.getLastScannedAt()).toBe(1700000000000);
 
-    // Later at t = 1700000050000, client requests report without scanning
     fakeNow = 1700000050000;
     const rep = store.getUsageReport({ preset: "today", agents: ["claude"] }, { from: "2023-11-14", to: "2023-11-14" }, "2023-11-14", false);
-    // scannedAt reflects the actual scan time (1700000000000), not the query time (1700000050000)!
     expect(rep.scannedAt).toBe(1700000000000);
 
     store.close();
 
-    // 2. QuotaService: returns actual fetchedAt from providers, and cached requests reuse that server timestamp
+    // 2. QuotaService: fetchAll records actual fetch timestamp, and repeated getQuota reads return cached timestamp with no upstream call
+    let calls = 0;
+    const cfg = { quotaEnabled: true, quotaProviders: { claude: true, codex: false, antigravity: false } } as any;
     const qService = new QuotaService({
       now: nowFn,
-      claude: { fetch: async () => ({ provider: "claude" as const, windows: [], credits: [], fetchedAt: fakeNow }) } as any,
+      claude: {
+        fetch: async () => {
+          calls++;
+          return { provider: "claude" as const, windows: [], credits: [], fetchedAt: fakeNow };
+        },
+      } as any,
       codex: { fetch: async () => ({ provider: "codex" as const, windows: [], credits: [], fetchedAt: fakeNow }) } as any,
       antigravity: { fetch: async () => ({ provider: "antigravity" as const, windows: [], credits: [], fetchedAt: fakeNow }) } as any,
     });
 
-    const res1 = await qService.getQuota({ quotaProviders: { claude: true, codex: false, antigravity: false } } as any);
+    await qService.fetchAll(cfg);
+    const res1 = await qService.getQuota(cfg);
     expect(res1.fetchedAt).toBe(1700000050000);
 
-    // 30 seconds later, within 60s cache window:
     fakeNow = 1700000080000;
-    const res2 = await qService.getQuota({ quotaProviders: { claude: true, codex: false, antigravity: false } } as any);
-    // res2 should return the original server fetch time from cache!
+    const res2 = await qService.getQuota(cfg);
     expect(res2.fetchedAt).toBe(1700000050000);
+    expect(calls).toBe(1);
   });
 
   test("UsageStore seeds model_price_periods at 0000-01-01, splits on price change, preserves on rebuildAll, and backfills unpriced records", async () => {

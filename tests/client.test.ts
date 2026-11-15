@@ -6,7 +6,7 @@ import { formatModelNameWithRecipes } from "../src/client/src/utils/model-name";
 import { renderMarkdown } from "../src/client/src/utils/markdown";
 import { callCommand, callInputText } from "../src/client/src/utils/tool-call";
 import type { NormalizedToolCall } from "../src/types/protocol";
-import { state, setState } from "../src/client/src/state/store";
+import { state, setState, quotaButtonShown, quotaUsageTarget } from "../src/client/src/state/store";
 import { applyClientConfigWithTransitions, sendConfigPatch, handleServerMessage, initWebSocket } from "../src/client/src/state/ws";
 
 const rootDir = join(import.meta.dir, "..");
@@ -137,20 +137,70 @@ describe("mobile layout enhancements (mobile-ui-and-themes.md §1.2, §2.1)", ()
     expect(composerSrc).toContain("Math.min(ta.scrollHeight, 280)");
   });
 
-  test("master switch quotaUsageEnabled gates gauge buttons on Home and All Agents (mobile-ui-and-themes.md §11.1, §11.4)", () => {
+  test("quotaEnabled and usageEnabled share one entry and show disabled notice on off tabs (mobile-ui-and-themes.md §11.1, §11.4)", () => {
+    const prev = {
+      quotaEnabled: state.quotaEnabled,
+      usageEnabled: state.usageEnabled,
+      quotaButton: state.quotaButton,
+    };
+    try {
+      setState("quotaButton", true);
+      setState("quotaEnabled", false);
+      setState("usageEnabled", true);
+      expect(quotaButtonShown()).toBe(true);
+      expect(quotaUsageTarget()).toBe("usage");
+
+      setState("quotaEnabled", true);
+      setState("usageEnabled", false);
+      expect(quotaButtonShown()).toBe(true);
+      expect(quotaUsageTarget()).toBe("quota");
+
+      setState("quotaEnabled", true);
+      setState("usageEnabled", true);
+      expect(quotaButtonShown()).toBe(true);
+      expect(quotaUsageTarget()).toBe("quota");
+
+      setState("quotaEnabled", false);
+      setState("usageEnabled", false);
+      expect(quotaButtonShown()).toBe(false);
+
+      setState("quotaEnabled", true);
+      setState("usageEnabled", true);
+      setState("quotaButton", false);
+      expect(quotaButtonShown()).toBe(false);
+    } finally {
+      setState(prev);
+    }
+
     const homeSrc = readFileSync(join(rootDir, "src", "client", "src", "components", "Home.tsx"), "utf-8");
-    // Verify both header gauge buttons check quotaButtonShown or quotaUsageEnabled
     const matches = [...homeSrc.matchAll(/<Show when=\{([^}]+)\}>\s*<button aria-label=\{t\("quota\.title"\)\}/g)];
     expect(matches.length).toBe(2);
     for (const m of matches) {
-      expect(m[1]).toMatch(/quotaButtonShown|quotaUsageEnabled/);
+      expect(m[1]).toContain("quotaButtonShown");
     }
+    expect(homeSrc).toContain("navigate({ name: quotaUsageTarget(), from: \"home\" })");
+    expect(homeSrc).toContain("navigate({ name: quotaUsageTarget(), from: \"agents\" })");
+    expect(homeSrc).toContain("state.quotaEnabled && quotaDot(state.quotaSnapshots)");
 
     const settingsSrc = readFileSync(join(rootDir, "src", "client", "src", "components", "Settings.tsx"), "utf-8");
-    expect(settingsSrc).toContain("quotaUsageEnabled");
+    expect(settingsSrc).toContain("quotaEnabled");
+    expect(settingsSrc).toContain("usageEnabled");
+    expect(settingsSrc).toContain("state.quotaEnabled || state.usageEnabled");
+    expect(settingsSrc).not.toContain("quotaUsageEnabled");
 
     const indexSrc = readFileSync(join(rootDir, "src", "client", "src", "index.tsx"), "utf-8");
-    expect(indexSrc).toContain("quotaFeatureOn");
+    expect(indexSrc).toContain("!quotaFeatureOn() && !usageFeatureOn()");
+    expect(indexSrc).toContain("(quotaFeatureOn() || usageFeatureOn()) && state.route.name === \"quota\"");
+    expect(indexSrc).toContain("(quotaFeatureOn() || usageFeatureOn()) && state.route.name === \"usage\"");
+
+    const quotaSrc = readFileSync(join(rootDir, "src", "client", "src", "components", "QuotaPage.tsx"), "utf-8");
+    expect(quotaSrc).toContain("FeatureDisabledNotice");
+    expect(quotaSrc).toContain("if (state.quotaEnabled &&");
+    expect(quotaSrc).toContain("if (!state.quotaEnabled || refreshing()) return");
+
+    const usageSrc = readFileSync(join(rootDir, "src", "client", "src", "components", "UsagePage.tsx"), "utf-8");
+    expect(usageSrc).toContain("FeatureDisabledNotice");
+    expect(usageSrc).toContain("if (!state.usageEnabled) return");
   });
 
   test("Quota and Usage pages render skeleton templates and loading animations before data arrives", () => {
@@ -172,31 +222,52 @@ describe("mobile layout enhancements (mobile-ui-and-themes.md §1.2, §2.1)", ()
     expect(wsSrc).toMatch(/res\.fetchedAt/);
   });
 
-  test("client state transitions clear snapshots on toggle-off and restore on toggle-on (quota-and-usage.md §1.1)", () => {
-    // Setup state as enabled with mock snapshots and updated timestamp
-    setState("quotaUsageEnabled", true);
+  test("client state transitions clear only the disabled feature and apply push updates (quota-and-usage.md §1.1, protocol.md §5.11–§5.12)", () => {
+    // 1. Turning off quotaEnabled clears quotaSnapshots/quotaUpdated without clearing usageScannedAt
+    setState("quotaEnabled", true);
+    setState("usageEnabled", true);
     setState("quotaSnapshots", [{ provider: "claude" as const, enabled: true, snapshot: null, error: null }]);
     setState("quotaUpdated", 1700000000000);
+    setState("usageScannedAt", 1700000005000);
 
-    // 1. applyClientConfigWithTransitions toggling off clears snapshots and updated timestamp
-    applyClientConfigWithTransitions({ quotaUsageEnabled: false });
-    expect(state.quotaUsageEnabled).toBe(false);
+    applyClientConfigWithTransitions({ quotaEnabled: false });
+    expect(state.quotaEnabled).toBe(false);
     expect(state.quotaSnapshots).toEqual([]);
     expect(state.quotaUpdated).toBeNull();
+    expect(state.usageEnabled).toBe(true);
+    expect(state.usageScannedAt).toBe(1700000005000);
 
-    // 2. sendConfigPatch on initiating phone also clears snapshots immediately on toggle-off
-    setState("quotaUsageEnabled", true);
-    setState("quotaSnapshots", [{ provider: "codex" as const, enabled: true, snapshot: null, error: null }]);
-    setState("quotaUpdated", 1700000010000);
+    // 2. Push events update store silently when enabled
+    applyClientConfigWithTransitions({ quotaEnabled: true });
+    handleServerMessage({
+      type: "quota_updated",
+      payload: {
+        providers: [{ provider: "claude", enabled: true, snapshot: { provider: "claude", windows: [], credits: [], fetchedAt: 1700000020000 }, error: null }],
+        fetchedAt: 1700000020000,
+      },
+    });
+    expect(state.quotaUpdated).toBe(1700000020000);
+    expect(state.quotaSnapshots[0]?.snapshot?.fetchedAt).toBe(1700000020000);
 
-    // Calling sendConfigPatch with quotaUsageEnabled: false
-    void sendConfigPatch({ quotaUsageEnabled: false });
-    expect(state.quotaUsageEnabled).toBe(false);
+    handleServerMessage({
+      type: "usage_updated",
+      payload: { scannedAt: 1700000030000 },
+    });
+    expect(state.usageScannedAt).toBe(1700000030000);
+
+    // 3. sendConfigPatch turning off quotaEnabled clears snapshots immediately; usageEnabled off clears usageScannedAt
+    void sendConfigPatch({ quotaEnabled: false });
+    expect(state.quotaEnabled).toBe(false);
     expect(state.quotaSnapshots).toEqual([]);
     expect(state.quotaUpdated).toBeNull();
+    expect(state.usageScannedAt).toBe(1700000030000);
+
+    void sendConfigPatch({ usageEnabled: false });
+    expect(state.usageEnabled).toBe(false);
+    expect(state.usageScannedAt).toBeNull();
   });
 
-  test("sendConfigPatch turn-on waits for server ack then fetches quota on initiating phone (quota-and-usage.md §1.1)", async () => {
+  test("sendConfigPatch turn-on waits for server ack then reads cached quota on initiating phone (quota-and-usage.md §1.1)", async () => {
     const sentFrames: any[] = [];
     let fakeWsInstance: any = null;
     const origWs = globalThis.WebSocket;
@@ -244,15 +315,15 @@ describe("mobile layout enhancements (mobile-ui-and-themes.md §1.2, §2.1)", ()
       expect(state.connected).toBe(true);
 
       // Start in disabled state with empty snapshots
-      setState("quotaUsageEnabled", false);
+      setState("quotaEnabled", false);
       setState("quotaSnapshots", []);
       sentFrames.length = 0;
 
       // 1. Turning on sends config_patch
-      const patchPromise = sendConfigPatch({ quotaUsageEnabled: true });
+      const patchPromise = sendConfigPatch({ quotaEnabled: true });
       const patchFrame = sentFrames.find((f) => f.type === "config_patch");
       expect(patchFrame).toBeDefined();
-      expect(patchFrame.payload.client.quotaUsageEnabled).toBe(true);
+      expect(patchFrame.payload.client.quotaEnabled).toBe(true);
 
       // 2. Before server ack arrives, quota_get MUST NOT be sent yet
       expect(sentFrames.some((f) => f.type === "quota_get")).toBe(false);
@@ -266,7 +337,7 @@ describe("mobile layout enhancements (mobile-ui-and-themes.md §1.2, §2.1)", ()
 
       await patchPromise;
 
-      // 4. After server ack, quota_get is sent to fetch fresh quota!
+      // 4. After server ack, quota_get is sent
       expect(sentFrames.some((f) => f.type === "quota_get")).toBe(true);
     } finally {
       if (fakeWsInstance) {
@@ -315,5 +386,12 @@ describe("code blocks and heatmap scales (mobile-ui-and-themes.md §3.2, §9.1)"
     for (const k of keys) expect(PALETTES.dark[k]).toBe(PALETTES.light[k]);
     expect(luminance(PALETTES.light.heatTokens1)).toBeGreaterThan(luminance(PALETTES.light.heatTokens5));
     expect(luminance(PALETTES.light.heatCost1)).toBeGreaterThan(luminance(PALETTES.light.heatCost5));
+  });
+
+  test("PromptCard falls back to ReplyBelow when transcript question lacks checked keys (herdr-adapter.md §7.2)", () => {
+    const cardSrc = readFileSync(join(rootDir, "src", "client", "src", "components", "PromptCard.tsx"), "utf-8");
+    expect(cardSrc).toContain("canAnswerTranscriptQuestion");
+    expect(cardSrc).toContain("unanswerableQuestion");
+    expect(cardSrc).toContain("options: []");
   });
 });

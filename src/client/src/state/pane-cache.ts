@@ -1,4 +1,4 @@
-import type { NormalizedTurn, SessionStats, TodoItem, SessionInfo, HaveInfo, QueuedPrompt, AgentStatus } from "../../../types/protocol";
+import type { NormalizedTurn, SessionStats, TodoItem, SessionInfo, HaveInfo, QueuedPrompt, AgentStatus, SubagentInfo } from "../../../types/protocol";
 import { hashTurn } from "../../../types/protocol";
 
 export const PANE_CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
@@ -15,6 +15,7 @@ export interface PaneCacheEntry {
   sessionStats?: SessionStats | null;
   sessionTitle?: string | null;
   todos?: TodoItem[] | null;
+  subagents?: SubagentInfo[] | null;
   session?: SessionInfo | null;
   queue?: QueuedPrompt[];
 }
@@ -190,6 +191,7 @@ export async function save(
     sessionStats?: SessionStats | null;
     sessionTitle?: string | null;
     todos?: TodoItem[] | null;
+    subagents?: SubagentInfo[] | null;
     session?: SessionInfo | null;
     queue?: QueuedPrompt[];
   }
@@ -205,6 +207,7 @@ export async function save(
     sessionStats: entry.sessionStats,
     sessionTitle: entry.sessionTitle,
     todos: entry.todos,
+    subagents: entry.subagents,
     session: entry.session,
     queue: entry.queue,
   };

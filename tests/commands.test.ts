@@ -41,7 +41,11 @@ beforeEach(async () => {
   client.applySnapshot(topologyOf(PANES.map((p) => ({ ...p, cwd: dir })), { folder: "/start" }));
   uploads = new UploadStore(join(dir, "uploads"));
   pairing = new PairingManager({ devicesFilePath: join(dir, "devices.json"), adminSocketPath: join(dir, "admin.sock"), publicBaseUrl: "https://pigeon.example.ts.net" });
-  server = new WsServer({
+  server = makeServer();
+});
+
+function makeServer(extra: Partial<ConstructorParameters<typeof WsServer>[0]> = {}): WsServer {
+  return new WsServer({
     buildId: "b",
     herdrClient: client,
     pushManager: new PushManager(join(dir, "vapid.json")),
@@ -52,8 +56,9 @@ beforeEach(async () => {
     pairingManager: pairing,
     queueFilePath: join(dir, "queue.json"),
     modelCatalog: new ModelCatalog({ home: dir, env: { PATH: "" }, keychain: false, cachePath: modelsCache(dir) }),
+    ...extra,
   });
-});
+}
 
 /** A catalog file with one Claude model, fetched just now, so no source is asked. */
 function modelsCache(home: string): string {
@@ -416,6 +421,66 @@ describe("prompt queue (protocol.md §4.2, §4.13, §5.8)", () => {
     expect(restoredQueue).toHaveLength(1);
     expect(restoredQueue[0].item.text).toBe("waiting");
     newServer.destroy();
+  });
+});
+
+describe("duplicate prompts (protocol.md §4.2)", () => {
+  const ackOf = (c: ReturnType<typeof fakeWs>, id: string) => c.ofType("ack").find((a) => a.replyTo === id)?.payload;
+
+  test("the same text and attachments right after an accepted prompt are acked as a duplicate and neither sent nor queued", async () => {
+    const idle = await viewer("p2");
+    await send(idle.ws, { type: "agent_prompt", id: "d1", payload: { targetPaneId: "p2", text: "run the tests" } });
+    await send(idle.ws, { type: "agent_prompt", id: "d2", payload: { targetPaneId: "p2", text: "run the tests" } });
+    expect(ackOf(idle, "d1")).toMatchObject({ queued: false });
+    expect(ackOf(idle, "d2")).toEqual({ duplicate: true });
+    expect(herdr.callsOf("terminal.send")).toHaveLength(1);
+
+    await send(idle.ws, { type: "agent_prompt", id: "d3", payload: { targetPaneId: "p2", text: "run the tests again" } });
+    expect(ackOf(idle, "d3")).toMatchObject({ queued: false });
+    expect(herdr.callsOf("terminal.send")).toHaveLength(2);
+
+    const working = await viewer("p1");
+    await send(working.ws, { type: "agent_prompt", id: "d4", payload: { targetPaneId: "p1", text: "also lint" } });
+    await send(working.ws, { type: "agent_prompt", id: "d5", payload: { targetPaneId: "p1", text: "also lint" } });
+    expect(ackOf(working, "d4")).toMatchObject({ queued: true });
+    expect(ackOf(working, "d5")).toEqual({ duplicate: true });
+    expect(working.ofType("prompt_queue").at(-1).payload.items.map((i: any) => i.text)).toEqual(["also lint"]);
+  });
+
+  test("the same text with other attachments is a different prompt", async () => {
+    const c = await viewer("p2");
+    const id = uploads.save({ name: "a.png", mime: "image/png", bytes: new Uint8Array([1, 2, 3]) }).id;
+    await send(c.ws, { type: "agent_prompt", id: "e1", payload: { targetPaneId: "p2", text: "look", attachments: [id] } });
+    await send(c.ws, { type: "agent_prompt", id: "e2", payload: { targetPaneId: "p2", text: "look", attachments: [id] } });
+    expect(ackOf(c, "e2")).toEqual({ duplicate: true });
+    await send(c.ws, { type: "agent_prompt", id: "e3", payload: { targetPaneId: "p2", text: "look" } });
+    expect(ackOf(c, "e3")).toMatchObject({ queued: false });
+    expect(herdr.callsOf("terminal.send")).toHaveLength(2);
+  });
+
+  test("a prompt answered with an error is not remembered, so its resend goes out", async () => {
+    herdr.handlers["terminal.send"] = () => ({ error: "blocked" });
+    const c = await viewer("p2");
+    await send(c.ws, { type: "agent_prompt", id: "f1", payload: { targetPaneId: "p2", text: "deploy" } });
+    expect(lastError(c)).toBe(ProtocolErrors.ERR_AGENT_BLOCKED);
+    herdr.handlers["terminal.send"] = () => ({ result: {} });
+    await send(c.ws, { type: "agent_prompt", id: "f2", payload: { targetPaneId: "p2", text: "deploy" } });
+    expect(ackOf(c, "f2")).toMatchObject({ queued: false });
+    await send(c.ws, { type: "agent_prompt", id: "f3", payload: { targetPaneId: "p2", text: "deploy" } });
+    expect(ackOf(c, "f3")).toEqual({ duplicate: true });
+  });
+
+  test("after the window the same prompt goes out again", async () => {
+    server.destroy();
+    server = makeServer({ promptDuplicateWindowMs: 40 });
+    const c = await viewer("p2");
+    await send(c.ws, { type: "agent_prompt", id: "g1", payload: { targetPaneId: "p2", text: "continue" } });
+    await send(c.ws, { type: "agent_prompt", id: "g2", payload: { targetPaneId: "p2", text: "continue" } });
+    expect(ackOf(c, "g2")).toEqual({ duplicate: true });
+    await Bun.sleep(80);
+    await send(c.ws, { type: "agent_prompt", id: "g3", payload: { targetPaneId: "p2", text: "continue" } });
+    expect(ackOf(c, "g3")).toMatchObject({ queued: false });
+    expect(herdr.callsOf("terminal.send")).toHaveLength(2);
   });
 });
 

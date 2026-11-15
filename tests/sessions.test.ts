@@ -473,6 +473,33 @@ describe("Claude Code records (agent-session-normalization.md §2.3, §3)", () =
       ],
     });
   });
+
+  test("a task notification starts no turn (issue #25)", async () => {
+    const home = tempDir("home");
+    const proj = tempDir("proj");
+    const at = (s: number) => new Date(Date.UTC(2026, 10, 15, 9, 0, s)).toISOString();
+    mkdirSync(join(home, ".claude", "sessions"), { recursive: true });
+    writeFileSync(join(home, ".claude", "sessions", "78.json"), JSON.stringify({ pid: 78, sessionId: "s1", cwd: proj }));
+    mkdirSync(join(home, ".claude", "projects", slug(proj)), { recursive: true });
+    writeFileSync(
+      join(home, ".claude", "projects", slug(proj), "s1.jsonl"),
+      jsonl([
+        { type: "user", timestamp: at(0), cwd: proj, message: { role: "user", content: "Run it in the background" } },
+        { type: "assistant", timestamp: at(1), message: { model: "claude-opus-5-5", role: "assistant", content: [{ type: "text", text: "Started." }] } },
+        {
+          type: "user",
+          timestamp: at(5),
+          origin: { kind: "task-notification", producer: "session-task" },
+          message: { role: "user", content: "<task-notification>\n<task-id>a1</task-id>\n<status>completed</status>\n<summary>Agent \"Build\" finished</summary>\n</task-notification>" },
+        },
+        { type: "assistant", timestamp: at(6), message: { model: "claude-opus-5-5", role: "assistant", content: [{ type: "text", text: "It finished." }] } },
+      ])
+    );
+    const { open } = await setup(home, [{ paneId: "p1", app: "claude-code", cwd: proj, pid: 78 }]);
+    const payload = turnsOf(await open("p1"));
+    expect(payload.turns.map((t: any) => t.userPrompt?.text)).toEqual(["Run it in the background"]);
+    expect(payload.turns[0].assistantResponse.markdown).toBe("It finished.");
+  });
 });
 
 describe("Codex records (agent-session-normalization.md §2.4)", () => {
@@ -536,6 +563,24 @@ describe("Pi records (agent-session-normalization.md §2.5)", () => {
     expect(turn.userPrompt.text).toBe("List files");
     expect(turn.toolCalls[0]).toMatchObject({ verb: "run", target: "ls", output: "a.ts", status: "completed" });
     expect(turn.assistantResponse.markdown).toBe("One file.");
+  });
+
+  test("an assistant message that stopped on an error is an error item (issue #25)", async () => {
+    const home = tempDir("home");
+    const proj = tempDir("proj");
+    const dir = join(home, ".pi", "agent", "sessions", `--${proj.slice(1).replace(/\//g, "-")}--`);
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(
+      join(dir, "2026-11-10T11-00-00_p2.jsonl"),
+      jsonl([
+        { type: "session", id: "p2", cwd: proj },
+        { type: "message", message: { role: "user", content: [{ type: "text", text: "Go" }] } },
+        { type: "message", message: { role: "assistant", content: [], stopReason: "error", errorMessage: "Request timed out.: The operation was aborted. (20)" } },
+      ])
+    );
+    const { open } = await setup(home, [{ paneId: "p1", app: "pi", cwd: proj, createdMs: Date.now() - 60_000 }]);
+    const payload = turnsOf(await open("p1"));
+    expect(payload.turns[0].items).toContainEqual({ kind: "error", errorKind: "unknown", text: "Request timed out.: The operation was aborted. (20)" });
   });
 });
 
@@ -796,6 +841,33 @@ describe("transcript questions, agent errors and turn times (issue #21)", () => 
     expect(herdr.calls.some((call) => call.method === "terminal.send")).toBe(false);
   });
 
+  test("an AGY pending ask_question is a transcript interaction with checked key shortcuts and allowsOther (issue #25, herdr-adapter.md §7.2)", async () => {
+    const home = tempDir("home");
+    const logs = join(home, ".gemini", "antigravity-cli", "brain", "g1", ".system_generated", "logs");
+    mkdirSync(logs, { recursive: true });
+    writeFileSync(
+      join(logs, "transcript.jsonl"),
+      jsonl([
+        { step_index: 0, type: "USER_INPUT", created_at: at(0), content: "<USER_REQUEST>tidy up</USER_REQUEST>" },
+        {
+          step_index: 1,
+          type: "PLANNER_RESPONSE",
+          created_at: at(1),
+          tool_calls: [{ name: "ask_question", args: { questions: JSON.stringify([{ is_multi_select: false, options: ["保留", "删除"], question: "这个会话怎么处理？" }]) } }],
+        },
+      ])
+    );
+    const { open } = await setup(home, [{ paneId: "p1", app: "antigravity", state: "working", cwd: tempDir("proj"), createdMs: Date.now() - 60_000 }]);
+    const c = await open("p1");
+    const interaction = await until(() => c.ofType("pane_state").map((m) => m.payload).find((p) => p.paneId === "p1" && p.pendingInteraction)?.pendingInteraction);
+    expect(interaction).toMatchObject({ source: "transcript", question: "这个会话怎么处理？" });
+    expect(interaction.options.map((o: any) => [o.id, o.label, o.keyShortcut])).toEqual([
+      ["q1_opt_1", "保留", "1"],
+      ["q1_opt_2", "删除", "2"],
+    ]);
+    expect(interaction.allowsOther).toBe(true);
+  });
+
   test("agent_set_model is no longer accepted", async () => {
     const { home, proj } = claudeHome(claudeTranscript);
     const { server, open } = await setup(home, [{ paneId: "p1", app: "claude-code", cwd: proj, pid: 4242 }]);
@@ -836,6 +908,157 @@ describe("Antigravity past sessions (agent-session-normalization.md §2.6, issue
       { id: "a-sub", title: "Review the parser", updatedAt: Date.UTC(2026, 10, 11, 12, 0, 0, 250) },
       { id: "a-root", title: "Fix the login flow", updatedAt: Date.UTC(2026, 10, 11, 10, 0, 0, 500), model: "Gemini 3.8 Pro" },
     ]);
+  });
+});
+
+describe("sub-agents (agent-session-normalization.md §3.4, protocol.md §4.20)", () => {
+  const at = (s: number) => new Date(Date.UTC(2026, 10, 15, 10, 0, s)).toISOString();
+  const detail = async (server: WsServer, c: ReturnType<typeof fakeWs>, subagentId: string) => {
+    const id = `sub_${subagentId}`;
+    await server.handleMessage(c.ws, JSON.stringify({ type: "detail_get", id, payload: { paneId: "p1", kind: "subagent", subagentId } }));
+    return { ack: c.ofType("ack").find((a) => a.replyTo === id)?.payload, error: c.ofType("error").find((e) => e.replyTo === id)?.error };
+  };
+  const notification = (taskId: string, status: string, s: number) => ({
+    type: "user",
+    timestamp: at(s),
+    origin: { kind: "task-notification", producer: "session-task" },
+    message: { role: "user", content: `<task-notification>\n<task-id>${taskId}</task-id>\n<status>${status}</status>\n</task-notification>` },
+  });
+  const agentCall = (id: string, s: number, input: Record<string, unknown>) => ({
+    type: "assistant",
+    timestamp: at(s),
+    message: { model: "claude-opus-5-5", role: "assistant", content: [{ type: "tool_use", id, name: "Agent", input }] },
+  });
+  const agentResult = (id: string, s: number, toolUseResult: Record<string, unknown>) => ({
+    type: "user",
+    timestamp: at(s),
+    toolUseResult,
+    message: { role: "user", content: [{ type: "tool_result", tool_use_id: id, content: "done" }] },
+  });
+
+  test("Claude: sync and background agents with their status, and a sub-agent's own conversation", async () => {
+    const home = tempDir("home");
+    const proj = tempDir("proj");
+    const projDir = join(home, ".claude", "projects", slug(proj));
+    mkdirSync(join(home, ".claude", "sessions"), { recursive: true });
+    writeFileSync(join(home, ".claude", "sessions", "79.json"), JSON.stringify({ pid: 79, sessionId: "s1", cwd: proj }));
+    mkdirSync(join(projDir, "s1", "subagents"), { recursive: true });
+    writeFileSync(
+      join(projDir, "s1.jsonl"),
+      jsonl([
+        { type: "user", timestamp: at(0), cwd: proj, message: { role: "user", content: "Research in parallel" } },
+        agentCall("t1", 1, { description: "Sync research", subagent_type: "Explore", model: "sonnet", prompt: "Find the bug" }),
+        agentResult("t1", 2, { agentId: "aaa1", status: "completed", resolvedModel: "claude-sonnet-5-5" }),
+        agentCall("t2", 3, { description: "Background build", subagent_type: "general-purpose", prompt: "Build" }),
+        agentResult("t2", 4, { isAsync: true, status: "async_launched", agentId: "bbb2", resolvedModel: "claude-opus-5-5" }),
+        agentCall("t3", 5, { description: "Background lint", subagent_type: "general-purpose", prompt: "Lint" }),
+        agentResult("t3", 6, { isAsync: true, status: "async_launched", agentId: "ccc3", resolvedModel: "claude-opus-5-5" }),
+        agentCall("t4", 7, { description: "Background docs", subagent_type: "general-purpose", prompt: "Docs" }),
+        agentResult("t4", 8, { isAsync: true, status: "async_launched", agentId: "ddd4", resolvedModel: "claude-opus-5-5" }),
+        agentCall("t5", 9, { description: "Still planning", subagent_type: "Plan", prompt: "Plan" }),
+        notification("bbb2", "completed", 10),
+        notification("ccc3", "killed", 11),
+      ])
+    );
+    writeFileSync(
+      join(projDir, "s1", "subagents", "agent-aaa1.jsonl"),
+      jsonl([
+        { type: "user", isSidechain: true, agentId: "aaa1", timestamp: at(1), message: { role: "user", content: "Find the bug" } },
+        { type: "assistant", isSidechain: true, agentId: "aaa1", timestamp: at(2), message: { model: "claude-sonnet-5-5", role: "assistant", content: [{ type: "text", text: "Found it in a.ts" }] } },
+      ])
+    );
+    const { server, open } = await setup(home, [{ paneId: "p1", app: "claude-code", cwd: proj, pid: 79 }]);
+    const c = await open("p1");
+    expect(turnsOf(c).subagents).toEqual([
+      { id: "aaa1", title: "Sync research", type: "Explore", model: "claude-sonnet-5-5", status: "completed" },
+      { id: "bbb2", title: "Background build", type: "general-purpose", model: "claude-opus-5-5", status: "completed" },
+      { id: "ccc3", title: "Background lint", type: "general-purpose", model: "claude-opus-5-5", status: "failed" },
+      { id: "ddd4", title: "Background docs", type: "general-purpose", model: "claude-opus-5-5", status: "running" },
+      { id: "t5", title: "Still planning", type: "Plan", status: "running" },
+    ]);
+
+    const sync = await detail(server, c, "aaa1");
+    expect(sync.ack.subagent).toMatchObject({ id: "aaa1", status: "completed" });
+    expect(sync.ack.turns.map((t: any) => [t.userPrompt?.text, t.assistantResponse?.markdown])).toEqual([["Find the bug", "Found it in a.ts"]]);
+    expect((await detail(server, c, "ddd4")).ack).toMatchObject({ subagent: { id: "ddd4", status: "running" }, turns: [] });
+    expect((await detail(server, c, "nope")).error?.code).toBe("ERR_NOT_FOUND");
+  });
+
+  test("AGY: child conversations from its summaries, and a newer child transcript never takes the parent's pane", async () => {
+    const home = tempDir("home");
+    const dir = join(home, ".gemini", "antigravity-cli");
+    const transcript = (id: string, text: string, mtimeSec: number) => {
+      const logs = join(dir, "brain", id, ".system_generated", "logs");
+      mkdirSync(logs, { recursive: true });
+      const file = join(logs, "transcript.jsonl");
+      writeFileSync(file, jsonl([{ step_index: 0, type: "USER_INPUT", created_at: new Date(mtimeSec * 1000).toISOString(), content: `<USER_REQUEST>${text}</USER_REQUEST>` }]));
+      utimesSync(file, mtimeSec, mtimeSec);
+    };
+    const now = Date.now() / 1000;
+    transcript("g1", "audit the backend", now - 20);
+    transcript("k1", "check the page", now - 5);
+    transcript("k2", "research", now - 2);
+    const db = new Database(join(dir, "conversation_summaries.db"));
+    db.run(
+      "CREATE TABLE `conversation_summaries` (`conversation_id` text,`title` text NOT NULL DEFAULT \"\",`preview` text NOT NULL DEFAULT \"\",`step_count` integer NOT NULL DEFAULT 0,`last_modified_time` datetime NOT NULL,`workspace_uris` text NOT NULL,`status` text NOT NULL DEFAULT \"\",`source` text NOT NULL DEFAULT \"\",`project_id` text NOT NULL DEFAULT \"\",`agent_name` text NOT NULL DEFAULT \"\",`parent_conversation_id` text NOT NULL DEFAULT \"\",`nesting_depth` integer NOT NULL DEFAULT 0,`battle_id` text NOT NULL DEFAULT \"\",`winning_conversation_id` text NOT NULL DEFAULT \"\",`not_fully_idle` numeric NOT NULL DEFAULT false,`killed` numeric NOT NULL DEFAULT false,`last_user_input_time` datetime NOT NULL,`last_user_input_step_index` integer NOT NULL DEFAULT -1,`app_data_dir` text NOT NULL DEFAULT \"\", raw_summary BLOB, group_id TEXT NOT NULL DEFAULT '',PRIMARY KEY (`conversation_id`))"
+    );
+    const row = (id: string, parent: string, title: string, agent: string, status: string, killed: number, input: string) =>
+      db.run(
+        "INSERT INTO conversation_summaries (conversation_id, title, last_modified_time, workspace_uris, status, agent_name, parent_conversation_id, nesting_depth, killed, last_user_input_time) VALUES (?, ?, ?, '[]', ?, ?, ?, ?, ?, ?)",
+        [id, title, input, status, agent, parent, parent ? 1 : 0, killed, input]
+      );
+    row("k2", "g1", "", "researcher", "CASCADE_RUN_STATUS_RUNNING", 0, "2026-11-15 10:00:03+00:00");
+    row("g1", "", "Audit", "", "CASCADE_RUN_STATUS_IDLE", 0, "2026-11-15 10:00:00+00:00");
+    row("k1", "g1", "Check the page", "browser", "CASCADE_RUN_STATUS_IDLE", 0, "2026-11-15 10:00:01+00:00");
+    row("k3", "g1", "Gone", "browser", "CASCADE_RUN_STATUS_IDLE", 1, "2026-11-15 10:00:02+00:00");
+    db.close();
+
+    const { server, open } = await setup(home, [{ paneId: "p1", app: "antigravity", cwd: tempDir("proj"), createdMs: Date.now() - 60_000 }]);
+    expect(server.paneStore.boundSession("p1")?.sessionId).toBe("g1");
+    const c = await open("p1");
+    expect(turnsOf(c).subagents).toEqual([
+      { id: "k1", title: "Check the page", type: "browser", status: "completed" },
+      { id: "k3", title: "Gone", type: "browser", status: "failed" },
+      { id: "k2", title: "researcher", type: "researcher", status: "running" },
+    ]);
+    const child = await detail(server, c, "k1");
+    expect(child.ack.turns.map((t: any) => t.userPrompt?.text)).toEqual(["check the page"]);
+  });
+
+  test("OpenCode: child sessions by parent_id, never bound to the parent's pane nor listed", async () => {
+    const home = tempDir("home");
+    const proj = tempDir("proj");
+    const dbDir = join(home, ".local", "share", "opencode");
+    mkdirSync(dbDir, { recursive: true });
+    const db = new Database(join(dbDir, "opencode.db"));
+    db.run(
+      "CREATE TABLE session_v2 (id text PRIMARY KEY, directory text, title text, parent_id text, agent text, time_created integer, time_updated integer, time_archived integer, time_idle integer, idle_outcome text, summary_additions integer, summary_deletions integer, summary_files integer, summary_diffs text)"
+    );
+    db.run("CREATE TABLE session_message (id text PRIMARY KEY, session_id text NOT NULL, type text NOT NULL, seq integer NOT NULL, time_created integer NOT NULL, time_updated integer NOT NULL, data text NOT NULL)");
+    const now = Date.now();
+    const session = (id: string, parent: string | null, title: string, agent: string, created: number, updated: number, idle: number | null, outcome: string | null) =>
+      db.run(
+        "INSERT INTO session_v2 (id, directory, title, parent_id, agent, time_created, time_updated, time_idle, idle_outcome) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        [id, proj, title, parent, agent, created, updated, idle, outcome]
+      );
+    session("ses_p", null, "Parent", "build", now - 30_000, now - 20_000, now - 20_000, "succeeded");
+    session("ses_c2", "ses_p", "Second child", "general", now - 15_000, now - 1_000, null, null);
+    session("ses_c1", "ses_p", "First child", "explore", now - 25_000, now - 2_000, now - 2_000, "succeeded");
+    session("ses_c3", "ses_p", "Third child", "general", now - 10_000, now - 3_000, now - 3_000, "failed");
+    db.run("INSERT INTO session_message VALUES ('m_p', 'ses_p', 'user', 1, ?, ?, ?)", [now - 30_000, now - 30_000, JSON.stringify({ text: "explore the repo" })]);
+    db.run("INSERT INTO session_message VALUES ('m_c1', 'ses_c1', 'user', 1, ?, ?, ?)", [now - 25_000, now - 25_000, JSON.stringify({ text: "look at src" })]);
+    db.close();
+
+    const { server, open } = await setup(home, [{ paneId: "p1", app: "opencode", cwd: proj, createdMs: now - 60_000 }]);
+    expect(server.paneStore.boundSession("p1")?.sessionId).toBe("ses_p");
+    const c = await open("p1");
+    expect(turnsOf(c).subagents).toEqual([
+      { id: "ses_c1", title: "First child", type: "explore", status: "completed" },
+      { id: "ses_c2", title: "Second child", type: "general", status: "running" },
+      { id: "ses_c3", title: "Third child", type: "general", status: "failed" },
+    ]);
+    expect((await detail(server, c, "ses_c1")).ack.turns.map((t: any) => t.userPrompt?.text)).toEqual(["look at src"]);
+    expect(new AgentAdapterManager({ home }).listSessions("opencode", proj).map((s) => s.id)).toEqual(["ses_p"]);
   });
 });
 

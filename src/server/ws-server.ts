@@ -61,6 +61,7 @@ export interface WsServerOptions {
   usageService?: UsageService;
   queueFilePath?: string;
   queueSendTimeoutMs?: number;
+  promptDuplicateWindowMs?: number;
   watchDebounceMs?: number;
   port?: number;
   productionPort?: number;
@@ -130,6 +131,8 @@ export class WsServer {
   /** `item` is what the phone sees (its own text and upload ids, so **编辑** can restore them); `send` is the composed prompt. */
   private queueFilePath?: string;
   private queueSendTimeoutMs: number;
+  private promptDuplicateWindowMs: number;
+  private lastPromptByPane = new Map<string, { hash: string; at: number }>();
   private queues = new Map<string, Array<{ item: QueuedPrompt; send: string; created_ms: number }>>();
   private queueStates = new Map<string, QueueState>();
   private restoredPaneIds = new Set<string>();
@@ -152,6 +155,7 @@ export class WsServer {
     this.buildId = options.buildId;
     this.queueFilePath = options.queueFilePath;
     this.queueSendTimeoutMs = options.queueSendTimeoutMs ?? 30_000;
+    this.promptDuplicateWindowMs = options.promptDuplicateWindowMs ?? 60_000;
     this.loadQueues();
     this.herdrClient = options.herdrClient;
     this.pushManager = options.pushManager;
@@ -164,6 +168,8 @@ export class WsServer {
     this.pairingManager = options.pairingManager;
     this.quotaService = options.quotaService;
     this.usageService = options.usageService;
+    if (this.quotaService) this.wireQuotaService(this.quotaService);
+    if (this.usageService) this.wireUsageService(this.usageService);
     const port = options.port ?? options.configManager?.getServerConfig().port ?? DEFAULT_PORT;
     const prodPort = options.productionPort ?? resolveProductionPort(options.configManager?.env);
     const isCompiled = process.execPath.endsWith("/pigeon") || !process.argv[1]?.endsWith(".ts");
@@ -261,7 +267,10 @@ export class WsServer {
 
       if (!meta?.paneId) {
         for (const paneId of this.paneStore.trackedPaneIds()) {
-          if (!this.herdrClient.hasPane(paneId)) this.paneStore.closePane(paneId);
+          if (!this.herdrClient.hasPane(paneId)) {
+            this.paneStore.closePane(paneId);
+            this.lastPromptByPane.delete(paneId);
+          }
         }
         for (const paneId of Array.from(this.queues.keys())) {
           if (!this.herdrClient.hasPane(paneId)) {
@@ -356,11 +365,17 @@ export class WsServer {
 
   public handleOpen(ws: Ws): void {
     this.clients.add(ws);
+    this.quotaService?.setClientOnline(true);
+    this.usageService?.setClientOnline(true);
     this.logger?.(`ws connect: ${ws.data?.session?.deviceName || "client"} (conn=${ws.data?.connectionId})`);
   }
 
   public handleClose(ws: Ws): void {
     this.clients.delete(ws);
+    if (this.clients.size === 0) {
+      this.quotaService?.setClientOnline(false);
+      this.usageService?.setClientOnline(false);
+    }
     this.pushManager.removePresence(ws.data.connectionId);
     this.syncMonitoredPanes();
     this.logger?.(`ws disconnect: ${ws.data?.session?.deviceName || "client"} (conn=${ws.data?.connectionId})`);
@@ -510,8 +525,15 @@ export class WsServer {
       case "agent_prompt": {
         const { targetPaneId, text, attachments } = msg.payload;
         if (!this.requireKnownPane(ws, msg.id, targetPaneId)) return;
+        const attachmentIds = attachments ?? [];
+        const hash = createHash("sha256").update(JSON.stringify([text, attachmentIds])).digest("hex");
+        const prev = this.lastPromptByPane.get(targetPaneId);
+        if (this.promptDuplicateWindowMs > 0 && prev && prev.hash === hash && Date.now() - prev.at < this.promptDuplicateWindowMs) {
+          this.send(ws, { type: "ack", replyTo: msg.id, payload: { duplicate: true } });
+          return;
+        }
         const paths: string[] = [];
-        for (const id of attachments ?? []) {
+        for (const id of attachmentIds) {
           const info = this.uploadStore?.get(id);
           if (!info) {
             this.sendError(ws, msg.id, ProtocolErrors.ERR_INVALID_PAYLOAD, `Unknown upload '${id}'`);
@@ -520,7 +542,7 @@ export class WsServer {
           paths.push(info.path);
         }
         const full = this.composePrompt(targetPaneId, text, paths);
-        await this.submitPrompt(ws, msg.id, targetPaneId, full, { text, attachments: attachments ?? [] });
+        await this.submitPrompt(ws, msg.id, targetPaneId, full, { text, attachments: attachmentIds }, hash);
         return;
       }
 
@@ -668,6 +690,7 @@ export class WsServer {
           // protocol.md §4.1: every question's picks at once; the agent's checked keys (herdr-adapter.md §7.2).
           const steps = optionIds ? this.transcriptAnswerSteps(targetPaneId, optionIds, otherTexts ?? {}) : null;
           if (!steps) {
+            this.logger?.(`${this.paneLogLabel(targetPaneId)} interaction respond rejected: missing checked keys or invalid optionIds`);
             this.sendError(ws, msg.id, ProtocolErrors.ERR_INVALID_PAYLOAD, "optionIds must pick every question, and the agent needs checked keys");
             return;
           }
@@ -788,35 +811,34 @@ export class WsServer {
       }
 
       case "quota_get": {
-        if (this.configManager.getClientConfig().quotaUsageEnabled === false) {
-          this.sendError(ws, msg.id, ProtocolErrors.ERR_FEATURE_DISABLED, "Quota and usage are disabled in settings");
+        if (this.configManager.getClientConfig().quotaEnabled !== true) {
+          this.sendError(ws, msg.id, ProtocolErrors.ERR_FEATURE_DISABLED, "Quota is disabled in settings");
           return;
         }
-        this.quotaService ??= new QuotaService({ configManager: this.configManager });
-        const res = await this.quotaService.getQuota(this.configManager.getClientConfig());
+        const res = await this.quota().getQuota(this.configManager.getClientConfig());
         this.sendAck(ws, msg.id, { providers: res.providers, fetchedAt: res.fetchedAt });
         return;
       }
 
       case "usage_get":
-        if (this.configManager.getClientConfig().quotaUsageEnabled === false) {
-          this.sendError(ws, msg.id, ProtocolErrors.ERR_FEATURE_DISABLED, "Quota and usage are disabled in settings");
+        if (this.configManager.getClientConfig().usageEnabled === false) {
+          this.sendError(ws, msg.id, ProtocolErrors.ERR_FEATURE_DISABLED, "Usage is disabled in settings");
           return;
         }
         this.sendAck(ws, msg.id, (await this.usage().getUsage(msg.payload)) as any);
         return;
 
       case "usage_day":
-        if (this.configManager.getClientConfig().quotaUsageEnabled === false) {
-          this.sendError(ws, msg.id, ProtocolErrors.ERR_FEATURE_DISABLED, "Quota and usage are disabled in settings");
+        if (this.configManager.getClientConfig().usageEnabled === false) {
+          this.sendError(ws, msg.id, ProtocolErrors.ERR_FEATURE_DISABLED, "Usage is disabled in settings");
           return;
         }
         this.sendAck(ws, msg.id, (await this.usage().getDay(msg.payload)) as any);
         return;
 
       case "usage_model":
-        if (this.configManager.getClientConfig().quotaUsageEnabled === false) {
-          this.sendError(ws, msg.id, ProtocolErrors.ERR_FEATURE_DISABLED, "Quota and usage are disabled in settings");
+        if (this.configManager.getClientConfig().usageEnabled === false) {
+          this.sendError(ws, msg.id, ProtocolErrors.ERR_FEATURE_DISABLED, "Usage is disabled in settings");
           return;
         }
         this.sendAck(ws, msg.id, (await this.usage().getModel(msg.payload)) as any);
@@ -874,6 +896,16 @@ export class WsServer {
           this.sendAck(ws, msg.id, { diff });
           return;
         }
+        if (kind === "subagent") {
+          const { subagentId } = msg.payload;
+          const result = subagentId ? this.agentAdapters.getSubagent(sessionState.agent, sessionState.sessionId, subagentId) : null;
+          if (!result) {
+            this.sendError(ws, msg.id, ProtocolErrors.ERR_NOT_FOUND, `Sub-agent ${subagentId} not found`);
+            return;
+          }
+          this.sendAck(ws, msg.id, { subagent: result.subagent, turns: result.turns.map(toLightTurn) });
+          return;
+        }
         this.sendError(ws, msg.id, ProtocolErrors.ERR_INVALID_PAYLOAD, `Unknown detail kind ${kind}`);
         return;
       }
@@ -925,6 +957,7 @@ export class WsServer {
             ...(sessionState.stats ? { sessionStats: toLightStats(sessionState.stats) } : {}),
             ...(sessionState.sessionTitle ? { sessionTitle: sessionState.sessionTitle } : {}),
             ...(sessionState.todos ? { todos: sessionState.todos } : {}),
+            ...(sessionState.subagents ? { subagents: sessionState.subagents } : {}),
             session: this.paneStore.sessionInfo(paneId, agentKind),
           };
         }
@@ -940,6 +973,7 @@ export class WsServer {
             ...(sessionState.stats ? { sessionStats: toLightStats(sessionState.stats) } : {}),
             ...(sessionState.sessionTitle ? { sessionTitle: sessionState.sessionTitle } : {}),
             ...(sessionState.todos ? { todos: sessionState.todos } : {}),
+            ...(sessionState.subagents ? { subagents: sessionState.subagents } : {}),
             session: this.paneStore.sessionInfo(paneId, agentKind),
           };
         }
@@ -1026,9 +1060,38 @@ export class WsServer {
     }
   }
 
+  private wireQuotaService(service: QuotaService): void {
+    service.setOnUpdated((payload) => {
+      if (this.clients.size > 0 && this.configManager.getClientConfig().quotaEnabled === true) {
+        this.broadcast({ type: "quota_updated", payload });
+      }
+    });
+    service.setClientOnline(this.clients.size > 0);
+  }
+
+  private wireUsageService(service: UsageService): void {
+    service.setOnUpdated((payload) => {
+      if (this.clients.size > 0 && this.configManager.getClientConfig().usageEnabled !== false) {
+        this.broadcast({ type: "usage_updated", payload });
+      }
+    });
+    service.setClientOnline(this.clients.size > 0);
+  }
+
+  private quota(): QuotaService {
+    if (!this.quotaService) {
+      this.quotaService = new QuotaService({ configManager: this.configManager });
+      this.wireQuotaService(this.quotaService);
+    }
+    return this.quotaService;
+  }
+
   /** The daemon injects its usage service; tests without one get a service on first use. */
   private usage(): UsageService {
-    this.usageService ??= new UsageService({ configManager: this.configManager });
+    if (!this.usageService) {
+      this.usageService = new UsageService({ configManager: this.configManager });
+      this.wireUsageService(this.usageService);
+    }
     return this.usageService;
   }
 
@@ -1223,7 +1286,7 @@ export class WsServer {
     const kind = this.herdrClient.getPaneAgentKind(paneId);
     const questionSteps = kind ? getAgentRecipe(kind)?.questionSteps : undefined;
     if (!pq || !questionSteps) return null;
-    const answers: QuestionAnswer[] = pq.questions.map((q) => ({ multiSelect: !!q.multiSelect, picks: [] }));
+    const answers: QuestionAnswer[] = pq.questions.map((q) => ({ multiSelect: !!q.multiSelect, picks: [], optionCount: q.options.length }));
     let reached = 0;
     for (const id of optionIds) {
       const m = /^q(\d+)_(?:opt_(\d+)|(other))$/.exec(id);
@@ -1317,7 +1380,14 @@ export class WsServer {
   }
 
   /** Queues while the agent works or others wait; sends otherwise (protocol.md §4.2). */
-  private async submitPrompt(ws: Ws, replyTo: string | null, paneId: string, send: string, shown: { text: string; attachments: string[] }): Promise<void> {
+  private async submitPrompt(
+    ws: Ws,
+    replyTo: string | null,
+    paneId: string,
+    send: string,
+    shown: { text: string; attachments: string[] },
+    hash: string
+  ): Promise<void> {
     const queue = this.queues.get(paneId) ?? [];
     const state = this.getQueueState(paneId);
     const herdrStatus = this.herdrClient.getPaneHerdrStatus(paneId);
@@ -1329,14 +1399,24 @@ export class WsServer {
       queue.push({ item, send, created_ms });
       this.queues.set(paneId, queue);
       this.saveQueues();
+      this.lastPromptByPane.set(paneId, { hash, at: Date.now() });
       this.sendQueue(paneId);
       this.logger?.(`${this.paneLogLabel(paneId)} queue: enqueued ${item.queueId}`);
       if (replyTo) this.sendAck(ws, replyTo, { queued: true, queueId: item.queueId });
       return;
     }
     this.logger?.(`${this.paneLogLabel(paneId)} prompt: sent immediate`);
-    // Not queued on failure: the phone keeps the draft, so a resend would deliver it twice.
-    await this.herdrClient.sendPrompt(paneId, send, shown.attachments.length > 0);
+    // Record before awaiting Herdr so an in-flight resend is treated as duplicate; remove on error so retries still go out.
+    const entry = { hash, at: Date.now() };
+    this.lastPromptByPane.set(paneId, entry);
+    try {
+      await this.herdrClient.sendPrompt(paneId, send, shown.attachments.length > 0);
+    } catch (err) {
+      if (this.lastPromptByPane.get(paneId) === entry) {
+        this.lastPromptByPane.delete(paneId);
+      }
+      throw err;
+    }
     if (replyTo) this.sendAck(ws, replyTo, { queued: false });
   }
 
@@ -1383,6 +1463,7 @@ export class WsServer {
       }
       this.queueStates.delete(paneId);
       this.queues.delete(paneId);
+      this.lastPromptByPane.delete(paneId);
       this.lastPaneTailAt.delete(paneId);
       this.lastStatus.delete(paneId);
       this.lastPushAt.delete(`${paneId}:blocked`);
@@ -1631,6 +1712,10 @@ export class WsServer {
         ws.close(4403, "Device session revoked");
         this.clients.delete(ws);
       }
+    }
+    if (this.clients.size === 0) {
+      this.quotaService?.setClientOnline(false);
+      this.usageService?.setClientOnline(false);
     }
     this.syncMonitoredPanes();
   }

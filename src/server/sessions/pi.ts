@@ -139,8 +139,10 @@ function applyRecord(b: TurnBuilder, r: unknown): void {
     if (id) b.toolResult(id, blocksText(m.content), m.isError === true, ts);
     return;
   }
-  if (m.role !== "assistant" || !Array.isArray(m.content)) return;
+  if (m.role !== "assistant") return;
   if (str(m.provider) && str(m.model)) b.model = `${m.provider}/${m.model}`;
+  if (m.stopReason === "error") b.error("unknown", str(m.errorMessage) ?? "", ts);
+  if (!Array.isArray(m.content)) return;
   for (const block of m.content) {
     if (!isObj(block)) continue;
     if (block.type === "text") b.text(str(block.text) ?? "", ts);

@@ -62,6 +62,7 @@ export const en = {
   "composer.placeholderCommand": "Type a command",
   "composer.placeholderQueued": "Messages queue until this turn ends",
   "composer.placeholderReply": "Reply…",
+  "composer.duplicateSkipped": "Already sent just now; skipped",
 
   "conn.computerDown": "Computer not connected",
   "conn.herdrDown": "Herdr not responding",
@@ -242,6 +243,14 @@ export const en = {
   "status.done": "Done",
   "status.idle": "Idle",
 
+  "subagents.title": "Sub-agents",
+  "subagents.menu": "Sub-agents ({count})",
+  "subagents.runningCapsule": { one: "{count} sub-agent running", other: "{count} sub-agents running" },
+  "subagents.statusRunning": "Running",
+  "subagents.statusCompleted": "Completed",
+  "subagents.statusFailed": "Failed",
+  "subagents.emptyLog": "No messages to show",
+
   "summary.run": "Running {command}",
   "summary.thinking": "Thinking",
 
@@ -278,6 +287,7 @@ export const en = {
   "transcript.thoughtFor": "Thought for {seconds} s",
   "transcript.thought": "Thinking",
   "transcript.copyReply": "Copy reply",
+  "transcript.copyPrompt": "Copy prompt",
   "transcript.compacted": "Context compacted",
 
   "verb.run": "Run",
@@ -307,6 +317,9 @@ export const en = {
   "quota.creditsExpiry": "Expires",
   "quota.extraUsage": "Extra usage: {used} / {limit}",
   "quota.errorPrefix": "Refresh failed: {error}. Previous data is shown below.",
+  "quota.disabledNotice": "Subscription quota tracking is off. Enable it in Settings › Quota & usage.",
+  "usage.disabledNotice": "Token usage tracking is off. Enable it in Settings › Quota & usage.",
+  "quota.openSettings": "Open Settings",
 
   "usage.today": "Today",
   "usage.loading": "Loading usage…",
@@ -363,8 +376,9 @@ export const en = {
   "usage.levelEmpty": "0 (Empty)",
 
   "settings.quotaUsage": "Quota & usage",
-  "settings.quotaUsageEnabled": "Enable quota & usage",
-  "settings.quotaUsageDisabledHint": "Quota and usage features are disabled; background scans and queries are stopped.",
+  "settings.quotaEnabled": "Enable subscription quota",
+  "settings.usageEnabled": "Enable token usage",
+  "settings.quotaUsageDisabledHint": "Subscription quota and token usage are disabled; background refreshes and requests are stopped.",
   "settings.subscriptionQuota": "Subscription quota",
   "settings.tokenUsage": "Token usage",
   "settings.usageSummary": "Today {today} · 7d {week}",
@@ -382,6 +396,6 @@ export const en = {
   "settings.usageScanMode": "Usage calculation mode",
   "settings.usageScanRealtime": "Realtime",
   "settings.usageScanScheduled": "Scheduled",
-  "settings.usageScanInterval": "Background interval",
-  "settings.usageScanModeHint": "Scheduled mode displays cached usage immediately; Realtime mode calculates fresh token counts on demand.",
+  "settings.usageScanInterval": "Refresh interval",
+  "settings.usageScanModeHint": "Subscription quota and scheduled usage share the background refresh interval (5m default, active while connected); Realtime scans newly changed logs on demand.",
 } as const;

@@ -1,6 +1,7 @@
-// Issue #13. quota-and-usage.md §2.6, protocol.md §4.15.
+// Issue #13, #25. quota-and-usage.md §2.6, protocol.md §4.16, §5.11.
 import type { ConfigManager } from "../config-manager";
-import type { ClientConfig, QuotaProviderState, QuotaSnapshot } from "../../types/protocol";
+import type { ClientConfig, QuotaGetPayload, QuotaProviderState, QuotaSnapshot } from "../../types/protocol";
+import { scanIntervalToMs } from "../../shared/defaults";
 import { ClaudeQuotaProvider } from "./claude";
 import { CodexQuotaProvider } from "./codex";
 import { AntigravityQuotaProvider } from "./antigravity";
@@ -13,6 +14,7 @@ export interface QuotaServiceOptions {
   configManager?: ConfigManager;
   autoScan?: boolean;
   now?: () => number;
+  onUpdated?: (payload: QuotaGetPayload) => void;
 }
 
 interface ProviderRecord {
@@ -26,11 +28,15 @@ export class QuotaService {
   private codex: CodexQuotaProvider;
   private antigravity: AntigravityQuotaProvider;
   private configManager?: ConfigManager;
+  private autoScan: boolean;
   private now: () => number;
+  private onUpdated?: (payload: QuotaGetPayload) => void;
   private backgroundTimer: ReturnType<typeof setInterval> | null = null;
-  private hasFetchedOnce = false;
-  private lastEnabled = true;
+  private timerIntervalMs: number | null = null;
+  private hasOnlineClients = false;
+  private lastEnabled = false;
   private lastFetchTime: number | null = null;
+  private refreshAllPromise: Promise<void> | null = null;
 
   private cache: Record<"claude" | "codex" | "antigravity", ProviderRecord> = {
     claude: { snapshot: null, error: null, fetchedAt: 0 },
@@ -45,45 +51,65 @@ export class QuotaService {
     this.codex = options.codex ?? new CodexQuotaProvider();
     this.antigravity = options.antigravity ?? new AntigravityQuotaProvider();
     this.configManager = options.configManager;
-    this.lastEnabled = options.configManager?.getClientConfig().quotaUsageEnabled !== false;
+    this.autoScan = options.autoScan !== false;
+    this.lastEnabled = options.configManager?.getClientConfig().quotaEnabled === true;
     this.now = options.now ?? (() => Date.now());
-    if (options.autoScan !== false && options.configManager) {
-      this.startBackgroundTimer();
-    }
+    this.onUpdated = options.onUpdated;
   }
 
-  public getScanMode(): "realtime" | "scheduled" {
-    return this.configManager?.getClientConfig().usageScanMode ?? "scheduled";
+  public setOnUpdated(cb?: (payload: QuotaGetPayload) => void): void {
+    this.onUpdated = cb;
   }
 
   public getScanIntervalMs(): number {
-    const interval = this.configManager?.getClientConfig().usageScanInterval ?? "15m";
-    switch (interval) {
-      case "1m": return 60_000;
-      case "2m": return 120_000;
-      case "5m": return 300_000;
-      case "10m": return 600_000;
-      case "15m": return 900_000;
-      default: return 900_000;
-    }
+    return scanIntervalToMs(this.configManager?.getClientConfig().usageScanInterval);
   }
 
-  public startBackgroundTimer(): void {
+  private isEnabled(clientConfig?: ClientConfig): boolean {
+    const cfg = clientConfig ?? this.configManager?.getClientConfig();
+    return cfg?.quotaEnabled === true;
+  }
+
+  private isStale(): boolean {
+    return this.lastFetchTime === null || (this.now() - this.lastFetchTime) > this.getScanIntervalMs();
+  }
+
+  private stopBackgroundTimer(): void {
     if (this.backgroundTimer) {
       clearInterval(this.backgroundTimer);
       this.backgroundTimer = null;
     }
-    const clientCfg = this.configManager?.getClientConfig();
-    if (clientCfg && clientCfg.quotaUsageEnabled === false) return;
-    if (this.getScanMode() !== "scheduled") return;
+    this.timerIntervalMs = null;
+  }
+
+  public setClientOnline(online: boolean): void {
+    this.hasOnlineClients = online;
+    if (!online) {
+      this.stopBackgroundTimer();
+      return;
+    }
+    this.startBackgroundTimer();
+    if (this.autoScan && this.isEnabled() && this.isStale()) {
+      void this.fetchAll().catch((err) => console.error("[Pigeon] connect quota fetch failed:", err));
+    }
+  }
+
+  public startBackgroundTimer(): void {
+    if (!this.autoScan || !this.hasOnlineClients || !this.configManager || !this.isEnabled()) {
+      this.stopBackgroundTimer();
+      return;
+    }
+    const intervalMs = this.getScanIntervalMs();
+    if (this.backgroundTimer && this.timerIntervalMs === intervalMs) return;
+    this.stopBackgroundTimer();
     const backgroundFetch = () => void this.fetchAll().catch((err) => console.error("[Pigeon] background quota fetch failed:", err));
-    this.backgroundTimer = setInterval(backgroundFetch, this.getScanIntervalMs());
+    this.backgroundTimer = setInterval(backgroundFetch, intervalMs);
     this.backgroundTimer.unref();
-    if (!this.hasFetchedOnce) backgroundFetch();
+    this.timerIntervalMs = intervalMs;
   }
 
   public updateConfig(): void {
-    const isNowEnabled = this.configManager?.getClientConfig().quotaUsageEnabled !== false;
+    const isNowEnabled = this.isEnabled();
     const becameEnabled = !this.lastEnabled && isNowEnabled;
     this.lastEnabled = isNowEnabled;
     this.startBackgroundTimer();
@@ -93,10 +119,7 @@ export class QuotaService {
   }
 
   public destroy(): void {
-    if (this.backgroundTimer) {
-      clearInterval(this.backgroundTimer);
-      this.backgroundTimer = null;
-    }
+    this.stopBackgroundTimer();
   }
 
   private isProviderEnabled(config: ClientConfig | undefined, key: "claude" | "codex" | "antigravity"): boolean {
@@ -104,54 +127,47 @@ export class QuotaService {
   }
 
   public async fetchAll(clientConfig?: ClientConfig): Promise<void> {
-    const config = clientConfig ?? this.configManager?.getClientConfig();
-    const providerKeys: Array<"claude" | "codex" | "antigravity"> = ["claude", "codex", "antigravity"];
-    const enabledKeys = providerKeys.filter((k) => this.isProviderEnabled(config, k));
+    if (this.refreshAllPromise) return this.refreshAllPromise;
+    this.refreshAllPromise = (async () => {
+      const config = clientConfig ?? this.configManager?.getClientConfig();
+      const providerKeys: Array<"claude" | "codex" | "antigravity"> = ["claude", "codex", "antigravity"];
+      const enabledKeys = providerKeys.filter((k) => this.isProviderEnabled(config, k));
 
-    await Promise.all(
-      enabledKeys.map(async (key) => {
-        try {
-          if (!this.inFlight[key]) {
-            this.inFlight[key] = this.fetchProvider(key).finally(() => {
-              delete this.inFlight[key];
-            });
+      await Promise.all(
+        enabledKeys.map(async (key) => {
+          try {
+            if (!this.inFlight[key]) {
+              this.inFlight[key] = this.fetchProvider(key).finally(() => {
+                delete this.inFlight[key];
+              });
+            }
+            const snap = await this.inFlight[key]!;
+            this.cache[key] = {
+              snapshot: snap,
+              error: null,
+              fetchedAt: this.now(),
+            };
+          } catch (err) {
+            this.cache[key].error = {
+              message: `${key}: ${(err as Error).message}`,
+              at: this.now(),
+            };
           }
-          const snap = await this.inFlight[key]!;
-          this.cache[key] = {
-            snapshot: snap,
-            error: null,
-            fetchedAt: this.now(),
-          };
-        } catch (err) {
-          this.cache[key].error = {
-            message: `${key}: ${(err as Error).message}`,
-            at: this.now(),
-          };
-        }
-      })
-    );
-    this.lastFetchTime = this.now();
-    this.hasFetchedOnce = true;
+        })
+      );
+      this.lastFetchTime = this.now();
+      const currentCfg = clientConfig ?? this.configManager?.getClientConfig();
+      if (!currentCfg || currentCfg.quotaEnabled === true) {
+        this.onUpdated?.(this.buildPayload(currentCfg));
+      }
+    })().finally(() => {
+      this.refreshAllPromise = null;
+    });
+    return this.refreshAllPromise;
   }
 
-  public async getQuota(clientConfig?: ClientConfig): Promise<{ providers: QuotaProviderState[]; fetchedAt: number }> {
+  private buildPayload(clientConfig?: ClientConfig): { providers: QuotaProviderState[]; fetchedAt: number } {
     const config = clientConfig ?? this.configManager?.getClientConfig();
-    const mode = config?.usageScanMode ?? this.getScanMode();
-    const now = this.now();
-
-    if (mode === "scheduled") {
-      // Scheduled mode: use pre-fetched background cache, never scan on query unless never fetched
-      if (!this.hasFetchedOnce) {
-        await this.fetchAll(config);
-      }
-    } else {
-      // Realtime mode: allow user-initiated queries with 60-second cooldown
-      const isCooldown = this.lastFetchTime !== null && (now - this.lastFetchTime < 60_000);
-      if (!isCooldown || !this.hasFetchedOnce) {
-        await this.fetchAll(config);
-      }
-    }
-
     const providerKeys: Array<"claude" | "codex" | "antigravity"> = ["claude", "codex", "antigravity"];
 
     const results: QuotaProviderState[] = providerKeys.map((key) => {
@@ -175,8 +191,13 @@ export class QuotaService {
     const validFetchedTimes = results
       .map((r) => r.snapshot?.fetchedAt ?? r.error?.at)
       .filter((t): t is number => typeof t === "number" && t > 0);
-    const fetchedAt = validFetchedTimes.length > 0 ? Math.max(...validFetchedTimes) : (this.lastFetchTime ?? now);
+    const fetchedAt = validFetchedTimes.length > 0 ? Math.max(...validFetchedTimes) : (this.lastFetchTime ?? 0);
     return { providers: results, fetchedAt };
+  }
+
+  /** Reads the daemon cache only; never triggers upstream provider requests (protocol.md §4.16). */
+  public async getQuota(clientConfig?: ClientConfig): Promise<{ providers: QuotaProviderState[]; fetchedAt: number }> {
+    return this.buildPayload(clientConfig);
   }
 
   private async fetchProvider(key: "claude" | "codex" | "antigravity"): Promise<QuotaSnapshot> {

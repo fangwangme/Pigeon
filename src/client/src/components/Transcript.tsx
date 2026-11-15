@@ -414,7 +414,7 @@ type Block =
   | { kind: "text"; markdown: string }
   | { kind: "tools"; calls: NormalizedToolCall[] }
   | { kind: "todo"; done: number; total: number }
-  | { kind: "error"; text: string }
+  | { kind: "error"; errorKind?: string; text: string; count?: number }
   | { kind: "compact"; summary: string };
 
 function blocksOf(turn: NormalizedTurn): Block[] {
@@ -544,17 +544,22 @@ export function Turn(props: { turn: NormalizedTurn; last: boolean; working: bool
                   {(f) => {
                     const uploadMatch = f.match(/up_[0-9a-f]{16}/);
                     const uploadId = uploadMatch ? uploadMatch[0] : null;
+                    const agyMatch = /\/brain\/([A-Za-z0-9_-]{1,64})\/\.user_uploaded\/([A-Za-z0-9._-]{1,200})$/.exec(f);
+                    const agyImg = agyMatch && !agyMatch[2].startsWith(".") && /\.(png|jpe?g|gif|webp)$/i.test(agyMatch[2])
+                      ? `/api/agent-media/agy/${encodeURIComponent(agyMatch[1])}/${encodeURIComponent(agyMatch[2])}`
+                      : null;
                     const fileName = f.split("/").pop() || f;
-                    const isImg = /\.(png|jpe?g|webp|gif|svg)$/i.test(f) || !!uploadId;
-                    return uploadId ? (
+                    const imgSrc = uploadId ? `/api/uploads/${uploadId}` : agyImg;
+                    const isImg = /\.(png|jpe?g|webp|gif|svg)$/i.test(f) || !!imgSrc;
+                    return imgSrc ? (
                       <button
                         type="button"
                         class="att-thumb-link"
                         style={{ cursor: "pointer", border: "1px solid var(--line)" }}
-                        onClick={() => openImage(`/api/uploads/${uploadId}`, fileName)}
+                        onClick={() => openImage(imgSrc, fileName)}
                       >
-                        <img src={`/api/uploads/${uploadId}`} alt={fileName} class="att-thumb" />
-                        <span class="att-name">{fileName.replace(/^up_[0-9a-f]{16}-/, "")}</span>
+                        <img src={imgSrc} alt={fileName} class="att-thumb" />
+                        <span class="att-name">{uploadId ? fileName.replace(/^up_[0-9a-f]{16}-/, "") : fileName}</span>
                       </button>
                     ) : (
                       <span>
@@ -568,6 +573,11 @@ export function Turn(props: { turn: NormalizedTurn; last: boolean; working: bool
             </Show>
             <Show when={p().text.trim()}>
               <div class="ub">{p().text}</div>
+              <div class="ub-acts">
+                <button aria-label={t("transcript.copyPrompt")} onClick={() => copyText(p().text)}>
+                  <Icon name="copy" sm />
+                </button>
+              </div>
             </Show>
           </>
         )}
@@ -597,8 +607,9 @@ export function Turn(props: { turn: NormalizedTurn; last: boolean; working: bool
               <Compaction summary={(b() as { summary: string }).summary} />
             </Match>
             <Match when={b().kind === "error"}>
-              <div class="turn-error" style={{ color: "var(--danger)", margin: "8px 0", "font-size": "14px", "line-height": "1.5" }}>
+              <div class="turn-error">
                 {(b() as { text: string }).text}
+                <Show when={((b() as { count?: number }).count ?? 1) > 1}> ×{(b() as { count?: number }).count}</Show>
               </div>
             </Match>
           </Switch>

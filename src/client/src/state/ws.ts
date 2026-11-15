@@ -1,7 +1,21 @@
 import { reconcile } from "solid-js/store";
 import { state, setState, applySyncedClientConfig, setUnread, showToast, writePref } from "./store";
 import { load, save, remove, clearAll, sweep, meta, migrateLocalStorageCache, getMemoryPaneView, applyPaneTail, type PaneCacheEntry } from "./pane-cache";
-import type { ClientMessage, ServerMessage, SnapshotPayload, PaneStatePayload, ClientConfig, AgentStatus, HaveInfo, QuotaProviderState } from "../../../types/protocol";
+import type {
+  ClientMessage,
+  ServerMessage,
+  SnapshotPayload,
+  PaneStatePayload,
+  ClientConfig,
+  AgentStatus,
+  HaveInfo,
+  QuotaProviderState,
+  NormalizedTurn,
+  SessionStats,
+  TodoItem,
+  SubagentInfo,
+  SessionInfo,
+} from "../../../types/protocol";
 import { hashTurn } from "../../../types/protocol";
 import { t } from "../i18n";
 
@@ -42,6 +56,7 @@ function saveActivePaneSnapshot(paneId: string): void {
       sessionStats: state.sessionStats ? toPlain(state.sessionStats) : null,
       sessionTitle: state.sessionTitle,
       todos: state.todos ? toPlain(state.todos) : null,
+      subagents: toPlain(state.subagents),
       session: state.session ? toPlain(state.session) : null,
       queue: toPlain(state.queue),
     });
@@ -252,6 +267,67 @@ function trackUnread(snap: SnapshotPayload): void {
   for (const id of Object.keys(state.unread)) if (!alive.has(id)) setUnread(id, false);
 }
 
+/** Apply a full turn payload (`pane_bootstrap.turns` or `normalized_turns`) and update the pane cache. */
+function applyFullTurns(
+  paneId: string,
+  payload: {
+    turns: NormalizedTurn[];
+    sessionStats?: SessionStats;
+    sessionTitle?: string;
+    todos?: TodoItem[];
+    subagents?: SubagentInfo[];
+    session: SessionInfo;
+  }
+): void {
+  setState({
+    sessionStats: payload.sessionStats || null,
+    sessionTitle: payload.sessionTitle || null,
+    todos: payload.todos || null,
+    subagents: payload.subagents || [],
+    session: payload.session,
+    paneSyncing: false,
+  });
+  setState("normalizedTurns", reconcile(payload.turns));
+  const metaInfo = meta(paneId);
+  if (!payload.session?.bound || (metaInfo && metaInfo.sessionId !== payload.session?.sessionId)) {
+    void remove(paneId);
+  } else if (payload.session?.sessionId && payload.turns?.length) {
+    saveActivePaneSnapshot(paneId);
+  }
+}
+
+/** Apply an incremental turn delta payload (`pane_bootstrap.resume` or `turns_delta`) to store state. */
+function applyTurnDelta(
+  paneId: string,
+  delta: {
+    sinceTurnIndex: number;
+    appendTurns: NormalizedTurn[];
+    patchLastTurn?: NormalizedTurn;
+    sessionStats?: SessionStats;
+    sessionTitle?: string;
+    todos?: TodoItem[];
+    subagents?: SubagentInfo[];
+    session?: SessionInfo;
+  }
+): void {
+  setState("paneSyncing", false);
+  const { sinceTurnIndex, appendTurns, patchLastTurn, sessionStats, sessionTitle, todos, subagents, session } = delta;
+  let current = [...state.normalizedTurns];
+  if (sinceTurnIndex === 0 && !patchLastTurn) {
+    current = appendTurns;
+  } else {
+    if (patchLastTurn) current[Math.max(0, sinceTurnIndex - (appendTurns.length > 0 ? 1 : 0))] = patchLastTurn;
+    if (appendTurns.length > 0) current = [...current.slice(0, sinceTurnIndex), ...appendTurns];
+  }
+  setState("normalizedTurns", reconcile(current));
+  if (sessionStats) setState("sessionStats", sessionStats);
+  if (sessionTitle) setState("sessionTitle", sessionTitle);
+  if (todos) setState("todos", todos);
+  if (subagents) setState("subagents", reconcile(subagents));
+  if (session) setState("session", session);
+  debouncedSaveActivePaneSnapshot(paneId);
+}
+
 /** Exported for tests; the socket's onmessage is the only production caller. */
 export function handleServerMessage(msg: ServerMessage): void {
   switch (msg.type) {
@@ -270,9 +346,20 @@ export function handleServerMessage(msg: ServerMessage): void {
       if (msg.payload.environment) {
         setState("environment", msg.payload.environment);
       }
-      if (state.quotaUsageEnabled !== false) {
+      if (state.quotaEnabled) {
         void fetchQuota();
       }
+      return;
+
+    case "quota_updated":
+      if (!state.quotaEnabled) return;
+      setState("quotaSnapshots", msg.payload.providers);
+      setState("quotaUpdated", msg.payload.fetchedAt && msg.payload.fetchedAt > 0 ? msg.payload.fetchedAt : null);
+      return;
+
+    case "usage_updated":
+      if (!state.usageEnabled) return;
+      setState("usageScannedAt", msg.payload.scannedAt);
       return;
 
     case "skills_sync":
@@ -326,36 +413,9 @@ export function handleServerMessage(msg: ServerMessage): void {
         setState("queuePaused", Boolean(msg.payload.queuePaused));
       }
       if (msg.payload.turns) {
-        setState({
-          sessionStats: msg.payload.turns.sessionStats || null,
-          sessionTitle: msg.payload.turns.sessionTitle || null,
-          todos: msg.payload.turns.todos || null,
-          session: msg.payload.turns.session,
-          paneSyncing: false,
-        });
-        setState("normalizedTurns", reconcile(msg.payload.turns.turns));
-        const metaInfo = meta(msg.payload.paneId);
-        if (!msg.payload.turns.session?.bound || (metaInfo && metaInfo.sessionId !== msg.payload.turns.session?.sessionId)) {
-          void remove(msg.payload.paneId);
-        } else if (msg.payload.turns.session?.sessionId && msg.payload.turns.turns?.length) {
-          saveActivePaneSnapshot(msg.payload.paneId);
-        }
+        applyFullTurns(msg.payload.paneId, msg.payload.turns);
       } else if (msg.payload.resume) {
-        setState("paneSyncing", false);
-        const { sinceTurnIndex, appendTurns, patchLastTurn, sessionStats, sessionTitle, todos, session } = msg.payload.resume;
-        let current = [...state.normalizedTurns];
-        if (sinceTurnIndex === 0 && !patchLastTurn) {
-          current = appendTurns;
-        } else {
-          if (patchLastTurn) current[Math.max(0, sinceTurnIndex - (appendTurns.length > 0 ? 1 : 0))] = patchLastTurn;
-          if (appendTurns.length > 0) current = [...current.slice(0, sinceTurnIndex), ...appendTurns];
-        }
-        setState("normalizedTurns", reconcile(current));
-        if (sessionStats) setState("sessionStats", sessionStats);
-        if (sessionTitle) setState("sessionTitle", sessionTitle);
-        if (todos) setState("todos", todos);
-        if (session) setState("session", session);
-        debouncedSaveActivePaneSnapshot(msg.payload.paneId);
+        applyTurnDelta(msg.payload.paneId, msg.payload.resume);
       }
       return;
     }
@@ -371,20 +431,7 @@ export function handleServerMessage(msg: ServerMessage): void {
       if (typeof msg.payload.seq === "number") {
         paneSeqs.set(msg.payload.paneId, msg.payload.seq);
       }
-      setState({
-        sessionStats: msg.payload.sessionStats || null,
-        sessionTitle: msg.payload.sessionTitle || null,
-        todos: msg.payload.todos || null,
-        session: msg.payload.session,
-        paneSyncing: false,
-      });
-      setState("normalizedTurns", reconcile(msg.payload.turns));
-      const metaInfo = meta(msg.payload.paneId);
-      if (!msg.payload.session?.bound || (metaInfo && metaInfo.sessionId !== msg.payload.session?.sessionId)) {
-        void remove(msg.payload.paneId);
-      } else if (msg.payload.session?.sessionId && msg.payload.turns?.length) {
-        saveActivePaneSnapshot(msg.payload.paneId);
-      }
+      applyFullTurns(msg.payload.paneId, msg.payload);
       return;
     }
 
@@ -400,21 +447,7 @@ export function handleServerMessage(msg: ServerMessage): void {
         }
         paneSeqs.set(msg.payload.paneId, msg.payload.seq);
       }
-      setState("paneSyncing", false);
-      const { sinceTurnIndex, appendTurns, patchLastTurn, sessionStats, sessionTitle, todos, session } = msg.payload;
-      let current = [...state.normalizedTurns];
-      if (sinceTurnIndex === 0 && !patchLastTurn) {
-        current = appendTurns;
-      } else {
-        if (patchLastTurn) current[Math.max(0, sinceTurnIndex - (appendTurns.length > 0 ? 1 : 0))] = patchLastTurn;
-        if (appendTurns.length > 0) current = [...current.slice(0, sinceTurnIndex), ...appendTurns];
-      }
-      setState("normalizedTurns", reconcile(current));
-      if (sessionStats) setState("sessionStats", sessionStats);
-      if (sessionTitle) setState("sessionTitle", sessionTitle);
-      if (todos) setState("todos", todos);
-      if (session) setState("session", session);
-      debouncedSaveActivePaneSnapshot(msg.payload.paneId);
+      applyTurnDelta(msg.payload.paneId, msg.payload);
       return;
     }
 
@@ -524,7 +557,12 @@ export function request(msg: WithoutId<Command>): Promise<any> {
 
 export function sendPrompt(text: string, attachments: string[] = []): Promise<any> {
   if (!state.activePaneId) return Promise.reject({ code: "ERR_NOT_FOUND", message: "no pane" });
-  return request({ type: "agent_prompt", payload: { targetPaneId: state.activePaneId, text, ...(attachments.length ? { attachments } : {}) } });
+  return request({ type: "agent_prompt", payload: { targetPaneId: state.activePaneId, text, ...(attachments.length ? { attachments } : {}) } }).then(
+    (res) => {
+      if (res?.duplicate) showToast(t("composer.duplicateSkipped"));
+      return res;
+    },
+  );
 }
 
 export function sendKeys(keys: string[]): void {
@@ -537,7 +575,14 @@ export function setScreenWatch(paneId: string, on: boolean): void {
   sendMessage({ type: "screen_watch", id: nextId(), payload: { paneId, on } });
 }
 
-export function getDetail(payload: { paneId: string; kind: "tool" | "reasoning" | "file"; turnId?: string; callId?: string; filePath?: string }): Promise<any> {
+export function getDetail(payload: {
+  paneId: string;
+  kind: "tool" | "reasoning" | "file" | "subagent";
+  turnId?: string;
+  callId?: string;
+  filePath?: string;
+  subagentId?: string;
+}): Promise<any> {
   return request({ type: "detail_get", payload });
 }
 
@@ -575,6 +620,7 @@ export async function selectPane(paneId: string): Promise<void> {
     sessionStats: memoryView?.sessionStats || null,
     sessionTitle: memoryView?.sessionTitle || null,
     todos: memoryView?.todos || null,
+    subagents: memoryView?.subagents || [],
     session: memoryView?.session || null,
     queue: memoryView?.queue || [],
     queuePaused: false,
@@ -612,6 +658,7 @@ export async function selectPane(paneId: string): Promise<void> {
       sessionStats: cached.sessionStats || null,
       sessionTitle: cached.sessionTitle || null,
       todos: cached.todos || null,
+      subagents: cached.subagents || [],
       session: cached.session || null,
       queue: cached.queue || [],
       paneSyncing: true,
@@ -643,32 +690,39 @@ export async function selectPane(paneId: string): Promise<void> {
   reportPresence();
 }
 
-/** Applies client config and triggers quota transitions when quotaUsageEnabled changes (quota-and-usage.md §1.1). */
-export function applyClientConfigWithTransitions(patch: Partial<ClientConfig> | undefined): void {
-  if (!patch) return;
-  const prevEnabled = state.quotaUsageEnabled;
-  applySyncedClientConfig(patch);
-  if (prevEnabled === false && state.quotaUsageEnabled) {
-    void fetchQuota();
-  } else if (prevEnabled === true && !state.quotaUsageEnabled) {
+function clearDisabledFeatureState(prevQuotaEnabled: boolean, prevUsageEnabled: boolean): void {
+  if (prevQuotaEnabled && !state.quotaEnabled) {
     setState("quotaSnapshots", []);
     setState("quotaUpdated", null);
+  }
+  if (prevUsageEnabled && !state.usageEnabled) {
+    setState("usageScannedAt", null);
+  }
+}
+
+/** Applies client config and triggers feature transitions when switches change (quota-and-usage.md §1.1). */
+export function applyClientConfigWithTransitions(patch: Partial<ClientConfig> | undefined): void {
+  if (!patch) return;
+  const prevQuotaEnabled = state.quotaEnabled;
+  const prevUsageEnabled = state.usageEnabled;
+  applySyncedClientConfig(patch);
+  clearDisabledFeatureState(prevQuotaEnabled, prevUsageEnabled);
+  if (!prevQuotaEnabled && state.quotaEnabled) {
+    void fetchQuota();
   }
 }
 
 export async function sendConfigPatch(patch: Partial<ClientConfig>): Promise<void> {
-  const prevEnabled = state.quotaUsageEnabled;
+  const prevQuotaEnabled = state.quotaEnabled;
+  const prevUsageEnabled = state.usageEnabled;
   applySyncedClientConfig(patch);
-  if (prevEnabled === true && state.quotaUsageEnabled === false) {
-    setState("quotaSnapshots", []);
-    setState("quotaUpdated", null);
-  }
+  clearDisabledFeatureState(prevQuotaEnabled, prevUsageEnabled);
   try {
     const res = await request({ type: "config_patch", payload: { client: patch } });
     if (res && typeof res.version === "number") {
       configVersion = Math.max(configVersion, res.version);
     }
-    if (prevEnabled === false && state.quotaUsageEnabled === true) {
+    if (!prevQuotaEnabled && state.quotaEnabled) {
       void fetchQuota();
     }
   } catch (err) {
@@ -676,9 +730,9 @@ export async function sendConfigPatch(patch: Partial<ClientConfig>): Promise<voi
   }
 }
 
-/** protocol.md §4.16: always answered from the daemon's 60-second cache. */
+/** protocol.md §4.16: reads the daemon's cache only; never triggers upstream requests. */
 export async function fetchQuota(): Promise<QuotaProviderState[]> {
-  if (state.quotaUsageEnabled === false) {
+  if (!state.quotaEnabled) {
     return [];
   }
   setState("quotaLoading", true);
@@ -689,7 +743,7 @@ export async function fetchQuota(): Promise<QuotaProviderState[]> {
       const serverFetchedAt =
         res.fetchedAt ||
         Math.max(0, ...res.providers.map((p: any) => p.snapshot?.fetchedAt ?? p.error?.at ?? 0));
-      setState("quotaUpdated", serverFetchedAt > 0 ? serverFetchedAt : Date.now());
+      setState("quotaUpdated", serverFetchedAt > 0 ? serverFetchedAt : null);
       return res.providers;
     }
   } catch (err) {

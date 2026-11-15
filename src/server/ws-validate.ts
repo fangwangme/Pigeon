@@ -177,6 +177,8 @@ export function validateClientMessage(raw: unknown): ValidationResult {
         if (!isStr(p.turnId)) return fail(id, "detail_get reasoning needs turnId");
       } else if (p.kind === "file") {
         if (!isStr(p.filePath)) return fail(id, "detail_get file needs filePath");
+      } else if (p.kind === "subagent") {
+        if (!isStr(p.subagentId)) return fail(id, "detail_get subagent needs subagentId");
       } else {
         return fail(id, `Unsupported detail kind '${p.kind}'`);
       }
@@ -212,7 +214,8 @@ function isValidAgentList(v: unknown): v is string[] {
 const CONFIG_CHECKS: Record<keyof ClientConfig, (v: unknown) => boolean> = {
   themeMode: (v) => v === "system" || v === "light" || v === "dark",
   accent: (v) => typeof v === "string" && (ACCENT_NAMES as readonly string[]).includes(v),
-  quotaUsageEnabled: (v) => typeof v === "boolean",
+  quotaEnabled: (v) => typeof v === "boolean",
+  usageEnabled: (v) => typeof v === "boolean",
   quotaDisplay: (v) => v === "remaining" || v === "used",
   quotaButton: (v) => typeof v === "boolean",
   quotaShowAccount: (v) => typeof v === "boolean",

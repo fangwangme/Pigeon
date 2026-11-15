@@ -5,6 +5,23 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.12] - 2026-11-15
+
+### Added
+- **AGY session normalization, `ask_question` submission & media serving**: Supported Antigravity (`agy`) error records, context compaction checkpoints, pending `ask_question` cards (including live-checked `questionSteps` submission and `Write-in...` text) and `exit_plan_mode` interaction cards, background command status updates until finish/cancel system messages, pasted `.user_uploaded` image thumbnails via `GET /api/agent-media/agy/<sessionId>/<name>`, full-width question mark prompts, AGY footer status-line filtering, and fallback to composer reply hints when a transcript question lacks checked keys (#25).
+- **Sub-agent listing & read-only detail view**: Listed child sub-agents across Claude Code, Antigravity, and OpenCode on `normalized_turns` / `turns_delta` (with running indicator capsule beside todos and `⋯` menu sheet), opened each sub-agent's own read-only conversation on demand via `detail_get` `kind: "subagent"`, and excluded child conversations from parent session binding (#25).
+- **User prompt copy button**: Added a right-aligned copy button underneath user messages with text (#25).
+
+### Changed
+- **Unified agent error warnings**: Rendered agent error items in amber (`--warn`) across all agents with consecutive-error folding (`count` / `×N`), covering Antigravity `ERROR_MESSAGE`, OpenCode `data.error` (excluding `aborted`), and Pi `stopReason: "error"` (#25).
+- **Prompt duplicate guard**: Deduplicated identical prompt text and attachment IDs sent to the same pane within a configurable window (default 60 s, returning `ack` `{ duplicate: true }` and clearing the draft with a toast instead of delivering twice) (#25).
+- **Account details hidden by default**: Changed `quotaShowAccount` default to `false` so subscription plan and account labels stay hidden on Quota and Settings pages until explicitly enabled (#25).
+- **Split quota & usage switches with background-only refresh & unified entry**: Replaced `quotaUsageEnabled` with independent `quotaEnabled` (default `false`) and `usageEnabled` (default `true`) switches sharing `usageScanInterval` (default `5m`), running background refreshes only while paired phones are connected (with catch-up on connect or toggle-on and silent `quota_updated` / `usage_updated` pushes), making `quota_get` strictly cache-read-only, dropping legacy `quotaUsageEnabled` on config load, sharing one `(quotaEnabled || usageEnabled) && quotaButton` entry button (opening Usage when only `usageEnabled` is true and Quota otherwise, showing the quota status dot only when `quotaEnabled` is true), and keeping both Quota/Usage tabs reachable with an amber notice and Settings shortcut on a disabled tab (#25).
+
+### Fixed
+- **Antigravity model detection**: Restricted `Model Selection` setting-change parsing to `USER_INPUT` records and also read `PLANNER_RESPONSE.model` in record order, preventing quoted setting text inside tool outputs from overriding the session model (#25).
+- **Claude Code task notifications & permission card payloads**: Filtered out `task-notification` records from user prompts, and displayed `pendingInteraction.payload` lines inside permission cards when the pending tool call is neither a command nor a diff (#25).
+
 ## [0.1.11] - 2026-11-14
 
 ### Changed

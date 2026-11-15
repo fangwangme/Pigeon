@@ -94,6 +94,7 @@ When Herdr cannot be reached (its socket is missing or refuses the connection, `
 ```
 - `text` may be empty only when `attachments` is not. `attachments` holds at most 10 upload ids from §7. An id the daemon does not know is `ERR_INVALID_PAYLOAD`, and nothing is sent.
 - **Attachments**: the daemon appends attachment file paths: the file's absolute path, prefixed with the recipe's file-mention prefix (`@` for claude, opencode, and pi; none for codex, agy, and a plain terminal; agy uses space separation without `@` to prevent CLI autocomplete popups and multiline mode stalls).
+- **Duplicate guard** (issue #25, user decision 2026-11-15): a phone whose connection drops after the daemon took a prompt but before the ack arrives keeps the draft, and the user sends it again. So the daemon remembers, per pane, the hash of the last prompt it accepted — its `text` and its `attachments` ids in order — and when it accepted it. An `agent_prompt` with the same hash within the window after that is acked `{ "duplicate": true }`; nothing is sent or queued, and the remembered time does not move. Accepted means sent at once or queued; a prompt answered with an error is not remembered, so its resend goes out. The window is 60 seconds; `WsServer` takes it as the option `promptDuplicateWindowMs`, so tests drive it with a short one. The memory is not persisted and leaves with the pane. `queue_update` and the queue's own batches are not checked. The phone treats the ack as sent: it clears the draft and shows the toast "相同内容刚刚已发送，已跳过".
 - **Queue**: when the pane's Herdr status is `working`, or the pane already has queued prompts, the prompt is queued instead of sent (user decision, 2026-11-06). The ack carries `{ "queued": true, "queueId": "q_…" }`, and every viewer of the pane gets `prompt_queue` (§5.8).
 - **Queue state machine**: each pane's queue is either `idle` (nothing out) or `sending` (a batch is out and not yet settled). One transition function takes every input: the pane's Herdr status (from a status event or from a snapshot, `herdr-adapter.md` §3.1), a new user turn in the pane's transcript (including the first turn of a fresh session), a send result, the send timeout, a queue edit, and the pane's removal.
   - In `idle`, when the pane's status is `idle` or `done` and the queue is not empty, **every** queued prompt goes out at once as one batch (user decision, 2026-11-13: the agent sees everything that piled up and decides itself): their composed prompts (§4.2) are joined in queue order with a blank line between them and sent as one prompt. Each is marked `sending: true`, and the queue enters `sending`. Prompts queued while a batch is out wait for the next batch.
@@ -194,7 +195,7 @@ Updates the text and attachments of an existing queued prompt in-place, preservi
 ```json
 { "type": "quota_get", "id": "cli_20", "payload": {} }
 ```
-Answers with the quota of every provider (`quota-and-usage.md` §2). Answers from the daemon's 60-second provider cache to protect upstream provider rate limits. When `quotaUsageEnabled` is `false` (`quota-and-usage.md` §1.1), the request is rejected with `ERR_FEATURE_DISABLED` without querying any provider. The ack carries:
+Answers strictly with the daemon's cached provider quota states (`quota-and-usage.md` §2.6) without triggering any upstream provider fetch. When `quotaEnabled` is `false` (`quota-and-usage.md` §1.1), the request is rejected with `ERR_FEATURE_DISABLED` without querying any provider. The ack carries:
 ```json
 { "providers": [ { "provider": "claude", "enabled": true,
     "snapshot": { "provider": "claude", "plan": "pro", "account": "you@example.com", "fetchedAt": 1794218000000, "credits": [],
@@ -202,13 +203,13 @@ Answers with the quota of every provider (`quota-and-usage.md` §2). Answers fro
       "windows": [ { "id": "five_hour", "label": "5h", "usedPercent": 52, "periodMs": 18000000, "resetsAt": 1794228620000 } ] },
     "error": null } ], "fetchedAt": 1794218000000 }
 ```
-One entry per provider, enabled or not; a disabled provider has `snapshot: null` and is not fetched. The top-level `fetchedAt` carries the timestamp when the daemon last fetched or checked the providers. A provider that failed has `error: { "message", "at" }` and keeps its previous `snapshot` (or null when it never had one). Provider failures never turn into a command error.
+One entry per provider, enabled or not; a disabled provider has `snapshot: null` and is not fetched. The top-level `fetchedAt` carries the timestamp when the daemon last fetched or checked the providers (or `0` before the first background refresh completes). A provider that failed has `error: { "message", "at" }` and keeps its previous `snapshot` (or null when it never had one). Provider failures never turn into a command error.
 
 ### 4.17 Usage Report (`usage_get`)
 ```json
 { "type": "usage_get", "id": "cli_21", "payload": { "preset": "custom", "from": "2026-10-01", "to": "2026-10-31", "agents": ["claude", "codex", "agy", "opencode", "pi"] } }
 ```
-`preset` is `today`, `7d`, `30d`, `year`, `all` or `custom`; `custom` requires `from` and `to` (`YYYY-MM-DD`), which other presets must not carry. An optional boolean `force` (the refresh button) rescans newly modified session files before answering in realtime mode (`quota-and-usage.md` §3.7); in scheduled mode, requests always answer from the background cache (user decision, 2026-11-11). `agents` is a non-empty list of distinct agent kinds and filters every figure in the reply. Anything else is `ERR_INVALID_PAYLOAD` and nothing is scanned. When `quotaUsageEnabled` is `false` (`quota-and-usage.md` §1.1), the request is rejected with `ERR_FEATURE_DISABLED` without scanning files or querying prices. The ack carries:
+`preset` is `today`, `7d`, `30d`, `year`, `all` or `custom`; `custom` requires `from` and `to` (`YYYY-MM-DD`), which other presets must not carry. An optional boolean `force` (the refresh button) rescans newly modified session files before answering in realtime mode (`quota-and-usage.md` §3.7); in scheduled mode, requests always answer from the background cache (user decision, 2026-11-11). `agents` is a non-empty list of distinct agent kinds and filters every figure in the reply. Anything else is `ERR_INVALID_PAYLOAD` and nothing is scanned. When `usageEnabled` is `false` (`quota-and-usage.md` §1.1), the request is rejected with `ERR_FEATURE_DISABLED` without scanning files or querying prices. The ack carries:
 - `range` (`from`, `to`), `firstDay` (the first day with usage, or null), `scannedAt`, `pricesAvailable`;
 - `totals` and, when `quota-and-usage.md` §3.5 gives one, `comparison` (`from`, `to`, `totals`); totals are `{ cost, tokens, input, output, cacheRead, cacheWrite, messages, sessions }`;
 - `days`: every day of the range with usage, newest first, each with the totals fields and `date`;
@@ -218,13 +219,13 @@ One entry per provider, enabled or not; a disabled provider has `snapshot: null`
 ```json
 { "type": "usage_day", "id": "cli_22", "payload": { "date": "2026-11-06", "agents": ["claude", "codex"] } }
 ```
-When `quotaUsageEnabled` is `false`, the request is rejected with `ERR_FEATURE_DISABLED`. The ack carries `date`, `totals`, and `agents`: per agent its totals and `models` (each model's totals), sorted by cost.
+When `usageEnabled` is `false`, the request is rejected with `ERR_FEATURE_DISABLED`. The ack carries `date`, `totals`, and `agents`: per agent its totals and `models` (each model's totals), sorted by cost.
 
 ### 4.19 Model Detail (`usage_model`)
 ```json
 { "type": "usage_model", "id": "cli_23", "payload": { "model": "gpt-5-6-sol", "from": "2026-10-11", "to": "2026-11-09", "agents": ["codex"] } }
 ```
-When `quotaUsageEnabled` is `false`, the request is rejected with `ERR_FEATURE_DISABLED`. The ack carries `model`, `company`, `totals`, `lastUsed`, `agents` (per agent: kind and totals) and `perDay` (every day of the range in order, with `date`, `tokens` and `cost`, zero on days without use). An unknown model is answered with zero totals, not an error.
+When `usageEnabled` is `false`, the request is rejected with `ERR_FEATURE_DISABLED`. The ack carries `model`, `company`, `totals`, `lastUsed`, `agents` (per agent: kind and totals) and `perDay` (every day of the range in order, with `date`, `tokens` and `cost`, zero on days without use). An unknown model is answered with zero totals, not an error.
 
 ### 4.20 Detail (`detail_get`)
 ```json
@@ -234,7 +235,8 @@ Fetches what the light form (`agent-session-normalization.md` §3.3) leaves out,
 - `kind: "tool"` with `turnId` and `callId` → the ack carries `{ "call" }`, the full `NormalizedToolCall` (input, output, diff with patch).
 - `kind: "reasoning"` with `turnId` → `{ "text" }`, the turn's reasoning text.
 - `kind: "file"` with `filePath` → `{ "diff" }`, that file's `FileDiffSummary` from `sessionStats` with its accumulated `patch`.
-A pane without a bound session, or a turn, call or file the session does not have, is `ERR_NOT_FOUND`. The phone keeps details in memory only.
+- `kind: "subagent"` with `subagentId` → `{ "subagent", "turns" }` (issue #25): the sub-agent's current `SubagentInfo` and its conversation in the light form, read now (`agent-session-normalization.md` §3.4). A sub-agent without a conversation on disk answers `turns: []`.
+A pane without a bound session, or a turn, call, file or sub-agent the session does not have, is `ERR_NOT_FOUND`. The phone keeps details in memory only.
 
 ### 4.21 Screen Watch (`screen_watch`)
 ```json
@@ -333,7 +335,7 @@ Sent to the clients viewing a pane whenever its classified screen or status chan
 This is sent in the handshake and broadcast whenever the daemon's connection to Herdr goes up or down.
 
 ### 5.6 Normalized Turns (`normalized_turns`, `turns_delta`)
-`normalized_turns` carries the whole conversation of a pane's structured session (`agent-session-normalization.md`): `{ paneId, seq, turns, sessionStats?, sessionTitle?, todos?, session }`. Turns and `sessionStats` are in the light form (`agent-session-normalization.md` §3.3).
+`normalized_turns` carries the whole conversation of a pane's structured session (`agent-session-normalization.md`): `{ paneId, seq, turns, sessionStats?, sessionTitle?, todos?, subagents?, session }`. `subagents` is the session's `SubagentInfo[]` (`agent-session-normalization.md` §3.4), absent when it has none. Turns and `sessionStats` are in the light form (`agent-session-normalization.md` §3.3).
 ```json
 "session": { "bound": true, "agent": "claude", "sessionId": "2c9ad7c8-…", "model": { "value": "opus", "source": "launch" }, "thinking": { "value": "high", "source": "launch" } }
 ```
@@ -357,7 +359,7 @@ A pane that becomes bound or switches session (for example after the agent's `/c
   }
 }
 ```
-`sinceTurnIndex: 0` without `patchLastTurn` replaces the whole list. Otherwise `patchLastTurn` replaces the last known turn, and `appendTurns` is placed from `sinceTurnIndex` on. `sessionStats`, `todos` and `session` ride along only when they changed.
+`sinceTurnIndex: 0` without `patchLastTurn` replaces the whole list. Otherwise `patchLastTurn` replaces the last known turn, and `appendTurns` is placed from `sinceTurnIndex` on. `sessionStats`, `todos`, `subagents` and `session` ride along only when they changed.
 
 `seq` counts the pane's turn changes: each `turns_delta` carries the previous value plus one, and `normalized_turns` and the bootstrap carry the current value. A client that receives a `turns_delta` whose `seq` is not one more than the last it applied for that pane discards it and selects the pane again with its `have` (§4.4).
 
@@ -397,6 +399,18 @@ Every recipe summary, in the shape of §5.7. Broadcast to every client after a f
 ```
 Prefetch for fast switching (user decision, 2026-11-10: only for agents that are working or waiting). For every pane whose status is `working` or `blocked` and that has a bound session, the daemon pushes to every connection that is not viewing that pane the last turns of its session in the light form, as many as fit in 32 KB counted from the newest, with the pane's current `seq`. At most one `pane_tail` per pane per second, and one more when the pane leaves `working` or `blocked`. The client stores them in its in-memory pane views (`mobile-ui-and-themes.md` §3.1); a later bootstrap of that pane resumes from them.
 
+### 5.11 Quota Updated (`quota_updated`)
+```json
+{ "type": "quota_updated", "payload": { "providers": [], "fetchedAt": 1794218000000 } }
+```
+Broadcast to every connected client when a background quota refresh completes and `client.quotaEnabled` is `true` (`quota-and-usage.md` §2.6). Carries the updated `providers` list and `fetchedAt` in the exact shape of §4.16; the client replaces its cached quota state silently without waiting for a manual refresh.
+
+### 5.12 Usage Updated (`usage_updated`)
+```json
+{ "type": "usage_updated", "payload": { "scannedAt": 1794218000000 } }
+```
+Broadcast to every connected client when a usage scan completes and `client.usageEnabled` is `true` (`quota-and-usage.md` §2.6). Carries the updated `scannedAt` timestamp; clients viewing usage views refresh silently from the daemon cache when `scannedAt` advances.
+
 ## 6. Configuration Synchronization Protocol
 
 The client part of `config.json` (appearance) is shared by all paired devices.
@@ -417,9 +431,9 @@ The client part of `config.json` (appearance) is shared by all paired devices.
 { "type": "config_patch", "id": "cli_21", "payload": { "client": { "accent": "green" } } }
 ```
 *Server Behavior*:
-1. The patch is validated against a whitelist of keys and value types: `themeMode` (`system`, `light`, `dark`), `accent` (`blue`, `purple`, `green`, `orange`, `pink`), `quotaUsageEnabled` (boolean), `quotaProviders` (an object with any of `claude`, `codex`, `antigravity`, each a boolean), `quotaDisplay` (`remaining`, `used`), `quotaButton` (boolean), `quotaShowAccount` (boolean), `usageScanMode` (`scheduled`, `realtime`) and `usageScanInterval` (`1m`, `2m`, `5m`, `10m`, `15m`). Any unknown key or bad value rejects the whole patch with `ERR_INVALID_PAYLOAD`, and nothing is saved.
+1. The patch is validated against a whitelist of keys and value types: `themeMode` (`system`, `light`, `dark`), `accent` (`blue`, `purple`, `green`, `orange`, `pink`), `quotaEnabled` (boolean), `usageEnabled` (boolean), `quotaProviders` (an object with any of `claude`, `codex`, `antigravity`, each a boolean), `quotaDisplay` (`remaining`, `used`), `quotaButton` (boolean), `quotaShowAccount` (boolean), `usageScanMode` (`scheduled`, `realtime`) and `usageScanInterval` (`1m`, `2m`, `5m`, `10m`, `15m`). Legacy `quotaUsageEnabled` or any other unknown key or bad value rejects the whole patch with `ERR_INVALID_PAYLOAD`, and nothing is saved.
 2. The patch is deep-merged and written to `config.json` before the reply. A write error is reported as `ERR_INTERNAL`.
-3. Defaults are `themeMode: "system"`, `accent: "blue"`, `quotaUsageEnabled: true`, `quotaDisplay: "remaining"`, `quotaButton: true`, `quotaShowAccount: true`, `usageScanMode: "scheduled"` and `usageScanInterval: "15m"`; `quotaProviders` defaults to the providers logged in on this computer (`quota-and-usage.md` §2.5). The config version is bumped. The sender gets `ack` with `{ "version", "client" }`.
+3. Defaults are `themeMode: "system"`, `accent: "blue"`, `quotaEnabled: false`, `usageEnabled: true`, `quotaDisplay: "remaining"`, `quotaButton: true`, `quotaShowAccount: false` (issue #25: account details stay hidden until the user turns them on), `usageScanMode: "scheduled"` and `usageScanInterval: "5m"`; `quotaProviders` defaults to the providers logged in on this computer (`quota-and-usage.md` §2.5). Legacy `quotaUsageEnabled` in `config.json` is dropped on load without being inherited by `quotaEnabled` or `usageEnabled`. The config version is bumped. The sender gets `ack` with `{ "version", "client" }`.
 4. Every other client gets `{ "type": "config_updated", "payload": { "version", "client" } }`. Clients ignore a `config_sync` or `config_updated` whose version is older than one they have already applied.
 
 ## 7. Uploads (`POST /api/uploads`)
@@ -431,6 +445,13 @@ Attachments are uploaded before the prompt that uses them.
 - **Storage**: `<stateDir>/uploads/<id>-<name>`, mode `0600`, where `id` is `up_` + 16 random hex digits. Uploads older than 7 days are deleted when the daemon starts.
 - **Reply**: `{ "id", "name", "size", "mime" }`. The phone then names `id` in `agent_prompt.attachments` (§4.2).
 - **Retrieval (`GET /api/uploads/:id`)**: returns the uploaded file bytes with its stored `Content-Type`, so the phone can show thumbnails and images in the transcript. Gate: a valid session cookie (else HTTP 401) and an allowed `Host` (else HTTP 403). `Origin` may be absent, because a browser sends none for an `<img>` load or a link; when present it must pass the exact Origin check (`security-and-pairing.md` §4, else HTTP 403). The session cookie is `SameSite=Strict`, so a request from another site carries no cookie.
+
+### 7.1 AGY media (`GET /api/agent-media/agy/<sessionId>/<name>`)
+Images pasted into AGY itself are prompt attachments that live in AGY's own folder (`agent-session-normalization.md` §2.2), not in Pigeon's uploads (issue #25, user decision 2026-11-15). This route returns one of them, so the phone can show its thumbnail.
+- **Gate**: the same as upload retrieval above.
+- **Trust boundary**: the path segments come from the network. `sessionId` must match `[A-Za-z0-9_-]{1,64}` and `name` `[A-Za-z0-9._-]{1,200}` without a leading dot, and `name` must end in `.png`, `.jpg`, `.jpeg`, `.gif` or `.webp`. The file is `~/.gemini/antigravity-cli/brain/<sessionId>/.user_uploaded/<name>`; its real path (symlinks resolved) must be a regular file directly inside that folder's real path. Anything else is HTTP 404, and no other file of the computer is reachable through the route.
+- **Reply**: the file bytes with the `Content-Type` of its extension, `Content-Disposition: inline`, and the same `Cache-Control`, `X-Content-Type-Options` and `Content-Security-Policy` headers as upload retrieval.
+- The phone uses it for a prompt file whose path is inside an AGY `.user_uploaded` folder (`…/brain/<sessionId>/.user_uploaded/<name>`).
 
 ## 8. Error Code Registry
 

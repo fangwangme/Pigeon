@@ -1,5 +1,6 @@
-// Issue #13. quota-and-usage.md §3, protocol.md §4.16–§4.18.
+// Issue #13, #25. quota-and-usage.md §3, protocol.md §4.17–§4.19, §5.12.
 import { formatYMD, resolveRange, type UsagePreset } from "../../shared/usage";
+import { scanIntervalToMs } from "../../shared/defaults";
 import type { UsageDayPayload, UsageGetPayload, UsageModelPayload } from "../../types/protocol";
 import { PricingManager } from "./pricing";
 import { UsageStore } from "./store";
@@ -12,15 +13,20 @@ export interface UsageServiceOptions {
   configManager?: ConfigManager;
   now?: () => number;
   autoScan?: boolean;
+  onUpdated?: (payload: { scannedAt: number }) => void;
 }
 
 export class UsageService {
   private store: UsageStore;
   private pricing: PricingManager;
   private configManager?: ConfigManager;
+  private autoScan: boolean;
   private now: () => number;
+  private onUpdated?: (payload: { scannedAt: number }) => void;
   private scanPromise: Promise<{ scannedFiles: number; recordsAdded: number }> | null = null;
   private backgroundTimer: ReturnType<typeof setInterval> | null = null;
+  private timerIntervalMs: number | null = null;
+  private hasOnlineClients = false;
   private hasScannedOnce = false;
   private lastEnabled = true;
   private lastScanTime: number | null = null;
@@ -29,16 +35,19 @@ export class UsageService {
 
   constructor(options: UsageServiceOptions = {}) {
     this.configManager = options.configManager;
-    this.lastEnabled = options.configManager?.getClientConfig().quotaUsageEnabled !== false;
+    this.autoScan = options.autoScan !== false;
+    this.lastEnabled = options.configManager?.getClientConfig().usageEnabled !== false;
     // The usage database sits in the daemon's state directory; the agents' files are under the config's home.
     const stateDir = options.configManager?.getServerConfig().stateDir;
     this.store =
       options.store ?? new UsageStore({ dbPath: stateDir ? join(stateDir, "usage.db") : undefined, home: options.configManager?.home });
     this.pricing = options.pricing ?? new PricingManager({ cachePath: stateDir ? join(stateDir, "pricing-cache.json") : undefined });
     this.now = options.now ?? (() => Date.now());
-    if (options.autoScan !== false) {
-      this.startBackgroundTimer();
-    }
+    this.onUpdated = options.onUpdated;
+  }
+
+  public setOnUpdated(cb?: (payload: { scannedAt: number }) => void): void {
+    this.onUpdated = cb;
   }
 
   public getScanMode(): "realtime" | "scheduled" {
@@ -46,35 +55,56 @@ export class UsageService {
   }
 
   public getScanIntervalMs(): number {
-    const interval = this.configManager?.getClientConfig().usageScanInterval ?? "15m";
-    switch (interval) {
-      case "1m": return 60_000;
-      case "2m": return 120_000;
-      case "5m": return 300_000;
-      case "10m": return 600_000;
-      case "15m": return 900_000;
-      default: return 900_000;
-    }
+    return scanIntervalToMs(this.configManager?.getClientConfig().usageScanInterval);
   }
 
-  public startBackgroundTimer(): void {
+  private isEnabled(): boolean {
+    return this.configManager ? this.configManager.getClientConfig().usageEnabled !== false : true;
+  }
+
+  private isStale(): boolean {
+    const last = this.lastScanTime ?? this.store.getLastScannedAt?.() ?? 0;
+    return last <= 0 || (this.now() - last) > this.getScanIntervalMs();
+  }
+
+  private stopBackgroundTimer(): void {
     if (this.backgroundTimer) {
       clearInterval(this.backgroundTimer);
       this.backgroundTimer = null;
     }
-    const clientCfg = this.configManager?.getClientConfig();
-    if (clientCfg && clientCfg.quotaUsageEnabled === false) return;
-    if (this.getScanMode() !== "scheduled") return;
-    const backgroundScan = () => void this.scan().catch((err) => console.error("[Pigeon] background usage scan failed:", err));
-    // §3.7: scheduled mode scans in the background; the timer never keeps a one-shot CLI process alive.
-    this.backgroundTimer = setInterval(backgroundScan, this.getScanIntervalMs());
-    this.backgroundTimer.unref();
-    if (!this.hasScannedOnce) backgroundScan();
+    this.timerIntervalMs = null;
   }
 
-  /** The scan mode, interval, or master switch may have changed (`config_patch`). */
+  public setClientOnline(online: boolean): void {
+    this.hasOnlineClients = online;
+    if (!online) {
+      this.stopBackgroundTimer();
+      return;
+    }
+    this.startBackgroundTimer();
+    if (this.autoScan && this.isEnabled() && this.getScanMode() === "scheduled" && this.isStale()) {
+      void this.scan().catch((err) => console.error("[Pigeon] connect usage scan failed:", err));
+    }
+  }
+
+  public startBackgroundTimer(): void {
+    if (!this.autoScan || !this.hasOnlineClients || !this.isEnabled() || this.getScanMode() !== "scheduled") {
+      this.stopBackgroundTimer();
+      return;
+    }
+    const intervalMs = this.getScanIntervalMs();
+    if (this.backgroundTimer && this.timerIntervalMs === intervalMs) return;
+    this.stopBackgroundTimer();
+    const backgroundScan = () => void this.scan().catch((err) => console.error("[Pigeon] background usage scan failed:", err));
+    // §3.7: scheduled mode scans in the background while at least one phone is connected; never keeps a CLI process alive.
+    this.backgroundTimer = setInterval(backgroundScan, intervalMs);
+    this.backgroundTimer.unref();
+    this.timerIntervalMs = intervalMs;
+  }
+
+  /** The scan mode, interval, or feature switch may have changed (`config_patch`). */
   public updateConfig(): void {
-    const isNowEnabled = this.configManager?.getClientConfig().quotaUsageEnabled !== false;
+    const isNowEnabled = this.isEnabled();
     const becameEnabled = !this.lastEnabled && isNowEnabled;
     this.lastEnabled = isNowEnabled;
     this.startBackgroundTimer();
@@ -84,10 +114,7 @@ export class UsageService {
   }
 
   public destroy(): void {
-    if (this.backgroundTimer) {
-      clearInterval(this.backgroundTimer);
-      this.backgroundTimer = null;
-    }
+    this.stopBackgroundTimer();
     // A scan still in flight keeps the database until it settles; its own failure is reported by its caller.
     const close = () => this.store.close();
     if (this.scanPromise) this.scanPromise.then(close, close);
@@ -113,6 +140,10 @@ export class UsageService {
         this.lastScanTime = this.now();
         this.lastScanDurationMs = this.now() - start;
         this.lastScanError = null;
+        if (this.isEnabled()) {
+          const scannedAt = this.store.getLastScannedAt?.() || this.lastScanTime;
+          this.onUpdated?.({ scannedAt });
+        }
         return res;
       } catch (err: any) {
         this.lastScanError = err.message || String(err);

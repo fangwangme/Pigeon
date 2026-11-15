@@ -1,7 +1,7 @@
 import { render } from "solid-js/web";
 import { createEffect, createSignal, Match, on, onMount, Show, Switch } from "solid-js";
 import "./styles.css";
-import { goBack, navigate, quotaFeatureOn, setState, state, systemReducesTransparency } from "./state/store";
+import { goBack, navigate, quotaFeatureOn, setState, state, systemReducesTransparency, usageFeatureOn } from "./state/store";
 import { applyTheme } from "./themes";
 import { checkPairingFromUrlHash, initWebSocket, reportPresence, selectPane } from "./state/ws";
 import { AgentsPage, Home } from "./components/Home";
@@ -244,7 +244,7 @@ function App() {
     resetWindowScroll();
   }, { defer: true }));
   createEffect(() => {
-    if (state.configReady && state.quotaUsageEnabled === false) {
+    if (state.configReady && !quotaFeatureOn() && !usageFeatureOn()) {
       if (state.route.name === "quota" || state.route.name === "usage") {
         navigate({ name: "home" });
       }
@@ -273,10 +273,10 @@ function App() {
         <Match when={state.route.name === "settings"}>
           <Settings />
         </Match>
-        <Match when={quotaFeatureOn() && state.route.name === "quota"}>
+        <Match when={(quotaFeatureOn() || usageFeatureOn()) && state.route.name === "quota"}>
           <QuotaPage />
         </Match>
-        <Match when={quotaFeatureOn() && state.route.name === "usage"}>
+        <Match when={(quotaFeatureOn() || usageFeatureOn()) && state.route.name === "usage"}>
           <UsagePage />
         </Match>
       </Switch>

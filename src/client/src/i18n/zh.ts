@@ -63,6 +63,7 @@ export const zh: Messages = {
   "composer.placeholderCommand": "输入命令",
   "composer.placeholderQueued": "补充消息会排队发送",
   "composer.placeholderReply": "回复…",
+  "composer.duplicateSkipped": "相同内容刚刚已发送，已跳过",
 
   "conn.computerDown": "电脑未连接",
   "conn.herdrDown": "Herdr 没有响应",
@@ -243,6 +244,14 @@ export const zh: Messages = {
   "status.done": "已完成",
   "status.idle": "空闲",
 
+  "subagents.title": "子代理",
+  "subagents.menu": "子代理 ({count})",
+  "subagents.runningCapsule": "{count} 个子代理运行中",
+  "subagents.statusRunning": "运行中",
+  "subagents.statusCompleted": "已完成",
+  "subagents.statusFailed": "失败",
+  "subagents.emptyLog": "没有可显示的记录",
+
   "summary.run": "运行 {command}",
   "summary.thinking": "正在思考",
 
@@ -279,6 +288,7 @@ export const zh: Messages = {
   "transcript.thoughtFor": "思考了 {seconds} 秒",
   "transcript.thought": "思考",
   "transcript.copyReply": "复制回复",
+  "transcript.copyPrompt": "复制消息",
   "transcript.compacted": "上下文已压缩",
 
   "verb.run": "运行",
@@ -308,6 +318,9 @@ export const zh: Messages = {
   "quota.creditsExpiry": "到期时间",
   "quota.extraUsage": "额外用量：{used} / {limit}",
   "quota.errorPrefix": "刷新失败：{error}。下面仍显示上一次的数据。",
+  "quota.disabledNotice": "订阅额度查询已关闭，可在 设置 › 额度与用量 中开启",
+  "usage.disabledNotice": "Token 用量统计已关闭，可在 设置 › 额度与用量 中开启",
+  "quota.openSettings": "前往设置",
 
   "usage.today": "今天",
   "usage.loading": "正在统计用量…",
@@ -364,8 +377,9 @@ export const zh: Messages = {
   "usage.levelEmpty": "0（无用量）",
 
   "settings.quotaUsage": "额度与用量",
-  "settings.quotaUsageEnabled": "启用额度与用量查询",
-  "settings.quotaUsageDisabledHint": "已停用额度与用量功能，后台已停止扫描与外部请求。",
+  "settings.quotaEnabled": "启用订阅额度查询",
+  "settings.usageEnabled": "启用 Token 用量统计",
+  "settings.quotaUsageDisabledHint": "订阅额度与 Token 用量均已停用，后台已停止扫描与外部请求。",
   "settings.subscriptionQuota": "订阅额度",
   "settings.tokenUsage": "Token 用量",
   "settings.usageSummary": "今日 {today} · 近 7 天 {week}",
@@ -383,6 +397,6 @@ export const zh: Messages = {
   "settings.usageScanMode": "用量计算模式",
   "settings.usageScanRealtime": "实时扫描",
   "settings.usageScanScheduled": "定时后台",
-  "settings.usageScanInterval": "后台扫描间隔",
-  "settings.usageScanModeHint": "定时后台模式直接展示已缓存的最新数据，秒开秒显；实时扫描模式在触发时悬挂等待最新数据计算完成后返回。",
+  "settings.usageScanInterval": "后台刷新间隔",
+  "settings.usageScanModeHint": "订阅额度与定时用量共用后台刷新间隔（默认 5m，仅在有手机连接时运行）；实时模式在打开用量页时扫描新变动。",
 };

@@ -23,6 +23,8 @@ export interface SessionSource {
   /** The file whose changes mean new records. */
   watchPath(sessionId: string): string | null;
   read(sessionId: string, incremental: boolean): SessionRead;
+  /** `agent-session-normalization.md` §3.4: a sub-agent's own conversation. */
+  readSubagent?(parentSessionId: string, subagentId: string): SessionRead;
   /** Drops incremental state for a session that is no longer bound. */
   forget(sessionId: string): void;
   /** `agent-session-normalization.md` §2.6. */

@@ -128,6 +128,29 @@ describe("what is a prompt (herdr-adapter.md §8.2)", () => {
     expect(prompt.payload).not.toContain("mode:auto");
     expect(prompt.options).toHaveLength(0);
   });
+
+  // issue #25: AGY's footer, read from a live AGY pane on 2026-11-15.
+  const agyStatus = [
+    "Pigeon  main  ctx:18%/1M  token:242k  Gemini 4 Hydrogen (High)",
+    "20:03:55  5h:12% · 53m (20:56)  7d:23% · 5d 18h (11-21 14:12)",
+    "mode:auto",
+  ];
+  const agyInput = ["────────────────────────────────────────────", ">", "────────────────────────────────────────────"];
+
+  test("a numbered list under a line ending in a full-width question mark is a prompt, with AGY's status lines below it", () => {
+    const { pendingInteraction } = classify(["这个会话怎么处理？", "1. 保留", "2. 删除", "", ...agyStatus, ""].join("\n"));
+    expect(pendingInteraction?.question).toBe("这个会话怎么处理？");
+    expect(pendingInteraction?.options.map((o) => [o.keyShortcut, o.label])).toEqual([
+      ["1", "保留"],
+      ["2", "删除"],
+    ]);
+  });
+
+  test("AGY's quota line is a status line, never the question of an unrecognized prompt", () => {
+    const prompt = buildUnrecognizedPrompt(["Waiting for your answer", "", ...agyInput, ...agyStatus].join("\n"));
+    expect(prompt.question).toBe("Waiting for your answer");
+    expect(prompt.payload).not.toContain("5h:12%");
+  });
 });
 
 describe("question menus (herdr-adapter.md §8.2)", () => {

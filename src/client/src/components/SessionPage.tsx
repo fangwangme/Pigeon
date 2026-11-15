@@ -1,7 +1,7 @@
 import { createEffect, createMemo, createSignal, For, on, onCleanup, onMount, Show } from "solid-js";
 import { navigate, openTerminal, setState, showToast, state } from "../state/store";
-import { copyText, request, requestSkills, selectPane, sendKeys, sendPrompt, setScreenWatch } from "../state/ws";
-import type { FileDiffSummary, QueuedPrompt } from "../../../types/protocol";
+import { copyText, getDetail, request, requestSkills, selectPane, sendKeys, sendPrompt, setScreenWatch } from "../state/ws";
+import type { FileDiffSummary, NormalizedTurn, QueuedPrompt, SubagentInfo } from "../../../types/protocol";
 import {
   cancelQueuedPromptEdit,
   Composer,
@@ -161,7 +161,129 @@ function PaneSheet(props: { onClose: () => void }) {
   );
 }
 
-type Panel = "menu" | "changes" | "panes" | "plus" | "skills" | null;
+function SubagentCapsule(props: { onOpen: () => void }) {
+  const runningCount = () => state.subagents.filter((s) => s.status === "running").length;
+  return (
+    <Show when={runningCount() > 0}>
+      <button class="todo" onClick={props.onOpen}>
+        <StatusIcon status="working" />
+        <span>{t("subagents.runningCapsule", { count: runningCount() })}</span>
+      </button>
+    </Show>
+  );
+}
+
+function SubagentStatus(props: { status: SubagentInfo["status"] }) {
+  return (
+    <span class={`sub-st${props.status === "failed" ? " failed" : ""}`}>
+      <Show when={props.status === "running"}>
+        <StatusIcon status="working" />
+      </Show>
+      <Show when={props.status === "failed"}>
+        <span class="sdot failed" />
+      </Show>
+      <span>
+        {props.status === "running"
+          ? t("subagents.statusRunning")
+          : props.status === "failed"
+            ? t("subagents.statusFailed")
+            : t("subagents.statusCompleted")}
+      </span>
+    </span>
+  );
+}
+
+/** §3.7: list sub-agents in start order and push a read-only conversation detail sheet on tap. */
+function SubagentsSheet(props: { onClose: () => void }) {
+  const [selected, setSelected] = createSignal<{ subagent: SubagentInfo; turns: NormalizedTurn[] } | null>(null);
+  const [loading, setLoading] = createSignal(false);
+  const [err, setErr] = createSignal<string | null>(null);
+  let seq = 0;
+
+  const agentName = () => state.session?.agent ?? findPane(state.activePaneId)?.pane.agent;
+  const subMeta = (s: SubagentInfo) =>
+    [s.type, s.model ? formatModelName(agentName(), s.model) : ""].filter(Boolean).join(" · ");
+
+  const openSubagent = async (s: SubagentInfo) => {
+    if (!state.activePaneId) return;
+    const reqSeq = ++seq;
+    setSelected({ subagent: s, turns: [] });
+    setLoading(true);
+    setErr(null);
+    try {
+      const res = (await getDetail({
+        paneId: state.activePaneId,
+        kind: "subagent",
+        subagentId: s.id,
+      })) as { subagent: SubagentInfo; turns: NormalizedTurn[] };
+      if (reqSeq !== seq) return;
+      setSelected({ subagent: res.subagent, turns: res.turns || [] });
+      setState("subagents", (list) => list.map((item) => (item.id === res.subagent.id ? res.subagent : item)));
+    } catch (e: any) {
+      if (reqSeq !== seq) return;
+      setErr(e?.message || String(e));
+    } finally {
+      if (reqSeq === seq) setLoading(false);
+    }
+  };
+
+  return (
+    <Sheet
+      title={selected() ? selected()!.subagent.title : t("subagents.title")}
+      sub={selected() ? subMeta(selected()!.subagent) || undefined : undefined}
+      full={!!selected()}
+      onClose={props.onClose}
+      onBack={
+        selected()
+          ? () => {
+              seq++;
+              setSelected(null);
+              setLoading(false);
+              setErr(null);
+            }
+          : undefined
+      }
+    >
+      <Show
+        when={selected()}
+        fallback={
+          <div class="card">
+            <For each={state.subagents}>
+              {(s) => (
+                <button class="li" onClick={() => openSubagent(s)}>
+                  <div class="tx">
+                    {s.title}
+                    <Show when={subMeta(s)}>
+                      <small>{subMeta(s)}</small>
+                    </Show>
+                  </div>
+                  <SubagentStatus status={s.status} />
+                  <Icon name="chevR" sm />
+                </button>
+              )}
+            </For>
+          </div>
+        }
+      >
+        {(detail) => (
+          <Show when={!loading()} fallback={<p class="note">{t("common.loading")}</p>}>
+            <Show when={!err()} fallback={<p class="note">{err()}</p>}>
+              <Show when={detail().turns.length > 0} fallback={<p class="note">{t("subagents.emptyLog")}</p>}>
+                <div class="chat" style={{ padding: "8px 0 16px" }}>
+                  <For each={detail().turns}>
+                    {(turn, i) => <Turn turn={turn} last={i() === detail().turns.length - 1} working={false} />}
+                  </For>
+                </div>
+              </Show>
+            </Show>
+          </Show>
+        )}
+      </Show>
+    </Sheet>
+  );
+}
+
+type Panel = "menu" | "changes" | "panes" | "plus" | "skills" | "subagents" | null;
 
 const paneScroll = new Map<string, { scrollTop: number; atBottom: boolean }>();
 
@@ -432,7 +554,10 @@ export function SessionPage() {
 
       <div class="dock" ref={dock}>
         <div class="dockrow">
-          <TodoCapsule />
+          <div class="caprow">
+            <TodoCapsule />
+            <SubagentCapsule onOpen={() => setPanel("subagents")} />
+          </div>
           <Show when={!nearBottom()}>
             <button class="jump" aria-label={t("session.jump")} onClick={() => toBottom(true)}>
               <Icon name="down" />
@@ -498,6 +623,12 @@ export function SessionPage() {
                 {t("changes.title")}
               </button>
             </Show>
+            <Show when={state.subagents.length > 0}>
+              <button class="mi" onClick={() => setPanel("subagents")}>
+                <Icon name="layers" />
+                {t("subagents.menu", { count: state.subagents.length })}
+              </button>
+            </Show>
             <Show when={(tab()?.panes.length ?? 0) > 1}>
               <button class="mi" onClick={() => setPanel("panes")}>
                 <Icon name="panes" />
@@ -532,6 +663,9 @@ export function SessionPage() {
       </Show>
       <Show when={panel() === "changes"}>
         <ChangesSheet onClose={() => setPanel(null)} />
+      </Show>
+      <Show when={panel() === "subagents"}>
+        <SubagentsSheet onClose={() => setPanel(null)} />
       </Show>
       <Show when={panel() === "panes"}>
         <PaneSheet onClose={() => setPanel(null)} />

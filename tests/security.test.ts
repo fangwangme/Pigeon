@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, setSystemTime, test } from "bun:test";
-import { mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { connect } from "node:net";
 import { join } from "node:path";
 import { ConfigManager, resolveInstancePaths, resolveProductionPort } from "../src/server/config-manager";
@@ -300,6 +300,7 @@ describe("HTTP and WebSocket gate (security-and-pairing.md §3, §4)", () => {
       adminSocketPath: join(dir, "admin.sock"),
       devicesFilePath: join(dir, "devices.json"),
       vapidPath: join(dir, "vapid.json"),
+      agyBrainDir: join(dir, "agy-brain"),
       embeddedHtml: "<!doctype html><title>Pigeon</title><link rel=\"apple-touch-icon\" href=\"/icon-192.png\" /><link rel=\"icon\" type=\"image/svg+xml\" href=\"/icon.svg\" />",
     });
     await daemon.start();
@@ -428,6 +429,34 @@ describe("HTTP and WebSocket gate (security-and-pairing.md §3, §4)", () => {
     expect(await plain.text()).toBe("hello");
     expect((await fetch(`${base}/api/uploads/${id}`, { headers: { Origin: "https://evil.example", Cookie: cookie } })).status).toBe(403);
     expect((await fetch(`${base}/api/uploads/${id}`)).status).toBe(401);
+  });
+
+  test("an image pasted into AGY is served from its .user_uploaded folder and nothing else is reachable (protocol.md §7.1, issue #25)", async () => {
+    const cookie = pairedCookie();
+    const brain = daemon.config.agyBrainDir;
+    const uploaded = join(brain, "s-media", ".user_uploaded");
+    mkdirSync(uploaded, { recursive: true });
+    writeFileSync(join(uploaded, "uploaded_media_1.png"), "png-bytes");
+    writeFileSync(join(uploaded, "notes.txt"), "text");
+    writeFileSync(join(uploaded, ".hidden.png"), "hidden");
+    const outside = join(tempDir("outside"), "secret.png");
+    writeFileSync(outside, "secret");
+    symlinkSync(outside, join(uploaded, "link.png"));
+    writeFileSync(join(brain, "s-media", "transcript.png"), "not uploaded");
+
+    const media = (path: string, headers: Record<string, string> = { Cookie: cookie }) => fetch(`${base}/api/agent-media/agy/${path}`, { headers });
+    const ok = await media("s-media/uploaded_media_1.png");
+    expect(ok.status).toBe(200);
+    expect(await ok.text()).toBe("png-bytes");
+    expect(ok.headers.get("content-type")).toBe("image/png");
+    expect(ok.headers.get("x-content-type-options")).toBe("nosniff");
+    expect(ok.headers.get("content-security-policy")).toBe("default-src 'none'; sandbox");
+
+    expect((await media("s-media/uploaded_media_1.png", {})).status).toBe(401);
+    expect((await media("s-media/uploaded_media_1.png", { Cookie: cookie, Origin: "https://evil.example" })).status).toBe(403);
+    for (const bad of ["s-media/notes.txt", "s-media/.hidden.png", "s-media/link.png", "s-media/..%2Ftranscript.png", "..%2Fs-media/uploaded_media_1.png", "s-media/missing.png"]) {
+      expect([bad, (await media(bad)).status]).toEqual([bad, 404]);
+    }
   });
 
   test("the app shell's CSP allows blob: images (architecture.md §5)", async () => {

@@ -37,8 +37,12 @@ const NUMBERED_OPTION_RE = /^(?:\[(\d+)\]|\((\d+)\)|(\d+)[.)])\s+(.+)$/;
 const PROMPT_HINT_RE = /(esc|enter|tab|↑|↓|to cancel|to select|to confirm|to navigate|ctrl\+)/i;
 const BORDER_ONLY_RE = /^[\s─━│┃╭╮╰╯┌┐└┘├┤═║╔╗╚╝-]*$/;
 const TOOL_CALL_RE = /^([A-Za-z_][A-Za-z0-9_.-]*)\((.*)\)$/;
-const STATUS_LINE_RE = /(ctx:\d+%|token:\d+|mode:(?:auto|plan|bypass))\b/i;
+const STATUS_LINE_RE = /(ctx:\d+%|token:\d+|mode:(?:auto|plan|bypass)\b|^\d{2}:\d{2}:\d{2}\s+.*\b\d+[hd]:\d+%)/i;
 const BARE_PROMPT_RE = /^[>❯›▶$]\s*$/;
+
+function endsWithQuestionMark(s: string): boolean {
+  return s.endsWith("?") || s.endsWith("？");
+}
 
 /** Removes TUI box-drawing side borders so `│ Do you want to proceed? │` reads as plain text. */
 function unbox(line: string): string {
@@ -98,7 +102,7 @@ function parseTailPrompt(lines: string[], start: number): PromptParse | null {
 
   for (let j = start + 1; j < lines.length; j++) {
     const trimmed = lines[j].trim();
-    if (!trimmed || BORDER_ONLY_RE.test(trimmed)) continue;
+    if (!trimmed || BORDER_ONLY_RE.test(trimmed) || STATUS_LINE_RE.test(trimmed)) continue;
     const opt = parseNumberedOption(trimmed);
     if (opt) {
       options.push({ id: `opt_${opt.num}`, label: opt.label, keyShortcut: opt.num });
@@ -324,7 +328,7 @@ export class CardClassifier {
       }
 
       // 4. Prompt at the bottom of the screen
-      if (!questionMenu && (isQuestionLine(trimmed) || (trimmed.endsWith("?") && this.hasNumberedOptionsAhead(lines, i)))) {
+      if (!questionMenu && (isQuestionLine(trimmed) || (endsWithQuestionMark(trimmed) && this.hasNumberedOptionsAhead(lines, i)))) {
         const prompt = parseTailPrompt(lines, i);
         if (prompt) {
           const card = buildInteraction(prompt);
@@ -339,7 +343,7 @@ export class CardClassifier {
       i++;
       while (i < lines.length) {
         const nextTrimmed = lines[i].trim();
-        if (isBlockStart(nextTrimmed) || nextTrimmed.endsWith("?")) break;
+        if (isBlockStart(nextTrimmed) || endsWithQuestionMark(nextTrimmed)) break;
         mdLines.push(lines[i]);
         i++;
       }

@@ -176,9 +176,9 @@ export function Settings() {
   const [usageSummaryText, setUsageSummaryText] = createSignal<string>("—");
   createEffect(
     on(
-      () => state.connected && state.configReady && state.quotaUsageEnabled !== false,
-      (on) => {
-        if (on) {
+      () => [state.connected, state.configReady, state.usageEnabled, state.usageScannedAt] as const,
+      ([connected, configReady, usageEnabled]) => {
+        if (connected && configReady && usageEnabled) {
           void request({
             type: "usage_get",
             payload: { preset: "7d", agents: ["claude", "codex", "agy", "opencode", "pi"] },
@@ -281,11 +281,11 @@ export function Settings() {
 
           <div class="sec">{t("settings.quotaUsage")}</div>
           <div class="card">
-            <button class="li" onClick={() => sendConfigPatch({ quotaUsageEnabled: state.quotaUsageEnabled === false })}>
-              <div class="tx">{t("settings.quotaUsageEnabled")}</div>
-              <span class={`tg${state.quotaUsageEnabled !== false ? "" : " off"}`} />
+            <button class="li" onClick={() => sendConfigPatch({ quotaEnabled: !state.quotaEnabled })}>
+              <div class="tx">{t("settings.quotaEnabled")}</div>
+              <span class={`tg${state.quotaEnabled ? "" : " off"}`} />
             </button>
-            <Show when={state.quotaUsageEnabled !== false}>
+            <Show when={state.quotaEnabled}>
               <button class="li" onClick={() => navigate({ name: "quota", from: "settings" })}>
                 <span style={{ width: "32px", height: "32px", "border-radius": "9px", background: "var(--accentbg)", color: "var(--accent)", display: "grid", "place-items": "center", flex: "none" }}>
                   <Icon name="gauge" sm />
@@ -293,16 +293,6 @@ export function Settings() {
                 <div class="tx">
                   {t("settings.subscriptionQuota")}
                   <small>{quotaSummaryText()}</small>
-                </div>
-                <Icon name="chevR" sm />
-              </button>
-              <button class="li" onClick={() => navigate({ name: "usage", from: "settings" })}>
-                <span style={{ width: "32px", height: "32px", "border-radius": "9px", background: "var(--accentbg)", color: "var(--accent)", display: "grid", "place-items": "center", flex: "none" }}>
-                  <Icon name="barChart" sm />
-                </span>
-                <div class="tx">
-                  {t("settings.tokenUsage")}
-                  <small>{usageSummaryText()}</small>
                 </div>
                 <Icon name="chevR" sm />
               </button>
@@ -335,13 +325,26 @@ export function Settings() {
                   </button>
                 </div>
               </div>
-              <button class="li" onClick={() => sendConfigPatch({ quotaButton: !state.quotaButton })}>
-                <div class="tx">{t("settings.showQuotaButton")}</div>
-                <span class={`tg${state.quotaButton ? "" : " off"}`} />
-              </button>
-              <button class="li" onClick={() => sendConfigPatch({ quotaShowAccount: state.quotaShowAccount === false })}>
+              <button class="li" onClick={() => sendConfigPatch({ quotaShowAccount: state.quotaShowAccount !== true })}>
                 <div class="tx">{t("settings.quotaShowAccount")}</div>
-                <span class={`tg${state.quotaShowAccount !== false ? "" : " off"}`} />
+                <span class={`tg${state.quotaShowAccount === true ? "" : " off"}`} />
+              </button>
+            </Show>
+
+            <button class="li" onClick={() => sendConfigPatch({ usageEnabled: !state.usageEnabled })}>
+              <div class="tx">{t("settings.usageEnabled")}</div>
+              <span class={`tg${state.usageEnabled ? "" : " off"}`} />
+            </button>
+            <Show when={state.usageEnabled}>
+              <button class="li" onClick={() => navigate({ name: "usage", from: "settings" })}>
+                <span style={{ width: "32px", height: "32px", "border-radius": "9px", background: "var(--accentbg)", color: "var(--accent)", display: "grid", "place-items": "center", flex: "none" }}>
+                  <Icon name="barChart" sm />
+                </span>
+                <div class="tx">
+                  {t("settings.tokenUsage")}
+                  <small>{usageSummaryText()}</small>
+                </div>
+                <Icon name="chevR" sm />
               </button>
               <div class="li">
                 <div class="tx">{t("settings.usageScanMode")}</div>
@@ -372,43 +375,51 @@ export function Settings() {
                   </button>
                 </div>
               </div>
+            </Show>
 
-              <Show when={state.usageScanMode !== "realtime"}>
-                <div class="li" style={{ "justify-content": "space-between", "align-items": "center" }}>
-                  <div class="tx">{t("settings.usageScanInterval")}</div>
-                  <div style={{ display: "inline-flex", gap: "6px" }}>
-                    <For each={["1m", "2m", "5m", "10m", "15m"] as const}>
-                      {(interval) => {
-                        const isSel = () => (state.usageScanInterval || "15m") === interval;
-                        return (
-                          <button
-                            style={{
-                              height: "28px",
-                              padding: "0 8px",
-                              "border-radius": "6px",
-                              border: "1px solid var(--line)",
-                              font: "inherit",
-                              "font-size": "12px",
-                              "font-weight": isSel() ? 650 : 500,
-                              background: isSel() ? "var(--accentbg)" : "var(--surface)",
-                              color: isSel() ? "var(--accent)" : "var(--fg)",
-                              transition: "all .15s",
-                            }}
-                            onClick={() => sendConfigPatch({ usageScanInterval: interval })}
-                          >
-                            {interval}
-                          </button>
-                        );
-                      }}
-                    </For>
-                  </div>
+            <Show when={state.quotaEnabled || state.usageEnabled}>
+              <button class="li" onClick={() => sendConfigPatch({ quotaButton: !state.quotaButton })}>
+                <div class="tx">{t("settings.showQuotaButton")}</div>
+                <span class={`tg${state.quotaButton ? "" : " off"}`} />
+              </button>
+            </Show>
+
+            <Show when={state.quotaEnabled || (state.usageEnabled && state.usageScanMode !== "realtime")}>
+              <div class="li" style={{ "justify-content": "space-between", "align-items": "center" }}>
+                <div class="tx">{t("settings.usageScanInterval")}</div>
+                <div style={{ display: "inline-flex", gap: "6px" }}>
+                  <For each={["1m", "2m", "5m", "10m", "15m"] as const}>
+                    {(interval) => {
+                      const isSel = () => (state.usageScanInterval || "5m") === interval;
+                      return (
+                        <button
+                          style={{
+                            height: "28px",
+                            padding: "0 8px",
+                            "border-radius": "6px",
+                            border: "1px solid var(--line)",
+                            font: "inherit",
+                            "font-size": "12px",
+                            "font-weight": isSel() ? 650 : 500,
+                            background: isSel() ? "var(--accentbg)" : "var(--surface)",
+                            color: isSel() ? "var(--accent)" : "var(--fg)",
+                            transition: "all .15s",
+                          }}
+                          onClick={() => sendConfigPatch({ usageScanInterval: interval })}
+                        >
+                          {interval}
+                        </button>
+                      );
+                    }}
+                  </For>
                 </div>
-              </Show>
+              </div>
             </Show>
           </div>
-          <Show when={state.quotaUsageEnabled !== false}>
+          <Show when={state.quotaEnabled || state.usageEnabled}>
             <p class="note">{t("settings.usageScanModeHint")}</p>
-
+          </Show>
+          <Show when={state.quotaEnabled}>
             <div class="sec">{t("settings.queriedProviders")}</div>
             <div class="card">
               <For each={["claude", "codex", "antigravity"] as const}>
@@ -418,10 +429,9 @@ export function Settings() {
                   const sub = () => {
                     if (!isOn()) return t("settings.providerDisabled");
                     const s = snap();
-                    if (state.quotaShowAccount !== false && s?.snapshot?.plan) {
+                    if (state.quotaShowAccount === true && s?.snapshot?.plan) {
                       return t("settings.providerPlan", { plan: s.snapshot.plan });
                     }
-                    if (s?.snapshot) return t("settings.providerActive");
                     return t("settings.providerActive");
                   };
                   const toggle = () => {
@@ -446,7 +456,7 @@ export function Settings() {
               </For>
             </div>
           </Show>
-          <Show when={state.quotaUsageEnabled === false}>
+          <Show when={!state.quotaEnabled && !state.usageEnabled}>
             <p class="note">{t("settings.quotaUsageDisabledHint")}</p>
           </Show>
 

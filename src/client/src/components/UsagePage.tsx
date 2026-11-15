@@ -1,4 +1,4 @@
-import { createEffect, createMemo, createSignal, For, Show } from "solid-js";
+import { createEffect, createMemo, createSignal, For, on, Show } from "solid-js";
 import { navigate, state } from "../state/store";
 import { request } from "../state/ws";
 import { cacheHitPercent, daysBetween, formatYMD, heatmapLayout, type UsagePreset } from "../../../shared/usage";
@@ -8,7 +8,7 @@ import type {
   UsageGetPayload,
   UsageModelPayload,
 } from "../../../types/protocol";
-import { formatModelName, Icon } from "./ui";
+import { FeatureDisabledNotice, formatModelName, Icon, QuotaUsageTabs } from "./ui";
 import { t, locale } from "../i18n";
 
 const AGENT_KEYS = ["claude", "codex", "agy", "opencode", "pi"] as const;
@@ -110,6 +110,7 @@ export function UsagePage() {
   const backTarget = () => (state.route.name === "usage" ? (state.route.from ?? "home") : "home");
 
   const loadUsage = async (force = false) => {
+    if (!state.usageEnabled) return;
     setLoading(true);
     try {
       const res: UsageGetPayload = await request({
@@ -137,7 +138,7 @@ export function UsagePage() {
   };
 
   createEffect(() => {
-    if (!state.configReady) return;
+    if (!state.configReady || !state.usageEnabled) return;
     // Re-fetch when range or activeAgents change
     const p = range();
     activeAgents(); // tracked: a filter change reloads
@@ -147,6 +148,21 @@ export function UsagePage() {
       void loadUsage();
     }
   });
+
+  createEffect(
+    on(
+      () => state.usageScannedAt,
+      (scannedAt) => {
+        if (!scannedAt || !state.configReady || !state.usageEnabled) return;
+        const rep = usageReport();
+        if (rep && rep.scannedAt >= scannedAt) return;
+        if (range() !== "custom" || (customFrom() && customTo())) {
+          void loadUsage();
+        }
+      },
+      { defer: true }
+    )
+  );
 
   const openDaySheet = async (date: string) => {
     setSelectedDay(date);
@@ -554,48 +570,39 @@ export function UsagePage() {
         <div class="ht">
           <div class="t">{t("quota.title")}</div>
           <div class="s">
-            {isLoading()
-              ? (usageReport() ? t("quota.refreshing") : t("usage.loading"))
-              : usageReport()?.scannedAt
-              ? t("quota.scannedTo", {
-                  time: new Date(usageReport()!.scannedAt).toTimeString().slice(0, 8),
-                })
+            {state.usageEnabled
+              ? (isLoading()
+                ? (usageReport() ? t("quota.refreshing") : t("usage.loading"))
+                : usageReport()?.scannedAt
+                ? t("quota.scannedTo", {
+                    time: new Date(usageReport()!.scannedAt).toTimeString().slice(0, 8),
+                  })
+                : "")
               : ""}
           </div>
         </div>
-        <button class="cbtn" aria-label={t("app.reload")} onClick={() => void loadUsage(true)}>
-          <span
-            style={{
-              display: "inline-flex",
-              "align-items": "center",
-              "justify-content": "center",
-              animation: isLoading() ? "spin .8s linear infinite" : "none",
-            }}
-          >
-            <Icon name="refresh" />
-          </span>
-        </button>
+        <Show when={state.usageEnabled} fallback={<div style={{ width: "38px" }} />}>
+          <button class="cbtn" aria-label={t("app.reload")} onClick={() => void loadUsage(true)}>
+            <span
+              style={{
+                display: "inline-flex",
+                "align-items": "center",
+                "justify-content": "center",
+                animation: isLoading() ? "spin .8s linear infinite" : "none",
+              }}
+            >
+              <Icon name="refresh" />
+            </span>
+          </button>
+        </Show>
       </div>
 
       <div class="scroll">
         <div style={{ padding: "0 16px calc(30px + env(safe-area-inset-bottom))" }}>
           {/* Segmented switch */}
-          <div style={{ "margin-top": "6px" }}>
-            <div class="seg" style={{ display: "grid", "grid-template-columns": "repeat(2, minmax(0, 1fr))", padding: "3px" }}>
-              <button
-                style={{ height: "38px", "font-size": "14.5px" }}
-                onClick={() => navigate({ name: "quota", from: backTarget() })}
-              >
-                {t("quota.tabQuota")}
-              </button>
-              <button
-                class="on"
-                style={{ height: "38px", "font-size": "14.5px" }}
-              >
-                {t("quota.tabUsage")}
-              </button>
-            </div>
-          </div>
+          <QuotaUsageTabs active="usage" from={backTarget()} />
+
+          <Show when={state.usageEnabled} fallback={<FeatureDisabledNotice message={t("usage.disabledNotice")} />}>
 
           {/* Range Chips */}
           <div style={{ "margin-top": "12px", display: "flex", gap: "6px", "overflow-x": "auto" }}>
@@ -1419,6 +1426,7 @@ export function UsagePage() {
             <div style={{ padding: "12px 8px 0", "font-size": "12px", color: "var(--faint)" }}>
               {t("usage.unpricedNote")}
             </div>
+          </Show>
           </Show>
         </div>
       </div>
