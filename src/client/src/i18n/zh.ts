@@ -63,7 +63,7 @@ export const zh: Messages = {
   "composer.placeholderCommand": "输入命令",
   "composer.placeholderQueued": "补充消息会排队发送",
   "composer.placeholderReply": "回复…",
-  "composer.duplicateSkipped": "刚刚发过这条，已跳过",
+  "composer.duplicateSkipped": "相同内容刚刚已发送，已跳过",
 
   "conn.computerDown": "电脑未连接",
   "conn.herdrDown": "Herdr 没有响应",

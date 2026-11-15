@@ -1405,9 +1405,17 @@ export class WsServer {
       return;
     }
     this.logger?.(`${this.paneLogLabel(paneId)} prompt: sent immediate`);
-    // Not queued on failure: the phone keeps the draft, so a resend would deliver it twice.
-    await this.herdrClient.sendPrompt(paneId, send, shown.attachments.length > 0);
-    this.lastPromptByPane.set(paneId, { hash, at: Date.now() });
+    // Record before awaiting Herdr so an in-flight resend is treated as duplicate; remove on error so retries still go out.
+    const entry = { hash, at: Date.now() };
+    this.lastPromptByPane.set(paneId, entry);
+    try {
+      await this.herdrClient.sendPrompt(paneId, send, shown.attachments.length > 0);
+    } catch (err) {
+      if (this.lastPromptByPane.get(paneId) === entry) {
+        this.lastPromptByPane.delete(paneId);
+      }
+      throw err;
+    }
     if (replyTo) this.sendAck(ws, replyTo, { queued: false });
   }
 

@@ -25,6 +25,7 @@ export class UsageService {
   private onUpdated?: (payload: { scannedAt: number }) => void;
   private scanPromise: Promise<{ scannedFiles: number; recordsAdded: number }> | null = null;
   private backgroundTimer: ReturnType<typeof setInterval> | null = null;
+  private timerIntervalMs: number | null = null;
   private hasOnlineClients = false;
   private hasScannedOnce = false;
   private lastEnabled = true;
@@ -66,13 +67,18 @@ export class UsageService {
     return last <= 0 || (this.now() - last) > this.getScanIntervalMs();
   }
 
+  private stopBackgroundTimer(): void {
+    if (this.backgroundTimer) {
+      clearInterval(this.backgroundTimer);
+      this.backgroundTimer = null;
+    }
+    this.timerIntervalMs = null;
+  }
+
   public setClientOnline(online: boolean): void {
     this.hasOnlineClients = online;
     if (!online) {
-      if (this.backgroundTimer) {
-        clearInterval(this.backgroundTimer);
-        this.backgroundTimer = null;
-      }
+      this.stopBackgroundTimer();
       return;
     }
     this.startBackgroundTimer();
@@ -82,17 +88,18 @@ export class UsageService {
   }
 
   public startBackgroundTimer(): void {
-    if (this.backgroundTimer) {
-      clearInterval(this.backgroundTimer);
-      this.backgroundTimer = null;
+    if (!this.autoScan || !this.hasOnlineClients || !this.isEnabled() || this.getScanMode() !== "scheduled") {
+      this.stopBackgroundTimer();
+      return;
     }
-    if (!this.autoScan || !this.hasOnlineClients) return;
-    if (!this.isEnabled()) return;
-    if (this.getScanMode() !== "scheduled") return;
+    const intervalMs = this.getScanIntervalMs();
+    if (this.backgroundTimer && this.timerIntervalMs === intervalMs) return;
+    this.stopBackgroundTimer();
     const backgroundScan = () => void this.scan().catch((err) => console.error("[Pigeon] background usage scan failed:", err));
     // §3.7: scheduled mode scans in the background while at least one phone is connected; never keeps a CLI process alive.
-    this.backgroundTimer = setInterval(backgroundScan, this.getScanIntervalMs());
+    this.backgroundTimer = setInterval(backgroundScan, intervalMs);
     this.backgroundTimer.unref();
+    this.timerIntervalMs = intervalMs;
   }
 
   /** The scan mode, interval, or feature switch may have changed (`config_patch`). */
@@ -107,10 +114,7 @@ export class UsageService {
   }
 
   public destroy(): void {
-    if (this.backgroundTimer) {
-      clearInterval(this.backgroundTimer);
-      this.backgroundTimer = null;
-    }
+    this.stopBackgroundTimer();
     // A scan still in flight keeps the database until it settles; its own failure is reported by its caller.
     const close = () => this.store.close();
     if (this.scanPromise) this.scanPromise.then(close, close);

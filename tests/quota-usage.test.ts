@@ -580,6 +580,87 @@ describe("quota config and usage request validation (quota-and-usage.md §2.5, p
     }
   });
 
+  test("repeated phone connects within an interval keep the running background timer without pushing the next refresh back", async () => {
+    const d = tempDir("timer-stability");
+    const fakeHome = join(d, "home");
+    mkdirSync(fakeHome, { recursive: true });
+
+    const cfgMgr = new ConfigManager(join(d, "config.json"), { HOME: fakeHome });
+    cfgMgr.patchClientConfig({
+      quotaEnabled: true,
+      usageEnabled: true,
+      usageScanMode: "scheduled",
+      usageScanInterval: "5m",
+      quotaProviders: { claude: true, codex: false, antigravity: false },
+    });
+
+    let fetchCount = 0;
+    const qService = new QuotaService({
+      configManager: cfgMgr,
+      claude: {
+        fetch: async () => {
+          fetchCount++;
+          return { provider: "claude", windows: [], credits: [], fetchedAt: Date.now() };
+        },
+      } as any,
+      codex: { fetch: async () => ({ provider: "codex", windows: [], credits: [], fetchedAt: Date.now() }) } as any,
+      antigravity: { fetch: async () => ({ provider: "antigravity", windows: [], credits: [], fetchedAt: Date.now() }) } as any,
+    });
+    const store = new UsageStore({ dbPath: join(d, "usage.db"), home: fakeHome, discoverLs: async () => null });
+    const uService = new UsageService({
+      configManager: cfgMgr,
+      store,
+      pricing: new PricingManager({ cachePath: join(d, "pricing.json"), fetch: (() => Promise.reject()) as any }),
+    });
+    let scanCount = 0;
+    const origScan = store.scanIncremental.bind(store);
+    store.scanIncremental = async (pricing) => {
+      scanCount++;
+      return origScan(pricing);
+    };
+
+    const qIntervalSpy = spyOn(qService, "getScanIntervalMs").mockReturnValue(50);
+    const uIntervalSpy = spyOn(uService, "getScanIntervalMs").mockReturnValue(50);
+
+    try {
+      qService.setClientOnline(true);
+      uService.setClientOnline(true);
+      await (qService as any).refreshAllPromise;
+      await (uService as any).scanPromise;
+      expect(fetchCount).toBe(1);
+      expect(scanCount).toBe(1);
+
+      const qTimer = (qService as any).backgroundTimer;
+      const uTimer = (uService as any).backgroundTimer;
+
+      // Repeatedly reconnect/open additional phones every 15ms (< 50ms interval):
+      // without the guard, clearInterval+setInterval each time would starve the 50ms timer indefinitely.
+      for (let i = 0; i < 12; i++) {
+        await new Promise((r) => setTimeout(r, 15));
+        qService.setClientOnline(true);
+        uService.setClientOnline(true);
+        expect((qService as any).backgroundTimer).toBe(qTimer);
+        expect((uService as any).backgroundTimer).toBe(uTimer);
+        if (fetchCount >= 2 && scanCount >= 2) break;
+      }
+      expect(fetchCount).toBeGreaterThanOrEqual(2);
+      expect(scanCount).toBeGreaterThanOrEqual(2);
+
+      // Changing the configured interval replaces the running timers cleanly.
+      qIntervalSpy.mockReturnValue(120);
+      uIntervalSpy.mockReturnValue(120);
+      qService.updateConfig();
+      uService.updateConfig();
+      expect((qService as any).backgroundTimer).not.toBe(qTimer);
+      expect((uService as any).backgroundTimer).not.toBe(uTimer);
+    } finally {
+      qIntervalSpy.mockRestore();
+      uIntervalSpy.mockRestore();
+      qService.destroy();
+      uService.destroy();
+    }
+  });
+
   test("server accurately tracks and returns actual scan and fetch timestamps for usage and quota", async () => {
     const d = tempDir("actual-timestamps");
     const fakeHome = join(d, "home");
