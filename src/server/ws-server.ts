@@ -690,6 +690,7 @@ export class WsServer {
           // protocol.md §4.1: every question's picks at once; the agent's checked keys (herdr-adapter.md §7.2).
           const steps = optionIds ? this.transcriptAnswerSteps(targetPaneId, optionIds, otherTexts ?? {}) : null;
           if (!steps) {
+            this.logger?.(`${this.paneLogLabel(targetPaneId)} interaction respond rejected: missing checked keys or invalid optionIds`);
             this.sendError(ws, msg.id, ProtocolErrors.ERR_INVALID_PAYLOAD, "optionIds must pick every question, and the agent needs checked keys");
             return;
           }
@@ -1285,7 +1286,7 @@ export class WsServer {
     const kind = this.herdrClient.getPaneAgentKind(paneId);
     const questionSteps = kind ? getAgentRecipe(kind)?.questionSteps : undefined;
     if (!pq || !questionSteps) return null;
-    const answers: QuestionAnswer[] = pq.questions.map((q) => ({ multiSelect: !!q.multiSelect, picks: [] }));
+    const answers: QuestionAnswer[] = pq.questions.map((q) => ({ multiSelect: !!q.multiSelect, picks: [], optionCount: q.options.length }));
     let reached = 0;
     for (const id of optionIds) {
       const m = /^q(\d+)_(?:opt_(\d+)|(other))$/.exec(id);

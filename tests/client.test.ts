@@ -387,4 +387,11 @@ describe("code blocks and heatmap scales (mobile-ui-and-themes.md §3.2, §9.1)"
     expect(luminance(PALETTES.light.heatTokens1)).toBeGreaterThan(luminance(PALETTES.light.heatTokens5));
     expect(luminance(PALETTES.light.heatCost1)).toBeGreaterThan(luminance(PALETTES.light.heatCost5));
   });
+
+  test("PromptCard falls back to ReplyBelow when transcript question lacks checked keys (herdr-adapter.md §7.2)", () => {
+    const cardSrc = readFileSync(join(rootDir, "src", "client", "src", "components", "PromptCard.tsx"), "utf-8");
+    expect(cardSrc).toContain("canAnswerTranscriptQuestion");
+    expect(cardSrc).toContain("unanswerableQuestion");
+    expect(cardSrc).toContain("options: []");
+  });
 });

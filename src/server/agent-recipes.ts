@@ -10,6 +10,7 @@ export interface QuestionAnswer {
   multiSelect: boolean;
   picks: number[];
   other?: string;
+  optionCount?: number;
 }
 
 /** `herdr-adapter.md` §7.2 claude row and §8.2: the steps that answer one Claude question. */
@@ -18,6 +19,18 @@ export function claudeQuestionSteps(q: QuestionAnswer): AnswerStep[] {
   if (!q.multiSelect) return q.other !== undefined ? [{ text: q.other }] : [{ keys: digits }];
   if (q.other === undefined) return [{ keys: [...digits, "right"] }];
   return [...(digits.length ? [{ keys: digits }] : []), { text: q.other }, { keys: ["enter", "down", "enter"] }];
+}
+
+/** `herdr-adapter.md` §7.2 agy row: the steps that answer one Antigravity CLI question. */
+export function agyQuestionSteps(q: QuestionAnswer): AnswerStep[] {
+  const digits = q.picks.map(String);
+  if (q.other === undefined) {
+    return [{ keys: q.multiSelect ? [...digits, "enter"] : digits }];
+  }
+  const n = q.optionCount ?? 0;
+  const openWriteIn: AnswerStep =
+    n > 0 && n <= 8 ? { keys: [String(n + 1)] } : { keys: [...Array.from({ length: n }, () => "down"), "enter"] };
+  return [...(digits.length ? [{ keys: digits }] : []), openWriteIn, { text: q.other }];
 }
 
 /**
@@ -101,6 +114,7 @@ const AGENT_RECIPES: Record<string, AgentRecipe> = {
     resumable: true,
     mentionPrefix: "",
     attachmentSeparator: " ",
+    questionSteps: (questions) => questions.flatMap(agyQuestionSteps),
   },
   opencode: {
     kind: "opencode",

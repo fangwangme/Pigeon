@@ -389,7 +389,9 @@ export function PromptCard(props: { collapsed: boolean; onCollapse: () => void; 
   // A pane refresh replaces these objects; a card is rebuilt only when its prompt changes, so
   // the page and picks the user made survive (§4.2).
   const isTranscript = createMemo(() => p().source === "transcript");
-  const questionId = () => (isTranscript() ? question()?.id : undefined);
+  const canAnswerTranscriptQuestion = () => p().options.some((o) => !!o.keyShortcut) || !!p().allowsOther;
+  const questionId = () => (isTranscript() && canAnswerTranscriptQuestion() ? question()?.id : undefined);
+  const unanswerableQuestion = () => isTranscript() && !!question()?.id && !canAnswerTranscriptQuestion();
   return (
     <Show
       when={!props.collapsed || !questionId()}
@@ -404,6 +406,18 @@ export function PromptCard(props: { collapsed: boolean; onCollapse: () => void; 
         when={questionId()}
         keyed
         fallback={
+          <Show
+            when={!unanswerableQuestion()}
+            fallback={
+              <PermissionCard
+                p={{
+                  ...p(),
+                  question: question()!.questions.map((item) => item.question).join("\n") || p().question,
+                  options: [],
+                }}
+              />
+            }
+          >
           <Show
             when={plan()?.markdown}
             keyed
@@ -425,6 +439,7 @@ export function PromptCard(props: { collapsed: boolean; onCollapse: () => void; 
             }
           >
             {(md: string) => <PlanCard p={p()} markdown={md} />}
+          </Show>
           </Show>
         }
       >

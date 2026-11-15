@@ -8,7 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.1.12] - 2026-11-15
 
 ### Added
-- **AGY session normalization & media serving**: Supported Antigravity (`agy`) error records, context compaction checkpoints, pending `ask_question` and `exit_plan_mode` interaction cards, background command status updates until finish/cancel system messages, pasted `.user_uploaded` image thumbnails via `GET /api/agent-media/agy/<sessionId>/<name>`, full-width question mark prompts, and AGY footer status-line filtering (#25).
+- **AGY session normalization, `ask_question` submission & media serving**: Supported Antigravity (`agy`) error records, context compaction checkpoints, pending `ask_question` cards (including live-checked `questionSteps` submission and `Write-in...` text) and `exit_plan_mode` interaction cards, background command status updates until finish/cancel system messages, pasted `.user_uploaded` image thumbnails via `GET /api/agent-media/agy/<sessionId>/<name>`, full-width question mark prompts, AGY footer status-line filtering, and fallback to composer reply hints when a transcript question lacks checked keys (#25).
 - **Sub-agent listing & read-only detail view**: Listed child sub-agents across Claude Code, Antigravity, and OpenCode on `normalized_turns` / `turns_delta` (with running indicator capsule beside todos and `⋯` menu sheet), opened each sub-agent's own read-only conversation on demand via `detail_get` `kind: "subagent"`, and excluded child conversations from parent session binding (#25).
 - **User prompt copy button**: Added a right-aligned copy button underneath user messages with text (#25).
 

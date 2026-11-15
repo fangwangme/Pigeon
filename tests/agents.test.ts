@@ -127,3 +127,27 @@ describe("skills per pane (herdr-adapter.md §8.3)", () => {
     expect(scanner.getPluginError()).toBeTruthy();
   });
 });
+
+describe("agy transcript question steps (herdr-adapter.md §7.2)", () => {
+  test("single-select, multi-select, mixed, and Write-in sequences match Antigravity CLI", () => {
+    const steps = getAgentRecipe("agy")!.questionSteps!;
+    expect(steps([{ multiSelect: false, picks: [2], optionCount: 3 }])).toEqual([{ keys: ["2"] }]);
+    expect(steps([{ multiSelect: true, picks: [1, 3], optionCount: 3 }])).toEqual([{ keys: ["1", "3", "enter"] }]);
+    expect(
+      steps([
+        { multiSelect: true, picks: [1, 2], optionCount: 2 },
+        { multiSelect: false, picks: [2], optionCount: 2 },
+      ])
+    ).toEqual([{ keys: ["1", "2", "enter"] }, { keys: ["2"] }]);
+    expect(steps([{ multiSelect: false, picks: [], other: "custom", optionCount: 2 }])).toEqual([{ keys: ["3"] }, { text: "custom" }]);
+    expect(steps([{ multiSelect: true, picks: [1, 3], other: "note", optionCount: 3 }])).toEqual([
+      { keys: ["1", "3"] },
+      { keys: ["4"] },
+      { text: "note" },
+    ]);
+    expect(steps([{ multiSelect: false, picks: [], other: "long", optionCount: 9 }])).toEqual([
+      { keys: ["down", "down", "down", "down", "down", "down", "down", "down", "down", "enter"] },
+      { text: "long" },
+    ]);
+  });
+});

@@ -841,7 +841,7 @@ describe("transcript questions, agent errors and turn times (issue #21)", () => 
     expect(herdr.calls.some((call) => call.method === "terminal.send")).toBe(false);
   });
 
-  test("an AGY pending ask_question is a transcript interaction without key shortcuts while its keys are unchecked (issue #25, herdr-adapter.md §7.2)", async () => {
+  test("an AGY pending ask_question is a transcript interaction with checked key shortcuts and allowsOther (issue #25, herdr-adapter.md §7.2)", async () => {
     const home = tempDir("home");
     const logs = join(home, ".gemini", "antigravity-cli", "brain", "g1", ".system_generated", "logs");
     mkdirSync(logs, { recursive: true });
@@ -862,10 +862,10 @@ describe("transcript questions, agent errors and turn times (issue #21)", () => 
     const interaction = await until(() => c.ofType("pane_state").map((m) => m.payload).find((p) => p.paneId === "p1" && p.pendingInteraction)?.pendingInteraction);
     expect(interaction).toMatchObject({ source: "transcript", question: "这个会话怎么处理？" });
     expect(interaction.options.map((o: any) => [o.id, o.label, o.keyShortcut])).toEqual([
-      ["q1_opt_1", "保留", ""],
-      ["q1_opt_2", "删除", ""],
+      ["q1_opt_1", "保留", "1"],
+      ["q1_opt_2", "删除", "2"],
     ]);
-    expect(interaction.allowsOther).toBeUndefined();
+    expect(interaction.allowsOther).toBe(true);
   });
 
   test("agent_set_model is no longer accepted", async () => {
