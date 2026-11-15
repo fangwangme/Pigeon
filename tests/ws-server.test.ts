@@ -241,6 +241,13 @@ describe("configuration sync (protocol.md §6)", () => {
     expect(JSON.stringify(config.getClientConfig())).toBe(before);
   });
 
+  test("a fresh config hides account details (protocol.md §6.3, issue #25)", async () => {
+    const c = fakeWs();
+    server.handleOpen(c.ws);
+    await send(c.ws, { type: "config_get", id: "g1" });
+    expect(c.ofType("config_sync").at(-1)?.payload.client.quotaShowAccount).toBe(false);
+  });
+
   test("a removed key or an unknown accent is rejected", async () => {
     const c = fakeWs();
     await send(c.ws, { type: "config_patch", id: "p1", payload: { client: { themeKey: "gruvbox" } } });

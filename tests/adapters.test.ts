@@ -210,6 +210,115 @@ describe("structured session adapters (agent-session-normalization.md §2)", () 
       const { turns } = adapter.getTurns("ses_non_existent");
       expect(turns.length).toBe(0);
     });
+
+    test("a provider error is an error item with its type as errorKind; an interrupted step adds none (agent-session-normalization.md §2.1, issue #25)", () => {
+      const path = join(testDir, "opencode_errors.db");
+      const db = new Database(path);
+      db.run("CREATE TABLE session_v2 (id text PRIMARY KEY, directory text, title text, time_updated integer, time_archived integer, summary_additions integer, summary_deletions integer, summary_files integer, summary_diffs text)");
+      db.run("CREATE TABLE session_message (id text PRIMARY KEY, session_id text NOT NULL, type text NOT NULL, seq integer NOT NULL, time_created integer NOT NULL, time_updated integer NOT NULL, data text NOT NULL)");
+      db.run("INSERT INTO session_v2 (id, directory, title, time_updated) VALUES ('ses_e', '/work', 'Errors', 3000)");
+      db.run("INSERT INTO session_message VALUES ('m_u1', 'ses_e', 'user', 1, 1000, 1000, ?)", [JSON.stringify({ text: "go" })]);
+      db.run("INSERT INTO session_message VALUES ('m_a1', 'ses_e', 'assistant', 2, 1100, 1100, ?)", [
+        JSON.stringify({ content: [], finish: "error", error: { type: "provider.quota", message: "Rate limit exceeded. Please try again later." } }),
+      ]);
+      db.run("INSERT INTO session_message VALUES ('m_u2', 'ses_e', 'user', 3, 2000, 2000, ?)", [JSON.stringify({ text: "again" })]);
+      db.run("INSERT INTO session_message VALUES ('m_a2', 'ses_e', 'assistant', 4, 2100, 2100, ?)", [
+        JSON.stringify({ content: [], finish: "error", error: { type: "aborted", message: "Step interrupted" } }),
+      ]);
+      db.close();
+
+      const { turns } = new OpenCodeAdapter({ dbPath: path }).getTurns("ses_e");
+      expect(turns.map((t) => t.userPrompt?.text)).toEqual(["go", "again"]);
+      expect(turns[0].items).toContainEqual({ kind: "error", errorKind: "provider.quota", text: "Rate limit exceeded. Please try again later." });
+      expect((turns[1].items ?? []).filter((i) => i.kind === "error")).toEqual([]);
+    });
+  });
+
+  describe("Antigravity records (agent-session-normalization.md §2.2)", () => {
+    const brain = join(testDir, "brain-records");
+    const at = (s: number) => new Date(Date.UTC(2026, 10, 15, 8, 0, s)).toISOString();
+    const write = (id: string, records: object[]) => {
+      const logs = join(brain, id, ".system_generated", "logs");
+      mkdirSync(logs, { recursive: true });
+      writeFileSync(join(logs, "transcript.jsonl"), records.map((r, i) => JSON.stringify({ step_index: i, created_at: at(i), ...r })).join("\n") + "\n");
+    };
+    const systemMessage = (task: string, verb: string) =>
+      `The following is a <SYSTEM_MESSAGE> not actually sent by the user.\n\n<SYSTEM_MESSAGE>\n[Message] timestamp=2026-11-15T08:00:09Z sender=${task} priority=MESSAGE_PRIORITY_HIGH content=Task id "${task}" ${verb} with result: done\n</SYSTEM_MESSAGE>`;
+    const media = `${brain}/sA/.user_uploaded/uploaded_media_1.png`;
+
+    beforeAll(() => {
+      write("sA", [
+        { type: "USER_INPUT", source: "USER_EXPLICIT", status: "DONE", content: "<USER_REQUEST>看看这张图</USER_REQUEST>", media: [{ mime_type: "image/png", uri: media }] },
+        { type: "PLANNER_RESPONSE", tool_calls: [{ name: "run_command", args: { CommandLine: "sleep 60" } }] },
+        { type: "GENERIC", status: "RUNNING", content: "Created At: 2026-11-15T16:00:02+08:00\nTool is running as a background task with task id: sA/task-4\nTask Description: sleep 60" },
+        { type: "PLANNER_RESPONSE", tool_calls: [{ name: "run_command", args: { CommandLine: "sleep 90" } }] },
+        { type: "GENERIC", status: "RUNNING", content: "Created At: 2026-11-15T16:00:04+08:00\nTool is running as a background task with task id: sA/task-5\nTask Description: sleep 90" },
+        { type: "SYSTEM_MESSAGE", status: "DONE", content: systemMessage("sA/task-4", "finished") },
+        { type: "SYSTEM_MESSAGE", status: "DONE", content: systemMessage("sA/task-5", "was canceled") },
+        { type: "ERROR_MESSAGE", status: "DONE", content: "", error: "API error (attempt 1): request failed: stream idle timeout (5m0s): context deadline exceeded" },
+        { type: "ERROR_MESSAGE", status: "DONE", content: "", error: "API error (attempt 2): request failed: stream idle timeout (5m0s): context deadline exceeded" },
+        { type: "CHECKPOINT", status: "DONE", content: "# Resuming from a compaction\n\nSummary: the card was fixed." },
+        {
+          type: "PLANNER_RESPONSE",
+          tool_calls: [
+            {
+              name: "ask_question",
+              args: {
+                questions: JSON.stringify([
+                  { is_multi_select: false, options: ["(Recommended) 方案 A", "方案 B"], question: "选哪个方案？" },
+                  { is_multi_select: true, options: ["lint", "test", "build"], question: "Which checks?" },
+                ]),
+                toolSummary: '"Ask the user"',
+              },
+            },
+          ],
+        },
+      ]);
+      write("sB", [
+        { type: "USER_INPUT", content: "<USER_REQUEST>plan it</USER_REQUEST>" },
+        { type: "PLANNER_RESPONSE", tool_calls: [{ name: "exit_plan_mode", args: { plan: JSON.stringify("# Plan\n\n1. Do it") } }] },
+      ]);
+      write("sC", [
+        { type: "USER_INPUT", content: "<USER_REQUEST>plan it</USER_REQUEST>" },
+        { type: "PLANNER_RESPONSE", tool_calls: [{ name: "exit_plan_mode", args: { plan: JSON.stringify("# Plan\n\n1. Do it") } }] },
+        { type: "GENERIC", status: "DONE", content: "The user approved the plan." },
+      ]);
+    });
+
+    test("pasted images, background commands, folded errors, a compaction and a pending question", () => {
+      const { turns } = new AgyAdapter({ baseBrainDir: brain }).getTurns("sA");
+      expect(turns).toHaveLength(1);
+      const turn = turns[0];
+      expect(turn.userPrompt).toEqual({ text: "看看这张图", files: [media] });
+
+      const calls = (turn.items ?? []).flatMap((i) => (i.kind === "tool" ? [i.call] : []));
+      expect(calls.slice(0, 2).map((c) => [c.target, c.status])).toEqual([
+        ["sleep 60", "completed"],
+        ["sleep 90", "failed"],
+      ]);
+      expect(calls[0].output).toContain("background task with task id: sA/task-4");
+
+      expect(turn.items?.map((i) => i.kind)).toEqual(["tool", "tool", "error", "compact", "tool"]);
+      expect(turn.items?.[2]).toEqual({
+        kind: "error",
+        errorKind: "unknown",
+        text: "API error (attempt 2): request failed: stream idle timeout (5m0s): context deadline exceeded",
+        count: 2,
+      });
+      expect(turn.items?.[3]).toEqual({ kind: "compact", summary: "# Resuming from a compaction\n\nSummary: the card was fixed." });
+
+      expect(turn.pendingQuestion?.id).toBe(calls[2].id);
+      expect(turn.pendingQuestion?.questions).toEqual([
+        { question: "选哪个方案？", multiSelect: false, options: [{ label: "(Recommended) 方案 A" }, { label: "方案 B" }] },
+        { question: "Which checks?", multiSelect: true, options: [{ label: "lint" }, { label: "test" }, { label: "build" }] },
+      ]);
+    });
+
+    test("a pending exit_plan_mode is the turn's pending plan; once answered it is not", () => {
+      const adapter = new AgyAdapter({ baseBrainDir: brain });
+      expect(adapter.getTurns("sB").turns[0].pendingPlan).toEqual({ markdown: "# Plan\n\n1. Do it" });
+      expect(adapter.getTurns("sC").turns[0].pendingPlan).toBeUndefined();
+    });
   });
 
   describe("Antigravity (AGY) JSONL Adapter", () => {

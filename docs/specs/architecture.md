@@ -136,6 +136,7 @@ Pigeon uses a centralized, structured JSON configuration file to support pre-con
 ## 5. Trust Boundaries and Error Semantics
 
 - **Client Inputs (Untrusted)**: Every WebSocket frame is validated in `src/server/ws-validate.ts` before dispatch, and every HTTP body is validated in its route. Malformed payloads are rejected with explicit error codes, and nothing is executed.
+- **Files served to the phone**: only Pigeon's own uploads (`protocol.md` §7) and images inside AGY's `.user_uploaded` folders (`protocol.md` §7.1, issue #25). A path from the network never names any other file.
 - **Terminal & Agent Output (Untrusted)**: Text emitted by coding agents and CLI commands is untrusted content.
   - HTML tags are stripped and sanitized via a strict sanitizer (e.g. DOMPurify). `style`, `form`, `input`, `button`, `textarea` and `select` are removed with their content, so agent output cannot restyle the page or imitate a prompt card.
   - URL schemes are restricted to a whitelist (`https:`, `http:`, `mailto:`). Schemes like `javascript:`, `data:`, `blob:`, `file:` are strictly blocked.

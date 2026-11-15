@@ -94,6 +94,7 @@ When Herdr cannot be reached (its socket is missing or refuses the connection, `
 ```
 - `text` may be empty only when `attachments` is not. `attachments` holds at most 10 upload ids from §7. An id the daemon does not know is `ERR_INVALID_PAYLOAD`, and nothing is sent.
 - **Attachments**: the daemon appends attachment file paths: the file's absolute path, prefixed with the recipe's file-mention prefix (`@` for claude, opencode, and pi; none for codex, agy, and a plain terminal; agy uses space separation without `@` to prevent CLI autocomplete popups and multiline mode stalls).
+- **Duplicate guard** (issue #25, user decision 2026-11-15): a phone whose connection drops after the daemon took a prompt but before the ack arrives keeps the draft, and the user sends it again. So the daemon remembers, per pane, the hash of the last prompt it accepted — its `text` and its `attachments` ids in order — and when it accepted it. An `agent_prompt` with the same hash within the window after that is acked `{ "duplicate": true }`; nothing is sent or queued, and the remembered time does not move. Accepted means sent at once or queued; a prompt answered with an error is not remembered, so its resend goes out. The window is 60 seconds; `WsServer` takes it as the option `promptDuplicateWindowMs`, so tests drive it with a short one. The memory is not persisted and leaves with the pane. `queue_update` and the queue's own batches are not checked. The phone treats the ack as sent: it clears the draft and shows the toast "相同内容刚刚已发送，已跳过".
 - **Queue**: when the pane's Herdr status is `working`, or the pane already has queued prompts, the prompt is queued instead of sent (user decision, 2026-11-06). The ack carries `{ "queued": true, "queueId": "q_…" }`, and every viewer of the pane gets `prompt_queue` (§5.8).
 - **Queue state machine**: each pane's queue is either `idle` (nothing out) or `sending` (a batch is out and not yet settled). One transition function takes every input: the pane's Herdr status (from a status event or from a snapshot, `herdr-adapter.md` §3.1), a new user turn in the pane's transcript (including the first turn of a fresh session), a send result, the send timeout, a queue edit, and the pane's removal.
   - In `idle`, when the pane's status is `idle` or `done` and the queue is not empty, **every** queued prompt goes out at once as one batch (user decision, 2026-11-13: the agent sees everything that piled up and decides itself): their composed prompts (§4.2) are joined in queue order with a blank line between them and sent as one prompt. Each is marked `sending: true`, and the queue enters `sending`. Prompts queued while a batch is out wait for the next batch.
@@ -234,7 +235,8 @@ Fetches what the light form (`agent-session-normalization.md` §3.3) leaves out,
 - `kind: "tool"` with `turnId` and `callId` → the ack carries `{ "call" }`, the full `NormalizedToolCall` (input, output, diff with patch).
 - `kind: "reasoning"` with `turnId` → `{ "text" }`, the turn's reasoning text.
 - `kind: "file"` with `filePath` → `{ "diff" }`, that file's `FileDiffSummary` from `sessionStats` with its accumulated `patch`.
-A pane without a bound session, or a turn, call or file the session does not have, is `ERR_NOT_FOUND`. The phone keeps details in memory only.
+- `kind: "subagent"` with `subagentId` → `{ "subagent", "turns" }` (issue #25): the sub-agent's current `SubagentInfo` and its conversation in the light form, read now (`agent-session-normalization.md` §3.4). A sub-agent without a conversation on disk answers `turns: []`.
+A pane without a bound session, or a turn, call, file or sub-agent the session does not have, is `ERR_NOT_FOUND`. The phone keeps details in memory only.
 
 ### 4.21 Screen Watch (`screen_watch`)
 ```json
@@ -333,7 +335,7 @@ Sent to the clients viewing a pane whenever its classified screen or status chan
 This is sent in the handshake and broadcast whenever the daemon's connection to Herdr goes up or down.
 
 ### 5.6 Normalized Turns (`normalized_turns`, `turns_delta`)
-`normalized_turns` carries the whole conversation of a pane's structured session (`agent-session-normalization.md`): `{ paneId, seq, turns, sessionStats?, sessionTitle?, todos?, session }`. Turns and `sessionStats` are in the light form (`agent-session-normalization.md` §3.3).
+`normalized_turns` carries the whole conversation of a pane's structured session (`agent-session-normalization.md`): `{ paneId, seq, turns, sessionStats?, sessionTitle?, todos?, subagents?, session }`. `subagents` is the session's `SubagentInfo[]` (`agent-session-normalization.md` §3.4), absent when it has none. Turns and `sessionStats` are in the light form (`agent-session-normalization.md` §3.3).
 ```json
 "session": { "bound": true, "agent": "claude", "sessionId": "2c9ad7c8-…", "model": { "value": "opus", "source": "launch" }, "thinking": { "value": "high", "source": "launch" } }
 ```
@@ -357,7 +359,7 @@ A pane that becomes bound or switches session (for example after the agent's `/c
   }
 }
 ```
-`sinceTurnIndex: 0` without `patchLastTurn` replaces the whole list. Otherwise `patchLastTurn` replaces the last known turn, and `appendTurns` is placed from `sinceTurnIndex` on. `sessionStats`, `todos` and `session` ride along only when they changed.
+`sinceTurnIndex: 0` without `patchLastTurn` replaces the whole list. Otherwise `patchLastTurn` replaces the last known turn, and `appendTurns` is placed from `sinceTurnIndex` on. `sessionStats`, `todos`, `subagents` and `session` ride along only when they changed.
 
 `seq` counts the pane's turn changes: each `turns_delta` carries the previous value plus one, and `normalized_turns` and the bootstrap carry the current value. A client that receives a `turns_delta` whose `seq` is not one more than the last it applied for that pane discards it and selects the pane again with its `have` (§4.4).
 
@@ -419,7 +421,7 @@ The client part of `config.json` (appearance) is shared by all paired devices.
 *Server Behavior*:
 1. The patch is validated against a whitelist of keys and value types: `themeMode` (`system`, `light`, `dark`), `accent` (`blue`, `purple`, `green`, `orange`, `pink`), `quotaUsageEnabled` (boolean), `quotaProviders` (an object with any of `claude`, `codex`, `antigravity`, each a boolean), `quotaDisplay` (`remaining`, `used`), `quotaButton` (boolean), `quotaShowAccount` (boolean), `usageScanMode` (`scheduled`, `realtime`) and `usageScanInterval` (`1m`, `2m`, `5m`, `10m`, `15m`). Any unknown key or bad value rejects the whole patch with `ERR_INVALID_PAYLOAD`, and nothing is saved.
 2. The patch is deep-merged and written to `config.json` before the reply. A write error is reported as `ERR_INTERNAL`.
-3. Defaults are `themeMode: "system"`, `accent: "blue"`, `quotaUsageEnabled: true`, `quotaDisplay: "remaining"`, `quotaButton: true`, `quotaShowAccount: true`, `usageScanMode: "scheduled"` and `usageScanInterval: "15m"`; `quotaProviders` defaults to the providers logged in on this computer (`quota-and-usage.md` §2.5). The config version is bumped. The sender gets `ack` with `{ "version", "client" }`.
+3. Defaults are `themeMode: "system"`, `accent: "blue"`, `quotaUsageEnabled: true`, `quotaDisplay: "remaining"`, `quotaButton: true`, `quotaShowAccount: false` (issue #25: account details stay hidden until the user turns them on), `usageScanMode: "scheduled"` and `usageScanInterval: "15m"`; `quotaProviders` defaults to the providers logged in on this computer (`quota-and-usage.md` §2.5). The config version is bumped. The sender gets `ack` with `{ "version", "client" }`.
 4. Every other client gets `{ "type": "config_updated", "payload": { "version", "client" } }`. Clients ignore a `config_sync` or `config_updated` whose version is older than one they have already applied.
 
 ## 7. Uploads (`POST /api/uploads`)
@@ -431,6 +433,13 @@ Attachments are uploaded before the prompt that uses them.
 - **Storage**: `<stateDir>/uploads/<id>-<name>`, mode `0600`, where `id` is `up_` + 16 random hex digits. Uploads older than 7 days are deleted when the daemon starts.
 - **Reply**: `{ "id", "name", "size", "mime" }`. The phone then names `id` in `agent_prompt.attachments` (§4.2).
 - **Retrieval (`GET /api/uploads/:id`)**: returns the uploaded file bytes with its stored `Content-Type`, so the phone can show thumbnails and images in the transcript. Gate: a valid session cookie (else HTTP 401) and an allowed `Host` (else HTTP 403). `Origin` may be absent, because a browser sends none for an `<img>` load or a link; when present it must pass the exact Origin check (`security-and-pairing.md` §4, else HTTP 403). The session cookie is `SameSite=Strict`, so a request from another site carries no cookie.
+
+### 7.1 AGY media (`GET /api/agent-media/agy/<sessionId>/<name>`)
+Images pasted into AGY itself are prompt attachments that live in AGY's own folder (`agent-session-normalization.md` §2.2), not in Pigeon's uploads (issue #25, user decision 2026-11-15). This route returns one of them, so the phone can show its thumbnail.
+- **Gate**: the same as upload retrieval above.
+- **Trust boundary**: the path segments come from the network. `sessionId` must match `[A-Za-z0-9_-]{1,64}` and `name` `[A-Za-z0-9._-]{1,200}` without a leading dot, and `name` must end in `.png`, `.jpg`, `.jpeg`, `.gif` or `.webp`. The file is `~/.gemini/antigravity-cli/brain/<sessionId>/.user_uploaded/<name>`; its real path (symlinks resolved) must be a regular file directly inside that folder's real path. Anything else is HTTP 404, and no other file of the computer is reachable through the route.
+- **Reply**: the file bytes with the `Content-Type` of its extension, `Content-Disposition: inline`, and the same `Cache-Control`, `X-Content-Type-Options` and `Content-Security-Policy` headers as upload retrieval.
+- The phone uses it for a prompt file whose path is inside an AGY `.user_uploaded` folder (`…/brain/<sessionId>/.user_uploaded/<name>`).
 
 ## 8. Error Code Registry
 
