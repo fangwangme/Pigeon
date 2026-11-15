@@ -39,6 +39,7 @@ export interface DaemonConfig {
   vapidPath?: string;
   pushSubscriptionsPath?: string;
   uploadsDir?: string;
+  agyBrainDir?: string;
   embeddedHtml?: string;
   logPath?: string;
   productionPort?: number;
@@ -58,6 +59,7 @@ export interface ResolvedDaemonConfig {
   vapidPath: string;
   pushSubscriptionsPath: string;
   uploadsDir: string;
+  agyBrainDir: string;
   logPath: string;
 }
 
@@ -354,6 +356,7 @@ export class PigeonDaemon {
       vapidPath: opts.vapidPath || (isProduction ? join(serverCfg.stateDir, "vapid.json") : instancePaths.vapidPath),
       pushSubscriptionsPath: opts.pushSubscriptionsPath || (isProduction ? join(serverCfg.stateDir, "push-subscriptions.json") : instancePaths.pushSubscriptionsPath),
       uploadsDir: opts.uploadsDir || (isProduction ? join(serverCfg.stateDir, "uploads") : instancePaths.uploadsDir),
+      agyBrainDir: opts.agyBrainDir || join(homedir(), ".gemini", "antigravity-cli", "brain"),
       logPath: opts.logPath || (isProduction ? join(serverCfg.stateDir, "pigeon.log") : instancePaths.logPath),
     };
 
@@ -706,7 +709,7 @@ export class PigeonDaemon {
       const extMatch = /\.([a-z0-9]+)$/i.exec(name);
       const mime = extMatch ? AGENT_IMAGE_MIME[extMatch[1].toLowerCase()] : undefined;
       if (!mime) return new Response("Not found", { status: 404 });
-      const uploadedDir = join(homedir(), ".gemini", "antigravity-cli", "brain", sessionId, ".user_uploaded");
+      const uploadedDir = join(this.config.agyBrainDir, sessionId, ".user_uploaded");
       let realFile: string;
       try {
         const realDir = realpathSync(uploadedDir);

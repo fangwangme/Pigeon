@@ -1,7 +1,6 @@
 import { afterAll, beforeAll, describe, expect, setSystemTime, test } from "bun:test";
 import { mkdirSync, readFileSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { connect } from "node:net";
-import { homedir } from "node:os";
 import { join } from "node:path";
 import { ConfigManager, resolveInstancePaths, resolveProductionPort } from "../src/server/config-manager";
 import { PigeonDaemon, resolveAccess } from "../src/server/daemon";
@@ -301,6 +300,7 @@ describe("HTTP and WebSocket gate (security-and-pairing.md §3, §4)", () => {
       adminSocketPath: join(dir, "admin.sock"),
       devicesFilePath: join(dir, "devices.json"),
       vapidPath: join(dir, "vapid.json"),
+      agyBrainDir: join(dir, "agy-brain"),
       embeddedHtml: "<!doctype html><title>Pigeon</title><link rel=\"apple-touch-icon\" href=\"/icon-192.png\" /><link rel=\"icon\" type=\"image/svg+xml\" href=\"/icon.svg\" />",
     });
     await daemon.start();
@@ -433,7 +433,7 @@ describe("HTTP and WebSocket gate (security-and-pairing.md §3, §4)", () => {
 
   test("an image pasted into AGY is served from its .user_uploaded folder and nothing else is reachable (protocol.md §7.1, issue #25)", async () => {
     const cookie = pairedCookie();
-    const brain = join(homedir(), ".gemini", "antigravity-cli", "brain");
+    const brain = daemon.config.agyBrainDir;
     const uploaded = join(brain, "s-media", ".user_uploaded");
     mkdirSync(uploaded, { recursive: true });
     writeFileSync(join(uploaded, "uploaded_media_1.png"), "png-bytes");
