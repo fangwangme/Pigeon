@@ -112,7 +112,9 @@ describe("antigravity & codex quota providers (quota-and-usage.md §2.2, §2.3)"
 
     const provider = new AntigravityQuotaProvider({ home: dir, now: () => 1_700_000_000_000 });
     const qs = new QuotaService({ autoScan: false, antigravity: provider, claude: { fetch: async () => ({ provider: "claude", windows: [], credits: [], fetchedAt: 1 }) } as any, codex: { fetch: async () => ({ provider: "codex", windows: [], credits: [], fetchedAt: 1 }) } as any });
-    const res = await qs.getQuota({ ...DEFAULT_CLIENT_CONFIG, quotaProviders: { claude: false, codex: false, antigravity: true } });
+    const cfg = { ...DEFAULT_CLIENT_CONFIG, quotaEnabled: true, quotaProviders: { claude: false, codex: false, antigravity: true } };
+    await qs.fetchAll(cfg);
+    const res = await qs.getQuota(cfg);
     const snap = res.providers.find((p) => p.provider === "antigravity")!.snapshot!;
     expect(snap.account).toBe("alice@example.com");
     expect(snap.plan).toBe("Pro");
@@ -134,7 +136,9 @@ describe("antigravity & codex quota providers (quota-and-usage.md §2.2, §2.3)"
       codex: { fetch: async () => ({ provider: "codex", windows: [w("other", null), w("weekly", 168 * H), w("primary", 5 * H)], credits: [], fetchedAt: 1 }) } as any,
       antigravity: { fetch: async () => ({ provider: "antigravity", windows: [], credits: [], fetchedAt: 1 }) } as any,
     });
-    const res = await qs.getQuota(DEFAULT_CLIENT_CONFIG);
+    const cfg = { ...DEFAULT_CLIENT_CONFIG, quotaEnabled: true };
+    await qs.fetchAll(cfg);
+    const res = await qs.getQuota(cfg);
     const ids = (p: string) => res.providers.find((x) => x.provider === p)!.snapshot!.windows.map((x) => x.id);
     expect(ids("claude")).toEqual(["5h", "7d", "5h-fable", "7d-fable"]);
     expect(ids("codex")).toEqual(["primary", "weekly", "other"]);
@@ -233,6 +237,7 @@ describe("antigravity & codex quota providers (quota-and-usage.md §2.2, §2.3)"
       codex: { fetch: async () => ({ provider: "codex", windows: [], credits: [], fetchedAt: 1 }) } as any,
       antigravity: { fetch: async () => ({ provider: "antigravity", windows: [], credits: [], fetchedAt: 1 }) } as any,
     });
+    await qs.fetchAll(partialCfg);
     const res = await qs.getQuota(partialCfg);
     expect(res.providers.find((p) => p.provider === "claude")?.enabled).toBe(false);
     expect(res.providers.find((p) => p.provider === "codex")?.enabled).toBe(true);

@@ -87,7 +87,7 @@ export function QuotaPage() {
           <Icon name="chevL" />
         </button>
         <div class="ht">
-          <div class="t">{t("quota.title")}</div>
+          <div class="t">{state.usageEnabled ? t("quota.title") : t("settings.subscriptionQuota")}</div>
           <div class="s">
             {isLoading()
               ? (refreshing() ? t("quota.refreshing") : t("quota.loading"))
@@ -113,22 +113,24 @@ export function QuotaPage() {
       <div class="scroll">
         <div style={{ padding: "0 16px calc(30px + env(safe-area-inset-bottom))" }}>
           {/* Segmented switch */}
-          <div style={{ "margin-top": "6px" }}>
-            <div class="seg" style={{ display: "grid", "grid-template-columns": "repeat(2, minmax(0, 1fr))", padding: "3px" }}>
-              <button
-                class="on"
-                style={{ height: "38px", "font-size": "14.5px" }}
-              >
-                {t("quota.tabQuota")}
-              </button>
-              <button
-                style={{ height: "38px", "font-size": "14.5px" }}
-                onClick={() => navigate({ name: "usage", from: backTarget() })}
-              >
-                {t("quota.tabUsage")}
-              </button>
+          <Show when={state.quotaEnabled && state.usageEnabled}>
+            <div style={{ "margin-top": "6px" }}>
+              <div class="seg" style={{ display: "grid", "grid-template-columns": "repeat(2, minmax(0, 1fr))", padding: "3px" }}>
+                <button
+                  class="on"
+                  style={{ height: "38px", "font-size": "14.5px" }}
+                >
+                  {t("quota.tabQuota")}
+                </button>
+                <button
+                  style={{ height: "38px", "font-size": "14.5px" }}
+                  onClick={() => navigate({ name: "usage", from: backTarget() })}
+                >
+                  {t("quota.tabUsage")}
+                </button>
+              </div>
             </div>
-          </div>
+          </Show>
 
           {/* Skeleton Template when loading without data */}
           <Show when={showSkeleton()}>

@@ -195,7 +195,7 @@ Updates the text and attachments of an existing queued prompt in-place, preservi
 ```json
 { "type": "quota_get", "id": "cli_20", "payload": {} }
 ```
-Answers with the quota of every provider (`quota-and-usage.md` §2). Answers from the daemon's 60-second provider cache to protect upstream provider rate limits. When `quotaUsageEnabled` is `false` (`quota-and-usage.md` §1.1), the request is rejected with `ERR_FEATURE_DISABLED` without querying any provider. The ack carries:
+Answers strictly with the daemon's cached provider quota states (`quota-and-usage.md` §2.6) without triggering any upstream provider fetch. When `quotaEnabled` is `false` (`quota-and-usage.md` §1.1), the request is rejected with `ERR_FEATURE_DISABLED` without querying any provider. The ack carries:
 ```json
 { "providers": [ { "provider": "claude", "enabled": true,
     "snapshot": { "provider": "claude", "plan": "pro", "account": "you@example.com", "fetchedAt": 1794218000000, "credits": [],
@@ -203,13 +203,13 @@ Answers with the quota of every provider (`quota-and-usage.md` §2). Answers fro
       "windows": [ { "id": "five_hour", "label": "5h", "usedPercent": 52, "periodMs": 18000000, "resetsAt": 1794228620000 } ] },
     "error": null } ], "fetchedAt": 1794218000000 }
 ```
-One entry per provider, enabled or not; a disabled provider has `snapshot: null` and is not fetched. The top-level `fetchedAt` carries the timestamp when the daemon last fetched or checked the providers. A provider that failed has `error: { "message", "at" }` and keeps its previous `snapshot` (or null when it never had one). Provider failures never turn into a command error.
+One entry per provider, enabled or not; a disabled provider has `snapshot: null` and is not fetched. The top-level `fetchedAt` carries the timestamp when the daemon last fetched or checked the providers (or `0` before the first background refresh completes). A provider that failed has `error: { "message", "at" }` and keeps its previous `snapshot` (or null when it never had one). Provider failures never turn into a command error.
 
 ### 4.17 Usage Report (`usage_get`)
 ```json
 { "type": "usage_get", "id": "cli_21", "payload": { "preset": "custom", "from": "2026-10-01", "to": "2026-10-31", "agents": ["claude", "codex", "agy", "opencode", "pi"] } }
 ```
-`preset` is `today`, `7d`, `30d`, `year`, `all` or `custom`; `custom` requires `from` and `to` (`YYYY-MM-DD`), which other presets must not carry. An optional boolean `force` (the refresh button) rescans newly modified session files before answering in realtime mode (`quota-and-usage.md` §3.7); in scheduled mode, requests always answer from the background cache (user decision, 2026-11-11). `agents` is a non-empty list of distinct agent kinds and filters every figure in the reply. Anything else is `ERR_INVALID_PAYLOAD` and nothing is scanned. When `quotaUsageEnabled` is `false` (`quota-and-usage.md` §1.1), the request is rejected with `ERR_FEATURE_DISABLED` without scanning files or querying prices. The ack carries:
+`preset` is `today`, `7d`, `30d`, `year`, `all` or `custom`; `custom` requires `from` and `to` (`YYYY-MM-DD`), which other presets must not carry. An optional boolean `force` (the refresh button) rescans newly modified session files before answering in realtime mode (`quota-and-usage.md` §3.7); in scheduled mode, requests always answer from the background cache (user decision, 2026-11-11). `agents` is a non-empty list of distinct agent kinds and filters every figure in the reply. Anything else is `ERR_INVALID_PAYLOAD` and nothing is scanned. When `usageEnabled` is `false` (`quota-and-usage.md` §1.1), the request is rejected with `ERR_FEATURE_DISABLED` without scanning files or querying prices. The ack carries:
 - `range` (`from`, `to`), `firstDay` (the first day with usage, or null), `scannedAt`, `pricesAvailable`;
 - `totals` and, when `quota-and-usage.md` §3.5 gives one, `comparison` (`from`, `to`, `totals`); totals are `{ cost, tokens, input, output, cacheRead, cacheWrite, messages, sessions }`;
 - `days`: every day of the range with usage, newest first, each with the totals fields and `date`;
@@ -219,13 +219,13 @@ One entry per provider, enabled or not; a disabled provider has `snapshot: null`
 ```json
 { "type": "usage_day", "id": "cli_22", "payload": { "date": "2026-11-06", "agents": ["claude", "codex"] } }
 ```
-When `quotaUsageEnabled` is `false`, the request is rejected with `ERR_FEATURE_DISABLED`. The ack carries `date`, `totals`, and `agents`: per agent its totals and `models` (each model's totals), sorted by cost.
+When `usageEnabled` is `false`, the request is rejected with `ERR_FEATURE_DISABLED`. The ack carries `date`, `totals`, and `agents`: per agent its totals and `models` (each model's totals), sorted by cost.
 
 ### 4.19 Model Detail (`usage_model`)
 ```json
 { "type": "usage_model", "id": "cli_23", "payload": { "model": "gpt-5-6-sol", "from": "2026-10-11", "to": "2026-11-09", "agents": ["codex"] } }
 ```
-When `quotaUsageEnabled` is `false`, the request is rejected with `ERR_FEATURE_DISABLED`. The ack carries `model`, `company`, `totals`, `lastUsed`, `agents` (per agent: kind and totals) and `perDay` (every day of the range in order, with `date`, `tokens` and `cost`, zero on days without use). An unknown model is answered with zero totals, not an error.
+When `usageEnabled` is `false`, the request is rejected with `ERR_FEATURE_DISABLED`. The ack carries `model`, `company`, `totals`, `lastUsed`, `agents` (per agent: kind and totals) and `perDay` (every day of the range in order, with `date`, `tokens` and `cost`, zero on days without use). An unknown model is answered with zero totals, not an error.
 
 ### 4.20 Detail (`detail_get`)
 ```json
@@ -399,6 +399,18 @@ Every recipe summary, in the shape of §5.7. Broadcast to every client after a f
 ```
 Prefetch for fast switching (user decision, 2026-11-10: only for agents that are working or waiting). For every pane whose status is `working` or `blocked` and that has a bound session, the daemon pushes to every connection that is not viewing that pane the last turns of its session in the light form, as many as fit in 32 KB counted from the newest, with the pane's current `seq`. At most one `pane_tail` per pane per second, and one more when the pane leaves `working` or `blocked`. The client stores them in its in-memory pane views (`mobile-ui-and-themes.md` §3.1); a later bootstrap of that pane resumes from them.
 
+### 5.11 Quota Updated (`quota_updated`)
+```json
+{ "type": "quota_updated", "payload": { "providers": [], "fetchedAt": 1794218000000 } }
+```
+Broadcast to every connected client when a background quota refresh completes and `client.quotaEnabled` is `true` (`quota-and-usage.md` §2.6). Carries the updated `providers` list and `fetchedAt` in the exact shape of §4.16; the client replaces its cached quota state silently without waiting for a manual refresh.
+
+### 5.12 Usage Updated (`usage_updated`)
+```json
+{ "type": "usage_updated", "payload": { "scannedAt": 1794218000000 } }
+```
+Broadcast to every connected client when a usage scan completes and `client.usageEnabled` is `true` (`quota-and-usage.md` §2.6). Carries the updated `scannedAt` timestamp; clients viewing usage views refresh silently from the daemon cache when `scannedAt` advances.
+
 ## 6. Configuration Synchronization Protocol
 
 The client part of `config.json` (appearance) is shared by all paired devices.
@@ -419,9 +431,9 @@ The client part of `config.json` (appearance) is shared by all paired devices.
 { "type": "config_patch", "id": "cli_21", "payload": { "client": { "accent": "green" } } }
 ```
 *Server Behavior*:
-1. The patch is validated against a whitelist of keys and value types: `themeMode` (`system`, `light`, `dark`), `accent` (`blue`, `purple`, `green`, `orange`, `pink`), `quotaUsageEnabled` (boolean), `quotaProviders` (an object with any of `claude`, `codex`, `antigravity`, each a boolean), `quotaDisplay` (`remaining`, `used`), `quotaButton` (boolean), `quotaShowAccount` (boolean), `usageScanMode` (`scheduled`, `realtime`) and `usageScanInterval` (`1m`, `2m`, `5m`, `10m`, `15m`). Any unknown key or bad value rejects the whole patch with `ERR_INVALID_PAYLOAD`, and nothing is saved.
+1. The patch is validated against a whitelist of keys and value types: `themeMode` (`system`, `light`, `dark`), `accent` (`blue`, `purple`, `green`, `orange`, `pink`), `quotaEnabled` (boolean), `usageEnabled` (boolean), `quotaProviders` (an object with any of `claude`, `codex`, `antigravity`, each a boolean), `quotaDisplay` (`remaining`, `used`), `quotaButton` (boolean), `quotaShowAccount` (boolean), `usageScanMode` (`scheduled`, `realtime`) and `usageScanInterval` (`1m`, `2m`, `5m`, `10m`, `15m`). Legacy `quotaUsageEnabled` or any other unknown key or bad value rejects the whole patch with `ERR_INVALID_PAYLOAD`, and nothing is saved.
 2. The patch is deep-merged and written to `config.json` before the reply. A write error is reported as `ERR_INTERNAL`.
-3. Defaults are `themeMode: "system"`, `accent: "blue"`, `quotaUsageEnabled: true`, `quotaDisplay: "remaining"`, `quotaButton: true`, `quotaShowAccount: false` (issue #25: account details stay hidden until the user turns them on), `usageScanMode: "scheduled"` and `usageScanInterval: "15m"`; `quotaProviders` defaults to the providers logged in on this computer (`quota-and-usage.md` §2.5). The config version is bumped. The sender gets `ack` with `{ "version", "client" }`.
+3. Defaults are `themeMode: "system"`, `accent: "blue"`, `quotaEnabled: false`, `usageEnabled: true`, `quotaDisplay: "remaining"`, `quotaButton: true`, `quotaShowAccount: false` (issue #25: account details stay hidden until the user turns them on), `usageScanMode: "scheduled"` and `usageScanInterval: "5m"`; `quotaProviders` defaults to the providers logged in on this computer (`quota-and-usage.md` §2.5). Legacy `quotaUsageEnabled` in `config.json` is dropped on load without being inherited by `quotaEnabled` or `usageEnabled`. The config version is bumped. The sender gets `ack` with `{ "version", "client" }`.
 4. Every other client gets `{ "type": "config_updated", "payload": { "version", "client" } }`. Clients ignore a `config_sync` or `config_updated` whose version is older than one they have already applied.
 
 ## 7. Uploads (`POST /api/uploads`)

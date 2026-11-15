@@ -86,7 +86,8 @@ export interface AppState {
   canInstallPWA: boolean;
   configReady: boolean;
   quotaLoading: boolean;
-  quotaUsageEnabled: boolean;
+  quotaEnabled: boolean;
+  usageEnabled: boolean;
   quotaDisplay: "remaining" | "used";
   quotaButton: boolean;
   quotaShowAccount: boolean;
@@ -95,6 +96,7 @@ export interface AppState {
   quotaProviders: QuotaProvidersConfig;
   quotaSnapshots: QuotaProviderState[];
   quotaUpdated: number | null;
+  usageScannedAt: number | null;
 }
 
 /** localStorage can throw (private mode, blocked site data); preferences then fall back to defaults. */
@@ -170,15 +172,17 @@ const [state, setState] = createStore<AppState>({
   canInstallPWA: false,
   configReady: false,
   quotaLoading: false,
-  quotaUsageEnabled: readPref("pigeon_quota_usage_enabled") !== "0",
+  quotaEnabled: readPref("pigeon_quota_enabled") === "1",
+  usageEnabled: readPref("pigeon_usage_enabled") !== "0",
   quotaDisplay: "remaining",
   quotaButton: true,
   quotaShowAccount: false,
   usageScanMode: "scheduled",
-  usageScanInterval: "15m",
+  usageScanInterval: "5m",
   quotaProviders: { claude: true, codex: true, antigravity: true },
   quotaSnapshots: [],
   quotaUpdated: null,
+  usageScannedAt: null,
 });
 
 export { state, setState };
@@ -209,9 +213,13 @@ export function applySyncedClientConfig(config: Partial<ClientConfig> | undefine
   if (!config) return;
   if (config.themeMode) setState("themeMode", config.themeMode);
   if (config.accent) setState("accent", config.accent);
-  if (config.quotaUsageEnabled !== undefined) {
-    setState("quotaUsageEnabled", config.quotaUsageEnabled);
-    writePref("pigeon_quota_usage_enabled", config.quotaUsageEnabled ? "1" : "0");
+  if (config.quotaEnabled !== undefined) {
+    setState("quotaEnabled", config.quotaEnabled);
+    writePref("pigeon_quota_enabled", config.quotaEnabled ? "1" : "0");
+  }
+  if (config.usageEnabled !== undefined) {
+    setState("usageEnabled", config.usageEnabled);
+    writePref("pigeon_usage_enabled", config.usageEnabled ? "1" : "0");
   }
   if (config.quotaDisplay !== undefined) setState("quotaDisplay", config.quotaDisplay);
   if (config.quotaButton !== undefined) setState("quotaButton", config.quotaButton);
@@ -289,5 +297,6 @@ export function draftKey(paneId: string | null): string {
   return `pigeon_draft_${paneId ?? "new"}`;
 }
 
-export const quotaFeatureOn = () => state.quotaUsageEnabled !== false;
+export const quotaFeatureOn = () => state.quotaEnabled;
+export const usageFeatureOn = () => state.usageEnabled;
 export const quotaButtonShown = () => quotaFeatureOn() && state.quotaButton;

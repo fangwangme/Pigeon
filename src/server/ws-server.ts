@@ -168,6 +168,8 @@ export class WsServer {
     this.pairingManager = options.pairingManager;
     this.quotaService = options.quotaService;
     this.usageService = options.usageService;
+    if (this.quotaService) this.wireQuotaService(this.quotaService);
+    if (this.usageService) this.wireUsageService(this.usageService);
     const port = options.port ?? options.configManager?.getServerConfig().port ?? DEFAULT_PORT;
     const prodPort = options.productionPort ?? resolveProductionPort(options.configManager?.env);
     const isCompiled = process.execPath.endsWith("/pigeon") || !process.argv[1]?.endsWith(".ts");
@@ -363,11 +365,17 @@ export class WsServer {
 
   public handleOpen(ws: Ws): void {
     this.clients.add(ws);
+    this.quotaService?.setClientOnline(true);
+    this.usageService?.setClientOnline(true);
     this.logger?.(`ws connect: ${ws.data?.session?.deviceName || "client"} (conn=${ws.data?.connectionId})`);
   }
 
   public handleClose(ws: Ws): void {
     this.clients.delete(ws);
+    if (this.clients.size === 0) {
+      this.quotaService?.setClientOnline(false);
+      this.usageService?.setClientOnline(false);
+    }
     this.pushManager.removePresence(ws.data.connectionId);
     this.syncMonitoredPanes();
     this.logger?.(`ws disconnect: ${ws.data?.session?.deviceName || "client"} (conn=${ws.data?.connectionId})`);
@@ -802,35 +810,34 @@ export class WsServer {
       }
 
       case "quota_get": {
-        if (this.configManager.getClientConfig().quotaUsageEnabled === false) {
-          this.sendError(ws, msg.id, ProtocolErrors.ERR_FEATURE_DISABLED, "Quota and usage are disabled in settings");
+        if (this.configManager.getClientConfig().quotaEnabled !== true) {
+          this.sendError(ws, msg.id, ProtocolErrors.ERR_FEATURE_DISABLED, "Quota is disabled in settings");
           return;
         }
-        this.quotaService ??= new QuotaService({ configManager: this.configManager });
-        const res = await this.quotaService.getQuota(this.configManager.getClientConfig());
+        const res = await this.quota().getQuota(this.configManager.getClientConfig());
         this.sendAck(ws, msg.id, { providers: res.providers, fetchedAt: res.fetchedAt });
         return;
       }
 
       case "usage_get":
-        if (this.configManager.getClientConfig().quotaUsageEnabled === false) {
-          this.sendError(ws, msg.id, ProtocolErrors.ERR_FEATURE_DISABLED, "Quota and usage are disabled in settings");
+        if (this.configManager.getClientConfig().usageEnabled === false) {
+          this.sendError(ws, msg.id, ProtocolErrors.ERR_FEATURE_DISABLED, "Usage is disabled in settings");
           return;
         }
         this.sendAck(ws, msg.id, (await this.usage().getUsage(msg.payload)) as any);
         return;
 
       case "usage_day":
-        if (this.configManager.getClientConfig().quotaUsageEnabled === false) {
-          this.sendError(ws, msg.id, ProtocolErrors.ERR_FEATURE_DISABLED, "Quota and usage are disabled in settings");
+        if (this.configManager.getClientConfig().usageEnabled === false) {
+          this.sendError(ws, msg.id, ProtocolErrors.ERR_FEATURE_DISABLED, "Usage is disabled in settings");
           return;
         }
         this.sendAck(ws, msg.id, (await this.usage().getDay(msg.payload)) as any);
         return;
 
       case "usage_model":
-        if (this.configManager.getClientConfig().quotaUsageEnabled === false) {
-          this.sendError(ws, msg.id, ProtocolErrors.ERR_FEATURE_DISABLED, "Quota and usage are disabled in settings");
+        if (this.configManager.getClientConfig().usageEnabled === false) {
+          this.sendError(ws, msg.id, ProtocolErrors.ERR_FEATURE_DISABLED, "Usage is disabled in settings");
           return;
         }
         this.sendAck(ws, msg.id, (await this.usage().getModel(msg.payload)) as any);
@@ -1052,9 +1059,38 @@ export class WsServer {
     }
   }
 
+  private wireQuotaService(service: QuotaService): void {
+    service.setOnUpdated((payload) => {
+      if (this.clients.size > 0 && this.configManager.getClientConfig().quotaEnabled === true) {
+        this.broadcast({ type: "quota_updated", payload });
+      }
+    });
+    service.setClientOnline(this.clients.size > 0);
+  }
+
+  private wireUsageService(service: UsageService): void {
+    service.setOnUpdated((payload) => {
+      if (this.clients.size > 0 && this.configManager.getClientConfig().usageEnabled !== false) {
+        this.broadcast({ type: "usage_updated", payload });
+      }
+    });
+    service.setClientOnline(this.clients.size > 0);
+  }
+
+  private quota(): QuotaService {
+    if (!this.quotaService) {
+      this.quotaService = new QuotaService({ configManager: this.configManager });
+      this.wireQuotaService(this.quotaService);
+    }
+    return this.quotaService;
+  }
+
   /** The daemon injects its usage service; tests without one get a service on first use. */
   private usage(): UsageService {
-    this.usageService ??= new UsageService({ configManager: this.configManager });
+    if (!this.usageService) {
+      this.usageService = new UsageService({ configManager: this.configManager });
+      this.wireUsageService(this.usageService);
+    }
     return this.usageService;
   }
 
@@ -1667,6 +1703,10 @@ export class WsServer {
         ws.close(4403, "Device session revoked");
         this.clients.delete(ws);
       }
+    }
+    if (this.clients.size === 0) {
+      this.quotaService?.setClientOnline(false);
+      this.usageService?.setClientOnline(false);
     }
     this.syncMonitoredPanes();
   }

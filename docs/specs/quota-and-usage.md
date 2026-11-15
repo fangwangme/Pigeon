@@ -11,17 +11,17 @@ Both run inside the daemon. Pigeon never runs or reads the separate `tokenpulse`
 
 Not covered: API-key balances (Pi, OpenCode providers), quota history, quota push alerts, and usage of agents Pigeon does not drive.
 
-### 1.1 Master switch
+### 1.1 Feature switches
 
-`client.quotaUsageEnabled` (`architecture.md` §4.7, default `true`) controls both Subscription Quota and Token Usage Dashboard features across every paired phone (`mobile-ui-and-themes.md` §11.4).
+`client.quotaEnabled` (`architecture.md` §4.7, default `false`) and `client.usageEnabled` (`architecture.md` §4.7, default `true`) independently control Subscription Quota and Token Usage Dashboard across every paired phone (`mobile-ui-and-themes.md` §11.4). Legacy `quotaUsageEnabled` in `config.json` is dropped on load (neither switch inherits its value) and rejected by `config_patch`.
 
-When disabled (`false`):
-- **Entry masking:** the Settings card shows only the master switch; all inner navigation rows and detailed settings, as well as the queried-providers card, are hidden (`mobile-ui-and-themes.md` §8.1, §11.4). The header gauge buttons on both Home and All Agents pages are hidden (`mobile-ui-and-themes.md` §11.1). Navigating to or restoring a quota or usage route redirects immediately to Home.
-- **Value preservation:** all other client configuration keys in `config.json` (such as `quotaDisplay`, `quotaButton`, `quotaShowAccount`, `quotaProviders`, `usageScanMode`, and `usageScanInterval`) remain untouched. Aggregated session usage in `usage.db` remains intact. When re-enabled, previous settings and historical data are instantly restored.
-- **Scan and query shutdown:** the phone sends no `quota_get`, `usage_get`, `usage_day`, or `usage_model`. The daemon's WebSocket dispatch rejects any of those requests with `ERR_FEATURE_DISABLED` without calling a provider or scanning files (`protocol.md` §4.16–§4.19). `UsageService` stops its background scheduled timer; no session files are scanned. `QuotaService` makes no network requests or language server queries.
-- **In-flight work:** any scan or quota query already in flight when the switch is disabled is allowed to complete gracefully without interruption to avoid corrupting SQLite or file states.
+When a feature switch is disabled (`false`):
+- **Entry masking:** only that feature's Settings navigation row, sub-settings, provider list (for Quota), and dashboard entry are hidden (`mobile-ui-and-themes.md` §11.1, §11.4); the other feature remains unaffected. Navigating to or restoring `/quota` while `quotaEnabled` is `false`, or `/usage` while `usageEnabled` is `false`, redirects immediately to Home.
+- **Value preservation:** all other client configuration keys in `config.json` (such as `quotaDisplay`, `quotaButton`, `quotaShowAccount`, `quotaProviders`, `usageScanMode`, and `usageScanInterval`) remain untouched, and `usage.db` remains intact.
+- **Scan and query shutdown:** the phone sends no requests for a disabled feature. The daemon rejects `quota_get` when `quotaEnabled` is `false`, and rejects `usage_get`, `usage_day`, `usage_model` when `usageEnabled` is `false`, with `ERR_FEATURE_DISABLED` without querying providers or scanning files (`protocol.md` §4.16–§4.19). `QuotaService` stops its background timer when `quotaEnabled` is `false`; `UsageService` stops its background timer when `usageEnabled` is `false`.
+- **In-flight work:** any fetch or scan already in flight when a switch turns off finishes gracefully without interruption.
 - **Rebuild cache:** `pigeon rebuild-cache` via CLI remains permitted as an explicit administrative maintenance operation.
-- **Re-enabling:** transitioning from disabled to enabled immediately triggers one usage scan and one quota fetch to restore fresh data without waiting for an interval timer.
+- **Enabling:** toggling either switch from `false` to `true` immediately triggers one refresh for that feature (`fetchAll` for quota, `scan` for usage) without waiting for the next timer tick.
 
 ## 2. Quota
 
@@ -81,11 +81,12 @@ Both are computed on the phone from a window (`src/shared/quota.ts`) so that eve
 
 ### 2.6 Fetching, caching and failures
 
-- The phone asks for quota when the quota page opens and when the user taps refresh (`protocol.md` §4.16). The daemon answers from a rate-limiting protection cache younger than 60 seconds. Providers are fetched in parallel; one slow or failing provider never delays the others' results past its own timeout.
-- **Expected errors**, reported per provider in the reply and never as a protocol error: credentials missing, credentials rejected or not refreshable, network unreachable or timed out, an unexpected HTTP status, a response that cannot be parsed. Each carries a short message naming the provider and the cause.
-- A provider that fails keeps its previous snapshot in the reply, next to the error; the phone shows both.
-- A provider that failed is not fetched again for 60 seconds, whether or not it has a previous snapshot; replies in that time carry its last error. This keeps a rate-limited (429) provider from being hit on every request.
-- The list-page dot (`mobile-ui-and-themes.md` §11.1) comes from the last snapshots the daemon holds; the home page asks with the cache allowed and never forces a fetch.
+- **Daemon-owned background refresh & phone read-only cache:** quota and scheduled usage share `client.usageScanInterval` (`1m`, `2m`, `5m` default, `10m`, `15m`). Background timers run ONLY while at least one paired phone WebSocket connection is open; when all phones disconnect, all background refresh timers stop. `client.usageScanMode` affects usage scanning only, never quota refreshes.
+- On each interval tick, enabled tasks run concurrently without blocking each other (enabled quota providers fetch in parallel; usage scans when `usageScanMode` is `scheduled`). When a phone WebSocket connects, if any enabled item has never refreshed or its last refresh is older than `client.usageScanInterval`, the daemon immediately triggers one refresh for that item.
+- `quota_get` (`protocol.md` §4.16) — whether triggered by opening the quota page, tapping Refresh, or reading the home badge — always reads the daemon cache (`providers` and `fetchedAt`) and never invokes an upstream provider `fetch`.
+- **Expected errors**, reported per provider in the cache, replies and pushes, and never as a protocol error: credentials missing, credentials rejected or not refreshable, network unreachable or timed out, an unexpected HTTP status, a response that cannot be parsed. Each carries a short message naming the provider and the cause.
+- A provider that fails (including rate-limit HTTP 429) keeps its previous `snapshot` next to its new `error`; the phone shows both. Failed providers are not retried before the next interval.
+- After a background refresh completes, the daemon broadcasts updated state to online phones (`quota_updated` in `protocol.md` §5.11; `usage_updated` in `protocol.md` §5.12) so their UI updates silently without manual refresh.
 
 ## 3. Usage
 
@@ -163,8 +164,8 @@ A period is shown as a grid of days (`mobile-ui-and-themes.md` §11.3). Its orie
 
 ### 3.7 Freshness and Storage
 
-Usage scanning operates in one of two modes (`client.usageScanMode`):
-- **Scheduled** (`scheduled`, default): background scans run periodically at the configured interval (`1m`, `2m`, `5m` default, `10m`, `15m`). Client requests answer immediately from SQLite without blocking on filesystem reads; forced refresh (`force: true`) rescans newly modified session files only in realtime mode, while scheduled mode answers from the background cache (user decision, 2026-11-11).
+Usage scanning operates in one of two modes (`client.usageScanMode`, affecting usage only):
+- **Scheduled** (`scheduled`, default): while at least one paired phone WebSocket is connected and `client.usageEnabled` is `true`, background scans run periodically at the shared interval (`1m`, `2m`, `5m` default, `10m`, `15m`) and catch up once on phone connect if the last scan is missing or older than the interval. Client requests answer immediately from SQLite without blocking on filesystem reads; forced refresh (`force: true`) rescans newly modified session files only in realtime mode, while scheduled mode answers from the background cache (user decision, 2026-11-11).
 - **Realtime** (`realtime`): every usage request checks and scans newly modified session files before answering; a scan that is already running is shared.
 
 Scans run off the daemon's event loop (in a Worker), so a first scan or a rebuild never delays WebSocket traffic. JSONL files are read from the byte offset where the previous scan stopped, unless the file shrank.

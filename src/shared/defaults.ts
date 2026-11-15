@@ -1,16 +1,30 @@
-import type { ClientConfig } from "../types/protocol";
+import type { ClientConfig, UsageScanInterval } from "../types/protocol";
 
 // Single source for defaults shared by the daemon and the PWA.
 
 export const DEFAULT_CLIENT_CONFIG: ClientConfig = {
   themeMode: "system",
   accent: "blue",
-  quotaUsageEnabled: true,
+  quotaEnabled: false,
+  usageEnabled: true,
   quotaDisplay: "remaining",
   quotaButton: true,
   quotaShowAccount: false,
   usageScanMode: "scheduled",
-  usageScanInterval: "15m",
+  usageScanInterval: "5m",
 };
+
+const SCAN_INTERVAL_MS: Record<UsageScanInterval, number> = {
+  "1m": 60_000,
+  "2m": 120_000,
+  "5m": 300_000,
+  "10m": 600_000,
+  "15m": 900_000,
+};
+
+/** Converts `usageScanInterval` to milliseconds, defaulting to `"5m"`. */
+export function scanIntervalToMs(interval?: UsageScanInterval): number {
+  return (interval && SCAN_INTERVAL_MS[interval]) || SCAN_INTERVAL_MS["5m"];
+}
 
 export const ACCENT_NAMES = ["blue", "purple", "green", "orange", "pink"] as const;

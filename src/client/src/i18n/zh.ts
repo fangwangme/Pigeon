@@ -374,8 +374,9 @@ export const zh: Messages = {
   "usage.levelEmpty": "0（无用量）",
 
   "settings.quotaUsage": "额度与用量",
-  "settings.quotaUsageEnabled": "启用额度与用量查询",
-  "settings.quotaUsageDisabledHint": "已停用额度与用量功能，后台已停止扫描与外部请求。",
+  "settings.quotaEnabled": "启用订阅额度查询",
+  "settings.usageEnabled": "启用 Token 用量统计",
+  "settings.quotaUsageDisabledHint": "订阅额度与 Token 用量均已停用，后台已停止扫描与外部请求。",
   "settings.subscriptionQuota": "订阅额度",
   "settings.tokenUsage": "Token 用量",
   "settings.usageSummary": "今日 {today} · 近 7 天 {week}",
@@ -393,6 +394,6 @@ export const zh: Messages = {
   "settings.usageScanMode": "用量计算模式",
   "settings.usageScanRealtime": "实时扫描",
   "settings.usageScanScheduled": "定时后台",
-  "settings.usageScanInterval": "后台扫描间隔",
-  "settings.usageScanModeHint": "定时后台模式直接展示已缓存的最新数据，秒开秒显；实时扫描模式在触发时悬挂等待最新数据计算完成后返回。",
+  "settings.usageScanInterval": "后台刷新间隔",
+  "settings.usageScanModeHint": "订阅额度与定时用量共用后台刷新间隔（默认 5m，仅在有手机连接时运行）；实时模式在打开用量页时扫描新变动。",
 };

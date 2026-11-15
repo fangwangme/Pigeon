@@ -245,10 +245,10 @@ Without a valid pairing only the pairing guide shows: scan the QR code from `pig
 
 ## 11. Quota and usage
 
-Behavior and numbers come from `quota-and-usage.md`; this section is the presentation. The approved mockups are kept with issue #13's notes. Both pages share a header (back, the title **额度与用量** with the last refresh time, a refresh button; the standard page header with the top safe area of §1.1) and a segmented **额度 | 用量** switch below it.
+Behavior and numbers come from `quota-and-usage.md`; this section is the presentation. The approved mockups are kept with issue #13's notes. Both pages share a header (back, the title **额度与用量** with the last refresh time, a refresh button; the standard page header with the top safe area of §1.1) and, when both `client.quotaEnabled` and `client.usageEnabled` are on, a segmented **额度 | 用量** switch below it (omitted when only one feature is enabled).
 
 ### 11.1 Quota button
-- A gauge icon in the home capsule (left of settings) and in the All Agents capsule (left of filter); both open §11.2. The button shows when both `client.quotaUsageEnabled` and `client.quotaButton` are on (`architecture.md` §4.7); when either is off the button is hidden on both pages.
+- A gauge icon in the home capsule (left of settings) and in the All Agents capsule (left of filter); both open §11.2. The button shows when both `client.quotaEnabled` and `client.quotaButton` are on (`architecture.md` §4.7); when either is off the button is hidden on both pages.
 - A dot on the button: amber when any enabled provider's last snapshot has a window at level warn, red when one is exhausted (`quota-and-usage.md` §2.4); none otherwise.
 
 ### 11.2 Quota page
@@ -258,7 +258,7 @@ Behavior and numbers come from `quota-and-usage.md`; this section is the present
 - Colors (`quota-and-usage.md` §2.4): the bar uses the provider's agent color at level normal, `--warn` at warn, `--danger` when exhausted; the primary figure is `--fg` at normal and the level color otherwise. Pace text: **节奏正常**, **超出 N% · 约 <eta> 后用完**, **低于节奏 N%**, muted, except **超出**, which is `--warn`. A window with no pace shows no marker.
 - Reset credits and Claude extra usage (`extraUsage`, when enabled, even at `$0`) are listed under a provider's windows.
 - A provider error shows as a red line naming the provider and the cause, above its card; the card keeps the previous snapshot. No enabled provider with data: an empty state with a link to **管理查询的服务** (§11.4).
-- Loading state: while querying initial quota, the page renders pulsing skeleton cards for enabled providers with a loading spinner and message, hiding the empty state until loading finishes. The header subtitle reflects the server's actual fetch timestamp.
+- Loading state: while querying initial quota, the page renders pulsing skeleton cards for enabled providers with a loading spinner and message, hiding the empty state until loading finishes. The header subtitle reflects the server's actual fetch timestamp; tapping Refresh reads the daemon's cached state (`protocol.md` §4.16) without triggering upstream provider requests, while background refreshes push `quota_updated` (§5.11) silently.
 - Under the cards: **管理查询的服务**, and one line explaining the colors.
 
 ### 11.3 Usage page
@@ -274,10 +274,15 @@ Behavior and numbers come from `quota-and-usage.md`; this section is the present
 - Under the list: costs are estimates at public API prices, which subscriptions are not billed by; unpriced models and unavailable prices are named (`quota-and-usage.md` §3.3).
 
 ### 11.4 Settings group
-- The **额度与用量** card begins with the master toggle **启用额度与用量查询** (`client.quotaUsageEnabled`, default `true`). When off, all following items in the card and the **查询额度的服务** card are hidden. If the client route is on quota or usage when the toggle turns off (including broadcasts from other phones or route restored on reload), it redirects immediately to home.
-- **订阅额度** (summary: one short item per enabled provider following **额度显示**, e.g. **Claude 5h 剩 48%**) and **Token 用量** (summary: **今日 $x · 近 7 天 $y**).
-- **额度显示**: 剩余 / 已用 (`client.quotaDisplay`).
-- **列表页显示额度按钮** (`client.quotaButton`).
-- **显示账号信息** (`client.quotaShowAccount`, 默认关闭，issue #25；关闭时额度卡片不显示套餐级别与账号邮箱，设置页「查询额度的服务」副标题也不显示套餐).
-- **用量统计模式**: 定时扫描 / 实时扫描 (`client.usageScanMode`, 默认 `scheduled`)；在定时扫描模式下提供扫描间隔选择 (**1m**, **2m**, **5m**, **10m**, **15m**，`client.usageScanInterval`，默认 `15m`)。
-- **查询额度的服务**: Claude Code, Codex, Antigravity, each a switch (`client.quotaProviders`) with a subtitle (**已登录 · <plan>** when `quotaShowAccount` is on and a plan is known, **已登录** otherwise, or **不查询** when off).
+- The **额度与用量** card has two independent switches: **启用订阅额度查询** (`client.quotaEnabled`, default `false`) and **启用 Token 用量统计** (`client.usageEnabled`, default `true`). Turning one off hides only its own entry and sub-settings (and redirects only `/quota` or `/usage` to home); the other remains unaffected.
+- When `quotaEnabled` is on:
+  - **订阅额度** (summary: one short item per enabled provider following **额度显示**, e.g. **Claude 5h 剩 48%**)
+  - **额度显示**: 剩余 / 已用 (`client.quotaDisplay`)
+  - **列表页显示额度按钮** (`client.quotaButton`)
+  - **显示账号信息** (`client.quotaShowAccount`, 默认关闭，issue #25；关闭时额度卡片不显示套餐级别与账号邮箱，设置页「查询额度的服务」副标题也不显示套餐)
+  - **查询额度的服务** card: Claude Code, Codex, Antigravity, each a switch (`client.quotaProviders`) with a subtitle (**已登录 · <plan>** when `quotaShowAccount` is on and a plan is known, **已登录** otherwise, or **不查询** when off).
+- When `usageEnabled` is on:
+  - **Token 用量** (summary: **今日 $x · 近 7 天 $y**)
+  - **用量统计模式**: 定时扫描 / 实时扫描 (`client.usageScanMode`, 默认 `scheduled`)
+- When `quotaEnabled` is on, OR when `usageEnabled` is on with `usageScanMode` set to `scheduled`:
+  - Shared background refresh interval (**1m**, **2m**, **5m**, **10m**, **15m**，`client.usageScanInterval`，默认 `5m`).

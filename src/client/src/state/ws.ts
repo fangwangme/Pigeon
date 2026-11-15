@@ -317,9 +317,20 @@ export function handleServerMessage(msg: ServerMessage): void {
       if (msg.payload.environment) {
         setState("environment", msg.payload.environment);
       }
-      if (state.quotaUsageEnabled !== false) {
+      if (state.quotaEnabled) {
         void fetchQuota();
       }
+      return;
+
+    case "quota_updated":
+      if (!state.quotaEnabled) return;
+      setState("quotaSnapshots", msg.payload.providers);
+      setState("quotaUpdated", msg.payload.fetchedAt && msg.payload.fetchedAt > 0 ? msg.payload.fetchedAt : null);
+      return;
+
+    case "usage_updated":
+      if (!state.usageEnabled) return;
+      setState("usageScannedAt", msg.payload.scannedAt);
       return;
 
     case "skills_sync":
@@ -678,32 +689,40 @@ export async function selectPane(paneId: string): Promise<void> {
   reportPresence();
 }
 
-/** Applies client config and triggers quota transitions when quotaUsageEnabled changes (quota-and-usage.md §1.1). */
+/** Applies client config and triggers feature transitions when switches change (quota-and-usage.md §1.1). */
 export function applyClientConfigWithTransitions(patch: Partial<ClientConfig> | undefined): void {
   if (!patch) return;
-  const prevEnabled = state.quotaUsageEnabled;
+  const prevQuotaEnabled = state.quotaEnabled;
+  const prevUsageEnabled = state.usageEnabled;
   applySyncedClientConfig(patch);
-  if (prevEnabled === false && state.quotaUsageEnabled) {
+  if (!prevQuotaEnabled && state.quotaEnabled) {
     void fetchQuota();
-  } else if (prevEnabled === true && !state.quotaUsageEnabled) {
+  } else if (prevQuotaEnabled && !state.quotaEnabled) {
     setState("quotaSnapshots", []);
     setState("quotaUpdated", null);
+  }
+  if (prevUsageEnabled && !state.usageEnabled) {
+    setState("usageScannedAt", null);
   }
 }
 
 export async function sendConfigPatch(patch: Partial<ClientConfig>): Promise<void> {
-  const prevEnabled = state.quotaUsageEnabled;
+  const prevQuotaEnabled = state.quotaEnabled;
+  const prevUsageEnabled = state.usageEnabled;
   applySyncedClientConfig(patch);
-  if (prevEnabled === true && state.quotaUsageEnabled === false) {
+  if (prevQuotaEnabled && !state.quotaEnabled) {
     setState("quotaSnapshots", []);
     setState("quotaUpdated", null);
+  }
+  if (prevUsageEnabled && !state.usageEnabled) {
+    setState("usageScannedAt", null);
   }
   try {
     const res = await request({ type: "config_patch", payload: { client: patch } });
     if (res && typeof res.version === "number") {
       configVersion = Math.max(configVersion, res.version);
     }
-    if (prevEnabled === false && state.quotaUsageEnabled === true) {
+    if (!prevQuotaEnabled && state.quotaEnabled) {
       void fetchQuota();
     }
   } catch (err) {
@@ -711,9 +730,9 @@ export async function sendConfigPatch(patch: Partial<ClientConfig>): Promise<voi
   }
 }
 
-/** protocol.md §4.16: always answered from the daemon's 60-second cache. */
+/** protocol.md §4.16: reads the daemon's cache only; never triggers upstream requests. */
 export async function fetchQuota(): Promise<QuotaProviderState[]> {
-  if (state.quotaUsageEnabled === false) {
+  if (!state.quotaEnabled) {
     return [];
   }
   setState("quotaLoading", true);
@@ -724,7 +743,7 @@ export async function fetchQuota(): Promise<QuotaProviderState[]> {
       const serverFetchedAt =
         res.fetchedAt ||
         Math.max(0, ...res.providers.map((p: any) => p.snapshot?.fetchedAt ?? p.error?.at ?? 0));
-      setState("quotaUpdated", serverFetchedAt > 0 ? serverFetchedAt : Date.now());
+      setState("quotaUpdated", serverFetchedAt > 0 ? serverFetchedAt : null);
       return res.providers;
     }
   } catch (err) {

@@ -232,7 +232,12 @@ export class ConfigManager {
     if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
       throw new Error(`Pigeon config ${this.configPath} must contain a JSON object`);
     }
-    return parsed as StoredConfig;
+    const stored = parsed as StoredConfig;
+    if (stored.client && "quotaUsageEnabled" in (stored.client as Record<string, unknown>)) {
+      const { quotaUsageEnabled: _legacy, ...rest } = stored.client as Record<string, unknown>;
+      stored.client = rest as Partial<ClientConfig>;
+    }
+    return stored;
   }
 
   public getClientConfig(): ClientConfig {

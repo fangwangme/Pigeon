@@ -1,4 +1,4 @@
-import { createEffect, createMemo, createSignal, For, Show } from "solid-js";
+import { createEffect, createMemo, createSignal, For, on, Show } from "solid-js";
 import { navigate, state } from "../state/store";
 import { request } from "../state/ws";
 import { cacheHitPercent, daysBetween, formatYMD, heatmapLayout, type UsagePreset } from "../../../shared/usage";
@@ -110,6 +110,7 @@ export function UsagePage() {
   const backTarget = () => (state.route.name === "usage" ? (state.route.from ?? "home") : "home");
 
   const loadUsage = async (force = false) => {
+    if (!state.usageEnabled) return;
     setLoading(true);
     try {
       const res: UsageGetPayload = await request({
@@ -147,6 +148,21 @@ export function UsagePage() {
       void loadUsage();
     }
   });
+
+  createEffect(
+    on(
+      () => state.usageScannedAt,
+      (scannedAt) => {
+        if (!scannedAt || !state.configReady || !state.usageEnabled) return;
+        const rep = usageReport();
+        if (rep && rep.scannedAt >= scannedAt) return;
+        if (range() !== "custom" || (customFrom() && customTo())) {
+          void loadUsage();
+        }
+      },
+      { defer: true }
+    )
+  );
 
   const openDaySheet = async (date: string) => {
     setSelectedDay(date);
@@ -552,7 +568,7 @@ export function UsagePage() {
           <Icon name="chevL" />
         </button>
         <div class="ht">
-          <div class="t">{t("quota.title")}</div>
+          <div class="t">{state.quotaEnabled ? t("quota.title") : t("settings.tokenUsage")}</div>
           <div class="s">
             {isLoading()
               ? (usageReport() ? t("quota.refreshing") : t("usage.loading"))
@@ -580,22 +596,24 @@ export function UsagePage() {
       <div class="scroll">
         <div style={{ padding: "0 16px calc(30px + env(safe-area-inset-bottom))" }}>
           {/* Segmented switch */}
-          <div style={{ "margin-top": "6px" }}>
-            <div class="seg" style={{ display: "grid", "grid-template-columns": "repeat(2, minmax(0, 1fr))", padding: "3px" }}>
-              <button
-                style={{ height: "38px", "font-size": "14.5px" }}
-                onClick={() => navigate({ name: "quota", from: backTarget() })}
-              >
-                {t("quota.tabQuota")}
-              </button>
-              <button
-                class="on"
-                style={{ height: "38px", "font-size": "14.5px" }}
-              >
-                {t("quota.tabUsage")}
-              </button>
+          <Show when={state.quotaEnabled && state.usageEnabled}>
+            <div style={{ "margin-top": "6px" }}>
+              <div class="seg" style={{ display: "grid", "grid-template-columns": "repeat(2, minmax(0, 1fr))", padding: "3px" }}>
+                <button
+                  style={{ height: "38px", "font-size": "14.5px" }}
+                  onClick={() => navigate({ name: "quota", from: backTarget() })}
+                >
+                  {t("quota.tabQuota")}
+                </button>
+                <button
+                  class="on"
+                  style={{ height: "38px", "font-size": "14.5px" }}
+                >
+                  {t("quota.tabUsage")}
+                </button>
+              </div>
             </div>
-          </div>
+          </Show>
 
           {/* Range Chips */}
           <div style={{ "margin-top": "12px", display: "flex", gap: "6px", "overflow-x": "auto" }}>

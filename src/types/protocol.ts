@@ -151,7 +151,8 @@ export type UsageScanInterval = "1m" | "2m" | "5m" | "10m" | "15m";
 export interface ClientConfig {
   themeMode: ThemeMode;
   accent: AccentName;
-  quotaUsageEnabled?: boolean;
+  quotaEnabled?: boolean;
+  usageEnabled?: boolean;
   quotaProviders?: QuotaProvidersConfig;
   quotaDisplay?: QuotaDisplayMode;
   quotaButton?: boolean;
@@ -527,7 +528,9 @@ export type ServerMessage =
   | { type: "prompt_queue"; payload: PromptQueuePayload }
   | { type: "pane_bootstrap"; payload: PaneBootstrapPayload }
   | { type: "pane_tail"; payload: PaneTailPayload }
-  | { type: "recipes_sync"; payload: { recipes: Record<string, AgentRecipeSummary> } };
+  | { type: "recipes_sync"; payload: { recipes: Record<string, AgentRecipeSummary> } }
+  | { type: "quota_updated"; payload: QuotaGetPayload }
+  | { type: "usage_updated"; payload: { scannedAt: number } };
 
 export const ProtocolErrors = {
   ERR_INVALID_PAYLOAD: "ERR_INVALID_PAYLOAD",
