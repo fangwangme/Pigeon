@@ -267,6 +267,35 @@ function trackUnread(snap: SnapshotPayload): void {
   for (const id of Object.keys(state.unread)) if (!alive.has(id)) setUnread(id, false);
 }
 
+/** Apply a full turn payload (`pane_bootstrap.turns` or `normalized_turns`) and update the pane cache. */
+function applyFullTurns(
+  paneId: string,
+  payload: {
+    turns: NormalizedTurn[];
+    sessionStats?: SessionStats;
+    sessionTitle?: string;
+    todos?: TodoItem[];
+    subagents?: SubagentInfo[];
+    session: SessionInfo;
+  }
+): void {
+  setState({
+    sessionStats: payload.sessionStats || null,
+    sessionTitle: payload.sessionTitle || null,
+    todos: payload.todos || null,
+    subagents: payload.subagents || [],
+    session: payload.session,
+    paneSyncing: false,
+  });
+  setState("normalizedTurns", reconcile(payload.turns));
+  const metaInfo = meta(paneId);
+  if (!payload.session?.bound || (metaInfo && metaInfo.sessionId !== payload.session?.sessionId)) {
+    void remove(paneId);
+  } else if (payload.session?.sessionId && payload.turns?.length) {
+    saveActivePaneSnapshot(paneId);
+  }
+}
+
 /** Apply an incremental turn delta payload (`pane_bootstrap.resume` or `turns_delta`) to store state. */
 function applyTurnDelta(
   paneId: string,
@@ -384,21 +413,7 @@ export function handleServerMessage(msg: ServerMessage): void {
         setState("queuePaused", Boolean(msg.payload.queuePaused));
       }
       if (msg.payload.turns) {
-        setState({
-          sessionStats: msg.payload.turns.sessionStats || null,
-          sessionTitle: msg.payload.turns.sessionTitle || null,
-          todos: msg.payload.turns.todos || null,
-          subagents: msg.payload.turns.subagents || [],
-          session: msg.payload.turns.session,
-          paneSyncing: false,
-        });
-        setState("normalizedTurns", reconcile(msg.payload.turns.turns));
-        const metaInfo = meta(msg.payload.paneId);
-        if (!msg.payload.turns.session?.bound || (metaInfo && metaInfo.sessionId !== msg.payload.turns.session?.sessionId)) {
-          void remove(msg.payload.paneId);
-        } else if (msg.payload.turns.session?.sessionId && msg.payload.turns.turns?.length) {
-          saveActivePaneSnapshot(msg.payload.paneId);
-        }
+        applyFullTurns(msg.payload.paneId, msg.payload.turns);
       } else if (msg.payload.resume) {
         applyTurnDelta(msg.payload.paneId, msg.payload.resume);
       }
@@ -416,21 +431,7 @@ export function handleServerMessage(msg: ServerMessage): void {
       if (typeof msg.payload.seq === "number") {
         paneSeqs.set(msg.payload.paneId, msg.payload.seq);
       }
-      setState({
-        sessionStats: msg.payload.sessionStats || null,
-        sessionTitle: msg.payload.sessionTitle || null,
-        todos: msg.payload.todos || null,
-        subagents: msg.payload.subagents || [],
-        session: msg.payload.session,
-        paneSyncing: false,
-      });
-      setState("normalizedTurns", reconcile(msg.payload.turns));
-      const metaInfo = meta(msg.payload.paneId);
-      if (!msg.payload.session?.bound || (metaInfo && metaInfo.sessionId !== msg.payload.session?.sessionId)) {
-        void remove(msg.payload.paneId);
-      } else if (msg.payload.session?.sessionId && msg.payload.turns?.length) {
-        saveActivePaneSnapshot(msg.payload.paneId);
-      }
+      applyFullTurns(msg.payload.paneId, msg.payload);
       return;
     }
 
@@ -689,15 +690,8 @@ export async function selectPane(paneId: string): Promise<void> {
   reportPresence();
 }
 
-/** Applies client config and triggers feature transitions when switches change (quota-and-usage.md §1.1). */
-export function applyClientConfigWithTransitions(patch: Partial<ClientConfig> | undefined): void {
-  if (!patch) return;
-  const prevQuotaEnabled = state.quotaEnabled;
-  const prevUsageEnabled = state.usageEnabled;
-  applySyncedClientConfig(patch);
-  if (!prevQuotaEnabled && state.quotaEnabled) {
-    void fetchQuota();
-  } else if (prevQuotaEnabled && !state.quotaEnabled) {
+function clearDisabledFeatureState(prevQuotaEnabled: boolean, prevUsageEnabled: boolean): void {
+  if (prevQuotaEnabled && !state.quotaEnabled) {
     setState("quotaSnapshots", []);
     setState("quotaUpdated", null);
   }
@@ -706,17 +700,23 @@ export function applyClientConfigWithTransitions(patch: Partial<ClientConfig> | 
   }
 }
 
+/** Applies client config and triggers feature transitions when switches change (quota-and-usage.md §1.1). */
+export function applyClientConfigWithTransitions(patch: Partial<ClientConfig> | undefined): void {
+  if (!patch) return;
+  const prevQuotaEnabled = state.quotaEnabled;
+  const prevUsageEnabled = state.usageEnabled;
+  applySyncedClientConfig(patch);
+  clearDisabledFeatureState(prevQuotaEnabled, prevUsageEnabled);
+  if (!prevQuotaEnabled && state.quotaEnabled) {
+    void fetchQuota();
+  }
+}
+
 export async function sendConfigPatch(patch: Partial<ClientConfig>): Promise<void> {
   const prevQuotaEnabled = state.quotaEnabled;
   const prevUsageEnabled = state.usageEnabled;
   applySyncedClientConfig(patch);
-  if (prevQuotaEnabled && !state.quotaEnabled) {
-    setState("quotaSnapshots", []);
-    setState("quotaUpdated", null);
-  }
-  if (prevUsageEnabled && !state.usageEnabled) {
-    setState("usageScannedAt", null);
-  }
+  clearDisabledFeatureState(prevQuotaEnabled, prevUsageEnabled);
   try {
     const res = await request({ type: "config_patch", payload: { client: patch } });
     if (res && typeof res.version === "number") {

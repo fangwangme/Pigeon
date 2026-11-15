@@ -1,6 +1,6 @@
 import { Show, type JSX } from "solid-js";
 import { ICONS, type IconName } from "../icons";
-import { state } from "../state/store";
+import { navigate, state } from "../state/store";
 import type { AgentStatus, PaneSummary, TabSummary, WorkspaceSummary } from "../../../types/protocol";
 import { t } from "../i18n";
 import { formatModelNameWithRecipes } from "../utils/model-name";
@@ -198,6 +198,32 @@ export function DiffBadge(props: { add: number; del: number }) {
         <span class="a">+{props.add}</span>
         <span class="d">−{props.del}</span>
       </span>
+    </Show>
+  );
+}
+
+/** mobile-ui-and-themes.md §11: segmented Quota | Usage tab switcher shown only when both features are enabled. */
+export function QuotaUsageTabs(props: { active: "quota" | "usage"; from: "home" | "settings" | "agents" }) {
+  return (
+    <Show when={state.quotaEnabled && state.usageEnabled}>
+      <div style={{ "margin-top": "6px" }}>
+        <div class="seg" style={{ display: "grid", "grid-template-columns": "repeat(2, minmax(0, 1fr))", padding: "3px" }}>
+          <button
+            class={props.active === "quota" ? "on" : undefined}
+            style={{ height: "38px", "font-size": "14.5px" }}
+            onClick={() => { if (props.active !== "quota") navigate({ name: "quota", from: props.from }); }}
+          >
+            {t("quota.tabQuota")}
+          </button>
+          <button
+            class={props.active === "usage" ? "on" : undefined}
+            style={{ height: "38px", "font-size": "14.5px" }}
+            onClick={() => { if (props.active !== "usage") navigate({ name: "usage", from: props.from }); }}
+          >
+            {t("quota.tabUsage")}
+          </button>
+        </div>
+      </div>
     </Show>
   );
 }

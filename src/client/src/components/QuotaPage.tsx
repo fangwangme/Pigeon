@@ -2,7 +2,7 @@ import { createSignal, For, onCleanup, onMount, Show } from "solid-js";
 import { navigate, state } from "../state/store";
 import { fetchQuota } from "../state/ws";
 import { quotaLevel, quotaPace } from "../../../shared/quota";
-import { Icon } from "./ui";
+import { Icon, QuotaUsageTabs } from "./ui";
 import { t } from "../i18n";
 
 const ORDERED_PROVIDERS = ["claude", "codex", "antigravity"] as const;
@@ -113,24 +113,7 @@ export function QuotaPage() {
       <div class="scroll">
         <div style={{ padding: "0 16px calc(30px + env(safe-area-inset-bottom))" }}>
           {/* Segmented switch */}
-          <Show when={state.quotaEnabled && state.usageEnabled}>
-            <div style={{ "margin-top": "6px" }}>
-              <div class="seg" style={{ display: "grid", "grid-template-columns": "repeat(2, minmax(0, 1fr))", padding: "3px" }}>
-                <button
-                  class="on"
-                  style={{ height: "38px", "font-size": "14.5px" }}
-                >
-                  {t("quota.tabQuota")}
-                </button>
-                <button
-                  style={{ height: "38px", "font-size": "14.5px" }}
-                  onClick={() => navigate({ name: "usage", from: backTarget() })}
-                >
-                  {t("quota.tabUsage")}
-                </button>
-              </div>
-            </div>
-          </Show>
+          <QuotaUsageTabs active="quota" from={backTarget()} />
 
           {/* Skeleton Template when loading without data */}
           <Show when={showSkeleton()}>

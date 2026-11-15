@@ -1,5 +1,5 @@
 import { Database } from "bun:sqlite";
-import { existsSync, readFileSync, readdirSync, realpathSync, statSync } from "node:fs";
+import { existsSync, readdirSync, realpathSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { OPENCODE_PLACEHOLDER_TITLE, OpenCodeAdapter, type OpenCodeAdapterOptions } from "./opencode";
@@ -169,18 +169,19 @@ class AgySource implements SessionSource {
 class OpenCodeSource implements SessionSource {
   public readonly agent = "opencode";
   constructor(private adapter: OpenCodeAdapter) {}
+  private topLevelFilter(db: Database, table: string): string {
+    return table === "session_v2" && this.adapter.tableColumns(db, table).has("parent_id")
+      ? " AND (parent_id IS NULL OR parent_id = '')"
+      : "";
+  }
   public newest(facts: PaneFacts, exclude: Set<string>): string | null {
     if (!facts.cwd) return null;
     const rows =
-      this.adapter.withDb((db, table) => {
-        const parentFilter =
-          table === "session_v2" && this.adapter.tableColumns(db, table).has("parent_id")
-            ? " AND (parent_id IS NULL OR parent_id = '')"
-            : "";
-        return db
-          .query(`SELECT id FROM ${table} WHERE directory = ? AND time_updated >= ?${parentFilter} ORDER BY time_updated DESC LIMIT 20`)
-          .all(facts.cwd!, facts.createdMs) as Array<{ id: string }>;
-      }) ?? [];
+      this.adapter.withDb((db, table) =>
+        db
+          .query(`SELECT id FROM ${table} WHERE directory = ? AND time_updated >= ?${this.topLevelFilter(db, table)} ORDER BY time_updated DESC LIMIT 20`)
+          .all(facts.cwd!, facts.createdMs) as Array<{ id: string }>
+      ) ?? [];
     return rows.find((r) => !exclude.has(r.id))?.id ?? null;
   }
   public lastWritten(sessionId: string): number | null {
@@ -235,13 +236,9 @@ class OpenCodeSource implements SessionSource {
   public list(folder: string): PastSession[] {
     return (
       this.adapter.withDb((db, table) => {
-        const parentFilter =
-          table === "session_v2" && this.adapter.tableColumns(db, table).has("parent_id")
-            ? " AND (parent_id IS NULL OR parent_id = '')"
-            : "";
         const rows = db
           .query(
-            `SELECT id, title, time_updated FROM ${table} WHERE (directory = ? OR directory LIKE ?) AND time_archived IS NULL${parentFilter} ORDER BY time_updated DESC LIMIT 50`
+            `SELECT id, title, time_updated FROM ${table} WHERE (directory = ? OR directory LIKE ?) AND time_archived IS NULL${this.topLevelFilter(db, table)} ORDER BY time_updated DESC LIMIT 50`
           )
           .all(folder, `${folder}/%`) as Array<{ id: string; title: string | null; time_updated: number }>;
         return rows.map((r) => {

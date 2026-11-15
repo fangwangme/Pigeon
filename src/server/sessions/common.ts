@@ -1,4 +1,4 @@
-import { closeSync, existsSync, fstatSync, openSync, readSync, statSync } from "node:fs";
+import { closeSync, fstatSync, openSync, readSync, statSync } from "node:fs";
 import type {
   FileDiffSummary,
   NormalizedToolCall,

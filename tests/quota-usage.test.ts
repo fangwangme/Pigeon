@@ -135,7 +135,6 @@ describe("claude quota provider (quota-and-usage.md §2.2, §2.3)", () => {
         mcpOAuth: { keep: "me" },
       }),
     );
-  const readCreds = () => JSON.parse(readFileSync(credPath, "utf-8"));
 
   beforeEach(() => {
     home = tempDir("quota-claude");

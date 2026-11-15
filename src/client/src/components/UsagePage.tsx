@@ -8,7 +8,7 @@ import type {
   UsageGetPayload,
   UsageModelPayload,
 } from "../../../types/protocol";
-import { formatModelName, Icon } from "./ui";
+import { formatModelName, Icon, QuotaUsageTabs } from "./ui";
 import { t, locale } from "../i18n";
 
 const AGENT_KEYS = ["claude", "codex", "agy", "opencode", "pi"] as const;
@@ -596,24 +596,7 @@ export function UsagePage() {
       <div class="scroll">
         <div style={{ padding: "0 16px calc(30px + env(safe-area-inset-bottom))" }}>
           {/* Segmented switch */}
-          <Show when={state.quotaEnabled && state.usageEnabled}>
-            <div style={{ "margin-top": "6px" }}>
-              <div class="seg" style={{ display: "grid", "grid-template-columns": "repeat(2, minmax(0, 1fr))", padding: "3px" }}>
-                <button
-                  style={{ height: "38px", "font-size": "14.5px" }}
-                  onClick={() => navigate({ name: "quota", from: backTarget() })}
-                >
-                  {t("quota.tabQuota")}
-                </button>
-                <button
-                  class="on"
-                  style={{ height: "38px", "font-size": "14.5px" }}
-                >
-                  {t("quota.tabUsage")}
-                </button>
-              </div>
-            </div>
-          </Show>
+          <QuotaUsageTabs active="usage" from={backTarget()} />
 
           {/* Range Chips */}
           <div style={{ "margin-top": "12px", display: "flex", gap: "6px", "overflow-x": "auto" }}>

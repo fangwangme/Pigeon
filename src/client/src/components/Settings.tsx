@@ -429,7 +429,6 @@ export function Settings() {
                     if (state.quotaShowAccount === true && s?.snapshot?.plan) {
                       return t("settings.providerPlan", { plan: s.snapshot.plan });
                     }
-                    if (s?.snapshot) return t("settings.providerActive");
                     return t("settings.providerActive");
                   };
                   const toggle = () => {
