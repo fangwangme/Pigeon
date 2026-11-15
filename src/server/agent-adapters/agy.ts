@@ -1,14 +1,17 @@
+import { Database } from "bun:sqlite";
 import { existsSync, openSync, readSync, closeSync, statSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import type {
   FileDiffSummary,
+  NormalizedQuestion,
   NormalizedToolCall,
   NormalizedTurn,
   SessionStats,
+  SubagentInfo,
   ToolVerb,
 } from "../../shared/agent-session";
-import { lineDiff, targetForInput, verbForName } from "../sessions/common";
+import { lineDiff, pushFoldedError, targetForInput, verbForName } from "../sessions/common";
 
 function cleanArgValue(val: unknown): any {
   if (typeof val === "string") {
@@ -96,6 +99,36 @@ function computeSessionStats(turns: NormalizedTurn[]): SessionStats {
   };
 }
 
+function parseAgyQuestions(id: string, raw: unknown): NormalizedQuestion | undefined {
+  let list: unknown = raw;
+  if (typeof raw === "string") {
+    try {
+      list = JSON.parse(raw);
+    } catch {
+      return undefined;
+    }
+  }
+  if (!Array.isArray(list)) return undefined;
+  const questions = list
+    .filter((q: any): q is Record<string, any> => q && typeof q === "object" && typeof q.question === "string")
+    .map((q) => ({
+      question: q.question,
+      ...(typeof q.is_multi_select === "boolean" ? { multiSelect: q.is_multi_select } : {}),
+      options: Array.isArray(q.options)
+        ? q.options
+            .map((o: any) =>
+              typeof o === "string"
+                ? { label: o }
+                : o && typeof o.label === "string"
+                ? { label: o.label, ...(typeof o.description === "string" ? { description: o.description } : {}) }
+                : null
+            )
+            .filter((x): x is { label: string; description?: string } => x !== null)
+        : [],
+    }));
+  return questions.length > 0 ? { id, questions } : undefined;
+}
+
 /** agent-session-normalization.md §2.2: the label a "Model Selection" settings change names, if any. */
 export function agyModelSetting(content: string): string | undefined {
   const m = content.match(/The user changed setting `Model Selection` from .*? to `?(.+?)`?\.(?:\s+No need|\s*<\/USER_SETTINGS_CHANGE>|$)/);
@@ -175,16 +208,77 @@ export class AgyAdapter {
     return map;
   }
 
+  private withSummariesDb<T>(fallback: T, fn: (db: Database) => T): T {
+    const dbPath = join(dirname(this.baseBrainDir), "conversation_summaries.db");
+    if (!existsSync(dbPath)) return fallback;
+    try {
+      const db = new Database(dbPath, { readonly: true });
+      try {
+        db.run("PRAGMA query_only = ON;");
+        db.run("PRAGMA busy_timeout = 2000;");
+        return fn(db);
+      } finally {
+        db.close();
+      }
+    } catch {
+      return fallback;
+    }
+  }
+
+  /** `agent-session-normalization.md` §2.2: child conversations with `parent_conversation_id` are never bound to a pane. */
+  public getChildConversationIds(): Set<string> {
+    return this.withSummariesDb(new Set<string>(), (db) => {
+      const rows = db
+        .query("SELECT conversation_id FROM conversation_summaries WHERE parent_conversation_id IS NOT NULL AND parent_conversation_id != ''")
+        .all() as Array<{ conversation_id: string }>;
+      return new Set(rows.map((r) => r.conversation_id));
+    });
+  }
+
+  /** `agent-session-normalization.md` §2.2 & §3.4: sub-agents started by `sessionId`, ordered by `last_user_input_time`. */
+  public getSubagents(sessionId: string): SubagentInfo[] {
+    return this.withSummariesDb([], (db) => {
+      const rows = db
+        .query(
+          "SELECT conversation_id, title, agent_name, status, killed FROM conversation_summaries WHERE parent_conversation_id = ? ORDER BY last_user_input_time ASC"
+        )
+        .all(sessionId) as Array<{
+          conversation_id: string;
+          title: string | null;
+          agent_name: string | null;
+          status: string | null;
+          killed: number | null;
+        }>;
+      return rows.map((r) => {
+        const status: SubagentInfo["status"] =
+          Number(r.killed) === 1
+            ? "failed"
+            : !r.status || r.status === "CASCADE_RUN_STATUS_IDLE"
+            ? "completed"
+            : "running";
+        return {
+          id: r.conversation_id,
+          title: r.title || r.agent_name || r.conversation_id,
+          ...(r.agent_name ? { type: r.agent_name } : {}),
+          status,
+        };
+      });
+    });
+  }
+
   public getTurns(
     sessionId: string,
-    incremental = false
-  ): { turns: NormalizedTurn[]; stats?: SessionStats; sessionTitle?: string; model?: string } {
+    incremental = false,
+    includeSubagents = true
+  ): { turns: NormalizedTurn[]; stats?: SessionStats; sessionTitle?: string; model?: string; subagents?: SubagentInfo[] } {
     const title = this.getSessionTitle(sessionId) || undefined;
+    const subagents = includeSubagents ? this.getSubagents(sessionId) : [];
+    const subField = subagents.length > 0 ? { subagents } : {};
     const logPath = this.getSessionLogPath(sessionId);
     if (!incremental) this.resetCache(sessionId);
     const model = this.cachedModels.get(sessionId);
     if (!existsSync(logPath)) {
-      return { turns: [], sessionTitle: title, ...(model ? { model } : {}) };
+      return { turns: [], sessionTitle: title, ...(model ? { model } : {}), ...subField };
     }
 
     let fd: number | null = null;
@@ -203,7 +297,7 @@ export class AgyAdapter {
       }
 
       if (startOffset === totalBytes && this.cachedTurns.has(sessionId)) {
-        return { turns: this.cachedTurns.get(sessionId)!, sessionTitle: title, ...(model ? { model } : {}) };
+        return { turns: this.cachedTurns.get(sessionId)!, sessionTitle: title, ...(model ? { model } : {}), ...subField };
       }
 
       const bytesToRead = totalBytes - startOffset;
@@ -215,7 +309,7 @@ export class AgyAdapter {
       // agent-session-normalization.md §4.2: only whole lines are parsed. The offset stops after the
       // last newline, so a half-written line (and any split UTF-8 character) is read again in full.
       const lastNewline = buffer.lastIndexOf(0x0a);
-      if (lastNewline === -1) return { turns: this.cachedTurns.get(sessionId) || [], sessionTitle: title, ...(model ? { model } : {}) };
+      if (lastNewline === -1) return { turns: this.cachedTurns.get(sessionId) || [], sessionTitle: title, ...(model ? { model } : {}), ...subField };
       const completeChunk = buffer.subarray(0, lastNewline).toString("utf-8");
       this.byteOffsets.set(sessionId, startOffset + lastNewline + 1);
 
@@ -230,6 +324,25 @@ export class AgyAdapter {
       let fullRecords: Map<number, any> | null = null;
       let lastTs = stat.birthtimeMs || stat.mtimeMs || 0;
       let pendingAttachmentFiles: string[] = [];
+
+      const ensureTurn = (timestamp: number): NormalizedTurn => {
+        if (!currentTurn) {
+          turnCounter++;
+          currentTurn = {
+            turnId: `turn_${turnCounter}`,
+            turnNumber: turnCounter,
+            timestamp,
+            updatedAt: timestamp,
+            ...(pendingAttachmentFiles.length > 0 ? { userPrompt: { text: "", files: pendingAttachmentFiles } } : {}),
+            toolCalls: [],
+            items: [],
+          };
+          pendingAttachmentFiles = [];
+          turns.push(currentTurn);
+        }
+        currentTurn.updatedAt = Math.max(currentTurn.updatedAt ?? currentTurn.timestamp, timestamp);
+        return currentTurn;
+      };
 
       for (const line of lines) {
         const trimmed = line.trim();
@@ -302,6 +415,12 @@ export class AgyAdapter {
           }
           const cleanText = keptLines.join("\n").trim();
 
+          if (Array.isArray(record.media)) {
+            for (const m of record.media) {
+              if (m && typeof m.uri === "string" && m.uri) files.push(m.uri);
+            }
+          }
+
           if (!cleanText && files.length > 0) {
             pendingAttachmentFiles.push(...files);
             continue;
@@ -322,33 +441,19 @@ export class AgyAdapter {
           };
           turns.push(currentTurn);
         } else if (recType === "PLANNER_RESPONSE") {
-          if (!currentTurn) {
-            turnCounter++;
-            currentTurn = {
-              turnId: `turn_${turnCounter}`,
-              turnNumber: turnCounter,
-              timestamp,
-              updatedAt: timestamp,
-              ...(pendingAttachmentFiles.length > 0 ? { userPrompt: { text: "", files: pendingAttachmentFiles } } : {}),
-              toolCalls: [],
-              items: [],
-            };
-            pendingAttachmentFiles = [];
-            turns.push(currentTurn);
-          }
-          currentTurn.updatedAt = Math.max(currentTurn.updatedAt ?? currentTurn.timestamp, timestamp);
+          const turn = ensureTurn(timestamp);
 
           if (record.thinking) {
-            currentTurn.reasoning = {
-              text: currentTurn.reasoning?.text
-                ? currentTurn.reasoning.text + "\n" + record.thinking
+            turn.reasoning = {
+              text: turn.reasoning?.text
+                ? turn.reasoning.text + "\n" + record.thinking
                 : record.thinking,
             };
           }
 
           if (Array.isArray(record.tool_calls)) {
-            currentTurn.toolCalls = currentTurn.toolCalls || [];
-            currentTurn.items = currentTurn.items || [];
+            turn.toolCalls = turn.toolCalls || [];
+            turn.items = turn.items || [];
             for (const tc of record.tool_calls) {
               const cleanedArgs = cleanArgValue(tc.args || {});
               const target = targetForInput(cleanedArgs);
@@ -361,7 +466,7 @@ export class AgyAdapter {
               const diffInfo = extractAgyDiff(tc.name || "", cleanedArgs);
               const verb: ToolVerb = diffInfo?.verb ?? verbForName(tc.name || "");
               const call: NormalizedToolCall = {
-                id: `tc_${currentTurn.turnNumber}_${currentTurn.toolCalls.length}`,
+                id: `tc_${turn.turnNumber}_${turn.toolCalls.length}`,
                 name: tc.name || "tool",
                 verb,
                 ...(target ? { target } : {}),
@@ -370,17 +475,17 @@ export class AgyAdapter {
                 status: "running",
                 ...(diffInfo?.diff ? { diff: diffInfo.diff } : {}),
               };
-              currentTurn.toolCalls.push(call);
-              currentTurn.items.push({ kind: "tool", call });
+              turn.toolCalls.push(call);
+              turn.items.push({ kind: "tool", call });
             }
           }
 
           if (record.content) {
-            currentTurn.items = currentTurn.items || [];
-            currentTurn.items.push({ kind: "text", markdown: record.content });
-            currentTurn.assistantResponse = {
-              markdown: currentTurn.assistantResponse?.markdown
-                ? currentTurn.assistantResponse.markdown + "\n" + record.content
+            turn.items = turn.items || [];
+            turn.items.push({ kind: "text", markdown: record.content });
+            turn.assistantResponse = {
+              markdown: turn.assistantResponse?.markdown
+                ? turn.assistantResponse.markdown + "\n" + record.content
                 : record.content,
               isStreaming: false,
             };
@@ -390,17 +495,75 @@ export class AgyAdapter {
           if (pending) {
             const out = typeof record.content === "string" ? record.content : "";
             pending.output = out;
-            const exitMatch = /^Command exited with code (\d+)/m.exec(out);
-            const failedByExit = exitMatch !== null && Number(exitMatch[1]) !== 0;
-            pending.status = record.status === "ERROR" || failedByExit ? "failed" : "completed";
+            if (record.status === "RUNNING") {
+              pending.status = "running";
+            } else {
+              const exitMatch = /^Command exited with code (\d+)/m.exec(out);
+              const failedByExit = exitMatch !== null && Number(exitMatch[1]) !== 0;
+              pending.status = record.status === "ERROR" || failedByExit ? "failed" : "completed";
+            }
           }
+        } else if (recType === "SYSTEM_MESSAGE") {
+          const content = typeof record.content === "string" ? record.content : "";
+          const taskMatch = /Task id "([^"]+)" (finished|was canceled) with result:/.exec(content);
+          if (taskMatch) {
+            const taskId = taskMatch[1];
+            const outcome = taskMatch[2] === "finished" ? "completed" : "failed";
+            const sender = typeof record.sender === "string" ? record.sender : "";
+            if (!sender || sender === taskId) {
+              for (let ti = turns.length - 1; ti >= 0; ti--) {
+                const matchCall = [...(turns[ti].toolCalls ?? [])].reverse().find((tc) => {
+                  if (tc.status !== "running" || typeof tc.output !== "string") return false;
+                  const idMatch = /task id:\s*([^\s.,;)]+)/i.exec(tc.output);
+                  return idMatch?.[1] === taskId;
+                });
+                if (matchCall) {
+                  matchCall.status = outcome;
+                  turns[ti].updatedAt = Math.max(turns[ti].updatedAt ?? turns[ti].timestamp, timestamp);
+                  break;
+                }
+              }
+            }
+          }
+        } else if (recType === "ERROR_MESSAGE") {
+          const turn = ensureTurn(timestamp);
+          turn.items = turn.items || [];
+          const errText =
+            typeof record.error === "string" && record.error
+              ? record.error
+              : typeof record.content === "string"
+              ? record.content
+              : "";
+          const errKind =
+            typeof record.error_code === "string" && record.error_code ? record.error_code : "unknown";
+          pushFoldedError(turn.items, errKind, errText);
+        } else if (recType === "CHECKPOINT") {
+          const turn = ensureTurn(timestamp);
+          turn.items = turn.items || [];
+          turn.items.push({ kind: "compact", summary: typeof record.content === "string" ? record.content : "" });
         }
+      }
+
+      for (const t of turns) {
+        delete t.pendingQuestion;
+        delete t.pendingPlan;
+      }
+      const last = turns[turns.length - 1];
+      if (last?.toolCalls) {
+        const qCall = [...last.toolCalls].reverse().find((c) => c.name === "ask_question" && c.status === "running" && c.output === undefined);
+        if (qCall && typeof qCall.input === "object" && qCall.input !== null) {
+          const parsed = parseAgyQuestions(qCall.id, (qCall.input as Record<string, any>).questions);
+          if (parsed) last.pendingQuestion = parsed;
+        }
+        const pCall = [...last.toolCalls].reverse().find((c) => c.name === "exit_plan_mode" && c.status === "running" && c.output === undefined);
+        const plan = pCall && typeof pCall.input === "object" && pCall.input !== null ? (pCall.input as Record<string, any>).plan : undefined;
+        if (typeof plan === "string" && plan) last.pendingPlan = { markdown: plan };
       }
 
       const stats = computeSessionStats(turns);
       this.cachedTurns.set(sessionId, turns);
       const finalModel = this.cachedModels.get(sessionId);
-      return { turns, stats, sessionTitle: title, ...(finalModel ? { model: finalModel } : {}) };
+      return { turns, stats, sessionTitle: title, ...(finalModel ? { model: finalModel } : {}), ...subField };
     } finally {
       if (fd !== null) closeSync(fd);
     }

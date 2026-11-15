@@ -7,8 +7,9 @@ import type {
   NormalizedToolCall,
   FileDiffSummary,
   SessionStats,
+  SubagentInfo,
 } from "../../shared/agent-session";
-import { targetForInput, verbForName } from "../sessions/common";
+import { pushFoldedError, targetForInput, verbForName } from "../sessions/common";
 
 export interface OpenCodeAdapterOptions {
   dbPath?: string;
@@ -63,14 +64,48 @@ export class OpenCodeAdapter {
     }
   }
 
+  public tableColumns(db: Database, table: string): Set<string> {
+    const rows = db.query(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
+    return new Set(rows.map((r) => r.name));
+  }
+
+  private getSubagents(db: Database, sessionTable: "session_v2" | "session", sessionId: string): SubagentInfo[] {
+    if (sessionTable !== "session_v2") return [];
+    const cols = this.tableColumns(db, "session_v2");
+    if (!cols.has("parent_id")) return [];
+    const agentExpr = cols.has("agent") ? "agent" : "NULL AS agent";
+    const idleExpr = cols.has("time_idle") ? "time_idle" : "NULL AS time_idle";
+    const outcomeExpr = cols.has("idle_outcome") ? "idle_outcome" : "NULL AS idle_outcome";
+    const orderCol = cols.has("time_created") ? "time_created" : "time_updated";
+    const rows = db
+      .query(
+        `SELECT id, title, ${agentExpr}, ${idleExpr}, ${outcomeExpr} FROM session_v2 WHERE parent_id = ? ORDER BY ${orderCol} ASC`
+      )
+      .all(sessionId) as Array<{
+        id: string;
+        title: string | null;
+        agent: string | null;
+        time_idle: number | null;
+        idle_outcome: string | null;
+      }>;
+    return rows.map((r) => ({
+      id: r.id,
+      title: r.title || r.agent || r.id,
+      ...(r.agent ? { type: r.agent } : {}),
+      status: r.time_idle == null ? "running" : r.idle_outcome === "succeeded" ? "completed" : "failed",
+    }));
+  }
+
   public getTurns(
     sessionId: string,
-    incremental = false
+    incremental = false,
+    includeSubagents = true
   ): {
     turns: NormalizedTurn[];
     stats?: SessionStats;
     sessionTitle?: string;
     model?: string;
+    subagents?: SubagentInfo[];
   } {
     if (!this.isAvailable()) {
       return { turns: [] };
@@ -79,6 +114,8 @@ export class OpenCodeAdapter {
 
     return (
       this.withDb((db, sessionTable) => {
+        const subagents = includeSubagents ? this.getSubagents(db, sessionTable, sessionId) : [];
+        const subField = subagents.length > 0 ? { subagents } : {};
         const sessionSelect =
           sessionTable === "session_v2"
             ? "SELECT title, time_updated, summary_additions, summary_deletions, summary_files, summary_diffs FROM session_v2 WHERE id = ? LIMIT 1"
@@ -97,6 +134,7 @@ export class OpenCodeAdapter {
             stats: cached.stats,
             sessionTitle: cached.sessionTitle,
             ...(cached.model ? { model: cached.model } : {}),
+            ...subField,
           };
         }
 
@@ -283,6 +321,15 @@ export class OpenCodeAdapter {
                 isStreaming: false,
               };
             }
+
+            if (data.error && typeof data.error === "object") {
+              const errType = typeof data.error.type === "string" ? data.error.type : "";
+              const errMsg = typeof data.error.message === "string" ? data.error.message : "";
+              if (errType !== "aborted" && (errType || errMsg)) {
+                currentTurn.items = currentTurn.items || [];
+                pushFoldedError(currentTurn.items, errType || "unknown", errMsg);
+              }
+            }
           }
         }
 
@@ -294,7 +341,7 @@ export class OpenCodeAdapter {
         const sessionTitle = typeof sessionRow?.title === "string" && sessionRow.title && !isPlaceholder ? sessionRow.title : undefined;
         const result = { turns, stats, sessionTitle, ...(model ? { model } : {}) };
         this.cache.set(sessionId, { changeKey, ...result });
-        return result;
+        return { ...result, ...subField };
       }) ?? { turns: [] }
     );
   }

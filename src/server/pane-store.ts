@@ -2,7 +2,7 @@ import { EventEmitter } from "node:events";
 import { watch, type FSWatcher, existsSync } from "node:fs";
 import type { AgentAdapterManager } from "./agent-adapters/index";
 import { isEnoent } from "./sessions/common";
-import type { NormalizedTurn, SessionStats, TodoItem } from "../shared/agent-session";
+import type { NormalizedTurn, SessionStats, SubagentInfo, TodoItem } from "../shared/agent-session";
 import type { NormalizedTurnsPayload, SessionInfo, TurnsDeltaPayload } from "../types/protocol";
 
 export type { TurnsDeltaPayload } from "../types/protocol";
@@ -16,6 +16,7 @@ export interface PaneSessionState {
   stats?: SessionStats;
   sessionTitle?: string;
   todos?: TodoItem[];
+  subagents?: SubagentInfo[];
   model?: string;
   watcher?: FSWatcher;
   reattachTimer?: ReturnType<typeof setTimeout>;
@@ -184,21 +185,25 @@ export class PaneStore extends EventEmitter {
     const oldTurns = state.turns;
     const turns = structuredClone(result.turns);
     const oldInfo = JSON.stringify([state.todos, state.model]);
+    const oldSubagents = JSON.stringify(state.subagents ?? null);
     state.turns = turns;
     state.stats = result.stats;
     const titleChanged = state.sessionTitle !== result.sessionTitle;
     state.sessionTitle = result.sessionTitle;
     if (titleChanged) this.emit("title_changed", paneId);
     state.todos = result.todos;
+    state.subagents = result.subagents ? structuredClone(result.subagents) : undefined;
     const oldModel = state.model;
     const resolvedModel = result.model ? (this.modelResolver ? this.modelResolver(state.agent, result.model) : result.model) : undefined;
     state.model = resolvedModel;
     if (state.model && state.model !== oldModel) this.emit("session_model", state.agent, state.model);
     const infoChanged = oldInfo !== JSON.stringify([state.todos, state.model]);
+    const subagentsChanged = oldSubagents !== JSON.stringify(state.subagents ?? null);
     const extra = {
       sessionStats: result.stats,
       sessionTitle: result.sessionTitle,
       ...(infoChanged ? { todos: result.todos, session: this.sessionInfo(paneId, state.agent) } : {}),
+      ...(subagentsChanged ? { subagents: state.subagents ?? [] } : {}),
     };
 
     const oldLen = oldTurns.length;
@@ -212,7 +217,7 @@ export class PaneStore extends EventEmitter {
       state.seqWatermark += 1;
       const patch = same(oldTurns[oldLen - 1], turns[oldLen - 1]) ? undefined : turns[oldLen - 1];
       delta = { paneId, seq: state.seqWatermark, seqWatermark: state.seqWatermark, sinceTurnIndex: oldLen, appendTurns: turns.slice(oldLen), ...(patch ? { patchLastTurn: patch } : {}), ...extra };
-    } else if (!same(oldTurns[oldLen - 1], turns[newLen - 1]) || infoChanged) {
+    } else if (!same(oldTurns[oldLen - 1], turns[newLen - 1]) || infoChanged || subagentsChanged) {
       state.seqWatermark += 1;
       delta = { paneId, seq: state.seqWatermark, seqWatermark: state.seqWatermark, sinceTurnIndex: oldLen - 1, appendTurns: [], patchLastTurn: turns[newLen - 1], isStreaming: true, ...extra };
     }
@@ -247,6 +252,7 @@ export class PaneStore extends EventEmitter {
       ...(state?.stats ? { sessionStats: state.stats } : {}),
       ...(state?.sessionTitle ? { sessionTitle: state.sessionTitle } : {}),
       ...(state?.todos ? { todos: state.todos } : {}),
+      ...(state?.subagents ? { subagents: state.subagents } : {}),
       session: this.sessionInfo(paneId, agent),
     };
   }

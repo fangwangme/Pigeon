@@ -339,9 +339,9 @@ export function Settings() {
                 <div class="tx">{t("settings.showQuotaButton")}</div>
                 <span class={`tg${state.quotaButton ? "" : " off"}`} />
               </button>
-              <button class="li" onClick={() => sendConfigPatch({ quotaShowAccount: state.quotaShowAccount === false })}>
+              <button class="li" onClick={() => sendConfigPatch({ quotaShowAccount: state.quotaShowAccount !== true })}>
                 <div class="tx">{t("settings.quotaShowAccount")}</div>
-                <span class={`tg${state.quotaShowAccount !== false ? "" : " off"}`} />
+                <span class={`tg${state.quotaShowAccount === true ? "" : " off"}`} />
               </button>
               <div class="li">
                 <div class="tx">{t("settings.usageScanMode")}</div>
@@ -418,7 +418,7 @@ export function Settings() {
                   const sub = () => {
                     if (!isOn()) return t("settings.providerDisabled");
                     const s = snap();
-                    if (state.quotaShowAccount !== false && s?.snapshot?.plan) {
+                    if (state.quotaShowAccount === true && s?.snapshot?.plan) {
                       return t("settings.providerPlan", { plan: s.snapshot.plan });
                     }
                     if (s?.snapshot) return t("settings.providerActive");

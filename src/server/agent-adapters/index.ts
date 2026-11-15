@@ -11,6 +11,7 @@ import { PiSource } from "../sessions/pi";
 import type { SessionRead } from "../sessions/common";
 import { openFilesOf } from "../sessions/process-files";
 import type { PaneFacts, SessionSource } from "../sessions/source";
+import type { NormalizedTurn, SubagentInfo } from "../../shared/agent-session";
 import type { PastSession } from "../../types/protocol";
 
 export type { PaneFacts } from "../sessions/source";
@@ -69,9 +70,10 @@ class AgySource implements SessionSource {
   }
   public newest(facts: PaneFacts, exclude: Set<string>): string | null {
     if (!existsSync(this.brainDir)) return null;
+    const childIds = this.adapter.getChildConversationIds();
     let best: { id: string; mtime: number } | null = null;
     for (const id of readdirSync(this.brainDir)) {
-      if (exclude.has(id)) continue;
+      if (exclude.has(id) || childIds.has(id)) continue;
       const log = this.adapter.getSessionLogPath(id);
       if (!existsSync(log)) continue;
       const mtime = statSync(log).mtimeMs;
@@ -84,6 +86,9 @@ class AgySource implements SessionSource {
   }
   public read(id: string, incremental: boolean): SessionRead {
     return this.adapter.getTurns(id, incremental);
+  }
+  public readSubagent(_parentSessionId: string, subagentId: string): SessionRead {
+    return this.adapter.getTurns(subagentId, false, false);
   }
   public forget(id: string): void {
     this.adapter.resetCache(id);
@@ -167,11 +172,15 @@ class OpenCodeSource implements SessionSource {
   public newest(facts: PaneFacts, exclude: Set<string>): string | null {
     if (!facts.cwd) return null;
     const rows =
-      this.adapter.withDb((db, table) =>
-        db
-          .query(`SELECT id FROM ${table} WHERE directory = ? AND time_updated >= ? ORDER BY time_updated DESC LIMIT 20`)
-          .all(facts.cwd!, facts.createdMs) as Array<{ id: string }>
-      ) ?? [];
+      this.adapter.withDb((db, table) => {
+        const parentFilter =
+          table === "session_v2" && this.adapter.tableColumns(db, table).has("parent_id")
+            ? " AND (parent_id IS NULL OR parent_id = '')"
+            : "";
+        return db
+          .query(`SELECT id FROM ${table} WHERE directory = ? AND time_updated >= ?${parentFilter} ORDER BY time_updated DESC LIMIT 20`)
+          .all(facts.cwd!, facts.createdMs) as Array<{ id: string }>;
+      }) ?? [];
     return rows.find((r) => !exclude.has(r.id))?.id ?? null;
   }
   public lastWritten(sessionId: string): number | null {
@@ -219,13 +228,20 @@ class OpenCodeSource implements SessionSource {
   public read(id: string, incremental = false): SessionRead {
     return this.adapter.getTurns(id, incremental);
   }
+  public readSubagent(_parentSessionId: string, subagentId: string): SessionRead {
+    return this.adapter.getTurns(subagentId, false, false);
+  }
   public forget(): void {}
   public list(folder: string): PastSession[] {
     return (
       this.adapter.withDb((db, table) => {
+        const parentFilter =
+          table === "session_v2" && this.adapter.tableColumns(db, table).has("parent_id")
+            ? " AND (parent_id IS NULL OR parent_id = '')"
+            : "";
         const rows = db
           .query(
-            `SELECT id, title, time_updated FROM ${table} WHERE (directory = ? OR directory LIKE ?) AND time_archived IS NULL ORDER BY time_updated DESC LIMIT 50`
+            `SELECT id, title, time_updated FROM ${table} WHERE (directory = ? OR directory LIKE ?) AND time_archived IS NULL${parentFilter} ORDER BY time_updated DESC LIMIT 50`
           )
           .all(folder, `${folder}/%`) as Array<{ id: string; title: string | null; time_updated: number }>;
         return rows.map((r) => {
@@ -310,6 +326,22 @@ export class AgentAdapterManager {
 
   public getTurns(agent: string, sessionId: string, incremental = false): SessionRead | null {
     return this.callSource<SessionRead | null>(agent, "read", null, (source) => source.read(sessionId, incremental));
+  }
+
+  /** `agent-session-normalization.md` §3.4 & `protocol.md` §4.20: current info and turns of one sub-agent. */
+  public getSubagent(
+    agent: string,
+    sessionId: string,
+    subagentId: string
+  ): { subagent: SubagentInfo; turns: NormalizedTurn[] } | null {
+    return this.callSource(agent, "subagent", null, (source) => {
+      if (!source.readSubagent) return null;
+      const parent = source.read(sessionId, true);
+      const subagent = parent.subagents?.find((s) => s.id === subagentId);
+      if (!subagent) return null;
+      const child = source.readSubagent(sessionId, subagentId);
+      return { subagent, turns: child.turns };
+    });
   }
 
   /** File whose changes mean the session has new records; watched instead of polling. */

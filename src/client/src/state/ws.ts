@@ -1,7 +1,21 @@
 import { reconcile } from "solid-js/store";
 import { state, setState, applySyncedClientConfig, setUnread, showToast, writePref } from "./store";
 import { load, save, remove, clearAll, sweep, meta, migrateLocalStorageCache, getMemoryPaneView, applyPaneTail, type PaneCacheEntry } from "./pane-cache";
-import type { ClientMessage, ServerMessage, SnapshotPayload, PaneStatePayload, ClientConfig, AgentStatus, HaveInfo, QuotaProviderState } from "../../../types/protocol";
+import type {
+  ClientMessage,
+  ServerMessage,
+  SnapshotPayload,
+  PaneStatePayload,
+  ClientConfig,
+  AgentStatus,
+  HaveInfo,
+  QuotaProviderState,
+  NormalizedTurn,
+  SessionStats,
+  TodoItem,
+  SubagentInfo,
+  SessionInfo,
+} from "../../../types/protocol";
 import { hashTurn } from "../../../types/protocol";
 import { t } from "../i18n";
 
@@ -42,6 +56,7 @@ function saveActivePaneSnapshot(paneId: string): void {
       sessionStats: state.sessionStats ? toPlain(state.sessionStats) : null,
       sessionTitle: state.sessionTitle,
       todos: state.todos ? toPlain(state.todos) : null,
+      subagents: toPlain(state.subagents),
       session: state.session ? toPlain(state.session) : null,
       queue: toPlain(state.queue),
     });
@@ -252,6 +267,38 @@ function trackUnread(snap: SnapshotPayload): void {
   for (const id of Object.keys(state.unread)) if (!alive.has(id)) setUnread(id, false);
 }
 
+/** Apply an incremental turn delta payload (`pane_bootstrap.resume` or `turns_delta`) to store state. */
+function applyTurnDelta(
+  paneId: string,
+  delta: {
+    sinceTurnIndex: number;
+    appendTurns: NormalizedTurn[];
+    patchLastTurn?: NormalizedTurn;
+    sessionStats?: SessionStats;
+    sessionTitle?: string;
+    todos?: TodoItem[];
+    subagents?: SubagentInfo[];
+    session?: SessionInfo;
+  }
+): void {
+  setState("paneSyncing", false);
+  const { sinceTurnIndex, appendTurns, patchLastTurn, sessionStats, sessionTitle, todos, subagents, session } = delta;
+  let current = [...state.normalizedTurns];
+  if (sinceTurnIndex === 0 && !patchLastTurn) {
+    current = appendTurns;
+  } else {
+    if (patchLastTurn) current[Math.max(0, sinceTurnIndex - (appendTurns.length > 0 ? 1 : 0))] = patchLastTurn;
+    if (appendTurns.length > 0) current = [...current.slice(0, sinceTurnIndex), ...appendTurns];
+  }
+  setState("normalizedTurns", reconcile(current));
+  if (sessionStats) setState("sessionStats", sessionStats);
+  if (sessionTitle) setState("sessionTitle", sessionTitle);
+  if (todos) setState("todos", todos);
+  if (subagents) setState("subagents", reconcile(subagents));
+  if (session) setState("session", session);
+  debouncedSaveActivePaneSnapshot(paneId);
+}
+
 /** Exported for tests; the socket's onmessage is the only production caller. */
 export function handleServerMessage(msg: ServerMessage): void {
   switch (msg.type) {
@@ -330,6 +377,7 @@ export function handleServerMessage(msg: ServerMessage): void {
           sessionStats: msg.payload.turns.sessionStats || null,
           sessionTitle: msg.payload.turns.sessionTitle || null,
           todos: msg.payload.turns.todos || null,
+          subagents: msg.payload.turns.subagents || [],
           session: msg.payload.turns.session,
           paneSyncing: false,
         });
@@ -341,21 +389,7 @@ export function handleServerMessage(msg: ServerMessage): void {
           saveActivePaneSnapshot(msg.payload.paneId);
         }
       } else if (msg.payload.resume) {
-        setState("paneSyncing", false);
-        const { sinceTurnIndex, appendTurns, patchLastTurn, sessionStats, sessionTitle, todos, session } = msg.payload.resume;
-        let current = [...state.normalizedTurns];
-        if (sinceTurnIndex === 0 && !patchLastTurn) {
-          current = appendTurns;
-        } else {
-          if (patchLastTurn) current[Math.max(0, sinceTurnIndex - (appendTurns.length > 0 ? 1 : 0))] = patchLastTurn;
-          if (appendTurns.length > 0) current = [...current.slice(0, sinceTurnIndex), ...appendTurns];
-        }
-        setState("normalizedTurns", reconcile(current));
-        if (sessionStats) setState("sessionStats", sessionStats);
-        if (sessionTitle) setState("sessionTitle", sessionTitle);
-        if (todos) setState("todos", todos);
-        if (session) setState("session", session);
-        debouncedSaveActivePaneSnapshot(msg.payload.paneId);
+        applyTurnDelta(msg.payload.paneId, msg.payload.resume);
       }
       return;
     }
@@ -375,6 +409,7 @@ export function handleServerMessage(msg: ServerMessage): void {
         sessionStats: msg.payload.sessionStats || null,
         sessionTitle: msg.payload.sessionTitle || null,
         todos: msg.payload.todos || null,
+        subagents: msg.payload.subagents || [],
         session: msg.payload.session,
         paneSyncing: false,
       });
@@ -400,21 +435,7 @@ export function handleServerMessage(msg: ServerMessage): void {
         }
         paneSeqs.set(msg.payload.paneId, msg.payload.seq);
       }
-      setState("paneSyncing", false);
-      const { sinceTurnIndex, appendTurns, patchLastTurn, sessionStats, sessionTitle, todos, session } = msg.payload;
-      let current = [...state.normalizedTurns];
-      if (sinceTurnIndex === 0 && !patchLastTurn) {
-        current = appendTurns;
-      } else {
-        if (patchLastTurn) current[Math.max(0, sinceTurnIndex - (appendTurns.length > 0 ? 1 : 0))] = patchLastTurn;
-        if (appendTurns.length > 0) current = [...current.slice(0, sinceTurnIndex), ...appendTurns];
-      }
-      setState("normalizedTurns", reconcile(current));
-      if (sessionStats) setState("sessionStats", sessionStats);
-      if (sessionTitle) setState("sessionTitle", sessionTitle);
-      if (todos) setState("todos", todos);
-      if (session) setState("session", session);
-      debouncedSaveActivePaneSnapshot(msg.payload.paneId);
+      applyTurnDelta(msg.payload.paneId, msg.payload);
       return;
     }
 
@@ -524,7 +545,12 @@ export function request(msg: WithoutId<Command>): Promise<any> {
 
 export function sendPrompt(text: string, attachments: string[] = []): Promise<any> {
   if (!state.activePaneId) return Promise.reject({ code: "ERR_NOT_FOUND", message: "no pane" });
-  return request({ type: "agent_prompt", payload: { targetPaneId: state.activePaneId, text, ...(attachments.length ? { attachments } : {}) } });
+  return request({ type: "agent_prompt", payload: { targetPaneId: state.activePaneId, text, ...(attachments.length ? { attachments } : {}) } }).then(
+    (res) => {
+      if (res?.duplicate) showToast(t("composer.duplicateSkipped"));
+      return res;
+    },
+  );
 }
 
 export function sendKeys(keys: string[]): void {
@@ -537,7 +563,14 @@ export function setScreenWatch(paneId: string, on: boolean): void {
   sendMessage({ type: "screen_watch", id: nextId(), payload: { paneId, on } });
 }
 
-export function getDetail(payload: { paneId: string; kind: "tool" | "reasoning" | "file"; turnId?: string; callId?: string; filePath?: string }): Promise<any> {
+export function getDetail(payload: {
+  paneId: string;
+  kind: "tool" | "reasoning" | "file" | "subagent";
+  turnId?: string;
+  callId?: string;
+  filePath?: string;
+  subagentId?: string;
+}): Promise<any> {
   return request({ type: "detail_get", payload });
 }
 
@@ -575,6 +608,7 @@ export async function selectPane(paneId: string): Promise<void> {
     sessionStats: memoryView?.sessionStats || null,
     sessionTitle: memoryView?.sessionTitle || null,
     todos: memoryView?.todos || null,
+    subagents: memoryView?.subagents || [],
     session: memoryView?.session || null,
     queue: memoryView?.queue || [],
     queuePaused: false,
@@ -612,6 +646,7 @@ export async function selectPane(paneId: string): Promise<void> {
       sessionStats: cached.sessionStats || null,
       sessionTitle: cached.sessionTitle || null,
       todos: cached.todos || null,
+      subagents: cached.subagents || [],
       session: cached.session || null,
       queue: cached.queue || [],
       paneSyncing: true,

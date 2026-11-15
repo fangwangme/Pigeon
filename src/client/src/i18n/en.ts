@@ -62,6 +62,7 @@ export const en = {
   "composer.placeholderCommand": "Type a command",
   "composer.placeholderQueued": "Messages queue until this turn ends",
   "composer.placeholderReply": "Reply…",
+  "composer.duplicateSkipped": "Already sent just now; skipped",
 
   "conn.computerDown": "Computer not connected",
   "conn.herdrDown": "Herdr not responding",
@@ -242,6 +243,14 @@ export const en = {
   "status.done": "Done",
   "status.idle": "Idle",
 
+  "subagents.title": "Sub-agents",
+  "subagents.menu": "Sub-agents ({count})",
+  "subagents.runningCapsule": { one: "{count} sub-agent running", other: "{count} sub-agents running" },
+  "subagents.statusRunning": "Running",
+  "subagents.statusCompleted": "Completed",
+  "subagents.statusFailed": "Failed",
+  "subagents.emptyLog": "No messages to show",
+
   "summary.run": "Running {command}",
   "summary.thinking": "Thinking",
 
@@ -278,6 +287,7 @@ export const en = {
   "transcript.thoughtFor": "Thought for {seconds} s",
   "transcript.thought": "Thinking",
   "transcript.copyReply": "Copy reply",
+  "transcript.copyPrompt": "Copy prompt",
   "transcript.compacted": "Context compacted",
 
   "verb.run": "Run",

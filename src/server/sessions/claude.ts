@@ -1,6 +1,6 @@
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
-import type { FileDiffSummary, TodoItem } from "../../shared/agent-session";
+import type { FileDiffSummary, SubagentInfo, TodoItem } from "../../shared/agent-session";
 import type { PastSession } from "../../types/protocol";
 import { claudeSlug, countPatch, fileFallbackTs, isEnoent, isObj, JsonlTail, lineDiff, readHeadJsonLines, readTailJsonLines, str, todoStatus, TurnBuilder, type SessionRead } from "./common";
 import type { PaneFacts, SessionSource } from "./source";
@@ -10,7 +10,7 @@ export class ClaudeSource implements SessionSource {
   public readonly agent = "claude";
   private root: string;
   private paths = new Map<string, string>();
-  private readers = new Map<string, { tail: JsonlTail; builder: TurnBuilder }>();
+  private readers = new Map<string, { tail: JsonlTail; builder: TurnBuilder; subagents: ClaudeSubagents }>();
 
   constructor(home: string) {
     this.root = join(home, ".claude");
@@ -88,15 +88,30 @@ export class ClaudeSource implements SessionSource {
     if (!path) return { turns: [] };
     let reader = this.readers.get(sessionId);
     if (!reader || !incremental) {
-      reader = { tail: new JsonlTail(path), builder: new TurnBuilder(fileFallbackTs(path)) };
+      reader = { tail: new JsonlTail(path), builder: new TurnBuilder(fileFallbackTs(path)), subagents: new ClaudeSubagents() };
       this.readers.set(sessionId, reader);
     }
     const { records, reset } = reader.tail.read();
     if (reset) {
       reader.builder = new TurnBuilder(fileFallbackTs(path));
+      reader.subagents = new ClaudeSubagents();
     }
-    for (const r of records) applyRecord(reader.builder, r);
-    return reader.builder.result("AskUserQuestion", "ExitPlanMode");
+    for (const r of records) applyRecord(reader.builder, r, false, reader.subagents);
+    const out = reader.builder.result("AskUserQuestion", "ExitPlanMode");
+    const subs = reader.subagents.list();
+    if (subs.length > 0) out.subagents = subs;
+    return out;
+  }
+
+  public readSubagent(parentSessionId: string, subagentId: string): SessionRead {
+    const parentPath = this.paths.get(parentSessionId);
+    if (!parentPath) return { turns: [] };
+    const subPath = parentPath.replace(/\.jsonl$/, `/subagents/agent-${subagentId}.jsonl`);
+    if (!existsSync(subPath)) return { turns: [] };
+    const tail = new JsonlTail(subPath);
+    const builder = new TurnBuilder(fileFallbackTs(subPath));
+    for (const r of tail.read().records) applyRecord(builder, r, true);
+    return builder.result("AskUserQuestion", "ExitPlanMode");
   }
 
   public forget(sessionId: string): void {
@@ -174,6 +189,7 @@ const NOT_PROMPT = /^\s*<(command-|local-command-|system-reminder)/;
 /** The prompt text of a `user` record, or null when it is a tool result or meta line. */
 function promptText(r: Record<string, any>): string | null {
   if (r.isMeta === true || r.isCompactSummary === true) return null;
+  if (isObj(r.origin) && r.origin.kind === "task-notification") return null;
   const content = r.message?.content;
   if (typeof content === "string") return NOT_PROMPT.test(content) ? null : content;
   if (!Array.isArray(content)) return null;
@@ -234,8 +250,58 @@ function describeTool(name: string, input: Record<string, any>) {
   }
 }
 
-function applyRecord(b: TurnBuilder, r: unknown): void {
-  if (!isObj(r) || r.isSidechain === true) return;
+class ClaudeSubagents {
+  private ordered: SubagentInfo[] = [];
+  private byCall = new Map<string, SubagentInfo>();
+  private byId = new Map<string, SubagentInfo>();
+
+  public addCall(callId: string, info: SubagentInfo): void {
+    this.ordered.push(info);
+    this.byCall.set(callId, info);
+    this.byId.set(info.id, info);
+  }
+
+  public toolResult(callId: string, isError: boolean, result: unknown): void {
+    const info = this.byCall.get(callId);
+    if (!info) return;
+    if (isObj(result)) {
+      const agentId = str(result.agentId);
+      if (agentId) {
+        info.id = agentId;
+        this.byId.set(agentId, info);
+      }
+      const resolvedModel = str(result.resolvedModel);
+      if (resolvedModel) info.model = resolvedModel;
+      if (str(result.status) === "async_launched") {
+        info.status = "running";
+        return;
+      }
+    }
+    info.status = isError ? "failed" : "completed";
+  }
+
+  public taskNotification(text: string): void {
+    const idMatch = /<task-id>([^<]+)<\/task-id>/.exec(text);
+    const statusMatch = /<status>([^<]+)<\/status>/.exec(text);
+    if (!idMatch) return;
+    const info = this.byId.get(idMatch[1].trim());
+    if (!info) return;
+    info.status = statusMatch?.[1]?.trim() === "completed" ? "completed" : "failed";
+  }
+
+  public list(): SubagentInfo[] {
+    return this.ordered.map((s) => ({ ...s }));
+  }
+}
+
+function rawUserText(content: unknown): string {
+  if (typeof content === "string") return content;
+  if (Array.isArray(content)) return content.filter((b) => isObj(b) && b.type === "text").map((b) => b.text).join("\n");
+  return "";
+}
+
+function applyRecord(b: TurnBuilder, r: unknown, allowSidechain = false, subagents?: ClaudeSubagents): void {
+  if (!isObj(r) || (!allowSidechain && r.isSidechain === true)) return;
   const ts = b.resolveTs(r.timestamp);
   if (r.type === "custom-title" || r.type === "ai-title") {
     b.title = str(r.customTitle) ?? str(r.aiTitle) ?? b.title;
@@ -255,6 +321,7 @@ function applyRecord(b: TurnBuilder, r: unknown): void {
         const output = resultText(block.content);
         const exit = /^Exit code (\d+)/.exec(output);
         const call = b.toolResult(id, output, block.is_error === true, ts, exit ? Number(exit[1]) : undefined);
+        subagents?.toolResult(id, block.is_error === true, r.toolUseResult);
         // Write reports whether it created or replaced the file; structured patches are exact.
         const result = r.toolUseResult;
         if (call && isObj(result)) {
@@ -274,6 +341,9 @@ function applyRecord(b: TurnBuilder, r: unknown): void {
           }
         }
       }
+    }
+    if (subagents && isObj(r.origin) && r.origin.kind === "task-notification") {
+      subagents.taskNotification(rawUserText(content));
     }
     const text = promptText(r);
     if (text !== null) {
@@ -304,6 +374,17 @@ function applyRecord(b: TurnBuilder, r: unknown): void {
         const name = str(block.name);
         if (!id || !name) continue;
         const input = isObj(block.input) ? block.input : {};
+        if (subagents && (name === "Agent" || name === "Task")) {
+          const type = str(input.subagent_type);
+          const model = str(input.model);
+          subagents.addCall(id, {
+            id,
+            title: str(input.description) ?? name,
+            ...(type ? { type } : {}),
+            ...(model ? { model } : {}),
+            status: "running",
+          });
+        }
         const todos: TodoItem[] | undefined =
           name === "TodoWrite" && Array.isArray(input.todos)
             ? input.todos.filter(isObj).map((t: any) => ({ text: str(t.content) ?? "", status: todoStatus(t.status) }))

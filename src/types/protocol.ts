@@ -1,5 +1,5 @@
-import type { NormalizedTurn, SessionStats, TodoItem } from "../shared/agent-session";
-export type { NormalizedTurn, NormalizedToolCall, FileDiffSummary, NormalizedQuestion, SessionStats, TodoItem, TurnItem, ToolVerb } from "../shared/agent-session";
+import type { NormalizedTurn, SessionStats, SubagentInfo, TodoItem } from "../shared/agent-session";
+export type { NormalizedTurn, NormalizedToolCall, FileDiffSummary, NormalizedQuestion, SessionStats, SubagentInfo, TodoItem, TurnItem, ToolVerb } from "../shared/agent-session";
 
 export type AgentStatus = "idle" | "working" | "blocked" | "done" | "unknown";
 
@@ -341,6 +341,7 @@ export interface NormalizedTurnsPayload {
   sessionStats?: SessionStats;
   sessionTitle?: string;
   todos?: TodoItem[];
+  subagents?: SubagentInfo[];
   session: SessionInfo;
 }
 
@@ -354,6 +355,7 @@ export interface TurnsDeltaPayload {
   sessionStats?: SessionStats;
   sessionTitle?: string;
   todos?: TodoItem[];
+  subagents?: SubagentInfo[];
   session?: SessionInfo;
   isStreaming?: boolean;
 }
@@ -505,14 +507,14 @@ export type ClientMessage =
   | { type: "usage_get"; id: string; payload: { preset: string; from?: string; to?: string; agents: string[]; force?: boolean } }
   | { type: "usage_day"; id: string; payload: { date: string; agents: string[] } }
   | { type: "usage_model"; id: string; payload: { model: string; from: string; to: string; agents: string[] } }
-  | { type: "detail_get"; id: string; payload: { paneId: string; kind: "tool" | "reasoning" | "file"; turnId?: string; callId?: string; filePath?: string } }
+  | { type: "detail_get"; id: string; payload: { paneId: string; kind: "tool" | "reasoning" | "file" | "subagent"; turnId?: string; callId?: string; filePath?: string; subagentId?: string } }
   | { type: "screen_watch"; id: string; payload: { paneId: string; on: boolean } };
 
 // Server -> Client messages
 export type ServerMessage =
   | { type: "welcome"; replyTo: string; payload: { protocolVersion: string; serverVersion: string; buildId: string; environment?: { kind: "production" | "dev" | "test"; port: number }; deviceId: string; clientConfig: ClientConfig; recipes: Record<string, AgentRecipeSummary> } }
   | { type: "pong"; timestamp: number }
-  | { type: "ack"; replyTo: string; payload: { status: "ok"; [key: string]: any } }
+  | { type: "ack"; replyTo: string; payload: ({ status: "ok" } | { duplicate: true }) & Record<string, any> }
   | { type: "error"; replyTo?: string; error: { code: string; message: string; details?: any } }
   | { type: "pane_state"; payload: PaneStatePayload }
   | { type: "snapshot_update"; payload: SnapshotPayload }

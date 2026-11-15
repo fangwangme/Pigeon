@@ -177,6 +177,8 @@ export function validateClientMessage(raw: unknown): ValidationResult {
         if (!isStr(p.turnId)) return fail(id, "detail_get reasoning needs turnId");
       } else if (p.kind === "file") {
         if (!isStr(p.filePath)) return fail(id, "detail_get file needs filePath");
+      } else if (p.kind === "subagent") {
+        if (!isStr(p.subagentId)) return fail(id, "detail_get subagent needs subagentId");
       } else {
         return fail(id, `Unsupported detail kind '${p.kind}'`);
       }

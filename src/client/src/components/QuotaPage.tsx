@@ -291,7 +291,7 @@ export function QuotaPage() {
                             {PROVIDER_NAMES[p.provider] || p.provider.toUpperCase()}
                           </span>
                         </div>
-                        <Show when={state.quotaShowAccount !== false && (p.snapshot?.plan || p.snapshot?.account)}>
+                        <Show when={state.quotaShowAccount === true && (p.snapshot?.plan || p.snapshot?.account)}>
                           <div style={{ "font-size": "12.5px", color: "var(--muted)", "margin-top": "2px" }}>
                             <Show when={p.snapshot?.plan}>
                               <b style={{ color: "var(--fg)", "font-weight": 600 }}>{p.snapshot?.plan} · </b>

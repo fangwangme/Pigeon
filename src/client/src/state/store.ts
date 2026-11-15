@@ -13,6 +13,7 @@ import type {
   SessionInfo,
   SessionStats,
   SkillEntry,
+  SubagentInfo,
   ThemeMode,
   TodoItem,
   WorkspaceSummary,
@@ -63,6 +64,7 @@ export interface AppState {
   sessionStats: SessionStats | null;
   sessionTitle: string | null;
   todos: TodoItem[] | null;
+  subagents: SubagentInfo[];
   session: SessionInfo | null;
   paneSyncing: boolean;
   paneLoaded: boolean;
@@ -148,6 +150,7 @@ const [state, setState] = createStore<AppState>({
   sessionStats: null,
   sessionTitle: null,
   todos: null,
+  subagents: [],
   session: null,
   paneSyncing: false,
   paneLoaded: false,
@@ -170,7 +173,7 @@ const [state, setState] = createStore<AppState>({
   quotaUsageEnabled: readPref("pigeon_quota_usage_enabled") !== "0",
   quotaDisplay: "remaining",
   quotaButton: true,
-  quotaShowAccount: true,
+  quotaShowAccount: false,
   usageScanMode: "scheduled",
   usageScanInterval: "15m",
   quotaProviders: { claude: true, codex: true, antigravity: true },

@@ -63,6 +63,7 @@ export const zh: Messages = {
   "composer.placeholderCommand": "输入命令",
   "composer.placeholderQueued": "补充消息会排队发送",
   "composer.placeholderReply": "回复…",
+  "composer.duplicateSkipped": "刚刚发过这条，已跳过",
 
   "conn.computerDown": "电脑未连接",
   "conn.herdrDown": "Herdr 没有响应",
@@ -243,6 +244,14 @@ export const zh: Messages = {
   "status.done": "已完成",
   "status.idle": "空闲",
 
+  "subagents.title": "子代理",
+  "subagents.menu": "子代理 ({count})",
+  "subagents.runningCapsule": "{count} 个子代理运行中",
+  "subagents.statusRunning": "运行中",
+  "subagents.statusCompleted": "已完成",
+  "subagents.statusFailed": "失败",
+  "subagents.emptyLog": "没有可显示的记录",
+
   "summary.run": "运行 {command}",
   "summary.thinking": "正在思考",
 
@@ -279,6 +288,7 @@ export const zh: Messages = {
   "transcript.thoughtFor": "思考了 {seconds} 秒",
   "transcript.thought": "思考",
   "transcript.copyReply": "复制回复",
+  "transcript.copyPrompt": "复制消息",
   "transcript.compacted": "上下文已压缩",
 
   "verb.run": "运行",

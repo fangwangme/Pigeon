@@ -61,6 +61,7 @@ export interface WsServerOptions {
   usageService?: UsageService;
   queueFilePath?: string;
   queueSendTimeoutMs?: number;
+  promptDuplicateWindowMs?: number;
   watchDebounceMs?: number;
   port?: number;
   productionPort?: number;
@@ -130,6 +131,8 @@ export class WsServer {
   /** `item` is what the phone sees (its own text and upload ids, so **编辑** can restore them); `send` is the composed prompt. */
   private queueFilePath?: string;
   private queueSendTimeoutMs: number;
+  private promptDuplicateWindowMs: number;
+  private lastPromptByPane = new Map<string, { hash: string; at: number }>();
   private queues = new Map<string, Array<{ item: QueuedPrompt; send: string; created_ms: number }>>();
   private queueStates = new Map<string, QueueState>();
   private restoredPaneIds = new Set<string>();
@@ -152,6 +155,7 @@ export class WsServer {
     this.buildId = options.buildId;
     this.queueFilePath = options.queueFilePath;
     this.queueSendTimeoutMs = options.queueSendTimeoutMs ?? 30_000;
+    this.promptDuplicateWindowMs = options.promptDuplicateWindowMs ?? 60_000;
     this.loadQueues();
     this.herdrClient = options.herdrClient;
     this.pushManager = options.pushManager;
@@ -261,7 +265,10 @@ export class WsServer {
 
       if (!meta?.paneId) {
         for (const paneId of this.paneStore.trackedPaneIds()) {
-          if (!this.herdrClient.hasPane(paneId)) this.paneStore.closePane(paneId);
+          if (!this.herdrClient.hasPane(paneId)) {
+            this.paneStore.closePane(paneId);
+            this.lastPromptByPane.delete(paneId);
+          }
         }
         for (const paneId of Array.from(this.queues.keys())) {
           if (!this.herdrClient.hasPane(paneId)) {
@@ -510,8 +517,15 @@ export class WsServer {
       case "agent_prompt": {
         const { targetPaneId, text, attachments } = msg.payload;
         if (!this.requireKnownPane(ws, msg.id, targetPaneId)) return;
+        const attachmentIds = attachments ?? [];
+        const hash = createHash("sha256").update(JSON.stringify([text, attachmentIds])).digest("hex");
+        const prev = this.lastPromptByPane.get(targetPaneId);
+        if (this.promptDuplicateWindowMs > 0 && prev && prev.hash === hash && Date.now() - prev.at < this.promptDuplicateWindowMs) {
+          this.send(ws, { type: "ack", replyTo: msg.id, payload: { duplicate: true } });
+          return;
+        }
         const paths: string[] = [];
-        for (const id of attachments ?? []) {
+        for (const id of attachmentIds) {
           const info = this.uploadStore?.get(id);
           if (!info) {
             this.sendError(ws, msg.id, ProtocolErrors.ERR_INVALID_PAYLOAD, `Unknown upload '${id}'`);
@@ -520,7 +534,7 @@ export class WsServer {
           paths.push(info.path);
         }
         const full = this.composePrompt(targetPaneId, text, paths);
-        await this.submitPrompt(ws, msg.id, targetPaneId, full, { text, attachments: attachments ?? [] });
+        await this.submitPrompt(ws, msg.id, targetPaneId, full, { text, attachments: attachmentIds }, hash);
         return;
       }
 
@@ -874,6 +888,16 @@ export class WsServer {
           this.sendAck(ws, msg.id, { diff });
           return;
         }
+        if (kind === "subagent") {
+          const { subagentId } = msg.payload;
+          const result = subagentId ? this.agentAdapters.getSubagent(sessionState.agent, sessionState.sessionId, subagentId) : null;
+          if (!result) {
+            this.sendError(ws, msg.id, ProtocolErrors.ERR_NOT_FOUND, `Sub-agent ${subagentId} not found`);
+            return;
+          }
+          this.sendAck(ws, msg.id, { subagent: result.subagent, turns: result.turns.map(toLightTurn) });
+          return;
+        }
         this.sendError(ws, msg.id, ProtocolErrors.ERR_INVALID_PAYLOAD, `Unknown detail kind ${kind}`);
         return;
       }
@@ -925,6 +949,7 @@ export class WsServer {
             ...(sessionState.stats ? { sessionStats: toLightStats(sessionState.stats) } : {}),
             ...(sessionState.sessionTitle ? { sessionTitle: sessionState.sessionTitle } : {}),
             ...(sessionState.todos ? { todos: sessionState.todos } : {}),
+            ...(sessionState.subagents ? { subagents: sessionState.subagents } : {}),
             session: this.paneStore.sessionInfo(paneId, agentKind),
           };
         }
@@ -940,6 +965,7 @@ export class WsServer {
             ...(sessionState.stats ? { sessionStats: toLightStats(sessionState.stats) } : {}),
             ...(sessionState.sessionTitle ? { sessionTitle: sessionState.sessionTitle } : {}),
             ...(sessionState.todos ? { todos: sessionState.todos } : {}),
+            ...(sessionState.subagents ? { subagents: sessionState.subagents } : {}),
             session: this.paneStore.sessionInfo(paneId, agentKind),
           };
         }
@@ -1317,7 +1343,14 @@ export class WsServer {
   }
 
   /** Queues while the agent works or others wait; sends otherwise (protocol.md §4.2). */
-  private async submitPrompt(ws: Ws, replyTo: string | null, paneId: string, send: string, shown: { text: string; attachments: string[] }): Promise<void> {
+  private async submitPrompt(
+    ws: Ws,
+    replyTo: string | null,
+    paneId: string,
+    send: string,
+    shown: { text: string; attachments: string[] },
+    hash: string
+  ): Promise<void> {
     const queue = this.queues.get(paneId) ?? [];
     const state = this.getQueueState(paneId);
     const herdrStatus = this.herdrClient.getPaneHerdrStatus(paneId);
@@ -1329,6 +1362,7 @@ export class WsServer {
       queue.push({ item, send, created_ms });
       this.queues.set(paneId, queue);
       this.saveQueues();
+      this.lastPromptByPane.set(paneId, { hash, at: Date.now() });
       this.sendQueue(paneId);
       this.logger?.(`${this.paneLogLabel(paneId)} queue: enqueued ${item.queueId}`);
       if (replyTo) this.sendAck(ws, replyTo, { queued: true, queueId: item.queueId });
@@ -1337,6 +1371,7 @@ export class WsServer {
     this.logger?.(`${this.paneLogLabel(paneId)} prompt: sent immediate`);
     // Not queued on failure: the phone keeps the draft, so a resend would deliver it twice.
     await this.herdrClient.sendPrompt(paneId, send, shown.attachments.length > 0);
+    this.lastPromptByPane.set(paneId, { hash, at: Date.now() });
     if (replyTo) this.sendAck(ws, replyTo, { queued: false });
   }
 
@@ -1383,6 +1418,7 @@ export class WsServer {
       }
       this.queueStates.delete(paneId);
       this.queues.delete(paneId);
+      this.lastPromptByPane.delete(paneId);
       this.lastPaneTailAt.delete(paneId);
       this.lastStatus.delete(paneId);
       this.lastPushAt.delete(`${paneId}:blocked`);

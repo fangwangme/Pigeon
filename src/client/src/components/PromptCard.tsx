@@ -96,7 +96,8 @@ function PermissionCard(props: { p: InteractionCardData }) {
     const c = call();
     if (!c) return props.p.payload || "";
     if (c.verb === "run") return callCommand(c);
-    return "";
+    if (c.diff) return "";
+    return props.p.payload || "";
   };
   return (
     <div class="qcard">
