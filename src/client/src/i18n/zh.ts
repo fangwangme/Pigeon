@@ -318,6 +318,9 @@ export const zh: Messages = {
   "quota.creditsExpiry": "到期时间",
   "quota.extraUsage": "额外用量：{used} / {limit}",
   "quota.errorPrefix": "刷新失败：{error}。下面仍显示上一次的数据。",
+  "quota.disabledNotice": "订阅额度查询已关闭，可在 设置 › 额度与用量 中开启",
+  "usage.disabledNotice": "Token 用量统计已关闭，可在 设置 › 额度与用量 中开启",
+  "quota.openSettings": "前往设置",
 
   "usage.today": "今天",
   "usage.loading": "正在统计用量…",

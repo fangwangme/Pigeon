@@ -317,6 +317,9 @@ export const en = {
   "quota.creditsExpiry": "Expires",
   "quota.extraUsage": "Extra usage: {used} / {limit}",
   "quota.errorPrefix": "Refresh failed: {error}. Previous data is shown below.",
+  "quota.disabledNotice": "Subscription quota tracking is off. Enable it in Settings › Quota & usage.",
+  "usage.disabledNotice": "Token usage tracking is off. Enable it in Settings › Quota & usage.",
+  "quota.openSettings": "Open Settings",
 
   "usage.today": "Today",
   "usage.loading": "Loading usage…",

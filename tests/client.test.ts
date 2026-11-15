@@ -6,7 +6,7 @@ import { formatModelNameWithRecipes } from "../src/client/src/utils/model-name";
 import { renderMarkdown } from "../src/client/src/utils/markdown";
 import { callCommand, callInputText } from "../src/client/src/utils/tool-call";
 import type { NormalizedToolCall } from "../src/types/protocol";
-import { state, setState } from "../src/client/src/state/store";
+import { state, setState, quotaButtonShown, quotaUsageTarget } from "../src/client/src/state/store";
 import { applyClientConfigWithTransitions, sendConfigPatch, handleServerMessage, initWebSocket } from "../src/client/src/state/ws";
 
 const rootDir = join(import.meta.dir, "..");
@@ -137,22 +137,70 @@ describe("mobile layout enhancements (mobile-ui-and-themes.md §1.2, §2.1)", ()
     expect(composerSrc).toContain("Math.min(ta.scrollHeight, 280)");
   });
 
-  test("quotaEnabled and usageEnabled independently gate Home, Settings, and routes (mobile-ui-and-themes.md §11.1, §11.4)", () => {
+  test("quotaEnabled and usageEnabled share one entry and show disabled notice on off tabs (mobile-ui-and-themes.md §11.1, §11.4)", () => {
+    const prev = {
+      quotaEnabled: state.quotaEnabled,
+      usageEnabled: state.usageEnabled,
+      quotaButton: state.quotaButton,
+    };
+    try {
+      setState("quotaButton", true);
+      setState("quotaEnabled", false);
+      setState("usageEnabled", true);
+      expect(quotaButtonShown()).toBe(true);
+      expect(quotaUsageTarget()).toBe("usage");
+
+      setState("quotaEnabled", true);
+      setState("usageEnabled", false);
+      expect(quotaButtonShown()).toBe(true);
+      expect(quotaUsageTarget()).toBe("quota");
+
+      setState("quotaEnabled", true);
+      setState("usageEnabled", true);
+      expect(quotaButtonShown()).toBe(true);
+      expect(quotaUsageTarget()).toBe("quota");
+
+      setState("quotaEnabled", false);
+      setState("usageEnabled", false);
+      expect(quotaButtonShown()).toBe(false);
+
+      setState("quotaEnabled", true);
+      setState("usageEnabled", true);
+      setState("quotaButton", false);
+      expect(quotaButtonShown()).toBe(false);
+    } finally {
+      setState(prev);
+    }
+
     const homeSrc = readFileSync(join(rootDir, "src", "client", "src", "components", "Home.tsx"), "utf-8");
     const matches = [...homeSrc.matchAll(/<Show when=\{([^}]+)\}>\s*<button aria-label=\{t\("quota\.title"\)\}/g)];
     expect(matches.length).toBe(2);
     for (const m of matches) {
       expect(m[1]).toContain("quotaButtonShown");
     }
+    expect(homeSrc).toContain("navigate({ name: quotaUsageTarget(), from: \"home\" })");
+    expect(homeSrc).toContain("navigate({ name: quotaUsageTarget(), from: \"agents\" })");
+    expect(homeSrc).toContain("state.quotaEnabled && quotaDot(state.quotaSnapshots)");
 
     const settingsSrc = readFileSync(join(rootDir, "src", "client", "src", "components", "Settings.tsx"), "utf-8");
     expect(settingsSrc).toContain("quotaEnabled");
     expect(settingsSrc).toContain("usageEnabled");
+    expect(settingsSrc).toContain("state.quotaEnabled || state.usageEnabled");
     expect(settingsSrc).not.toContain("quotaUsageEnabled");
 
     const indexSrc = readFileSync(join(rootDir, "src", "client", "src", "index.tsx"), "utf-8");
-    expect(indexSrc).toContain("quotaFeatureOn() && state.route.name === \"quota\"");
-    expect(indexSrc).toContain("usageFeatureOn() && state.route.name === \"usage\"");
+    expect(indexSrc).toContain("!quotaFeatureOn() && !usageFeatureOn()");
+    expect(indexSrc).toContain("(quotaFeatureOn() || usageFeatureOn()) && state.route.name === \"quota\"");
+    expect(indexSrc).toContain("(quotaFeatureOn() || usageFeatureOn()) && state.route.name === \"usage\"");
+
+    const quotaSrc = readFileSync(join(rootDir, "src", "client", "src", "components", "QuotaPage.tsx"), "utf-8");
+    expect(quotaSrc).toContain("FeatureDisabledNotice");
+    expect(quotaSrc).toContain("if (state.quotaEnabled &&");
+    expect(quotaSrc).toContain("if (!state.quotaEnabled || refreshing()) return");
+
+    const usageSrc = readFileSync(join(rootDir, "src", "client", "src", "components", "UsagePage.tsx"), "utf-8");
+    expect(usageSrc).toContain("FeatureDisabledNotice");
+    expect(usageSrc).toContain("if (!state.usageEnabled) return");
   });
 
   test("Quota and Usage pages render skeleton templates and loading animations before data arrives", () => {

@@ -299,4 +299,5 @@ export function draftKey(paneId: string | null): string {
 
 export const quotaFeatureOn = () => state.quotaEnabled;
 export const usageFeatureOn = () => state.usageEnabled;
-export const quotaButtonShown = () => quotaFeatureOn() && state.quotaButton;
+export const quotaButtonShown = () => (quotaFeatureOn() || usageFeatureOn()) && state.quotaButton;
+export const quotaUsageTarget = (): "quota" | "usage" => (quotaFeatureOn() ? "quota" : "usage");

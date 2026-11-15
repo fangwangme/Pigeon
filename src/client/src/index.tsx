@@ -244,11 +244,10 @@ function App() {
     resetWindowScroll();
   }, { defer: true }));
   createEffect(() => {
-    if (!state.configReady) return;
-    if (state.route.name === "quota" && !state.quotaEnabled) {
-      navigate({ name: "home" });
-    } else if (state.route.name === "usage" && !state.usageEnabled) {
-      navigate({ name: "home" });
+    if (state.configReady && !quotaFeatureOn() && !usageFeatureOn()) {
+      if (state.route.name === "quota" || state.route.name === "usage") {
+        navigate({ name: "home" });
+      }
     }
   });
   const solid = () => state.reduceTransparency ?? systemReduce();
@@ -274,10 +273,10 @@ function App() {
         <Match when={state.route.name === "settings"}>
           <Settings />
         </Match>
-        <Match when={quotaFeatureOn() && state.route.name === "quota"}>
+        <Match when={(quotaFeatureOn() || usageFeatureOn()) && state.route.name === "quota"}>
           <QuotaPage />
         </Match>
-        <Match when={usageFeatureOn() && state.route.name === "usage"}>
+        <Match when={(quotaFeatureOn() || usageFeatureOn()) && state.route.name === "usage"}>
           <UsagePage />
         </Match>
       </Switch>

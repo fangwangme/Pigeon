@@ -325,10 +325,6 @@ export function Settings() {
                   </button>
                 </div>
               </div>
-              <button class="li" onClick={() => sendConfigPatch({ quotaButton: !state.quotaButton })}>
-                <div class="tx">{t("settings.showQuotaButton")}</div>
-                <span class={`tg${state.quotaButton ? "" : " off"}`} />
-              </button>
               <button class="li" onClick={() => sendConfigPatch({ quotaShowAccount: state.quotaShowAccount !== true })}>
                 <div class="tx">{t("settings.quotaShowAccount")}</div>
                 <span class={`tg${state.quotaShowAccount === true ? "" : " off"}`} />
@@ -379,6 +375,13 @@ export function Settings() {
                   </button>
                 </div>
               </div>
+            </Show>
+
+            <Show when={state.quotaEnabled || state.usageEnabled}>
+              <button class="li" onClick={() => sendConfigPatch({ quotaButton: !state.quotaButton })}>
+                <div class="tx">{t("settings.showQuotaButton")}</div>
+                <span class={`tg${state.quotaButton ? "" : " off"}`} />
+              </button>
             </Show>
 
             <Show when={state.quotaEnabled || (state.usageEnabled && state.usageScanMode !== "realtime")}>

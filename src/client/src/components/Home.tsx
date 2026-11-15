@@ -1,5 +1,5 @@
 import { createMemo, createSignal, For, Show } from "solid-js";
-import { filterActive, navigate, quotaButtonShown, state, toggleCollapsed, type FilterState } from "../state/store";
+import { filterActive, navigate, quotaButtonShown, quotaUsageTarget, state, toggleCollapsed, type FilterState } from "../state/store";
 import { selectPane } from "../state/ws";
 import type { PaneSummary, TabSummary, WorkspaceSummary } from "../../../types/protocol";
 import { openOverlay } from "./overlays";
@@ -116,11 +116,11 @@ function agentPanes(): Array<{ ws: WorkspaceSummary; tab: TabSummary; pane: Pane
 }
 
 function FilterButton() {
-  const dot = () => quotaDot(state.quotaSnapshots);
+  const dot = () => (state.quotaEnabled ? quotaDot(state.quotaSnapshots) : null);
   return (
     <div class="cap">
       <Show when={quotaButtonShown()}>
-        <button aria-label={t("quota.title")} onClick={() => navigate({ name: "quota", from: "home" })}>
+        <button aria-label={t("quota.title")} onClick={() => navigate({ name: quotaUsageTarget(), from: "home" })}>
           <Icon name="gauge" />
           <Show when={dot()}>
             <span class={`dot ${dot() === "danger" ? "red" : "amber"}`} />
@@ -311,9 +311,9 @@ export function AgentsPage() {
         </div>
         <div class="cap">
           <Show when={quotaButtonShown()}>
-            <button aria-label={t("quota.title")} onClick={() => navigate({ name: "quota", from: "agents" })}>
+            <button aria-label={t("quota.title")} onClick={() => navigate({ name: quotaUsageTarget(), from: "agents" })}>
               <Icon name="gauge" />
-              <Show when={quotaDot(state.quotaSnapshots)}>
+              <Show when={state.quotaEnabled && quotaDot(state.quotaSnapshots)}>
                 <span class={`dot ${quotaDot(state.quotaSnapshots) === "danger" ? "red" : "amber"}`} />
               </Show>
             </button>

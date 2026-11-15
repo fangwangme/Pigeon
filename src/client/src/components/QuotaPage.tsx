@@ -2,7 +2,7 @@ import { createSignal, For, onCleanup, onMount, Show } from "solid-js";
 import { navigate, state } from "../state/store";
 import { fetchQuota } from "../state/ws";
 import { quotaLevel, quotaPace } from "../../../shared/quota";
-import { Icon, QuotaUsageTabs } from "./ui";
+import { FeatureDisabledNotice, Icon, QuotaUsageTabs } from "./ui";
 import { t } from "../i18n";
 
 const ORDERED_PROVIDERS = ["claude", "codex", "antigravity"] as const;
@@ -32,7 +32,7 @@ export function QuotaPage() {
   const [now, setNow] = createSignal(Date.now());
 
   onMount(() => {
-    if (state.configReady && (!state.quotaSnapshots || state.quotaSnapshots.length === 0)) {
+    if (state.quotaEnabled && state.configReady && (!state.quotaSnapshots || state.quotaSnapshots.length === 0)) {
       setInitialLoading(true);
       void fetchQuota().finally(() => {
         setInitialLoading(false);
@@ -43,7 +43,7 @@ export function QuotaPage() {
   });
 
   const doRefresh = async () => {
-    if (refreshing()) return;
+    if (!state.quotaEnabled || refreshing()) return;
     setRefreshing(true);
     try {
       await fetchQuota();
@@ -87,33 +87,39 @@ export function QuotaPage() {
           <Icon name="chevL" />
         </button>
         <div class="ht">
-          <div class="t">{state.usageEnabled ? t("quota.title") : t("settings.subscriptionQuota")}</div>
+          <div class="t">{t("quota.title")}</div>
           <div class="s">
-            {isLoading()
-              ? (refreshing() ? t("quota.refreshing") : t("quota.loading"))
-              : state.quotaUpdated
-              ? t("quota.refreshedAt", { time: formatTime(state.quotaUpdated) })
+            {state.quotaEnabled
+              ? (isLoading()
+                ? (refreshing() ? t("quota.refreshing") : t("quota.loading"))
+                : state.quotaUpdated
+                ? t("quota.refreshedAt", { time: formatTime(state.quotaUpdated) })
+                : "")
               : ""}
           </div>
         </div>
-        <button class="cbtn" aria-label={t("app.reload")} onClick={doRefresh}>
-          <span
-            style={{
-              display: "inline-flex",
-              "align-items": "center",
-              "justify-content": "center",
-              animation: isLoading() ? "spin .8s linear infinite" : "none",
-            }}
-          >
-            <Icon name="refresh" />
-          </span>
-        </button>
+        <Show when={state.quotaEnabled} fallback={<div style={{ width: "38px" }} />}>
+          <button class="cbtn" aria-label={t("app.reload")} onClick={doRefresh}>
+            <span
+              style={{
+                display: "inline-flex",
+                "align-items": "center",
+                "justify-content": "center",
+                animation: isLoading() ? "spin .8s linear infinite" : "none",
+              }}
+            >
+              <Icon name="refresh" />
+            </span>
+          </button>
+        </Show>
       </div>
 
       <div class="scroll">
         <div style={{ padding: "0 16px calc(30px + env(safe-area-inset-bottom))" }}>
           {/* Segmented switch */}
           <QuotaUsageTabs active="quota" from={backTarget()} />
+
+          <Show when={state.quotaEnabled} fallback={<FeatureDisabledNotice message={t("quota.disabledNotice")} />}>
 
           {/* Skeleton Template when loading without data */}
           <Show when={showSkeleton()}>
@@ -502,6 +508,7 @@ export function QuotaPage() {
                 {t("quota.manageProviders")}
               </button>
             </div>
+          </Show>
           </Show>
         </div>
       </div>

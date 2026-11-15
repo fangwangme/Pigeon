@@ -245,11 +245,12 @@ Without a valid pairing only the pairing guide shows: scan the QR code from `pig
 
 ## 11. Quota and usage
 
-Behavior and numbers come from `quota-and-usage.md`; this section is the presentation. The approved mockups are kept with issue #13's notes. Both pages share a header (back, the title **额度与用量** with the last refresh time, a refresh button; the standard page header with the top safe area of §1.1) and, when both `client.quotaEnabled` and `client.usageEnabled` are on, a segmented **额度 | 用量** switch below it (omitted when only one feature is enabled).
+Behavior and numbers come from `quota-and-usage.md`; this section is the presentation. The approved mockups are kept with issue #13's notes. Both pages share a header (back, the title **额度与用量**, the last refresh/scan time when that tab's feature is on, and a refresh button when on; the standard page header with the top safe area of §1.1) and, whenever at least one of `client.quotaEnabled` or `client.usageEnabled` is on, a segmented **额度 | 用量** switch below it (issue #25). Switching onto a disabled feature's tab stays on that page instead of returning home, shows an amber (`--warn`) notice telling where to enable it (**设置 › 额度与用量**) with a button opening Settings, and sends no requests for that feature.
 
 ### 11.1 Quota button
-- A gauge icon in the home capsule (left of settings) and in the All Agents capsule (left of filter); both open §11.2. The button shows when both `client.quotaEnabled` and `client.quotaButton` are on (`architecture.md` §4.7); when either is off the button is hidden on both pages.
-- A dot on the button: amber when any enabled provider's last snapshot has a window at level warn, red when one is exhausted (`quota-and-usage.md` §2.4); none otherwise.
+- A gauge icon in the home capsule (left of settings) and in the All Agents capsule (left of filter). The button shows whenever `(client.quotaEnabled || client.usageEnabled) && client.quotaButton` is true; when both switches are off or `quotaButton` is off, the button is hidden on both pages (issue #25).
+- Target on tap: opens §11.2 (Quota) when `client.quotaEnabled` is on (including when both are on), and opens §11.3 (Usage) when only `client.usageEnabled` is on.
+- A dot on the button: shown only when `client.quotaEnabled` is on and any enabled provider's last snapshot has a window at level warn (amber) or exhausted (red) (`quota-and-usage.md` §2.4); hidden when `client.quotaEnabled` is off or otherwise.
 
 ### 11.2 Quota page
 - One card per enabled provider, in the order Claude Code, Codex, Antigravity: the provider name in its agent color, then `plan · account` (plan omitted when there is none).
@@ -274,15 +275,15 @@ Behavior and numbers come from `quota-and-usage.md`; this section is the present
 - Under the list: costs are estimates at public API prices, which subscriptions are not billed by; unpriced models and unavailable prices are named (`quota-and-usage.md` §3.3).
 
 ### 11.4 Settings group
-- The **额度与用量** card has two independent switches: **启用订阅额度查询** (`client.quotaEnabled`, default `false`) and **启用 Token 用量统计** (`client.usageEnabled`, default `true`). Turning one off hides only its own entry and sub-settings (and redirects only `/quota` or `/usage` to home); the other remains unaffected.
+- The **额度与用量** card has two independent switches: **启用订阅额度查询** (`client.quotaEnabled`, default `false`) and **启用 Token 用量统计** (`client.usageEnabled`, default `true`). Turning one off hides only its own entry row, feature-specific sub-settings, and provider list; only when **both** switches are off do `/quota` and `/usage` redirect to home.
 - When `quotaEnabled` is on:
   - **订阅额度** (summary: one short item per enabled provider following **额度显示**, e.g. **Claude 5h 剩 48%**)
   - **额度显示**: 剩余 / 已用 (`client.quotaDisplay`)
-  - **列表页显示额度按钮** (`client.quotaButton`)
   - **显示账号信息** (`client.quotaShowAccount`, 默认关闭，issue #25；关闭时额度卡片不显示套餐级别与账号邮箱，设置页「查询额度的服务」副标题也不显示套餐)
   - **查询额度的服务** card: Claude Code, Codex, Antigravity, each a switch (`client.quotaProviders`) with a subtitle (**已登录 · <plan>** when `quotaShowAccount` is on and a plan is known, **已登录** otherwise, or **不查询** when off).
 - When `usageEnabled` is on:
   - **Token 用量** (summary: **今日 $x · 近 7 天 $y**)
   - **用量统计模式**: 定时扫描 / 实时扫描 (`client.usageScanMode`, 默认 `scheduled`)
-- When `quotaEnabled` is on, OR when `usageEnabled` is on with `usageScanMode` set to `scheduled`:
-  - Shared background refresh interval (**1m**, **2m**, **5m**, **10m**, **15m**，`client.usageScanInterval`，默认 `5m`).
+- Shared items visible whenever `quotaEnabled` or `usageEnabled` is on:
+  - **列表页显示额度按钮** (`client.quotaButton`, issue #25: shared entry button for Quota/Usage on Home and All Agents)
+  - Shared background refresh interval (`client.usageScanInterval`: **1m**, **2m**, **5m** default, **10m**, **15m**; shown when `quotaEnabled` is on, OR when `usageEnabled` is on with `usageScanMode` set to `scheduled`).

@@ -202,10 +202,10 @@ export function DiffBadge(props: { add: number; del: number }) {
   );
 }
 
-/** mobile-ui-and-themes.md §11: segmented Quota | Usage tab switcher shown only when both features are enabled. */
+/** mobile-ui-and-themes.md §11: segmented Quota | Usage tab switcher shown whenever either feature is enabled. */
 export function QuotaUsageTabs(props: { active: "quota" | "usage"; from: "home" | "settings" | "agents" }) {
   return (
-    <Show when={state.quotaEnabled && state.usageEnabled}>
+    <Show when={state.quotaEnabled || state.usageEnabled}>
       <div style={{ "margin-top": "6px" }}>
         <div class="seg" style={{ display: "grid", "grid-template-columns": "repeat(2, minmax(0, 1fr))", padding: "3px" }}>
           <button
@@ -225,5 +225,51 @@ export function QuotaUsageTabs(props: { active: "quota" | "usage"; from: "home" 
         </div>
       </div>
     </Show>
+  );
+}
+
+/** mobile-ui-and-themes.md §11: amber notice shown on a disabled feature tab with a shortcut to Settings. */
+export function FeatureDisabledNotice(props: { message: string }) {
+  return (
+    <div
+      style={{
+        margin: "14px 0 0",
+        background: "var(--warnbg)",
+        border: "1px solid var(--warn)",
+        "border-radius": "18px",
+        padding: "18px",
+        display: "flex",
+        "flex-direction": "column",
+        gap: "14px",
+        color: "var(--warn)",
+      }}
+    >
+      <div style={{ display: "flex", "align-items": "flex-start", gap: "10px", "font-size": "14px", "font-weight": 550, "line-height": "1.5" }}>
+        <span style={{ flex: "none", "margin-top": "2px" }}>
+          <Icon name="alert" sm />
+        </span>
+        <span>{props.message}</span>
+      </div>
+      <button
+        onClick={() => navigate({ name: "settings" })}
+        style={{
+          display: "flex",
+          "align-items": "center",
+          "justify-content": "center",
+          gap: "6px",
+          width: "100%",
+          "min-height": "42px",
+          "border-radius": "12px",
+          background: "var(--surface)",
+          border: "1px solid var(--warn)",
+          color: "var(--warn)",
+          "font-size": "14px",
+          "font-weight": 600,
+        }}
+      >
+        <Icon name="gear" sm />
+        {t("quota.openSettings")}
+      </button>
+    </div>
   );
 }

@@ -8,7 +8,7 @@ import type {
   UsageGetPayload,
   UsageModelPayload,
 } from "../../../types/protocol";
-import { formatModelName, Icon, QuotaUsageTabs } from "./ui";
+import { FeatureDisabledNotice, formatModelName, Icon, QuotaUsageTabs } from "./ui";
 import { t, locale } from "../i18n";
 
 const AGENT_KEYS = ["claude", "codex", "agy", "opencode", "pi"] as const;
@@ -138,7 +138,7 @@ export function UsagePage() {
   };
 
   createEffect(() => {
-    if (!state.configReady) return;
+    if (!state.configReady || !state.usageEnabled) return;
     // Re-fetch when range or activeAgents change
     const p = range();
     activeAgents(); // tracked: a filter change reloads
@@ -568,35 +568,41 @@ export function UsagePage() {
           <Icon name="chevL" />
         </button>
         <div class="ht">
-          <div class="t">{state.quotaEnabled ? t("quota.title") : t("settings.tokenUsage")}</div>
+          <div class="t">{t("quota.title")}</div>
           <div class="s">
-            {isLoading()
-              ? (usageReport() ? t("quota.refreshing") : t("usage.loading"))
-              : usageReport()?.scannedAt
-              ? t("quota.scannedTo", {
-                  time: new Date(usageReport()!.scannedAt).toTimeString().slice(0, 8),
-                })
+            {state.usageEnabled
+              ? (isLoading()
+                ? (usageReport() ? t("quota.refreshing") : t("usage.loading"))
+                : usageReport()?.scannedAt
+                ? t("quota.scannedTo", {
+                    time: new Date(usageReport()!.scannedAt).toTimeString().slice(0, 8),
+                  })
+                : "")
               : ""}
           </div>
         </div>
-        <button class="cbtn" aria-label={t("app.reload")} onClick={() => void loadUsage(true)}>
-          <span
-            style={{
-              display: "inline-flex",
-              "align-items": "center",
-              "justify-content": "center",
-              animation: isLoading() ? "spin .8s linear infinite" : "none",
-            }}
-          >
-            <Icon name="refresh" />
-          </span>
-        </button>
+        <Show when={state.usageEnabled} fallback={<div style={{ width: "38px" }} />}>
+          <button class="cbtn" aria-label={t("app.reload")} onClick={() => void loadUsage(true)}>
+            <span
+              style={{
+                display: "inline-flex",
+                "align-items": "center",
+                "justify-content": "center",
+                animation: isLoading() ? "spin .8s linear infinite" : "none",
+              }}
+            >
+              <Icon name="refresh" />
+            </span>
+          </button>
+        </Show>
       </div>
 
       <div class="scroll">
         <div style={{ padding: "0 16px calc(30px + env(safe-area-inset-bottom))" }}>
           {/* Segmented switch */}
           <QuotaUsageTabs active="usage" from={backTarget()} />
+
+          <Show when={state.usageEnabled} fallback={<FeatureDisabledNotice message={t("usage.disabledNotice")} />}>
 
           {/* Range Chips */}
           <div style={{ "margin-top": "12px", display: "flex", gap: "6px", "overflow-x": "auto" }}>
@@ -1420,6 +1426,7 @@ export function UsagePage() {
             <div style={{ padding: "12px 8px 0", "font-size": "12px", color: "var(--faint)" }}>
               {t("usage.unpricedNote")}
             </div>
+          </Show>
           </Show>
         </div>
       </div>
