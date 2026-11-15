@@ -18,6 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Account details hidden by default**: Changed `quotaShowAccount` default to `false` so subscription plan and account labels stay hidden on Quota and Settings pages until explicitly enabled (#25).
 
 ### Fixed
+- **Antigravity model detection**: Restricted `Model Selection` setting-change parsing to `USER_INPUT` records and also read `PLANNER_RESPONSE.model` in record order, preventing quoted setting text inside tool outputs from overriding the session model (#25).
 - **Claude Code task notifications & permission card payloads**: Filtered out `task-notification` records from user prompts, and displayed `pendingInteraction.payload` lines inside permission cards when the pending tool call is neither a command nor a diff (#25).
 
 ## [0.1.11] - 2026-11-14

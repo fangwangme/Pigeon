@@ -3,8 +3,8 @@ import { existsSync, readFileSync, readdirSync, realpathSync, statSync } from "n
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { OPENCODE_PLACEHOLDER_TITLE, OpenCodeAdapter, type OpenCodeAdapterOptions } from "./opencode";
-import { AgyAdapter, agyModelSetting, type AgyAdapterOptions } from "./agy";
-import { isObj, readHeadJsonLines, readTailJsonLines } from "../sessions/common";
+import { AgyAdapter, agyRecordModel, type AgyAdapterOptions } from "./agy";
+import { readHeadJsonLines, readTailJsonLines } from "../sessions/common";
 import { ClaudeSource } from "../sessions/claude";
 import { CodexSource } from "../sessions/codex";
 import { PiSource } from "../sessions/pi";
@@ -133,14 +133,14 @@ class AgySource implements SessionSource {
             ts = 0;
           }
 
-          // agent-session-normalization.md §2.6: the latest setting in the first and last 256 KB.
+          // agent-session-normalization.md §2.6: the latest model record in the first and last 256 KB, by §2.2.
           let model: string | undefined = undefined;
           const logPath = this.adapter.getSessionLogPath(r.conversation_id);
           if (existsSync(logPath)) {
             const size = statSync(logPath).size;
             const records = size > 524_288 ? [...readHeadJsonLines(logPath), ...readTailJsonLines(logPath)] : readHeadJsonLines(logPath, size + 1);
             for (const rec of records) {
-              const found = isObj(rec) && typeof rec.content === "string" ? agyModelSetting(rec.content) : undefined;
+              const found = agyRecordModel(rec);
               if (found) model = found;
             }
           }

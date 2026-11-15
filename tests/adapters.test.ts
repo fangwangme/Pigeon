@@ -453,27 +453,42 @@ describe("structured session adapters (agent-session-normalization.md §2)", () 
       expect(adapter.getTurns("s", true).turns.map((t) => t.userPrompt?.text)).toEqual(["first", "第二个问题"]);
     });
 
-    test("Extracts model from USER_SETTINGS_CHANGE event in transcript (§2.2)", () => {
+    test("Extracts model from USER_INPUT setting change and PLANNER_RESPONSE model in record order (§2.2)", () => {
       const brain = join(testDir, "brain_model");
       const logs = join(brain, "s_model", ".system_generated", "logs");
       mkdirSync(logs, { recursive: true });
       const logFile = join(logs, "transcript.jsonl");
       const line1 = JSON.stringify({
         step_index: 0,
-        type: "USER_SETTINGS_CHANGE",
-        content: "The user changed setting `Model Selection` from `Gemini 2.5 Flash` to `Gemini 3.8 Flash (Medium)`.",
+        type: "USER_INPUT",
+        content: "<USER_REQUEST>\ntest\n</USER_REQUEST>\n<USER_SETTINGS_CHANGE>\nThe user changed setting `Model Selection` from `Gemini 2.5 Flash` to `Gemini 3.8 Flash (Medium)`.\n</USER_SETTINGS_CHANGE>",
         created_at: new Date(1000).toISOString(),
       });
       const line2 = JSON.stringify({
         step_index: 1,
-        type: "USER_INPUT",
-        content: "<USER_REQUEST>test</USER_REQUEST>",
+        type: "PLANNER_RESPONSE",
+        model: "gemini-4-hydrogen-high",
+        tool_calls: [{ name: "run_command", args: { CommandLine: "cat sample.log" } }],
         created_at: new Date(2000).toISOString(),
       });
-      writeFileSync(logFile, `${line1}\n${line2}\n`, "utf-8");
+      const line3 = JSON.stringify({
+        step_index: 2,
+        type: "GENERIC",
+        content: "The user changed setting `Model Selection` from `None` to `Gemini 4 Argon (Medium)`.",
+        created_at: new Date(3000).toISOString(),
+      });
+      writeFileSync(logFile, `${line1}\n${line2}\n${line3}\n`, "utf-8");
       const adapter = new AgyAdapter({ baseBrainDir: brain });
-      const { model } = adapter.getTurns("s_model", false);
-      expect(model).toBe("Gemini 3.8 Flash (Medium)");
+      expect(adapter.getTurns("s_model", false).model).toBe("gemini-4-hydrogen-high");
+
+      const line4 = JSON.stringify({
+        step_index: 3,
+        type: "USER_INPUT",
+        content: "<USER_REQUEST>\nnext\n</USER_REQUEST>\n<USER_SETTINGS_CHANGE>\nThe user changed setting `Model Selection` from `Gemini 4 Hydrogen (High)` to `Gemini 3.8 Flash (Medium)`.\n</USER_SETTINGS_CHANGE>",
+        created_at: new Date(4000).toISOString(),
+      });
+      writeFileSync(logFile, `${line4}\n`, { flag: "a" });
+      expect(adapter.getTurns("s_model", true).model).toBe("Gemini 3.8 Flash (Medium)");
     });
 
     test("Extracts diffs and computes session stats for edit_file and write_file", () => {

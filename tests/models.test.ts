@@ -138,8 +138,8 @@ describe("model catalog (herdr-adapter.md §7.1)", () => {
       join(logs, "transcript.jsonl"),
       JSON.stringify({
         step_index: 0,
-        type: "USER_SETTINGS_CHANGE",
-        content: "The user changed setting `Model Selection` from `Gemini 2.5 Flash` to `Gemini 3.8 Flash (Medium)`.",
+        type: "USER_INPUT",
+        content: "<USER_REQUEST>\nhi\n</USER_REQUEST>\n<USER_SETTINGS_CHANGE>\nThe user changed setting `Model Selection` from `Gemini 2.5 Flash` to `Gemini 3.8 Flash (Medium)`.\n</USER_SETTINGS_CHANGE>",
         created_at: new Date(1000).toISOString(),
       }) + "\n" +
       JSON.stringify({

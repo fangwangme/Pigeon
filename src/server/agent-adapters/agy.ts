@@ -130,10 +130,24 @@ function parseAgyQuestions(id: string, raw: unknown): NormalizedQuestion | undef
 }
 
 /** agent-session-normalization.md §2.2: the label a "Model Selection" settings change names, if any. */
-export function agyModelSetting(content: string): string | undefined {
+function agyModelSetting(content: string): string | undefined {
   const m = content.match(/The user changed setting `Model Selection` from .*? to `?(.+?)`?\.(?:\s+No need|\s*<\/USER_SETTINGS_CHANGE>|$)/);
   const raw = m?.[1]?.replace(/^`+|`+$/g, "").trim();
   return raw && raw !== "None" ? raw : undefined;
+}
+
+/** agent-session-normalization.md §2.2, §2.6: the model label (`USER_INPUT` setting change) or id (`PLANNER_RESPONSE.model`) a record names. */
+export function agyRecordModel(rec: unknown): string | undefined {
+  if (!rec || typeof rec !== "object") return undefined;
+  const r = rec as Record<string, unknown>;
+  if (r.type === "USER_INPUT" && typeof r.content === "string") {
+    return agyModelSetting(r.content);
+  }
+  if (r.type === "PLANNER_RESPONSE" && typeof r.model === "string") {
+    const m = r.model.trim();
+    return m || undefined;
+  }
+  return undefined;
 }
 
 export interface AgyAdapterOptions {
@@ -367,8 +381,7 @@ export class AgyAdapter {
         const timestamp = Number.isFinite(parsedTs) ? parsedTs : lastTs;
         if (Number.isFinite(parsedTs)) lastTs = parsedTs;
 
-        const rawContent = record.content || "";
-        const model = agyModelSetting(rawContent);
+        const model = agyRecordModel(record);
         if (model) this.cachedModels.set(sessionId, model);
 
         if (recType === "USER_INPUT") {
