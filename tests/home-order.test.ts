@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { orderWorkspaces, parseAgentsFilter } from "../src/client/src/state/list-prefs";
+import { orderWorkspaces, parseAgentsFilter, splitAgentless } from "../src/client/src/state/list-prefs";
+import { translate } from "../src/client/src/i18n";
 import type { PaneSummary, TabSummary, WorkspaceSummary } from "../src/types/protocol";
 
 // mobile-ui-and-themes.md §2.1 (Home order), §2.3.2 (All agents filter). Issue #27.
@@ -38,6 +39,31 @@ describe("Home order (mobile-ui-and-themes.md §2.1)", () => {
   test("workspaces without activity keep Herdr order after the active ones, and equal times keep Herdr order", () => {
     const list = [ws("a", tab("a1", pane("a1p"))), ws("b", tab("b1", pane("b1p", 10))), ws("c", tab("c1", pane("c1p", 10))), ws("d", tab("d1", pane("d1p")))];
     expect(orderWorkspaces(list, "activity").map((w) => w.id)).toEqual(["b", "c", "a", "d"]);
+  });
+});
+
+describe("folded group of workspaces without agents (mobile-ui-and-themes.md §2.1, §2.3.1)", () => {
+  const idleAgent = (id: string): PaneSummary => ({ id, agent: "codex", agentStatus: "idle", isPrimary: true });
+  const shell = (id: string): PaneSummary => ({ id, agent: null, agentStatus: "unknown", isPrimary: true });
+
+  test("only workspaces with no agent pane are folded; an idle agent keeps its workspace listed; both keep the given order", () => {
+    const list = [
+      ws("nexus", tab("n1", shell("n1p"))),
+      ws("pigeon", tab("g1", shell("g1p")), tab("g2", idleAgent("g2p"))),
+      ws("inkhub", tab("i1", shell("i1p")), tab("i2", shell("i2p"))),
+      ws("lifeos", tab("l1", idleAgent("l1p"))),
+    ];
+    const { listed, folded } = splitAgentless(list);
+    expect(listed.map((w) => w.id)).toEqual(["pigeon", "lifeos"]);
+    expect(folded.map((w) => w.id)).toEqual(["nexus", "inkhub"]);
+  });
+
+  test("the group row and the switch note exist in both languages, with English plural forms", () => {
+    expect(translate("en", "home.foldedGroup", { count: 1 })).toBe("1 folded workspace without agents");
+    expect(translate("en", "home.foldedGroup", { count: 12 })).toBe("12 folded workspaces without agents");
+    expect(translate("zh", "home.foldedGroup", { count: 12 })).toBe("已折叠 12 个没有 Agent 的工作区");
+    expect(translate("zh", "filter.foldAgentlessHint")).toBe("只有终端的工作区收进底部一行，点开展开");
+    expect(translate("en", "filter.foldAgentlessHint")).toBe("Terminal-only workspaces move into one row at the bottom; tap to expand");
   });
 });
 

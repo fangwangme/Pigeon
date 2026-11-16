@@ -43,7 +43,11 @@ Pigeon is a phone app for Herdr, written as a PWA. It follows the interaction mo
   - **Herdr 顺序** (default): workspaces and their tabs in Herdr's order.
   - **最近活动**: a tab's activity time is the newest `lastActivityAt` of its panes (`protocol.md` §5.3), a workspace's the newest of its tabs. Workspaces with an activity time come first, newest first, and tabs inside every workspace likewise; workspaces and tabs without one follow in Herdr's order. Equal times keep Herdr's order. In this order the group header also shows the workspace's activity time as a relative age (刚刚, 12 分钟前, as in §7.2).
   - The order is computed when Home is entered from any page (and on first load) and then held while Home stays open, so rows never move under the finger; status, labels and new or closed tabs still update in place. A tab or workspace that appears while Home is open goes to the end until the next entry.
-- **折叠没有 Agent 的工作区** (§2.3.1, off by default): when on, a workspace none of whose panes has an agent starts collapsed. The user's own collapse or expand of a workspace overrides it and is kept as today. A workspace that gains an agent is no longer folded by this rule.
+- **折叠没有 Agent 的工作区** (§2.3.1, off by default; user decision, 2026-11-16): when on, every workspace none of whose panes has an agent leaves the list and goes into one folded group, the last row of the list in either order: **已折叠 {count} 个没有 Agent 的工作区**. A workspace with an agent, even an idle one, stays in the list.
+  - The group starts folded; tapping its row expands it in place, and its expanded state is kept in this browser. Expanded, it shows its workspaces in the chosen order, each with the same header, tab rows, `+`, swipe actions and own collapse as in the list.
+  - Which workspaces the group holds is decided with the order (above): when Home is entered, and then held. A workspace that gains an agent leaves the group at the next entry; one that appears while Home is open joins the list or the group by whether it has an agent.
+  - With the switch off there is no group, and no workspace is collapsed by any rule; only the user's own collapse applies.
+  - While searching, the group's workspaces are matched like the others and their matches show in the results without expanding the group.
 - One row per tab. The left icon is the agent or shell avatar (`<AgentIcon>`: official Antigravity arch, Claude 8-bit crab, Codex rosette, OpenCode box, Pi mark, or skeumorphic terminal window with traffic lights and prompt). The title is the tab label (`protocol.md` §5.3: the Herdr name the user gave the tab, else the session's title, else the agent's name). The subtitle shows the primary pane's model (`protocol.md` §5.3 `model`, named as in §6.4) and, when the tab has more than one pane, the pane count, joined by ` · `; without a known model only the pane count shows. A plain terminal keeps its program as subtitle.
 - The row's right end holds the single status dot (`<StatusIcon>`: amber dot = waiting for you / `blocked`, blue pulsing dot = `working`, green dot `#10b981` = finished / `done`, subtle gray dot = `idle` / plain terminal). Session status is indicated purely by this dot's color: an agent that finishes shows green (`done`) waiting to be read; viewing the pane reports presence to the daemon (`herdr-adapter.md` §4), which marks it seen and transitions it to gray (`idle`). No separate unread dot is shown.
 - Swiping a row left reveals **重命名** and **关闭**; both use the same flows as the ⋯ menu (§6.1, §6.4).
@@ -62,7 +66,8 @@ Each list page has its own sheet holding only what applies to that page (user de
 
 #### 2.3.1 Home
 - **排序**: **Herdr 顺序** (default) or **最近活动** (§2.1).
-- **显示**: one switch, **折叠没有 Agent 的工作区** (off by default; §2.1).
+- **显示**: one switch, **折叠没有 Agent 的工作区** (off by default; §2.1), with the note **只有终端的工作区收进底部一行，点开展开** under it.
+- Every label of this sheet and of the folded group comes from the message catalog in both languages (§10); the group's row is a count message with English plural forms.
 
 #### 2.3.2 All agents
 - **分组**: **按状态** (default) or **按工作区** (§2.2).
