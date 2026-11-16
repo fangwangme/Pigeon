@@ -386,8 +386,8 @@ function ModelPickerSheet(props: {
       sub={props.recipe?.label}
       onClose={props.onClose}
       right={
-        <button class="btn acc sh-confirm" onClick={confirm}>
-          {t("common.confirm")}
+        <button class="cbtn sh-confirm" aria-label={t("common.confirm")} onClick={confirm}>
+          <Icon name="check" />
         </button>
       }
     >
