@@ -200,18 +200,20 @@ export function Home() {
   const orderedWorkspaces = createMemo(() => {
     if (state.homePrefs.order === "herdr") return state.workspaces;
     const wsOrder = heldWsOrder();
-    if (!wsOrder) return state.workspaces;
-    const tabOrderMap = heldTabOrder();
-    return arrangeById(state.workspaces, wsOrder).map((ws) => {
-      const tOrder = tabOrderMap[ws.id];
-      return tOrder ? { ...ws, tabs: arrangeById(ws.tabs, tOrder) } : ws;
-    });
+    return wsOrder ? arrangeById(state.workspaces, wsOrder) : state.workspaces;
   });
 
+  const orderedTabs = (ws: WorkspaceSummary) => {
+    if (state.homePrefs.order === "herdr") return ws.tabs;
+    const tOrder = heldTabOrder()[ws.id];
+    return tOrder ? arrangeById(ws.tabs, tOrder) : ws.tabs;
+  };
+
   const visibleTabs = (ws: WorkspaceSummary) => {
+    const list = orderedTabs(ws);
     const q = query()?.trim().toLowerCase();
-    if (!q) return ws.tabs;
-    return ws.tabs.filter((t) => t.label.toLowerCase().includes(q) || ws.label.toLowerCase().includes(q));
+    if (!q) return list;
+    return list.filter((t) => t.label.toLowerCase().includes(q) || ws.label.toLowerCase().includes(q));
   };
   const focusedWs = () => (state.workspaces.find((w) => w.isFocused) ?? state.workspaces[0])?.id ?? null;
   return (
