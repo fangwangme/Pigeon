@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.13] - 2026-11-16
+
+### Added
+- **Home activity ordering & fold option**: Added per-pane `lastActivityAt` tracking (later of bound session's latest turn timestamp and last observed agent status change), Herdr vs recent activity ordering on Home (computed on entry and held while on Home, showing workspace relative activity age), and an opt-in switch to fold workspaces without agents while respecting manual toggles (#27).
+- **Agent launch defaults**: Added `launch_defaults` WebSocket command and `ModelCatalog.launchDefaults` to read per-workspace/user default model and thinking level for Claude, Codex, pi, and Antigravity, preselecting them on the New Session page without sending `--model`/effort flags while untouched (#27).
+
+### Changed
+- **Split Home & All Agents filter sheets**: Replaced the shared filter sheet with a Home sort/display sheet and an All Agents grouping/status/agent sheet, dropping the `terminal` status chip and `showTerminals` / `showIdle` switches while migrating older stored filters cleanly (#27).
+- **Model picker confirm flow**: Kept model and thinking choices local to the picker sheet until **Confirm** (discarding on close, scrim tap, or swipe down), moved catalog refresh beside search (or to the list end when search is absent), tagged the agent default model, and added **Restore agent default** (#27).
+
 ## [0.1.12] - 2026-11-15
 
 ### Added
