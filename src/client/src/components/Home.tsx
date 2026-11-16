@@ -1,19 +1,43 @@
-import { createMemo, createSignal, For, Show } from "solid-js";
-import { filterActive, navigate, quotaButtonShown, quotaUsageTarget, state, toggleCollapsed, type FilterState } from "../state/store";
+import { createEffect, createMemo, createSignal, For, on, Show } from "solid-js";
+import {
+  agentsFilterActive,
+  navigate,
+  quotaButtonShown,
+  quotaUsageTarget,
+  state,
+  toggleCollapsed,
+  type AgentsFilter,
+} from "../state/store";
+import { orderWorkspaces, wsActivity, type HomeOrder } from "../state/list-prefs";
 import { selectPane } from "../state/ws";
 import type { PaneSummary, TabSummary, WorkspaceSummary } from "../../../types/protocol";
 import { openOverlay } from "./overlays";
-import { agentLabel, Icon, Logo, modelLabel, paneStatus, paneSummary, primaryPane, StatusIcon, tabStatus, type RowStatus } from "./ui";
+import { agentLabel, ago, Icon, Logo, modelLabel, paneStatus, paneSummary, primaryPane, StatusIcon, tabStatus, type RowStatus } from "./ui";
 import { AgentIcon } from "./AgentIcon";
 import { t, type MessageId } from "../i18n";
 import { quotaDot } from "../../../shared/quota";
 
-function passes(status: RowStatus, agent: string | null | undefined, f: FilterState): boolean {
-  if (status === "terminal" && !f.showTerminals) return false;
-  if (status === "idle" && !f.showIdle) return false;
-  if (f.statuses.length && !f.statuses.includes(status)) return false;
+function passesAgentsFilter(status: RowStatus, agent: string | null | undefined, f: AgentsFilter): boolean {
+  if (f.statuses.length && !f.statuses.includes(status as AgentsFilter["statuses"][number])) return false;
   if (f.agents.length && (!agent || !f.agents.includes(agent))) return false;
   return true;
+}
+
+function arrangeById<T extends { id: string }>(items: readonly T[], order: readonly string[]): T[] {
+  const byId = new Map(items.map((x) => [x.id, x]));
+  const out: T[] = [];
+  const seen = new Set<string>();
+  for (const id of order) {
+    const item = byId.get(id);
+    if (item) {
+      out.push(item);
+      seen.add(id);
+    }
+  }
+  for (const item of items) {
+    if (!seen.has(item.id)) out.push(item);
+  }
+  return out;
 }
 
 function openPane(paneId: string, from: "home" | "agents"): void {
@@ -127,7 +151,7 @@ function FilterButton() {
           </Show>
         </button>
       </Show>
-      <button aria-label={t("filter.title")} onClick={() => openOverlay({ kind: "filter" })}>
+      <button aria-label={t("filter.homeTitle")} onClick={() => openOverlay({ kind: "homeFilter" })}>
         <Icon name="sliders" />
       </button>
       <button aria-label={t("settings.title")} onClick={() => navigate({ name: "settings" })}>
@@ -140,15 +164,54 @@ function FilterButton() {
 /** §2.1 */
 export function Home() {
   const [query, setQuery] = createSignal<string | null>(null);
+  const [heldWsOrder, setHeldWsOrder] = createSignal<string[] | null>(null);
+  const [heldTabOrder, setHeldTabOrder] = createSignal<Record<string, string[]>>({});
   const agents = createMemo(agentPanes);
   const waiting = () => agents().filter((a) => a.pane.agentStatus === "blocked").length;
   const working = () => agents().filter((a) => a.pane.agentStatus === "working").length;
+
+  const captureOrder = (list: WorkspaceSummary[], order: HomeOrder) => {
+    const ordered = orderWorkspaces(list, order);
+    setHeldWsOrder(ordered.map((w) => w.id));
+    const tabs: Record<string, string[]> = {};
+    for (const w of ordered) tabs[w.id] = w.tabs.map((t) => t.id);
+    setHeldTabOrder(tabs);
+  };
+
+  createEffect(
+    on(
+      () => state.homePrefs.order,
+      (order) => {
+        if (state.workspaces.length > 0) captureOrder(state.workspaces, order);
+        else {
+          setHeldWsOrder(null);
+          setHeldTabOrder({});
+        }
+      }
+    )
+  );
+
+  createEffect(() => {
+    if (heldWsOrder() === null && state.workspaces.length > 0) {
+      captureOrder(state.workspaces, state.homePrefs.order);
+    }
+  });
+
+  const orderedWorkspaces = createMemo(() => {
+    if (state.homePrefs.order === "herdr") return state.workspaces;
+    const wsOrder = heldWsOrder();
+    if (!wsOrder) return state.workspaces;
+    const tabOrderMap = heldTabOrder();
+    return arrangeById(state.workspaces, wsOrder).map((ws) => {
+      const tOrder = tabOrderMap[ws.id];
+      return tOrder ? { ...ws, tabs: arrangeById(ws.tabs, tOrder) } : ws;
+    });
+  });
+
   const visibleTabs = (ws: WorkspaceSummary) => {
     const q = query()?.trim().toLowerCase();
-    return ws.tabs.filter((t) => {
-      if (q && !t.label.toLowerCase().includes(q) && !ws.label.toLowerCase().includes(q)) return false;
-      return passes(tabStatus(t), primaryPane(t)?.agent, state.filter);
-    });
+    if (!q) return ws.tabs;
+    return ws.tabs.filter((t) => t.label.toLowerCase().includes(q) || ws.label.toLowerCase().includes(q));
   };
   const focusedWs = () => (state.workspaces.find((w) => w.isFocused) ?? state.workspaces[0])?.id ?? null;
   return (
@@ -207,14 +270,16 @@ export function Home() {
             </div>
           </Show>
 
-          <For each={state.workspaces}>
+          <For each={orderedWorkspaces()}>
             {(ws) => {
-              const shut = () => !!state.collapsed[ws.id];
+              const hasAgent = () => ws.tabs.some((t) => t.panes.some((p) => !!p.agent));
+              const shut = () => state.collapsed[ws.id] ?? (state.homePrefs.foldAgentless && !hasAgent());
               const tabs = () => visibleTabs(ws);
+              const act = () => wsActivity(ws);
               return (
                 <Show when={!query()?.trim() || tabs().length > 0}>
                   <div class="wsh">
-                    <button class="tg2" onClick={() => toggleCollapsed(ws.id)} aria-expanded={!shut()}>
+                    <button class="tg2" onClick={() => toggleCollapsed(ws.id, shut())} aria-expanded={!shut()}>
                       <span class={`chev${shut() ? " shut" : ""}`}>
                         <Icon name="chevD" sm />
                       </span>
@@ -225,7 +290,10 @@ export function Home() {
                           {ws.branch}
                         </span>
                       </Show>
-                      <span class="m">{ws.tabs.length}</span>
+                      <span class="m" style={{ flex: "none" }}>{ws.tabs.length}</span>
+                      <Show when={state.homePrefs.order === "activity" && act() !== undefined}>
+                        <span class="m" style={{ flex: "none" }}>{ago(act()!)}</span>
+                      </Show>
                     </button>
                     <button class="mini" aria-label={t("home.newIn", { name: ws.label })} onClick={() => navigate({ name: "new", workspaceId: ws.id, mode: "new" })}>
                       <Icon name="plus" sm />
@@ -276,8 +344,8 @@ function statusRank(st: RowStatus): number {
 export function AgentsPage() {
   // §2.2: every group starts expanded each time the page opens.
   const [shut, setShut] = createSignal<Record<string, boolean>>({});
-  const groupBy = () => state.filter.groupBy || "status";
-  const rows = createMemo(() => agentPanes().filter((a) => passes(paneStatus(a.pane), a.pane.agent, state.filter)));
+  const groupBy = () => state.agentsFilter.groupBy;
+  const rows = createMemo(() => agentPanes().filter((a) => passesAgentsFilter(paneStatus(a.pane), a.pane.agent, state.agentsFilter)));
 
   const wsGroups = createMemo(() => {
     const map = new Map<string, { ws: WorkspaceSummary; items: Array<{ ws: WorkspaceSummary; tab: TabSummary; pane: PaneSummary }> }>();
@@ -318,7 +386,7 @@ export function AgentsPage() {
               </Show>
             </button>
           </Show>
-          <button aria-label={t("filter.title")} onClick={() => openOverlay({ kind: "filter" })}>
+          <button aria-label={t("filter.title")} onClick={() => openOverlay({ kind: "agentsFilter" })}>
             <Icon name="sliders" />
           </button>
         </div>
@@ -329,7 +397,7 @@ export function AgentsPage() {
           <Show when={rows().length === 0}>
             <div class="emptyh">
               <div class="big">{t("agents.empty")}</div>
-              {filterActive() ? t("agents.emptyFiltered") : t("agents.emptyHint")}
+              {agentsFilterActive() ? t("agents.emptyFiltered") : t("agents.emptyHint")}
             </div>
           </Show>
           <Show when={groupBy() === "status"}>

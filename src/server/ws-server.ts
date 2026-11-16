@@ -208,6 +208,7 @@ export class WsServer {
       this.syncTranscriptInteraction(delta.paneId);
       this.updateQueuePause(delta.paneId);
       this.maybeSendPaneTail(delta.paneId);
+      queueMicrotask(() => this.herdrClient.refreshPaneActivity(delta.paneId));
     });
     this.paneStore.on("session_changed", (paneId: string) => {
       const bound = this.paneStore.boundSession(paneId);
@@ -222,6 +223,7 @@ export class WsServer {
       this.syncTranscriptInteraction(paneId);
       this.updateQueuePause(paneId);
       this.maybeSendPaneTail(paneId);
+      queueMicrotask(() => this.herdrClient.refreshPaneActivity(paneId));
     });
 
     // herdr-adapter.md §7.1: a model named in a session's records that the catalog lacks fills it again.
@@ -232,6 +234,7 @@ export class WsServer {
     this.paneStore.setModelResolver((agent, idOrLabel) => this.modelCatalog.resolve(agent, idOrLabel));
     this.herdrClient.setSessionTitleSource((paneId) => this.paneStore.sessionTitle(paneId));
     this.herdrClient.setSessionModelSource((paneId) => this.paneStore.sessionInfo(paneId, null).model.value ?? undefined);
+    this.herdrClient.setSessionActivitySource((paneId) => this.paneStore.lastActivityAt(paneId));
     // Titles change while a snapshot is being handled (binding reads the session), so relabel after it.
     this.paneStore.on("title_changed", () => queueMicrotask(() => this.herdrClient.relabelTabs()));
 
@@ -918,6 +921,22 @@ export class WsServer {
           ws.data.watchingScreenPaneId = undefined;
         }
         this.sendAck(ws, msg.id);
+        return;
+      }
+
+      case "launch_defaults": {
+        const { workspaceId, agentKind } = msg.payload;
+        const recipe = getAgentRecipe(agentKind);
+        if (!recipe) {
+          this.sendError(ws, msg.id, ProtocolErrors.ERR_INVALID_PAYLOAD, `Unknown agent kind '${agentKind}'`);
+          return;
+        }
+        const folder = this.herdrClient.getWorkspaceFolder(workspaceId);
+        if (!folder) {
+          this.sendError(ws, msg.id, ProtocolErrors.ERR_NOT_FOUND, `Unknown workspace ${workspaceId}`);
+          return;
+        }
+        this.sendAck(ws, msg.id, this.modelCatalog.launchDefaults(recipe.kind, folder));
         return;
       }
     }

@@ -75,6 +75,15 @@ export class PaneStore extends EventEmitter {
     return this.paneStates.get(paneId)?.sessionTitle;
   }
 
+  /** protocol.md §5.3: latest turn timestamp of the session bound to `paneId`, if any. */
+  public lastActivityAt(paneId: string): number | undefined {
+    const turns = this.paneStates.get(paneId)?.turns;
+    const last = turns?.[turns.length - 1];
+    if (!last) return undefined;
+    const ts = last.updatedAt ?? last.timestamp;
+    return typeof ts === "number" && Number.isFinite(ts) && ts > 0 ? ts : undefined;
+  }
+
   public boundSession(paneId: string): { agent: string; sessionId: string } | null {
     const s = this.paneStates.get(paneId);
     return s ? { agent: s.agent, sessionId: s.sessionId } : null;

@@ -143,6 +143,10 @@ export class HerdrClient extends EventEmitter {
   private sessionTitleOf: (paneId: string) => string | undefined = () => undefined;
   /** protocol.md §5.3: the active/latest model of the session bound to a pane. */
   private sessionModelOf: (paneId: string) => string | undefined = () => undefined;
+  /** protocol.md §5.3: latest turn timestamp of the session bound to a pane. */
+  private sessionActivityOf: (paneId: string) => number | undefined = () => undefined;
+  /** protocol.md §5.3: in-memory timestamp of the last agent status change per pane. */
+  private lastStatusChangeAt = new Map<string, number>();
   private lastTopology: HerdrTopology | null = null;
   private monitoredPaneIds = new Set<string>();
   private workspaceFolders = new Map<string, string>();
@@ -456,6 +460,11 @@ export class HerdrClient extends EventEmitter {
       const known = this.knownPanes.get(paneId);
       if (!known) return; // a terminal the window does not show
       const status = this.normalizeStatus(params.data.status);
+      const agentKind = this.agentKindOf(params.data.status);
+      if (status !== known.herdrStatus) {
+        if (agentKind) this.lastStatusChangeAt.set(paneId, Date.now());
+        else this.lastStatusChangeAt.delete(paneId);
+      }
       if (status !== "done") {
         if (this.seenPanes.delete(paneId)) this.saveSeenPanes();
       }
@@ -463,7 +472,7 @@ export class HerdrClient extends EventEmitter {
       if (typeof params.data.turn === "number") known.turn = params.data.turn;
       else if (status !== known.herdrStatus) known.desktopSeenTurn = null;
       known.herdrStatus = status;
-      known.agentKind = this.agentKindOf(params.data.status);
+      known.agentKind = agentKind;
       // relabelTabs() re-applies the last topology before the next snapshot arrives: keep it current.
       const term = this.lastTopology?.terminals.find((t) => t.address === paneId);
       if (term) term.status = params.data.status;
@@ -506,6 +515,38 @@ export class HerdrClient extends EventEmitter {
 
   public setSessionModelSource(source: (paneId: string) => string | undefined): void {
     this.sessionModelOf = source;
+  }
+
+  public setSessionActivitySource(source: (paneId: string) => number | undefined): void {
+    this.sessionActivityOf = source;
+  }
+
+  private paneActivityAt(paneId: string, known: KnownPane): number | undefined {
+    if (!known.agentKind) return undefined;
+    const statusAt = this.lastStatusChangeAt.get(paneId);
+    const sessionAt = this.sessionActivityOf(paneId);
+    return statusAt !== undefined && sessionAt !== undefined ? Math.max(statusAt, sessionAt) : (statusAt ?? sessionAt);
+  }
+
+  /** Refreshes a single pane's snapshot summary if its `lastActivityAt` changed. */
+  public refreshPaneActivity(paneId: string): void {
+    const known = this.knownPanes.get(paneId);
+    if (!known || this.currentSnapshot.workspaces.length === 0) return;
+    const nextAt = this.paneActivityAt(paneId, known);
+    let currentAt: number | undefined;
+    let found = false;
+    for (const ws of this.currentSnapshot.workspaces) {
+      for (const tab of ws.tabs) {
+        const p = tab.panes.find((x) => x.id === paneId);
+        if (p) {
+          currentAt = p.lastActivityAt;
+          found = true;
+          break;
+        }
+      }
+      if (found) break;
+    }
+    if (found && currentAt !== nextAt) this.updateSinglePaneSnapshot(paneId);
   }
 
   /** A bound session's title changed: rebuild the snapshot from the last topology, without asking Herdr. */
@@ -551,6 +592,9 @@ export class HerdrClient extends EventEmitter {
     }
     for (const id of Array.from(this.stitchedPanes)) if (!nextKnown.has(id)) this.stitchedPanes.delete(id);
     for (const id of Array.from(this.timeoutDemotedAt.keys())) if (!nextKnown.has(id)) this.timeoutDemotedAt.delete(id);
+    for (const id of Array.from(this.lastStatusChangeAt.keys())) {
+      if (!nextKnown.get(id)?.agentKind) this.lastStatusChangeAt.delete(id);
+    }
     let seenChanged = false;
     for (const id of Array.from(this.seenPanes)) {
       if (nextKnown.get(id)?.herdrStatus !== "done") {
@@ -567,6 +611,7 @@ export class HerdrClient extends EventEmitter {
     for (const [paneId, next] of nextKnown.entries()) {
       const prev = prevKnown.get(paneId);
       if (prev && prev.herdrStatus !== next.herdrStatus) {
+        if (next.agentKind) this.lastStatusChangeAt.set(paneId, Date.now());
         this.emit("pane_status_changed", { paneId, status: next.herdrStatus });
       }
       this.checkReportedStatusChange(paneId);
@@ -624,6 +669,7 @@ export class HerdrClient extends EventEmitter {
     const agentStatus = this.effectiveStatus(paneId);
     const { summary, summaryKind } = this.summarizePane(paneId, known.title);
     const model = this.sessionModelOf(paneId);
+    const lastActivityAt = this.paneActivityAt(paneId, known);
     return {
       id: paneId,
       agent: known.agentKind,
@@ -633,6 +679,7 @@ export class HerdrClient extends EventEmitter {
       ...(known.program ? { program: known.program } : {}),
       ...(model ? { model } : {}),
       ...(summaryKind ? { summary, summaryKind } : {}),
+      ...(lastActivityAt !== undefined ? { lastActivityAt } : {}),
     };
   }
 

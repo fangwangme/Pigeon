@@ -16,8 +16,11 @@ export function NewSession(props: { workspaceId: string | null; mode: "new" | "r
   const [mode, setMode] = createSignal(props.mode);
   const [wsId, setWsId] = createSignal(props.workspaceId ?? state.workspaces.find((w) => w.isFocused)?.id ?? state.workspaces[0]?.id ?? null);
   const [agent, setAgent] = createSignal(state.activePaneId && props.mode === "resume" ? currentAgent() : defaultAgent());
-  const [model, setModel] = createSignal<string | null>(null);
-  const [thinking, setThinking] = createSignal<string | null>(null);
+  const [defaultModel, setDefaultModel] = createSignal<string | null>(null);
+  const [defaultThinking, setDefaultThinking] = createSignal<string | null>(null);
+  const [pickedModel, setPickedModel] = createSignal<string | null>(null);
+  const [pickedThinking, setPickedThinking] = createSignal<string | null>(null);
+  const [touched, setTouched] = createSignal(false);
   const [sheet, setSheet] = createSignal<"ws" | "agent" | "model" | null>(null);
   const [past, setPast] = createSignal<PastSession[] | null>(null);
   const [busy, setBusy] = createSignal<string | null>(null);
@@ -31,11 +34,32 @@ export function NewSession(props: { workspaceId: string | null; mode: "new" | "r
   const recipe = () => (agent() ? state.recipes[agent()!] : undefined);
 
   createEffect(
-    on(agent, () => {
-      setModel(recipe()?.launchModel ? (recipe()?.defaultModel ?? recipe()?.models[0]?.id ?? null) : null);
-      setThinking(recipe()?.defaultThinking ?? null);
+    on([wsId, agent], () => {
+      setTouched(false);
+      setPickedModel(null);
+      setPickedThinking(null);
+      setDefaultModel(null);
+      setDefaultThinking(null);
     })
   );
+
+  let defaultsSeq = 0;
+  createEffect(
+    on([wsId, agent, () => state.connected], ([w, a, conn]) => {
+      const seq = ++defaultsSeq;
+      if (!conn || !w || !a || !state.recipes[a]?.launchModel) return;
+      request({ type: "launch_defaults", payload: { workspaceId: w, agentKind: a } })
+        .then((ack) => {
+          if (seq !== defaultsSeq) return;
+          setDefaultModel(typeof ack?.model === "string" ? ack.model : null);
+          setDefaultThinking(typeof ack?.thinking === "string" ? ack.thinking : null);
+        })
+        .catch(() => {
+          // Leave defaults empty if unreachable or unknown; never fall back to models[0].
+        });
+    })
+  );
+
   createEffect(() => {
     if (!agent() && Object.keys(state.recipes).length) setAgent(defaultAgent());
     if (!wsId() && state.workspaces.length) setWsId(state.workspaces[0].id);
@@ -61,17 +85,24 @@ export function NewSession(props: { workspaceId: string | null; mode: "new" | "r
 
   const create = (extra: { firstMessage?: string; resumeSessionId?: string }) => {
     if (!wsId() || !agent()) return Promise.reject({ message: t("new.pickFirst") });
+    const chosenModel = touched() ? pickedModel() : null;
+    const chosenThinking = touched() ? pickedThinking() : null;
     const payload = {
       workspaceId: wsId()!,
       agentKind: agent()!,
-      ...(model() ? { modelId: model()! } : {}),
-      ...(thinking() && recipe()?.models.find((m) => m.id === model())?.thinkingLevels?.includes(thinking()!) ? { thinking: thinking()! } : {}),
+      ...(chosenModel ? { modelId: chosenModel } : {}),
+      ...(chosenThinking && recipe()?.models.find((m) => m.id === chosenModel)?.thinkingLevels?.includes(chosenThinking)
+        ? { thinking: chosenThinking }
+        : {}),
       ...extra,
     };
     return request({ type: "create_tab_and_agent", payload }).then((ack) => go(ack.paneId));
   };
 
-  const thinkingLabel = () => (thinking() ? ` · ${thinking()}` : "");
+  const displayedModel = () => (touched() ? pickedModel() : defaultModel());
+  const displayedThinking = () => (touched() ? pickedThinking() : defaultThinking());
+  const thinkingLabel = () => (displayedThinking() ? ` · ${displayedThinking()}` : "");
+  const showDefaultTag = () => !touched() && !!defaultModel();
 
   return (
     <div class="page">
@@ -107,11 +138,19 @@ export function NewSession(props: { workspaceId: string | null; mode: "new" | "r
           <Show when={mode() === "new" && recipe()?.launchModel}>
             <button class="chip" onClick={() => setSheet("model")}>
               <Icon name="layers" />
-              {(model() ? formatModelName(agent(), model()) : t("new.defaultModel")) + thinkingLabel()}
+              {(displayedModel() ? formatModelName(agent(), displayedModel()) + thinkingLabel() : t("new.defaultModel"))}
+              <Show when={showDefaultTag()}>
+                <span class="mtag">{t("model.defaultTag")}</span>
+              </Show>
               <Icon name="chevD" />
             </button>
           </Show>
         </div>
+        <Show when={mode() === "new" && recipe()?.launchModel && !touched()}>
+          <p class="note" style={{ margin: "8px 2px 0" }}>
+            {t("new.followsDefaults", { agent: agentLabel(agent()) })}
+          </p>
+        </Show>
         <Show when={mode() === "new" && recipe() && !recipe()!.launchModel}>
           <p class="note" style={{ margin: "8px 2px 0" }}>
             {recipe()!.lastUsed
@@ -242,12 +281,23 @@ export function NewSession(props: { workspaceId: string | null; mode: "new" | "r
         <ModelPickerSheet
           agent={agent()!}
           recipe={recipe()}
-          model={model()}
-          thinking={thinking()}
+          defaultModel={defaultModel()}
+          defaultThinking={defaultThinking()}
+          model={displayedModel()}
+          thinking={displayedThinking()}
+          touched={touched()}
           onClose={() => setSheet(null)}
-          onPick={(chosenModel, chosenThinking) => {
-            setModel(chosenModel);
-            setThinking(chosenThinking);
+          onConfirm={(chosenModel, chosenThinking) => {
+            setPickedModel(chosenModel);
+            setPickedThinking(chosenThinking);
+            setTouched(true);
+            setSheet(null);
+          }}
+          onRestoreDefault={() => {
+            setPickedModel(null);
+            setPickedThinking(null);
+            setTouched(false);
+            setSheet(null);
           }}
         />
       </Show>
@@ -259,19 +309,25 @@ export function NewSession(props: { workspaceId: string | null; mode: "new" | "r
 function ModelPickerSheet(props: {
   agent: string;
   recipe: AgentRecipeSummary | undefined;
+  defaultModel: string | null;
+  defaultThinking: string | null;
   model: string | null;
   thinking: string | null;
-  onPick: (modelId: string, thinking: string | null) => void;
+  touched: boolean;
+  onConfirm: (modelId: string | null, thinking: string | null) => void;
+  onRestoreDefault: () => void;
   onClose: () => void;
 }) {
   const [query, setQuery] = createSignal("");
   const [refreshing, setRefreshing] = createSignal(false);
-  const [selectedModel, setSelectedModel] = createSignal<string | null>(props.model);
-  const [selectedThinking, setSelectedThinking] = createSignal<string | null>(props.thinking);
+  const [stagedModel, setStagedModel] = createSignal<string | null>(props.model);
+  const [stagedThinking, setStagedThinking] = createSignal<string | null>(props.thinking);
+  const [stagedRestored, setStagedRestored] = createSignal(!props.touched);
 
   const models = () => props.recipe?.models ?? [];
-  const current = () => models().find((m) => m.id === selectedModel());
+  const current = () => models().find((m) => m.id === stagedModel());
   const levels = () => current()?.thinkingLevels ?? [];
+  const isDefaultModel = () => props.defaultModel !== null && stagedModel() === props.defaultModel;
 
   const shown = () => {
     const q = query().trim().toLowerCase();
@@ -281,26 +337,38 @@ function ModelPickerSheet(props: {
   };
 
   const selectModel = (id: string) => {
-    setSelectedModel(id);
+    setStagedModel(id);
+    setStagedRestored(false);
     const target = models().find((m) => m.id === id);
     const lvls = target?.thinkingLevels ?? [];
     let nextThinking: string | null = null;
     if (lvls.length > 0) {
-      if (selectedThinking() && lvls.includes(selectedThinking()!)) {
-        nextThinking = selectedThinking();
+      if (stagedThinking() && lvls.includes(stagedThinking()!)) {
+        nextThinking = stagedThinking();
       } else {
         nextThinking = lvls[0] ?? null;
       }
     }
-    setSelectedThinking(nextThinking);
-    props.onPick(id, nextThinking);
+    setStagedThinking(nextThinking);
   };
 
   const selectThinking = (lvl: string) => {
-    setSelectedThinking(lvl);
-    if (selectedModel()) {
-      props.onPick(selectedModel()!, lvl);
+    setStagedThinking(lvl);
+    setStagedRestored(false);
+  };
+
+  const restoreDefault = () => {
+    setStagedModel(props.defaultModel);
+    setStagedThinking(props.defaultThinking);
+    setStagedRestored(true);
+  };
+
+  const confirm = () => {
+    if (stagedRestored()) {
+      props.onRestoreDefault();
+      return;
     }
+    props.onConfirm(stagedModel(), stagedThinking());
   };
 
   const refresh = () => {
@@ -318,33 +386,43 @@ function ModelPickerSheet(props: {
       sub={props.recipe?.label}
       onClose={props.onClose}
       right={
-        <button
-          class="cbtn"
-          style={{ color: "var(--accent)" }}
-          aria-label={t("model.refresh")}
-          disabled={refreshing()}
-          onClick={refresh}
-        >
-          <Show when={refreshing()} fallback={<Icon name="refresh" sm />}>
-            <span class="spin" />
-          </Show>
+        <button class="btn acc sh-confirm" onClick={confirm}>
+          {t("common.confirm")}
         </button>
       }
     >
       <div class="model-pinned-card">
-        <div class="nm">{selectedModel() ? formatModelName(props.agent, selectedModel()) : (current()?.label ?? t("model.model"))}</div>
-        <Show when={selectedModel()}>
-          <div class="id mono">{selectedModel()}</div>
+        <div class="model-card-top">
+          <div class="model-card-title">
+            <span class="nm">
+              {stagedModel() ? formatModelName(props.agent, stagedModel()) : (current()?.label ?? t("new.defaultModel"))}
+            </span>
+            <Show when={isDefaultModel()}>
+              <span class="mtag">{t("model.agentDefault")}</span>
+            </Show>
+          </div>
+          <Show when={props.defaultModel !== null && !stagedRestored()}>
+            <button class="lnk" style={{ "flex-shrink": 0, "font-size": "12.5px" }} onClick={restoreDefault}>
+              {t("model.restoreDefault")}
+            </button>
+          </Show>
+        </div>
+        <Show when={stagedModel()}>
+          <div class="id mono">{stagedModel()}</div>
         </Show>
         <div class="thinking-row">
           <Show
             when={levels().length > 0}
-            fallback={<span class="unsupported">{t("model.noThinking")}</span>}
+            fallback={
+              <Show when={stagedThinking()} fallback={<span class="unsupported">{t("model.noThinking")}</span>}>
+                <span class="chip hi">{stagedThinking()}</span>
+              </Show>
+            }
           >
             <For each={levels()}>
               {(l) => (
                 <button
-                  class={`chip${l === selectedThinking() ? " hi" : ""}`}
+                  class={`chip${l === stagedThinking() ? " hi" : ""}`}
                   onClick={() => selectThinking(l)}
                 >
                   {l}
@@ -356,30 +434,52 @@ function ModelPickerSheet(props: {
       </div>
 
       <Show when={models().length > 5}>
-        <div class="searchbar">
-          <Icon name="search" sm />
-          <input
-            placeholder={t("model.search")}
-            value={query()}
-            onInput={(e) => setQuery(e.currentTarget.value)}
-            autocomplete="off"
-            autocapitalize="off"
-            spellcheck={false}
-          />
+        <div class="model-search-row">
+          <div class="searchbar">
+            <Icon name="search" sm />
+            <input
+              placeholder={t("model.search")}
+              value={query()}
+              onInput={(e) => setQuery(e.currentTarget.value)}
+              autocomplete="off"
+              autocapitalize="off"
+              spellcheck={false}
+            />
+          </div>
+          <button
+            class="cbtn"
+            style={{ color: "var(--accent)" }}
+            aria-label={t("model.refresh")}
+            disabled={refreshing()}
+            onClick={refresh}
+          >
+            <Show when={refreshing()} fallback={<Icon name="refresh" sm />}>
+              <span class="spin" />
+            </Show>
+          </button>
         </div>
       </Show>
 
       <div class="card" style={{ "margin-top": "6px", "overflow-y": "auto" }}>
-        <For each={shown()} fallback={<p class="note">{t("model.none")}</p>}>
+        <For
+          each={shown()}
+          fallback={<p class="note" style={{ padding: "10px 14px" }}>{t("model.none")}</p>}
+        >
           {(m) => {
             const count = m.thinkingLevels?.length ?? 0;
+            const isDefault = () => props.defaultModel !== null && m.id === props.defaultModel;
             return (
               <button
                 class="li"
                 onClick={() => selectModel(m.id)}
               >
                 <div class="tx">
-                  <div style={{ "font-weight": 600 }}>{formatModelName(props.agent, m.id)}</div>
+                  <div style={{ display: "flex", "align-items": "center", gap: "6px", "font-weight": 600 }}>
+                    <span>{formatModelName(props.agent, m.id)}</span>
+                    <Show when={isDefault()}>
+                      <span class="mtag">{t("model.defaultTag")}</span>
+                    </Show>
+                  </div>
                   <small class="mono">{m.id}</small>
                 </div>
                 <Show when={count > 0}>
@@ -387,7 +487,7 @@ function ModelPickerSheet(props: {
                     {t("model.levelsCount", { count })}
                   </span>
                 </Show>
-                <Show when={m.id === selectedModel()}>
+                <Show when={m.id === stagedModel()}>
                   <span class="ck">
                     <Icon name="check" />
                   </span>
@@ -396,6 +496,14 @@ function ModelPickerSheet(props: {
             );
           }}
         </For>
+        <Show when={models().length <= 5}>
+          <button class="li" style={{ color: "var(--accent)" }} disabled={refreshing()} onClick={refresh}>
+            <Show when={refreshing()} fallback={<Icon name="refresh" sm />}>
+              <span class="spin" />
+            </Show>
+            <div class="tx">{t("model.refreshList")}</div>
+          </button>
+        </Show>
       </div>
     </Sheet>
   );

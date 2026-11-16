@@ -1,5 +1,15 @@
 import { createSignal, For, Show } from "solid-js";
-import { EMPTY_FILTER, filterActive, navigate, setFilter, showToast, state, type FilterState } from "../state/store";
+import {
+  agentsFilterDirty,
+  homePrefsActive,
+  navigate,
+  setAgentsFilter,
+  setHomePrefs,
+  showToast,
+  state,
+  type AgentsFilter,
+} from "../state/store";
+import { DEFAULT_AGENTS_FILTER, DEFAULT_HOME_PREFS } from "../state/list-prefs";
 import { request } from "../state/ws";
 import { agentLabel, findTab, Icon, paneLabel, Sheet } from "./ui";
 import { t, type MessageId } from "../i18n";
@@ -8,7 +18,8 @@ import { t, type MessageId } from "../i18n";
 type Overlay =
   | { kind: "rename"; tabId: string }
   | { kind: "close"; tabId: string }
-  | { kind: "filter" }
+  | { kind: "homeFilter" }
+  | { kind: "agentsFilter" }
   | { kind: "image"; url: string; alt?: string }
   | null;
 
@@ -135,28 +146,72 @@ function CloseSheet(props: { tabId: string }) {
   );
 }
 
-const STATUS_CHOICES: Array<[FilterState["statuses"][number], MessageId]> = [
+const AGENT_STATUS_CHOICES: Array<[AgentsFilter["statuses"][number], MessageId]> = [
   ["blocked", "status.blocked"],
   ["working", "status.working"],
   ["done", "status.done"],
   ["idle", "status.idle"],
-  ["terminal", "agent.terminal"],
 ];
 
-/** §2.3: stored in this browser only. */
-function FilterSheet() {
-  const toggle = <K extends "statuses" | "agents">(key: K, v: FilterState[K][number]) => {
-    const list = state.filter[key] as string[];
+/** §2.3.1: Home sort & fold options, stored in this browser only. */
+function HomeFilterSheet() {
+  return (
+    <Sheet
+      title={t("filter.homeTitle")}
+      onClose={() => setOverlay(null)}
+      right={
+        <Show when={homePrefsActive()}>
+          <button class="lnk" onClick={() => setHomePrefs(DEFAULT_HOME_PREFS)}>
+            {t("filter.reset")}
+          </button>
+        </Show>
+      }
+    >
+      <div class="sec">{t("filter.sort")}</div>
+      <div class="chipr">
+        <button
+          class={`chip${state.homePrefs.order === "herdr" ? " hi" : ""}`}
+          onClick={() => setHomePrefs({ ...state.homePrefs, order: "herdr" })}
+        >
+          {t("filter.sortHerdr")}
+        </button>
+        <button
+          class={`chip${state.homePrefs.order === "activity" ? " hi" : ""}`}
+          onClick={() => setHomePrefs({ ...state.homePrefs, order: "activity" })}
+        >
+          {t("filter.sortActivity")}
+        </button>
+      </div>
+      <div class="sec">{t("filter.show")}</div>
+      <div class="card">
+        <button
+          class="li"
+          onClick={() => setHomePrefs({ ...state.homePrefs, foldAgentless: !state.homePrefs.foldAgentless })}
+        >
+          <div class="tx">{t("filter.foldAgentless")}</div>
+          <span class={`tg${state.homePrefs.foldAgentless ? "" : " off"}`} />
+        </button>
+      </div>
+      <p class="note">{t("filter.note")}</p>
+    </Sheet>
+  );
+}
+
+/** §2.3.2: All Agents grouping & filters, stored in this browser only. */
+function AgentsFilterSheet() {
+  const toggle = <K extends "statuses" | "agents">(key: K, v: AgentsFilter[K][number]) => {
+    const list = state.agentsFilter[key] as string[];
     const next = list.includes(v as string) ? list.filter((x) => x !== v) : [...list, v as string];
-    setFilter({ ...state.filter, [key]: next });
+    setAgentsFilter({ ...state.agentsFilter, [key]: next });
   };
+  const agentKinds = () => Object.keys(state.recipes).filter((k) => k !== "terminal");
   return (
     <Sheet
       title={t("filter.title")}
       onClose={() => setOverlay(null)}
       right={
-        <Show when={filterActive()}>
-          <button class="lnk" onClick={() => setFilter({ ...EMPTY_FILTER, groupBy: state.filter.groupBy })}>
+        <Show when={agentsFilterDirty()}>
+          <button class="lnk" onClick={() => setAgentsFilter(DEFAULT_AGENTS_FILTER)}>
             {t("filter.reset")}
           </button>
         </Show>
@@ -165,23 +220,23 @@ function FilterSheet() {
       <div class="sec">{t("filter.grouping")}</div>
       <div class="chipr">
         <button
-          class={`chip${(state.filter.groupBy || "status") === "status" ? " hi" : ""}`}
-          onClick={() => setFilter({ ...state.filter, groupBy: "status" })}
+          class={`chip${state.agentsFilter.groupBy === "status" ? " hi" : ""}`}
+          onClick={() => setAgentsFilter({ ...state.agentsFilter, groupBy: "status" })}
         >
           {t("agents.groupByStatus")}
         </button>
         <button
-          class={`chip${state.filter.groupBy === "workspace" ? " hi" : ""}`}
-          onClick={() => setFilter({ ...state.filter, groupBy: "workspace" })}
+          class={`chip${state.agentsFilter.groupBy === "workspace" ? " hi" : ""}`}
+          onClick={() => setAgentsFilter({ ...state.agentsFilter, groupBy: "workspace" })}
         >
           {t("agents.groupByWorkspace")}
         </button>
       </div>
       <div class="sec">{t("filter.status")}</div>
       <div class="chipr" style={{ "flex-wrap": "wrap" }}>
-        <For each={STATUS_CHOICES}>
+        <For each={AGENT_STATUS_CHOICES}>
           {([v, label]) => (
-            <button class={`chip${state.filter.statuses.includes(v) ? " hi" : ""}`} onClick={() => toggle("statuses", v)}>
+            <button class={`chip${state.agentsFilter.statuses.includes(v) ? " hi" : ""}`} onClick={() => toggle("statuses", v)}>
               {t(label)}
             </button>
           )}
@@ -189,24 +244,13 @@ function FilterSheet() {
       </div>
       <div class="sec">Agent</div>
       <div class="chipr" style={{ "flex-wrap": "wrap" }}>
-        <For each={Object.keys(state.recipes)}>
+        <For each={agentKinds()}>
           {(kind) => (
-            <button class={`chip${state.filter.agents.includes(kind) ? " hi" : ""}`} onClick={() => toggle("agents", kind)}>
+            <button class={`chip${state.agentsFilter.agents.includes(kind) ? " hi" : ""}`} onClick={() => toggle("agents", kind)}>
               {agentLabel(kind)}
             </button>
           )}
         </For>
-      </div>
-      <div class="sec">{t("filter.show")}</div>
-      <div class="card">
-        <button class="li" onClick={() => setFilter({ ...state.filter, showTerminals: !state.filter.showTerminals })}>
-          <div class="tx">{t("filter.showTerminals")}</div>
-          <span class={`tg${state.filter.showTerminals ? "" : " off"}`} />
-        </button>
-        <button class="li" onClick={() => setFilter({ ...state.filter, showIdle: !state.filter.showIdle })}>
-          <div class="tx">{t("filter.showIdle")}</div>
-          <span class={`tg${state.filter.showIdle ? "" : " off"}`} />
-        </button>
       </div>
       <p class="note">{t("filter.note")}</p>
     </Sheet>
@@ -222,8 +266,11 @@ export function Overlays() {
       <Show when={overlay()?.kind === "close" && (overlay() as { tabId: string }).tabId} keyed>
         {(tabId) => <CloseSheet tabId={tabId} />}
       </Show>
-      <Show when={overlay()?.kind === "filter"}>
-        <FilterSheet />
+      <Show when={overlay()?.kind === "homeFilter"}>
+        <HomeFilterSheet />
+      </Show>
+      <Show when={overlay()?.kind === "agentsFilter"}>
+        <AgentsFilterSheet />
       </Show>
       <Show when={overlay()?.kind === "image" ? (overlay() as { kind: "image"; url: string; alt?: string }) : null} keyed>
         {(img) => <ImageViewer url={img.url} alt={img.alt} />}

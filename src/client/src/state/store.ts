@@ -20,8 +20,14 @@ import type {
 } from "../../../types/protocol";
 import { applyTheme } from "../themes";
 import { resolveLocale, setLocale, LOCALES, type LocalePref } from "../i18n";
+import {
+  DEFAULT_HOME_PREFS,
+  parseAgentsFilter,
+  type AgentsFilter,
+  type HomePrefs,
+} from "./list-prefs";
 
-export type { SkillEntry, AgentRecipeSummary };
+export type { SkillEntry, AgentRecipeSummary, AgentsFilter, HomePrefs };
 
 export type Route =
   | { name: "home" }
@@ -31,17 +37,6 @@ export type Route =
   | { name: "settings" }
   | { name: "quota"; from?: "home" | "agents" | "settings" }
   | { name: "usage"; from?: "home" | "agents" | "settings"; initialPreset?: "today" | "7d" | "30d" | "year" | "all" | "custom" };
-
-/** mobile-ui-and-themes.md §2.3: stored in this browser only. */
-export interface FilterState {
-  statuses: Array<"blocked" | "working" | "done" | "idle" | "terminal">;
-  agents: string[];
-  showTerminals: boolean;
-  showIdle: boolean;
-  groupBy?: "status" | "workspace";
-}
-
-export const EMPTY_FILTER: FilterState = { statuses: [], agents: [], showTerminals: true, showIdle: true, groupBy: "status" };
 
 export interface AppState {
   connected: boolean;
@@ -80,7 +75,8 @@ export interface AppState {
   localePref: LocalePref;
   route: Route;
   terminalOpen: boolean;
-  filter: FilterState;
+  agentsFilter: AgentsFilter;
+  homePrefs: HomePrefs;
   collapsed: Record<string, boolean>;
   unread: Record<string, boolean>;
   canInstallPWA: boolean;
@@ -166,7 +162,8 @@ const [state, setState] = createStore<AppState>({
   localePref: storedLocale && storedLocale in LOCALES ? (storedLocale as LocalePref) : "system",
   route: storedRoute,
   terminalOpen: false,
-  filter: readJson<FilterState>("pigeon_filter", EMPTY_FILTER),
+  agentsFilter: parseAgentsFilter(readPref("pigeon_filter")),
+  homePrefs: readJson<HomePrefs>("pigeon_home_prefs", DEFAULT_HOME_PREFS),
   collapsed: readJson<Record<string, boolean>>("pigeon_collapsed", {}),
   unread: readJson<Record<string, boolean>>("pigeon_unread", {}),
   canInstallPWA: false,
@@ -241,17 +238,31 @@ export function systemReducesTransparency(): boolean {
   return typeof window !== "undefined" && !!window.matchMedia?.("(prefers-reduced-transparency: reduce)").matches;
 }
 
-export function setFilter(filter: FilterState): void {
-  setState("filter", filter);
+export function setAgentsFilter(filter: AgentsFilter): void {
+  setState("agentsFilter", filter);
   writePref("pigeon_filter", JSON.stringify(filter));
 }
 
-export function filterActive(f: FilterState = state.filter): boolean {
-  return f.statuses.length > 0 || f.agents.length > 0 || !f.showTerminals || !f.showIdle;
+export function agentsFilterActive(f: AgentsFilter = state.agentsFilter): boolean {
+  return f.statuses.length > 0 || f.agents.length > 0;
 }
 
-export function toggleCollapsed(workspaceId: string): void {
-  setState("collapsed", workspaceId, (v) => !v);
+export function agentsFilterDirty(f: AgentsFilter = state.agentsFilter): boolean {
+  return f.statuses.length > 0 || f.agents.length > 0 || f.groupBy !== "status";
+}
+
+export function setHomePrefs(prefs: HomePrefs): void {
+  setState("homePrefs", prefs);
+  writePref("pigeon_home_prefs", JSON.stringify(prefs));
+}
+
+export function homePrefsActive(p: HomePrefs = state.homePrefs): boolean {
+  return p.order !== "herdr" || p.foldAgentless;
+}
+
+export function toggleCollapsed(workspaceId: string, currentShut?: boolean): void {
+  const next = currentShut !== undefined ? !currentShut : !state.collapsed[workspaceId];
+  setState("collapsed", workspaceId, next);
   writePref("pigeon_collapsed", JSON.stringify(state.collapsed));
 }
 
