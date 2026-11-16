@@ -188,6 +188,11 @@ export function validateClientMessage(raw: unknown): ValidationResult {
         return fail(id, "screen_watch needs paneId and on");
       }
       return ok();
+    case "launch_defaults":
+      if (!isObj(p) || !isStr(p.workspaceId) || !isStr(p.agentKind, 32)) {
+        return fail(id, "launch_defaults needs workspaceId and agentKind");
+      }
+      return ok();
     default:
       return fail(id, `Unsupported message type '${type}'`);
   }

@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.13] - 2026-11-16
+
+### Added
+- **Home activity ordering & fold option**: Added per-pane `lastActivityAt` tracking (later of bound session's latest turn timestamp and last observed agent status change), Herdr vs recent activity ordering on Home (computed on entry and held while on Home, showing workspace relative activity age), and an opt-in switch to group workspaces without agents into one expandable row at the bottom of Home (#27).
+- **Agent launch defaults**: Added `launch_defaults` WebSocket command and `ModelCatalog.launchDefaults` to read per-workspace/user default model and thinking level for Claude, Codex, pi, and Antigravity, preselecting them on the New Session page without sending `--model`/effort flags while untouched (#27).
+
+### Changed
+- **Split Home & All Agents filter sheets**: Replaced the shared filter sheet with a Home sort/display sheet and an All Agents grouping/status/agent sheet, dropping the `terminal` status chip and `showTerminals` / `showIdle` switches while migrating older stored filters cleanly (#27).
+- **Model picker confirm flow**: Kept model and thinking choices local to the picker sheet until the header checkmark confirm button is tapped (discarding on close, scrim tap, or swipe down), moved catalog refresh beside search (or to the list end when search is absent), tagged the agent default model, and added **Restore agent default** (#27).
+- **All Agents model subtitle**: Styled the model label on All Agents rows as plain muted text matching Home instead of an accent badge (#27).
+- **Usage heatmap cells**: The week-column layout (ranges over six weeks) uses fixed 24px cells labeled with their dates; the zoom controls are removed and it scrolls sideways by drag (#27).
+
 ## [0.1.12] - 2026-11-15
 
 ### Added

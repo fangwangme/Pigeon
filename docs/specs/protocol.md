@@ -250,6 +250,12 @@ The terminal view (`mobile-ui-and-themes.md` §5) turns this on while it is open
 ```
 Releases the pane's paused queue (§4.2): its oldest prompt goes out as in `idle`. A pane the daemon does not know is `ERR_NOT_FOUND`; a queue that is not paused is acked with no effect.
 
+### 4.23 Launch Defaults (`launch_defaults`)
+```json
+{ "type": "launch_defaults", "id": "cli_31", "payload": { "workspaceId": "w1", "agentKind": "claude" } }
+```
+The ack carries `{ "model"?: "<id>", "thinking"?: "<level>" }`: the model and thinking level the agent starts on when it is launched in that workspace's folder without `modelId` or `thinking` (§4.5), read from the agent's own settings as `herdr-adapter.md` §5 describes, the files read at the time of the request. Either field is left out when the settings name none or cannot be read; an agent with no such source (OpenCode, the plain terminal) answers `{}`. An unknown `agentKind` is `ERR_INVALID_PAYLOAD`; an unknown workspace is `ERR_NOT_FOUND`. The phone uses it for the new-session page's preselection (`mobile-ui-and-themes.md` §7.1).
+
 ## 5. Server Events (`server -> client`)
 
 ### 5.1 Command Acknowledgment (`ack`)
@@ -274,7 +280,7 @@ Broadcast to every client whenever the Herdr snapshot changes:
         "id": "w1", "label": "Pigeon", "folder": "/home/user/Pigeon", "branch": "main", "tabCount": 1, "activeTabId": "w1:t1", "hasWarn": true, "hasWorking": false, "isFocused": true,
         "tabs": [
           { "id": "w1:t1", "label": "Claude Code", "branch": "feat/1-ui", "paneCount": 2, "panes": [
-            { "id": "w1:p2", "agent": "claude", "agentStatus": "blocked", "isPrimary": true, "name": "claude", "program": "claude", "model": "opus", "summary": "Do you want to proceed?", "summaryKind": "text" },
+            { "id": "w1:p2", "agent": "claude", "agentStatus": "blocked", "isPrimary": true, "name": "claude", "program": "claude", "model": "opus", "summary": "Do you want to proceed?", "summaryKind": "text", "lastActivityAt": 1729650000000 },
             { "id": "w1:p3", "agent": null, "agentStatus": "unknown", "isPrimary": false, "program": "zsh" }
           ] }
         ]
@@ -290,6 +296,7 @@ Broadcast to every client whenever the Herdr snapshot changes:
 - A tab's `label` is its Herdr name when the user gave it one. A Herdr name that is empty or only digits is a default, and the label is then the title of the session bound to the tab's primary pane (`agent-session-normalization.md` §2), else the recipe's label (user decision, 2026-11-07). A 'session title' means solely a title the agent itself assigned (Claude Code `custom-title`/`ai-title`, OpenCode non-placeholder title, AGY annotation title); a first prompt is never a live session title.
 - `agentStatus` and `status` are the reported status: a pane the daemon marks seen is `idle` (`herdr-adapter.md` §4).
 - `model` is the pane's current model as `session.model.value` of §5.6 gives it, absent when the pane has no agent session or its source is `unknown`. A change of model is a snapshot change.
+- `lastActivityAt` (ms since the epoch) is the later of the `updatedAt` of the last turn of the session bound to the pane, else its `timestamp` (§5.6), and the time the daemon observed the pane's agent status change from one value to another (the first status it sees for a pane is not a change). It is absent when neither is known, as for a plain terminal. It is kept in memory only, so after a daemon restart a pane without a bound session has none until its status next changes. A change of it is a snapshot change. The phone orders Home by it (`mobile-ui-and-themes.md` §2.1).
 - The daemon broadcasts `snapshot_update` only when the payload differs from the last one it sent.
 
 ### 5.4 Pane State (`pane_state`)

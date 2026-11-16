@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { chmodSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { ConfigManager } from "../src/server/config-manager";
 import { HerdrClient } from "../src/server/herdr-client";
@@ -475,5 +475,63 @@ describe("pane data, Herdr faults and recipe lookup (issue #19)", () => {
     await send(c.ws, { type: "create_tab_and_agent", id: "k1", payload: { workspaceId: "w1", agentKind: "constructor" } });
     expect(lastError(c.sent)).toBe(ProtocolErrors.ERR_INVALID_PAYLOAD);
     expect(herdr.callsOf("tab.new")).toHaveLength(0);
+  });
+});
+
+const waitFor = async (cond: () => boolean, ms = 2000) => {
+  const end = Date.now() + ms;
+  while (!cond()) {
+    if (Date.now() > end) throw new Error("timed out");
+    await Bun.sleep(10);
+  }
+};
+
+describe("launch defaults (protocol.md §4.23)", () => {
+  test("the ack carries the agent's own default for the workspace; an unknown workspace is ERR_NOT_FOUND", async () => {
+    const home = tempDir("home");
+    const folder = tempDir("proj");
+    mkdirSync(join(home, "state"), { recursive: true });
+    const cachePath = join(home, "state", "models.json");
+    writeFileSync(cachePath, JSON.stringify({ claude: { models: [{ id: "claude-opus-5-5", label: "Claude Opus 5.5", thinkingLevels: ["low", "high"] }] } }));
+    mkdirSync(join(home, ".claude"), { recursive: true });
+    writeFileSync(join(home, ".claude", "settings.json"), JSON.stringify({ model: "opus", effortLevel: "high" }));
+    client.applySnapshot(topologyOf([{ paneId: "p1", app: "claude-code", cwd: folder }], { folder }));
+    const withCatalog = new WsServer({
+      buildId: "build_test",
+      herdrClient: client,
+      pushManager: new PushManager(join(home, "vapid.json")),
+      configManager: config,
+      modelCatalog: new ModelCatalog({ home, env: { HOME: home, PATH: "" }, keychain: false, cachePath }),
+    });
+    try {
+      const c = fakeWs();
+      await withCatalog.handleMessage(c.ws, JSON.stringify({ type: "launch_defaults", id: "d1", payload: { workspaceId: "w1", agentKind: "claude" } }));
+      const ack = c.sent.find((m) => m.type === "ack" && m.replyTo === "d1");
+      expect(ack.payload).toMatchObject({ model: "claude-opus-5-5", thinking: "high" });
+      await withCatalog.handleMessage(c.ws, JSON.stringify({ type: "launch_defaults", id: "d2", payload: { workspaceId: "nope", agentKind: "claude" } }));
+      expect(c.sent.filter((m) => m.type === "error").at(-1)?.error.code).toBe(ProtocolErrors.ERR_NOT_FOUND);
+    } finally {
+      withCatalog.destroy();
+    }
+  });
+});
+
+describe("pane activity time (protocol.md §5.3)", () => {
+  test("an agent status change stamps lastActivityAt on that pane; a plain terminal has none", async () => {
+    herdr.serve([{ paneId: "p1", app: "claude-code" }, { paneId: "p3" }]);
+    await client.connect();
+    const c = fakeWs();
+    server.handleOpen(c.ws);
+    await send(c.ws, { type: "hello", id: "h1", payload: { protocolVersion: "1.0.0" } });
+    await waitFor(() => herdr.callsOf("ls").length > 0);
+    await Bun.sleep(100);
+    const before = Date.now();
+    herdr.serve([{ paneId: "p1", app: "claude-code", state: "working" }, { paneId: "p3" }]);
+    herdr.emitEvent("status", "p1", { status: { state: "working", app: "claude-code" } });
+    const paneOf = (m: any, id: string) => m.payload.workspaces.flatMap((w: any) => w.tabs).flatMap((t: any) => t.panes).find((p: any) => p.id === id);
+    await waitFor(() => c.ofType("snapshot_update").some((m: any) => typeof paneOf(m, "p1")?.lastActivityAt === "number"));
+    const snap = c.ofType("snapshot_update").filter((m: any) => typeof paneOf(m, "p1")?.lastActivityAt === "number").at(-1);
+    expect(paneOf(snap, "p1").lastActivityAt).toBeGreaterThanOrEqual(before);
+    expect(paneOf(snap, "p3")?.lastActivityAt).toBeUndefined();
   });
 });

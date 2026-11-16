@@ -80,6 +80,8 @@ export interface PaneSummary {
   summary?: string;
   /** How the phone shows `summary` (`protocol.md` §5.3). */
   summaryKind?: SummaryKind;
+  /** Latest activity timestamp in ms since epoch (`protocol.md` §5.3). */
+  lastActivityAt?: number;
 }
 
 /** `text`: shown as is; `run`: the running command; `thinking`: the thought's title, or empty. */
@@ -509,7 +511,8 @@ export type ClientMessage =
   | { type: "usage_day"; id: string; payload: { date: string; agents: string[] } }
   | { type: "usage_model"; id: string; payload: { model: string; from: string; to: string; agents: string[] } }
   | { type: "detail_get"; id: string; payload: { paneId: string; kind: "tool" | "reasoning" | "file" | "subagent"; turnId?: string; callId?: string; filePath?: string; subagentId?: string } }
-  | { type: "screen_watch"; id: string; payload: { paneId: string; on: boolean } };
+  | { type: "screen_watch"; id: string; payload: { paneId: string; on: boolean } }
+  | { type: "launch_defaults"; id: string; payload: { workspaceId: string; agentKind: string } };
 
 // Server -> Client messages
 export type ServerMessage =

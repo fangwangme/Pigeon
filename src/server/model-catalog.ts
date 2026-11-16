@@ -123,6 +123,101 @@ export class ModelCatalog {
   }
 
   /**
+   * herdr-adapter.md §5: the model and effort an agent starts on when launched without `modelId`
+   * or `thinking`, read from its own settings files (trust boundary).
+   */
+  public launchDefaults(agent: string, folder?: string): { model?: string; thinking?: string } {
+    const parsedCache = new Map<string, Record<string, unknown> | null>();
+    const readFileObj = (path: string, parse: (raw: string) => unknown): Record<string, unknown> | null => {
+      if (parsedCache.has(path)) return parsedCache.get(path)!;
+      let result: Record<string, unknown> | null = null;
+      if (existsSync(path)) {
+        try {
+          const parsed = parse(readFileSync(path, "utf-8"));
+          if (isObj(parsed)) result = parsed;
+        } catch {
+          result = null;
+        }
+      }
+      parsedCache.set(path, result);
+      return result;
+    };
+    const str = (obj: Record<string, unknown>, key: string): string | undefined => {
+      const v = obj[key];
+      return typeof v === "string" && v.trim().length > 0 ? v.trim() : undefined;
+    };
+    const pickFirst = <T>(
+      files: string[],
+      parse: (raw: string) => unknown,
+      extract: (obj: Record<string, unknown>) => T | undefined
+    ): T | undefined => {
+      for (const path of files) {
+        const obj = readFileObj(path, parse);
+        if (!obj) continue;
+        const val = extract(obj);
+        if (val !== undefined) return val;
+      }
+      return undefined;
+    };
+    const parseJson = (raw: string) => JSON.parse(raw);
+    const parseToml = (raw: string) => Bun.TOML.parse(raw);
+
+    switch (agent) {
+      case "claude": {
+        const files = [
+          ...(folder ? [join(folder, ".claude", "settings.local.json"), join(folder, ".claude", "settings.json")] : []),
+          join(this.home, ".claude", "settings.json"),
+        ];
+        const rawModel = pickFirst(files, parseJson, (o) => str(o, "model"));
+        const thinking = pickFirst(files, parseJson, (o) => str(o, "effortLevel"));
+        const model = rawModel ? this.resolveClaudeDefault(rawModel) : undefined;
+        return { ...(model ? { model } : {}), ...(thinking ? { thinking } : {}) };
+      }
+      case "codex": {
+        const files = [
+          ...(folder ? [join(folder, ".codex", "config.toml")] : []),
+          join(this.home, ".codex", "config.toml"),
+        ];
+        const rawModel = pickFirst(files, parseToml, (o) => str(o, "model"));
+        const thinking = pickFirst(files, parseToml, (o) => str(o, "model_reasoning_effort"));
+        const model = rawModel ? this.resolve("codex", rawModel) : undefined;
+        return { ...(model ? { model } : {}), ...(thinking ? { thinking } : {}) };
+      }
+      case "pi": {
+        const files = [
+          ...(folder ? [join(folder, ".pi", "settings.json")] : []),
+          join(this.home, ".pi", "agent", "settings.json"),
+        ];
+        const rawModel = pickFirst(files, parseJson, (o) => {
+          const provider = str(o, "defaultProvider");
+          const mod = str(o, "defaultModel");
+          return provider && mod ? `${provider}/${mod}` : undefined;
+        });
+        const thinking = pickFirst(files, parseJson, (o) => str(o, "defaultThinkingLevel"));
+        const model = rawModel ? this.resolve("pi", rawModel) : undefined;
+        return { ...(model ? { model } : {}), ...(thinking ? { thinking } : {}) };
+      }
+      case "agy": {
+        const files = [join(this.home, ".gemini", "antigravity-cli", "settings.json")];
+        const rawModel = pickFirst(files, parseJson, (o) => str(o, "model"));
+        const model = rawModel ? this.resolve("agy", rawModel) : undefined;
+        return model ? { model } : {};
+      }
+      default:
+        return {};
+    }
+  }
+
+  private resolveClaudeDefault(raw: string): string | undefined {
+    const stripped = raw.replace(/\[[^\]]*\]$/, "").trim();
+    if (!stripped || stripped === "default") return undefined;
+    if (stripped === "opus" || stripped === "sonnet" || stripped === "haiku" || stripped === "fable") {
+      return this.models("claude").find((m) => m.id.startsWith(`claude-${stripped}`))?.id;
+    }
+    return this.resolve("claude", stripped);
+  }
+
+  /**
    * herdr-adapter.md §7.1: resolves a model value read from records to a catalog id by exact id,
    * else case-insensitive label match, else kept as read.
    */

@@ -160,7 +160,7 @@ A period is shown as a grid of days (`mobile-ui-and-themes.md` §11.3). Its orie
 
 - **≤ 7 days — strip:** one row, starting at `from`, each cell labeled with its weekday.
 - **spanning ≤ 6 Monday-based weeks — week rows:** one row per week, columns Monday to Sunday; days outside the range stay empty.
-- **longer — week columns:** one column per Monday-based week, rows Monday to Sunday (the GitHub layout), scrollable and zoomable.
+- **longer — week columns:** one column per Monday-based week, rows Monday to Sunday (the GitHub layout), scrolled sideways; it has no zoom (user decision, 2026-11-16).
 
 ### 3.7 Freshness and Storage
 

@@ -157,10 +157,41 @@ export function Sheet(props: {
   /** The body does not scroll; the children hold their own scroller below a fixed part. */
   flush?: boolean;
 }) {
+  let startX = 0;
+  let startY = 0;
+  let eligible = false;
+  const canSwipeDown = (target: EventTarget | null, sheetEl: HTMLElement): boolean => {
+    let el = target as HTMLElement | null;
+    while (el && el !== sheetEl) {
+      if (el.scrollTop > 0) return false;
+      el = el.parentElement;
+    }
+    return true;
+  };
   return (
     <div class="overlay" role="dialog" aria-modal="true">
       <div class="scrim" onClick={() => props.onClose()} />
-      <div class={`sheet${props.full ? " full" : ""}`}>
+      <div
+        class={`sheet${props.full ? " full" : ""}`}
+        onTouchStart={(e) => {
+          if (e.touches.length !== 1) {
+            eligible = false;
+            return;
+          }
+          startX = e.touches[0].clientX;
+          startY = e.touches[0].clientY;
+          eligible = canSwipeDown(e.target, e.currentTarget);
+        }}
+        onTouchEnd={(e) => {
+          if (!eligible) return;
+          eligible = false;
+          const t = e.changedTouches[0];
+          if (!t) return;
+          const dy = t.clientY - startY;
+          const dx = Math.abs(t.clientX - startX);
+          if (dy > 70 && dy > dx * 1.5) props.onClose();
+        }}
+      >
         <div class="grab" />
         <Show when={!props.noHeader}>
           <div class="sh">
