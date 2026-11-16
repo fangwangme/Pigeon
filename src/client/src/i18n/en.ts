@@ -88,9 +88,11 @@ export const en = {
   "filter.grouping": "Grouping",
   "filter.show": "Show",
   "filter.foldAgentless": "Collapse workspaces without agents",
+  "filter.foldAgentlessHint": "Terminal-only workspaces move into one row at the bottom; tap to expand",
   "filter.note": "Saved on this phone only.",
 
   "home.paneCount": { one: "{count} pane", other: "{count} panes" },
+  "home.foldedGroup": { one: "{count} folded workspace without agents", other: "{count} folded workspaces without agents" },
   "home.searchPlaceholder": "Search tabs or workspaces",
   "home.closeSearch": "Close search",
   "home.agentCount": { one: "{count} agent", other: "{count} agents" },

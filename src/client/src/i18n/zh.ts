@@ -89,9 +89,11 @@ export const zh: Messages = {
   "filter.grouping": "分组方式",
   "filter.show": "显示",
   "filter.foldAgentless": "折叠没有 Agent 的工作区",
+  "filter.foldAgentlessHint": "只有终端的工作区收进底部一行，点开展开",
   "filter.note": "只保存在这台手机上。",
 
   "home.paneCount": "{count} 个 pane",
+  "home.foldedGroup": "已折叠 {count} 个没有 Agent 的工作区",
   "home.searchPlaceholder": "搜索标签页或工作区",
   "home.closeSearch": "关闭搜索",
   "home.agentCount": "{count} 个",

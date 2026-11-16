@@ -8,7 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.1.13] - 2026-11-16
 
 ### Added
-- **Home activity ordering & fold option**: Added per-pane `lastActivityAt` tracking (later of bound session's latest turn timestamp and last observed agent status change), Herdr vs recent activity ordering on Home (computed on entry and held while on Home, showing workspace relative activity age), and an opt-in switch to fold workspaces without agents while respecting manual toggles (#27).
+- **Home activity ordering & fold option**: Added per-pane `lastActivityAt` tracking (later of bound session's latest turn timestamp and last observed agent status change), Herdr vs recent activity ordering on Home (computed on entry and held while on Home, showing workspace relative activity age), and an opt-in switch to group workspaces without agents into one expandable row at the bottom of Home (#27).
 - **Agent launch defaults**: Added `launch_defaults` WebSocket command and `ModelCatalog.launchDefaults` to read per-workspace/user default model and thinking level for Claude, Codex, pi, and Antigravity, preselecting them on the New Session page without sending `--model`/effort flags while untouched (#27).
 
 ### Changed

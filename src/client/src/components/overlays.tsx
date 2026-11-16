@@ -188,7 +188,10 @@ function HomeFilterSheet() {
           class="li"
           onClick={() => setHomePrefs({ ...state.homePrefs, foldAgentless: !state.homePrefs.foldAgentless })}
         >
-          <div class="tx">{t("filter.foldAgentless")}</div>
+          <div class="tx">
+            {t("filter.foldAgentless")}
+            <small>{t("filter.foldAgentlessHint")}</small>
+          </div>
           <span class={`tg${state.homePrefs.foldAgentless ? "" : " off"}`} />
         </button>
       </div>

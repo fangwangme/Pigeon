@@ -77,6 +77,7 @@ export interface AppState {
   terminalOpen: boolean;
   agentsFilter: AgentsFilter;
   homePrefs: HomePrefs;
+  foldedGroupOpen: boolean;
   collapsed: Record<string, boolean>;
   unread: Record<string, boolean>;
   canInstallPWA: boolean;
@@ -164,6 +165,7 @@ const [state, setState] = createStore<AppState>({
   terminalOpen: false,
   agentsFilter: parseAgentsFilter(readPref("pigeon_filter")),
   homePrefs: readJson<HomePrefs>("pigeon_home_prefs", DEFAULT_HOME_PREFS),
+  foldedGroupOpen: readPref("pigeon_folded_group_open") === "1",
   collapsed: readJson<Record<string, boolean>>("pigeon_collapsed", {}),
   unread: readJson<Record<string, boolean>>("pigeon_unread", {}),
   canInstallPWA: false,
@@ -260,9 +262,14 @@ export function homePrefsActive(p: HomePrefs = state.homePrefs): boolean {
   return p.order !== "herdr" || p.foldAgentless;
 }
 
-export function toggleCollapsed(workspaceId: string, currentShut?: boolean): void {
-  const next = currentShut !== undefined ? !currentShut : !state.collapsed[workspaceId];
-  setState("collapsed", workspaceId, next);
+export function toggleFoldedGroup(): void {
+  const next = !state.foldedGroupOpen;
+  setState("foldedGroupOpen", next);
+  writePref("pigeon_folded_group_open", next ? "1" : "0");
+}
+
+export function toggleCollapsed(workspaceId: string): void {
+  setState("collapsed", workspaceId, (v) => !v);
   writePref("pigeon_collapsed", JSON.stringify(state.collapsed));
 }
 

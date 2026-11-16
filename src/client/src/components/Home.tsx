@@ -6,9 +6,10 @@ import {
   quotaUsageTarget,
   state,
   toggleCollapsed,
+  toggleFoldedGroup,
   type AgentsFilter,
 } from "../state/store";
-import { orderWorkspaces, wsActivity, type HomeOrder } from "../state/list-prefs";
+import { hasAgentPane, orderWorkspaces, splitAgentless, wsActivity, type HomeOrder } from "../state/list-prefs";
 import { selectPane } from "../state/ws";
 import type { PaneSummary, TabSummary, WorkspaceSummary } from "../../../types/protocol";
 import { openOverlay } from "./overlays";
@@ -166,9 +167,16 @@ export function Home() {
   const [query, setQuery] = createSignal<string | null>(null);
   const [heldWsOrder, setHeldWsOrder] = createSignal<string[] | null>(null);
   const [heldTabOrder, setHeldTabOrder] = createSignal<Record<string, string[]>>({});
+  const [heldEntryIds, setHeldEntryIds] = createSignal<Set<string> | null>(null);
+  const [heldFoldedIds, setHeldFoldedIds] = createSignal<Set<string>>(new Set());
   const agents = createMemo(agentPanes);
   const waiting = () => agents().filter((a) => a.pane.agentStatus === "blocked").length;
   const working = () => agents().filter((a) => a.pane.agentStatus === "working").length;
+
+  const captureMembership = (list: readonly WorkspaceSummary[]) => {
+    setHeldEntryIds(new Set(list.map((w) => w.id)));
+    setHeldFoldedIds(new Set(splitAgentless(list).folded.map((w) => w.id)));
+  };
 
   const captureOrder = (list: WorkspaceSummary[], order: HomeOrder) => {
     const ordered = orderWorkspaces(list, order);
@@ -176,6 +184,7 @@ export function Home() {
     const tabs: Record<string, string[]> = {};
     for (const w of ordered) tabs[w.id] = w.tabs.map((t) => t.id);
     setHeldTabOrder(tabs);
+    captureMembership(ordered);
   };
 
   createEffect(
@@ -186,8 +195,20 @@ export function Home() {
         else {
           setHeldWsOrder(null);
           setHeldTabOrder({});
+          setHeldEntryIds(null);
+          setHeldFoldedIds(new Set<string>());
         }
       }
+    )
+  );
+
+  createEffect(
+    on(
+      () => state.homePrefs.foldAgentless,
+      () => {
+        if (state.workspaces.length > 0) captureMembership(state.workspaces);
+      },
+      { defer: true }
     )
   );
 
@@ -203,6 +224,21 @@ export function Home() {
     return wsOrder ? arrangeById(state.workspaces, wsOrder) : state.workspaces;
   });
 
+  const partitioned = createMemo(() => {
+    const all = orderedWorkspaces();
+    if (!state.homePrefs.foldAgentless) return { listed: all, folded: [] as WorkspaceSummary[] };
+    const entry = heldEntryIds();
+    const foldedSet = heldFoldedIds();
+    const listed: WorkspaceSummary[] = [];
+    const folded: WorkspaceSummary[] = [];
+    for (const ws of all) {
+      const isFolded = entry?.has(ws.id) ? foldedSet.has(ws.id) : !hasAgentPane(ws);
+      if (isFolded) folded.push(ws);
+      else listed.push(ws);
+    }
+    return { listed, folded };
+  });
+
   const orderedTabs = (ws: WorkspaceSummary) => {
     if (state.homePrefs.order === "herdr") return ws.tabs;
     const tOrder = heldTabOrder()[ws.id];
@@ -215,7 +251,42 @@ export function Home() {
     if (!q) return list;
     return list.filter((t) => t.label.toLowerCase().includes(q) || ws.label.toLowerCase().includes(q));
   };
+  const searching = () => !!query()?.trim();
   const focusedWs = () => (state.workspaces.find((w) => w.isFocused) ?? state.workspaces[0])?.id ?? null;
+
+  const renderWorkspace = (ws: WorkspaceSummary) => {
+    const shut = () => !!state.collapsed[ws.id];
+    const tabs = () => visibleTabs(ws);
+    const act = () => wsActivity(ws);
+    return (
+      <Show when={!searching() || tabs().length > 0}>
+        <div class="wsh">
+          <button class="tg2" onClick={() => toggleCollapsed(ws.id)} aria-expanded={!shut()}>
+            <span class={`chev${shut() ? " shut" : ""}`}>
+              <Icon name="chevD" sm />
+            </span>
+            <span class="n">{ws.label}</span>
+            <Show when={ws.branch}>
+              <span class="m">
+                <Icon name="branch" sm />
+                {ws.branch}
+              </span>
+            </Show>
+            <span class="m" style={{ flex: "none" }}>{ws.tabs.length}</span>
+            <Show when={state.homePrefs.order === "activity" && act() !== undefined}>
+              <span class="m" style={{ flex: "none" }}>{ago(act()!)}</span>
+            </Show>
+          </button>
+          <button class="mini" aria-label={t("home.newIn", { name: ws.label })} onClick={() => navigate({ name: "new", workspaceId: ws.id, mode: "new" })}>
+            <Icon name="plus" sm />
+          </button>
+        </div>
+        <Show when={!shut()}>
+          <For each={tabs()}>{(tab) => <TabRow ws={ws} tab={tab} />}</For>
+        </Show>
+      </Show>
+    );
+  };
   return (
     <div class="page">
       <div class="hdr home-hdr">
@@ -272,42 +343,28 @@ export function Home() {
             </div>
           </Show>
 
-          <For each={orderedWorkspaces()}>
-            {(ws) => {
-              const hasAgent = () => ws.tabs.some((t) => t.panes.some((p) => !!p.agent));
-              const shut = () => state.collapsed[ws.id] ?? (state.homePrefs.foldAgentless && !hasAgent());
-              const tabs = () => visibleTabs(ws);
-              const act = () => wsActivity(ws);
-              return (
-                <Show when={!query()?.trim() || tabs().length > 0}>
-                  <div class="wsh">
-                    <button class="tg2" onClick={() => toggleCollapsed(ws.id, shut())} aria-expanded={!shut()}>
-                      <span class={`chev${shut() ? " shut" : ""}`}>
-                        <Icon name="chevD" sm />
-                      </span>
-                      <span class="n">{ws.label}</span>
-                      <Show when={ws.branch}>
-                        <span class="m">
-                          <Icon name="branch" sm />
-                          {ws.branch}
-                        </span>
-                      </Show>
-                      <span class="m" style={{ flex: "none" }}>{ws.tabs.length}</span>
-                      <Show when={state.homePrefs.order === "activity" && act() !== undefined}>
-                        <span class="m" style={{ flex: "none" }}>{ago(act()!)}</span>
-                      </Show>
-                    </button>
-                    <button class="mini" aria-label={t("home.newIn", { name: ws.label })} onClick={() => navigate({ name: "new", workspaceId: ws.id, mode: "new" })}>
-                      <Icon name="plus" sm />
-                    </button>
-                  </div>
-                  <Show when={!shut()}>
-                    <For each={tabs()}>{(tab) => <TabRow ws={ws} tab={tab} />}</For>
-                  </Show>
+          <Show when={searching()} fallback={
+            <>
+              <For each={partitioned().listed}>{renderWorkspace}</For>
+              <Show when={partitioned().folded.length > 0}>
+                <button
+                  class="folded-grp"
+                  onClick={() => toggleFoldedGroup()}
+                  aria-expanded={state.foldedGroupOpen}
+                >
+                  <span class={`chev${state.foldedGroupOpen ? "" : " shut"}`}>
+                    <Icon name="chevD" sm />
+                  </span>
+                  <span>{t("home.foldedGroup", { count: partitioned().folded.length })}</span>
+                </button>
+                <Show when={state.foldedGroupOpen}>
+                  <For each={partitioned().folded}>{renderWorkspace}</For>
                 </Show>
-              );
-            }}
-          </For>
+              </Show>
+            </>
+          }>
+            <For each={orderedWorkspaces()}>{renderWorkspace}</For>
+          </Show>
         </div>
       </div>
       <div class="bottombar">

@@ -62,6 +62,28 @@ function sortByActivity<T>(items: readonly T[], activityOf: (item: T) => number 
     .map((entry) => entry.item);
 }
 
+/** Returns true if any pane in the workspace runs an agent. */
+export function hasAgentPane(ws: WorkspaceSummary): boolean {
+  return ws.tabs.some((t) => t.panes.some((p) => !!p.agent));
+}
+
+/**
+ * mobile-ui-and-themes.md §2.1: partitions workspaces into listed (at least one agent pane) and
+ * folded (no agent pane), preserving the given order in both lists.
+ */
+export function splitAgentless(workspaces: readonly WorkspaceSummary[]): {
+  listed: WorkspaceSummary[];
+  folded: WorkspaceSummary[];
+} {
+  const listed: WorkspaceSummary[] = [];
+  const folded: WorkspaceSummary[] = [];
+  for (const ws of workspaces) {
+    if (hasAgentPane(ws)) listed.push(ws);
+    else folded.push(ws);
+  }
+  return { listed, folded };
+}
+
 /**
  * mobile-ui-and-themes.md §2.1: orders workspaces and their tabs either in Herdr's order or by
  * newest `lastActivityAt` (active items first, newest first; inactive and tied items keep Herdr order).

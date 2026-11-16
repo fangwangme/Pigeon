@@ -114,6 +114,7 @@ svg.i.sm { width: 16px; height: 16px; }
 .wsh .m { font-size: 13px; color: var(--faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: inline-flex; align-items: center; gap: 4px; }
 .chev { display: inline-grid; place-items: center; transition: transform .15s; color: var(--faint); flex: none; }
 .chev.shut { transform: rotate(-90deg); }
+.folded-grp { display: flex; align-items: center; gap: 8px; width: 100%; min-height: 44px; margin: 18px 0 4px; padding: 8px 12px; border-radius: 14px; background: var(--surface); border: 1px solid var(--line); color: var(--muted); font-size: 13.5px; font-weight: 550; text-align: left; }
 .mini { width: 36px; height: 36px; border-radius: 50%; background: var(--surface); border: 1px solid var(--line); display: grid; place-items: center; flex: none; }
 .rowwrap { position: relative; overflow: hidden; border-radius: 12px; }
 .rowacts { position: absolute; right: 0; top: 0; bottom: 0; display: flex; }
