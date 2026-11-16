@@ -15,7 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Split Home & All Agents filter sheets**: Replaced the shared filter sheet with a Home sort/display sheet and an All Agents grouping/status/agent sheet, dropping the `terminal` status chip and `showTerminals` / `showIdle` switches while migrating older stored filters cleanly (#27).
 - **Model picker confirm flow**: Kept model and thinking choices local to the picker sheet until the header checkmark confirm button is tapped (discarding on close, scrim tap, or swipe down), moved catalog refresh beside search (or to the list end when search is absent), tagged the agent default model, and added **Restore agent default** (#27).
 - **All Agents model subtitle**: Styled the model label on All Agents rows as plain muted text matching Home instead of an accent badge (#27).
-- **Usage heatmap cells**: Ranges longer than seven days use fixed 24px cells labeled with their dates; the zoom controls are removed and the week-column layout scrolls sideways by drag (#27).
+- **Usage heatmap cells**: The week-column layout (ranges over six weeks) uses fixed 24px cells labeled with their dates; the zoom controls are removed and it scrolls sideways by drag (#27).
 
 ## [0.1.12] - 2026-11-15
 

@@ -925,7 +925,7 @@ export function UsagePage() {
                     <div style={{ "margin-top": "12px" }}>
                       <div style={{ display: "flex", gap: "5px", "padding-left": "30px", "font-size": "10.5px", color: "var(--faint)" }}>
                         <For each={getWeekdayTop()}>
-                          {(w) => <span style={{ width: `${HEAT_CELL}px`, flex: "none", "text-align": "center" }}>{w}</span>}
+                          {(w) => <span style={{ flex: 1, "text-align": "center" }}>{w}</span>}
                         </For>
                       </div>
                       <For each={hm.weeks}>
@@ -941,21 +941,20 @@ export function UsagePage() {
                                     if (c.val > 0) void openDaySheet(c.date);
                                   }}
                                   style={{
-                                    width: `${HEAT_CELL}px`,
-                                    height: `${HEAT_CELL}px`,
-                                    flex: "none",
-                                    "border-radius": "5px",
+                                    flex: 1,
+                                    height: "36px",
+                                    "border-radius": "6px",
                                     border: 0,
                                     background: c.color,
                                     color: c.textColor,
                                     font: "inherit",
-                                    "font-size": "10px",
+                                    "font-size": "11px",
                                     "font-weight": 600,
                                     "font-variant-numeric": "tabular-nums",
                                     display: "flex",
                                     "align-items": "flex-start",
                                     "justify-content": "flex-start",
-                                    padding: "2px 0 0 3px",
+                                    padding: "3px 0 0 5px",
                                     "box-sizing": "border-box",
                                   }}
                                 >
