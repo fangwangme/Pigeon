@@ -363,7 +363,6 @@ export const zh: Messages = {
   "usage.compareEqualLength": "与之前同样长的 {days} 天比较",
   "usage.dailyMetric": "每日{metric}",
   "usage.heatStats": "活跃 {active} 天 · 连续 {current} 天 / 最长 {longest} 天",
-  "usage.zoomFit": "适配",
   "usage.less": "少",
   "usage.more": "多",
   "usage.byDate": "按日期",
@@ -381,8 +380,6 @@ export const zh: Messages = {
   "usage.rangeDays": "{count} 天",
   "usage.sessionCount": "{count} 个会话",
   "usage.agentAndModel": "Agent 与模型",
-  "usage.zoomOut": "缩小",
-  "usage.zoomIn": "放大",
   "usage.level": "第 {level} 级",
   "usage.levelEmpty": "0（无用量）",
 

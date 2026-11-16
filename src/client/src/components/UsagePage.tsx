@@ -96,9 +96,7 @@ export function UsagePage() {
   const [selectedModel, setSelectedModel] = createSignal<string | null>(null);
   const [modelData, setModelData] = createSignal<UsageModelPayload | null>(null);
 
-  // Zoom for week-columns heatmap
-  const ZOOM_LEVELS = [16, 24, 32, 44];
-  const [zoomIndex, setZoomIndex] = createSignal<number | null>(null); // null = fit
+  const HEAT_CELL = 24;
   const [selectedLegendBucket, setSelectedLegendBucket] = createSignal<number | null>(null);
 
   createEffect(() => {
@@ -875,75 +873,6 @@ export function UsagePage() {
                       </div>
                     </div>
 
-                    {/* Zoom buttons for week-columns */}
-                    <Show when={hm.layout === "week-columns"}>
-                      <div
-                        style={{
-                          display: "flex",
-                          "align-items": "center",
-                          background: "var(--bg)",
-                          border: "1px solid var(--line)",
-                          "border-radius": "10px",
-                          padding: "2px",
-                        }}
-                      >
-                        <button
-                          onClick={() => {
-                            const cur = zoomIndex();
-                            if (cur === null) setZoomIndex(0);
-                            else if (cur > 0) setZoomIndex(cur - 1);
-                          }}
-                          aria-label={t("usage.zoomOut")}
-                          style={{
-                            width: "32px",
-                            height: "30px",
-                            border: 0,
-                            "border-radius": "8px",
-                            background: "none",
-                            color: "var(--fg)",
-                            display: "grid",
-                            "place-items": "center",
-                          }}
-                        >
-                          −
-                        </button>
-                        <button
-                          onClick={() => setZoomIndex(null)}
-                          style={{
-                            height: "30px",
-                            padding: "0 6px",
-                            border: 0,
-                            "border-radius": "8px",
-                            background: zoomIndex() === null ? "var(--code)" : "none",
-                            color: "var(--fg)",
-                            font: "inherit",
-                            "font-size": "12px",
-                          }}
-                        >
-                          {t("usage.zoomFit")}
-                        </button>
-                        <button
-                          onClick={() => {
-                            const cur = zoomIndex();
-                            if (cur === null) setZoomIndex(1);
-                            else if (cur < ZOOM_LEVELS.length - 1) setZoomIndex(cur + 1);
-                          }}
-                          aria-label={t("usage.zoomIn")}
-                          style={{
-                            width: "32px",
-                            height: "30px",
-                            border: 0,
-                            "border-radius": "8px",
-                            background: "none",
-                            color: "var(--fg)",
-                            display: "grid",
-                            "place-items": "center",
-                          }}
-                        >
-                          +
-                        </button>
-                      </div>
-                    </Show>
                   </div>
 
                   {/* Strip layout */}
@@ -996,7 +925,7 @@ export function UsagePage() {
                     <div style={{ "margin-top": "12px" }}>
                       <div style={{ display: "flex", gap: "5px", "padding-left": "30px", "font-size": "10.5px", color: "var(--faint)" }}>
                         <For each={getWeekdayTop()}>
-                          {(w) => <span style={{ flex: 1, "text-align": "center" }}>{w}</span>}
+                          {(w) => <span style={{ width: `${HEAT_CELL}px`, flex: "none", "text-align": "center" }}>{w}</span>}
                         </For>
                       </div>
                       <For each={hm.weeks}>
@@ -1012,20 +941,21 @@ export function UsagePage() {
                                     if (c.val > 0) void openDaySheet(c.date);
                                   }}
                                   style={{
-                                    flex: 1,
-                                    height: "36px",
-                                    "border-radius": "6px",
+                                    width: `${HEAT_CELL}px`,
+                                    height: `${HEAT_CELL}px`,
+                                    flex: "none",
+                                    "border-radius": "5px",
                                     border: 0,
                                     background: c.color,
                                     color: c.textColor,
                                     font: "inherit",
-                                    "font-size": "11px",
+                                    "font-size": "10px",
                                     "font-weight": 600,
                                     "font-variant-numeric": "tabular-nums",
                                     display: "flex",
                                     "align-items": "flex-start",
                                     "justify-content": "flex-start",
-                                    padding: "3px 0 0 5px",
+                                    padding: "2px 0 0 3px",
                                     "box-sizing": "border-box",
                                   }}
                                 >
@@ -1042,12 +972,6 @@ export function UsagePage() {
                   {/* Week-columns layout */}
                   <Show when={hm.layout === "week-columns" && hm.weeks}>
                     {(() => {
-                      const cellSz = () => {
-                        const zi = zoomIndex();
-                        if (zi === null) return 20; // default fit approx
-                        return ZOOM_LEVELS[zi];
-                      };
-
                       return (
                         <div style={{ display: "flex", gap: "4px", "margin-top": "12px" }}>
                           <div
@@ -1064,7 +988,7 @@ export function UsagePage() {
                           >
                             <For each={getWeekdaySide()}>
                               {(wl) => (
-                                <span style={{ height: `${cellSz()}px`, "line-height": `${cellSz()}px` }}>
+                                <span style={{ height: `${HEAT_CELL}px`, "line-height": `${HEAT_CELL}px` }}>
                                   {wl}
                                 </span>
                               )}
@@ -1078,7 +1002,7 @@ export function UsagePage() {
                               "overflow-x": "auto",
                               display: "flex",
                               "flex-direction": "row-reverse",
-                              "touch-action": "pan-x pinch-zoom",
+                              "touch-action": "pan-x",
                             }}
                           >
                             <div style={{ display: "flex", gap: "4px", flex: "none", "padding-bottom": "2px" }}>
@@ -1091,7 +1015,7 @@ export function UsagePage() {
                                         "font-size": "10px",
                                         color: "var(--faint)",
                                         "white-space": "nowrap",
-                                        width: `${cellSz()}px`,
+                                        width: `${HEAT_CELL}px`,
                                       }}
                                     >
                                       {w.month}
@@ -1103,10 +1027,10 @@ export function UsagePage() {
                                             if (c.val > 0) void openDaySheet(c.date);
                                           }}
                                           style={{
-                                            width: `${cellSz()}px`,
-                                            height: `${cellSz()}px`,
-                                            padding: 0,
-                                            "border-radius": cellSz() >= 24 ? "5px" : "3px",
+                                            width: `${HEAT_CELL}px`,
+                                            height: `${HEAT_CELL}px`,
+                                            padding: "2px 0 0 3px",
+                                            "border-radius": "5px",
                                             border: 0,
                                             background: c.color,
                                             color: c.textColor,
@@ -1120,7 +1044,7 @@ export function UsagePage() {
                                             "box-sizing": "border-box",
                                           }}
                                         >
-                                          {cellSz() >= 28 && c.inRange ? c.dayNum : ""}
+                                          {c.inRange ? c.dayNum : ""}
                                         </button>
                                       )}
                                     </For>

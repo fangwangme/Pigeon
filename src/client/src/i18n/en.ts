@@ -362,7 +362,6 @@ export const en = {
   "usage.compareEqualLength": "Compared with the previous {days} days",
   "usage.dailyMetric": "Daily {metric}",
   "usage.heatStats": "{active} active days · streak {current}d / longest {longest}d",
-  "usage.zoomFit": "Fit",
   "usage.less": "Less",
   "usage.more": "More",
   "usage.byDate": "By date",
@@ -380,8 +379,6 @@ export const en = {
   "usage.rangeDays": "{count} days",
   "usage.sessionCount": "{count} sessions",
   "usage.agentAndModel": "Agents & models",
-  "usage.zoomOut": "Zoom out",
-  "usage.zoomIn": "Zoom in",
   "usage.level": "Level {level}",
   "usage.levelEmpty": "0 (Empty)",
 
