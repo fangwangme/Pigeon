@@ -419,3 +419,75 @@ describe("Claude and OpenCode model sources (herdr-adapter.md §7.1, issue #21)"
     expect(readFileSync(codexCallsFile, "utf-8").trim().split("\n")).toHaveLength(1);
   });
 });
+
+describe("launch defaults (herdr-adapter.md §5)", () => {
+  const claudeList = [
+    { id: "claude-fable-5-2", label: "Claude Fable 5.2", thinkingLevels: ["low", "high"] },
+    { id: "claude-sonnet-5-5", label: "Claude Sonnet 5.5", thinkingLevels: ["low", "high"] },
+    { id: "claude-opus-5-5", label: "Claude Opus 5.5", thinkingLevels: ["low", "high"] },
+    { id: "claude-opus-5", label: "Claude Opus 5", thinkingLevels: ["low", "high"] },
+  ];
+  const agyList = [
+    { id: "gemini-4-argon-medium", label: "Gemini 4 Argon (Medium)" },
+    { id: "gemini-4-hydrogen-high", label: "Gemini 4 Hydrogen (High)" },
+  ];
+
+  function setup() {
+    const home = tempDir("home");
+    const folder = tempDir("proj");
+    const cachePath = join(home, "state", "models.json");
+    mkdirSync(join(home, "state"), { recursive: true });
+    writeFileSync(cachePath, JSON.stringify({ claude: { models: claudeList }, agy: { models: agyList } }));
+    const catalog = new ModelCatalog({ home, env: { HOME: home, PATH: "" }, keychain: false, cachePath });
+    const write = (path: string, text: string) => {
+      mkdirSync(join(path, ".."), { recursive: true });
+      writeFileSync(path, text);
+    };
+    return { home, folder, catalog, write };
+  }
+
+  test("claude: an alias becomes the first catalog id of that family, with effortLevel as thinking", () => {
+    const { home, folder, catalog, write } = setup();
+    write(join(home, ".claude", "settings.json"), JSON.stringify({ model: "opus[1m]", effortLevel: "high" }));
+    expect(catalog.launchDefaults("claude", folder)).toEqual({ model: "claude-opus-5-5", thinking: "high" });
+  });
+
+  test("claude: project settings override the user file key by key, settings.local.json first", () => {
+    const { home, folder, catalog, write } = setup();
+    write(join(home, ".claude", "settings.json"), JSON.stringify({ model: "opus", effortLevel: "high" }));
+    write(join(folder, ".claude", "settings.json"), JSON.stringify({ model: "sonnet" }));
+    expect(catalog.launchDefaults("claude", folder)).toEqual({ model: "claude-sonnet-5-5", thinking: "high" });
+    write(join(folder, ".claude", "settings.local.json"), JSON.stringify({ effortLevel: "low" }));
+    expect(catalog.launchDefaults("claude", folder)).toEqual({ model: "claude-sonnet-5-5", thinking: "low" });
+  });
+
+  test("codex: model and model_reasoning_effort from config.toml", () => {
+    const { home, folder, catalog, write } = setup();
+    write(join(home, ".codex", "config.toml"), 'model = "gpt-6-luna"\nmodel_reasoning_effort = "xhigh"\n\n[profiles.fast]\nmodel = "gpt-mini"\n');
+    expect(catalog.launchDefaults("codex", folder)).toEqual({ model: "gpt-6-luna", thinking: "xhigh" });
+  });
+
+  test("pi: provider and model join into the catalog id form, with defaultThinkingLevel", () => {
+    const { home, folder, catalog, write } = setup();
+    write(join(home, ".pi", "agent", "settings.json"), JSON.stringify({ defaultProvider: "nvidia", defaultModel: "nvidia/nemotron-x", defaultThinkingLevel: "medium" }));
+    expect(catalog.launchDefaults("pi", folder)).toEqual({ model: "nvidia/nvidia/nemotron-x", thinking: "medium" });
+  });
+
+  test("agy: the settings label resolves to its catalog id", () => {
+    const { home, folder, catalog, write } = setup();
+    write(join(home, ".gemini", "antigravity-cli", "settings.json"), JSON.stringify({ model: "Gemini 4 Hydrogen (High)" }));
+    expect(catalog.launchDefaults("agy", folder)).toEqual({ model: "gemini-4-hydrogen-high" });
+  });
+
+  test("missing or malformed settings give an empty answer, and opencode always does", () => {
+    const { home, folder, catalog, write } = setup();
+    expect(catalog.launchDefaults("claude", folder)).toEqual({});
+    write(join(home, ".claude", "settings.json"), "{ not json");
+    write(join(home, ".codex", "config.toml"), "model = = broken");
+    write(join(home, ".pi", "agent", "settings.json"), JSON.stringify({ defaultModel: 42 }));
+    expect(catalog.launchDefaults("claude", folder)).toEqual({});
+    expect(catalog.launchDefaults("codex", folder)).toEqual({});
+    expect(catalog.launchDefaults("pi", folder)).toEqual({});
+    expect(catalog.launchDefaults("opencode", folder)).toEqual({});
+  });
+});

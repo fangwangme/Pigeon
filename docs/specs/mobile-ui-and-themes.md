@@ -35,9 +35,15 @@ Pigeon is a phone app for Herdr, written as a PWA. It follows the interaction mo
 
 ### 2.1 Workspaces (the start screen)
 - The header's top padding is the same as every page header's (§1.1), and the gaps below it are kept tight.
-- Top left, the bionic pigeon logo mark (a compact 34×34px SVG `<Logo />` with subtle rounded border and gradient backdrop). Top right, one glass capsule with **filter** (§2.3), **quota** (§11.1) and **settings** (§8.1). There is no ☰, no device row, no tab bar, no pane row and no drawer.
+- Top left, the bionic pigeon logo mark (a compact 34×34px SVG `<Logo />` with subtle rounded border and gradient backdrop). Top right, one glass capsule with **filter** (§2.3.1), **quota** (§11.1) and **settings** (§8.1, the gear icon). There is no ☰, no device row, no tab bar, no pane row and no drawer.
 - An **所有 Agent** summary row (count of agents, and of those waiting) opens §2.2.
-- One collapsible group per Herdr workspace, in Herdr's order. The group header shows the workspace name, its git branch when it has one, and its tab count; its `+` opens a new session (§7.1) in that workspace. Collapsed state is kept in this browser.
+- Home lists every tab of every workspace: it has no status, agent-kind or terminal filter (user decision, 2026-11-16). Only the search below narrows it.
+- One collapsible group per Herdr workspace. The group header shows the workspace name, its git branch when it has one, and its tab count; its `+` opens a new session (§7.1) in that workspace. Collapsed state is kept in this browser.
+- **Order** (chosen in §2.3.1; stored in this browser):
+  - **Herdr 顺序** (default): workspaces and their tabs in Herdr's order.
+  - **最近活动**: a tab's activity time is the newest `lastActivityAt` of its panes (`protocol.md` §5.3), a workspace's the newest of its tabs. Workspaces with an activity time come first, newest first, and tabs inside every workspace likewise; workspaces and tabs without one follow in Herdr's order. Equal times keep Herdr's order. In this order the group header also shows the workspace's activity time as a relative age (刚刚, 12 分钟前, as in §7.2).
+  - The order is computed when Home is entered from any page (and on first load) and then held while Home stays open, so rows never move under the finger; status, labels and new or closed tabs still update in place. A tab or workspace that appears while Home is open goes to the end until the next entry.
+- **折叠没有 Agent 的工作区** (§2.3.1, off by default): when on, a workspace none of whose panes has an agent starts collapsed. The user's own collapse or expand of a workspace overrides it and is kept as today. A workspace that gains an agent is no longer folded by this rule.
 - One row per tab. The left icon is the agent or shell avatar (`<AgentIcon>`: official Antigravity arch, Claude 8-bit crab, Codex rosette, OpenCode box, Pi mark, or skeumorphic terminal window with traffic lights and prompt). The title is the tab label (`protocol.md` §5.3: the Herdr name the user gave the tab, else the session's title, else the agent's name). The subtitle shows the primary pane's model (`protocol.md` §5.3 `model`, named as in §6.4) and, when the tab has more than one pane, the pane count, joined by ` · `; without a known model only the pane count shows. A plain terminal keeps its program as subtitle.
 - The row's right end holds the single status dot (`<StatusIcon>`: amber dot = waiting for you / `blocked`, blue pulsing dot = `working`, green dot `#10b981` = finished / `done`, subtle gray dot = `idle` / plain terminal). Session status is indicated purely by this dot's color: an agent that finishes shows green (`done`) waiting to be read; viewing the pane reports presence to the daemon (`herdr-adapter.md` §4), which marks it seen and transitions it to gray (`idle`). No separate unread dot is shown.
 - Swiping a row left reveals **重命名** and **关闭**; both use the same flows as the ⋯ menu (§6.1, §6.4).
@@ -46,13 +52,24 @@ Pigeon is a phone app for Herdr, written as a PWA. It follows the interaction mo
 - Home and All Agents view no pane (`protocol.md` §4.4 `paneId: null`), so the daemon polls nothing for them.
 
 ### 2.2 All agents
-The header holds **quota** (§11.1) and **filter** (§2.3).
-- **By Status** (default, selected via filter sheet §2.3): Every pane with an agent, grouped by status in urgency order: **等待你** → **工作中** → **已完成** → **空闲**.
-- **By Workspace** (selected via filter sheet §2.3): Grouped by Herdr workspace, with workspaces and items sorted by status urgency priority (`blocked` → `working` → `done` → `idle`).
+The header holds **quota** (§11.1) and **filter** (§2.3.2).
+- **By Status** (default, selected via filter sheet §2.3.2): Every pane with an agent that passes the filter, grouped by status in urgency order: **等待你** → **工作中** → **已完成** → **空闲**.
+- **By Workspace** (selected via filter sheet §2.3.2): Grouped by Herdr workspace, with workspaces and items sorted by status urgency priority (`blocked` → `working` → `done` → `idle`).
 - Every group starts expanded each time the page opens; a group header collapses or expands its group, and its chevron points down when expanded and right when collapsed. Each row shows the agent's icon, the tab label as title, and a subtitle with workspace folder and model tag (flex allocation prioritizes workspace folder visibility over model label when space is tight). A waiting row adds one amber line saying what it waits for (the pane's summary). A tap opens that session; back returns here.
 
 ### 2.3 Filter
-A sheet shared by §2.1 and §2.2: status (等待你, 工作中, 已完成, 空闲, 终端), agent kind, grouping (按状态 / By Status default, or 按工作区 / By Workspace), and display options (show plain terminals, show idle tabs). The filter button stays clean without an indicator dot; when filters are active the filter sheet provides a reset action to restore defaults. Stored in this browser's `localStorage` only, never synced.
+Each list page has its own sheet holding only what applies to that page (user decision, 2026-11-16). The filter button stays clean without an indicator dot, and no chip row on the page repeats the sheet; when a sheet differs from its defaults it offers a **重置** action that restores them. Both are stored in this browser's `localStorage` only, never synced.
+
+#### 2.3.1 Home
+- **排序**: **Herdr 顺序** (default) or **最近活动** (§2.1).
+- **显示**: one switch, **折叠没有 Agent 的工作区** (off by default; §2.1).
+
+#### 2.3.2 All agents
+- **分组**: **按状态** (default) or **按工作区** (§2.2).
+- **状态**: 等待你, 工作中, 已完成, 空闲 (none chosen = all).
+- **Agent**: one chip per recipe kind (none chosen = all).
+- There is no terminal status and no "show plain terminals" or "show idle" switch: the page lists only panes with an agent, and leaving 空闲 unchosen while choosing the others hides idle ones.
+- A filter stored by an earlier build loads with its `showTerminals` and `showIdle` fields and any `terminal` status dropped.
 
 ## 3. Session page
 
@@ -162,10 +179,12 @@ A sheet of the pane's entries (`protocol.md` §5.7), grouped by source: 项目 �
 
 ### 6.4 Model and thinking level
 Chosen only when a session is created (§7.1; user decision, 2026-11-12). A running session's model and level are shown in its header (§3.1) and never changed from the phone; to use another model, the user starts a new session.
-- **Picker sheet**: the agent's models (`herdr-adapter.md` §7.1). A fixed card at the top holds the chosen model: its label, its id in monospace, and its thinking levels as one row of chips that scrolls sideways when it does not fit, or **不支持** when the model has none (the model's levels are a list, empty for a model without thinking). Choosing a model in the list moves it into the card; the level is kept when the new model offers it, else the model's first level is chosen. The list scrolls under the card, which never scrolls away. The approved mockup is board C of issue #21's design canvas.
+- **Picker sheet**: the agent's models (`herdr-adapter.md` §7.1). A fixed card at the top holds the chosen model: its label, its id in monospace, and its thinking levels as one row of chips that scrolls sideways when it does not fit, or **不支持** when the model has none (the model's levels are a list, empty for a model without thinking). Choosing a model in the list moves it into the card; the level is kept when the new model offers it, else the model's first level is chosen. The list scrolls under the card, which never scrolls away. The approved mockup is board C of issue #21's design canvas; issue #27's canvas adds the confirm button, the default tag and the moved refresh.
+- **Confirm** (user decision, 2026-11-16): the header's left is close (×), its right a filled accent **确认** button. Choices in the card and the list change only the sheet; **确认** applies them to the new-session page and closes the sheet; ×, the scrim or a swipe down close it and discard them.
+- **Agent default**: the model §7.1 resolved as the agent's own default carries a **默认** tag in its list row, and the card shows **Agent 默认** while it holds that model. When the default is known, the card offers **恢复 Agent 默认**, which puts the default model and level back into the card. A default that is not in the list still shows in the card, by the §6.4 name rule.
 - A search field filters by id and label when the agent has more than five models. There is no provider filter.
 - Each row shows the model's label and, when it has levels, their count.
-- A refresh button asks the daemon to fetch this agent's list again (`protocol.md` §4.15). The **模型** chip shows even while the list is empty (as **默认模型**), so the refresh stays reachable.
+- A refresh button asks the daemon to fetch this agent's list again (`protocol.md` §4.15). It sits at the right end of the search field's row; without a search field it is the last row of the list (**刷新模型列表**), so it stays reachable when the list is empty. It is not in the header. The **模型** chip shows even while the list is empty (as **默认模型**).
 - **Model names** everywhere (home and All agents rows, the 恢复 list, the session header, the picker, the usage model rows and day/model sheets; one rule for all of them) show the model's catalog label (`herdr-adapter.md` §7.1). When a model is shared across multiple agents, each agent's catalog is checked in order (skipping entries whose `label === id`); a tierless canonical ID (e.g. `gemini-3-8-flash`) that matches a tiered catalog entry (e.g. `gemini-3.8-flash-high`, `"Gemini 3.8 Flash (High)"`) strips the trailing thinking-tier parenthetical (`"Gemini 3.8 Flash"`). A model no catalog names shows the part of its id after the last `/`, or the whole id when it has none.
 
 ### 6.5 ⋯ menu
@@ -183,7 +202,8 @@ A sheet listing the tab's panes (agent or shell, status). The session page defau
 ## 7. New session
 
 ### 7.1 New
-A blank session page: segments **新建 / 恢复**, chips for **工作区** (Herdr's workspaces; preset from where it was opened), **Agent** (recipes) and **模型** (opens §6.4's picker; only for an agent that takes a model at launch, `protocol.md` §5.7). For an agent that does not, one muted line says so and names what it will start on (user decision, 2026-11-13): "OpenCode 不支持指定模型，沿用上次：GLM-5.3-Flash · max" from the recipe's `lastUsed` (label from the catalog), or "OpenCode 不支持指定模型，沿用上次的模型" without it. Then the composer for the first message. Sending creates the tab with the first message (`protocol.md` §4.5) and opens it; the title starts as the first message and can be renamed. Creating a Herdr workspace is not offered.
+A blank session page: segments **新建 / 恢复**, chips for **工作区** (Herdr's workspaces; preset from where it was opened), **Agent** (recipes) and **模型** (opens §6.4's picker; only for an agent that takes a model at launch, `protocol.md` §5.7). For an agent that does not, one muted line says so and names what it will start on (user decision, 2026-11-13): "OpenCode 不支持指定模型，沿用上次：GLM-5.3-Flash · max" from the recipe's `lastUsed` (label from the catalog), or "OpenCode 不支持指定模型，沿用上次的模型" without it. Then the composer for the first message.
+- **Preselected model** (user decision, 2026-11-16): for an agent that takes a model at launch, the chip starts on the agent's own default for the chosen workspace, asked from the daemon (`protocol.md` §4.23) each time the workspace or the agent changes. The chip shows that model and level (§6.4 name rule) with a **默认** tag, and one muted line under the chips says it follows the agent's own settings. While the user has not confirmed another choice in the picker, the launch sends neither `modelId` nor `thinking` (`protocol.md` §4.5), so the agent starts on its own configuration exactly. Without a known default the chip shows **默认模型**, and the launch likewise sends neither; the first model of the list is never preselected. A confirmed choice (even the same model with another level) is sent as `modelId` and `thinking` and drops the tag; **恢复 Agent 默认** in the picker returns to the untouched state. Sending creates the tab with the first message (`protocol.md` §4.5) and opens it; the title starts as the first message and can be renamed. Creating a Herdr workspace is not offered.
 
 ### 7.2 Resume
 The **恢复** segment (also reached from `+`) lists the agent's past sessions for the chosen workspace's folder (`protocol.md` §4.10): title or first message, then the age and the model joined by ` · ` (only the age when the model is unknown). A tap opens a new tab that resumes it (`protocol.md` §4.5 `resumeSessionId`) and goes there. Resuming always opens a new tab.
