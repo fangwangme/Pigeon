@@ -134,6 +134,11 @@ export class UsageStore {
         PRIMARY KEY (model, effective_from)
       );
 
+      CREATE TABLE IF NOT EXISTS model_releases (
+        model TEXT PRIMARY KEY,
+        release_date TEXT NOT NULL
+      );
+
       CREATE TABLE IF NOT EXISTS usage_meta (
         key TEXT PRIMARY KEY,
         val TEXT NOT NULL
@@ -250,7 +255,18 @@ export class UsageStore {
 
     const processRecords = this.db.transaction((records: RawUsageRecord[]) => {
       for (const r of records) {
-        const p = resolvePrice(r.date, r.canonicalModelId);
+        let modelId = r.modelId;
+        let canon = r.canonicalModelId;
+        let company = r.company;
+        if (r.agent === "agy" && r.unversionedFamily) {
+          const matched = this.resolveGeminiFamily(r.unversionedFamily, r.date, pricing);
+          if (matched) {
+            modelId = matched;
+            canon = matched;
+            company = detectCompany(matched, "agy");
+          }
+        }
+        const p = resolvePrice(r.date, canon);
         const cost = p ? costAt(p, r.inputTokens, r.outputTokens, r.cacheReadTokens, r.cacheWriteTokens) : 0;
         const unpriced = p ? 0 : 1;
 
@@ -260,10 +276,10 @@ export class UsageStore {
           r.messageKey,
           r.timestampMs,
           r.date,
-          r.rawModelId ?? r.modelId,
-          r.modelId,
-          r.canonicalModelId,
-          r.company,
+          r.rawModelId ?? modelId,
+          modelId,
+          canon,
+          company,
           r.inputTokens,
           r.outputTokens,
           r.cacheReadTokens,
@@ -338,7 +354,7 @@ export class UsageStore {
     }
 
     if (pricing.arePricesAvailable()) {
-      this.repairAntigravityRecords(pricing);
+      this.repairAntigravityRecords(pricing, catalogChanged);
     }
     if (catalogChanged) {
       this.backfillUnpricedRecords(pricing);
@@ -404,16 +420,22 @@ export class UsageStore {
     const closePeriod = this.db.prepare(
       "UPDATE model_price_periods SET effective_to = ? WHERE model = ? AND effective_from = ?"
     );
+    const upsertRelease = this.db.prepare(
+      "INSERT OR REPLACE INTO model_releases (model, release_date) VALUES (?, ?)"
+    );
 
     this.db.transaction(() => {
-      for (const [rawKey] of pricing.getCatalogEntries()) {
+      for (const [rawKey, entry] of pricing.getCatalogEntries()) {
         if (rawKey.includes("/")) continue;
         const canon = canonical(rawKey);
         if (!canon || seen.has(canon)) continue;
         seen.add(canon);
 
-        const fresh = pricing.getPrice(canon);
+        const fresh = pricing.getPrice(canon) ?? entry;
         if (!fresh) continue;
+        if (fresh.releaseDate) {
+          upsertRelease.run(canon, fresh.releaseDate);
+        }
         const inRate = toRatePerMillion(fresh.inputCostPerToken);
         const outRate = toRatePerMillion(fresh.outputCostPerToken);
         const crRate = fresh.cacheReadCostPerToken != null ? toRatePerMillion(fresh.cacheReadCostPerToken) : null;
@@ -476,21 +498,83 @@ export class UsageStore {
     return updated;
   }
 
-  public repairAntigravityRecords(pricing: PricingManager): number {
-    const unpricedRows: any[] = this.db.query(`
-      SELECT agent, message_key, date, raw_model_id, model_id, canonical_model_id,
-             input_tokens, output_tokens, cache_read_tokens, cache_write_tokens
-      FROM usage_records
-      WHERE agent = 'agy' AND (
-        unpriced = 1 OR
-        canonical_model_id LIKE '%-n' OR
-        canonical_model_id LIKE '%-a' OR
-        canonical_model_id = 'gemini-default' OR
-        canonical_model_id LIKE '%-trial'
-      )
-    `).all();
+  private resolveGeminiFamily(family: string, date: string, pricing: PricingManager): string | null {
+    const target = family.trim().toLowerCase();
+    if (!target) return null;
+    const baseRe = /^gemini-(\d+)(?:-(\d+))?-([a-z][a-z0-9]*)$/;
 
-    if (unpricedRows.length === 0) return 0;
+    const byModel = new Map<string, { model: string; major: number; minor: number; releaseDate: string | null }>();
+    const register = (modelName: string, releaseDate: string | null) => {
+      const m = modelName.match(baseRe);
+      if (!m || m[3] !== target) return;
+      const major = parseInt(m[1], 10);
+      const minor = m[2] !== undefined ? parseInt(m[2], 10) : 0;
+      const prev = byModel.get(modelName);
+      if (!prev || (!prev.releaseDate && releaseDate)) {
+        byModel.set(modelName, { model: modelName, major, minor, releaseDate: releaseDate ?? prev?.releaseDate ?? null });
+      }
+    };
+
+    const releaseRows = this.db.query("SELECT model, release_date FROM model_releases").all() as Array<{
+      model: string;
+      release_date: string;
+    }>;
+    for (const r of releaseRows) register(r.model, r.release_date);
+
+    for (const [rawKey, entry] of pricing.getCatalogEntries()) {
+      if (rawKey.includes("/")) continue;
+      register(canonical(rawKey), entry.releaseDate ?? null);
+    }
+
+    const periodRows = this.db.query("SELECT DISTINCT model FROM model_price_periods WHERE model LIKE 'gemini-%'").all() as Array<{
+      model: string;
+    }>;
+    for (const r of periodRows) register(r.model, null);
+
+    const candidates = Array.from(byModel.values());
+    if (candidates.length === 0) return null;
+
+    const eligible = candidates.filter((c) => c.releaseDate === null || c.releaseDate <= date);
+    if (eligible.length > 0) {
+      eligible.sort((a, b) => {
+        if (b.major !== a.major) return b.major - a.major;
+        if (b.minor !== a.minor) return b.minor - a.minor;
+        return (b.releaseDate ?? "").localeCompare(a.releaseDate ?? "");
+      });
+      return eligible[0].model;
+    }
+
+    candidates.sort((a, b) => {
+      const ra = a.releaseDate ?? "9999-99-99";
+      const rb = b.releaseDate ?? "9999-99-99";
+      if (ra !== rb) return ra.localeCompare(rb);
+      if (a.major !== b.major) return a.major - b.major;
+      return a.minor - b.minor;
+    });
+    return candidates[0].model;
+  }
+
+  public repairAntigravityRecords(pricing: PricingManager, recheckFamilies = false): number {
+    const candidateRows: any[] = this.db
+      .query(`
+        SELECT agent, message_key, date, raw_model_id, model_id, canonical_model_id, company, cost, unpriced,
+               input_tokens, output_tokens, cache_read_tokens, cache_write_tokens
+        FROM usage_records
+        WHERE agent = 'agy' AND (
+          unpriced = 1 OR
+          canonical_model_id LIKE '%-n' OR
+          canonical_model_id LIKE '%-a' OR
+          canonical_model_id = 'gemini-default' OR
+          canonical_model_id LIKE '%-trial' OR
+          canonical_model_id LIKE '%-xhigh' OR
+          canonical_model_id LIKE 'gemini-pro-orchestrator%' OR
+          canonical_model_id = 'gemini-flash-worker-agy' OR
+          (? = 1 AND raw_model_id IS NOT NULL AND raw_model_id NOT LIKE 'MODEL_PLACEHOLDER_%')
+        )
+      `)
+      .all(recheckFamilies ? 1 : 0);
+
+    if (candidateRows.length === 0) return 0;
 
     let repaired = 0;
     const update = this.db.prepare(`
@@ -500,22 +584,32 @@ export class UsageStore {
     `);
 
     this.db.transaction(() => {
-      for (const row of unpricedRows) {
+      for (const row of candidateRows) {
         const resolved = resolveAntigravityModel(row.raw_model_id, row.model_id);
-        const canon = resolved.canonicalModelId;
+        let modelId = resolved.modelId;
+        let canon = resolved.canonicalModelId;
+        if (resolved.unversionedFamily) {
+          const matched = this.resolveGeminiFamily(resolved.unversionedFamily, row.date, pricing);
+          if (matched) {
+            modelId = matched;
+            canon = matched;
+          }
+        }
+        const company = detectCompany(canon, "agy");
         const p = this.lookupPeriodPrice(row.date, canon, pricing);
         const cost = p ? costAt(p, row.input_tokens, row.output_tokens, row.cache_read_tokens, row.cache_write_tokens) : 0;
         const unpriced = p ? 0 : 1;
-        update.run(
-          resolved.rawModelId,
-          resolved.modelId,
-          canon,
-          detectCompany(canon, "agy"),
-          cost,
-          unpriced,
-          row.agent,
-          row.message_key
-        );
+        if (
+          resolved.rawModelId === row.raw_model_id &&
+          modelId === row.model_id &&
+          canon === row.canonical_model_id &&
+          company === row.company &&
+          cost === row.cost &&
+          unpriced === row.unpriced
+        ) {
+          continue;
+        }
+        update.run(resolved.rawModelId, modelId, canon, company, cost, unpriced, row.agent, row.message_key);
         repaired++;
       }
     })();

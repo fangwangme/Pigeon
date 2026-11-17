@@ -1,4 +1,4 @@
-// Issue #13. quota-and-usage.md §3.2. Model ID normalization.
+// Issue #13, #33. quota-and-usage.md §3.2. Model ID normalization.
 
 export function stripDateSuffix(modelId: string): string {
   const m1 = modelId.match(/-(\d{8})$/);
@@ -10,7 +10,7 @@ export function stripDateSuffix(modelId: string): string {
 
 export function stripVariantSuffixes(modelId: string): string {
   let s = modelId;
-  const suffixes = ["-high", "-medium", "-low", "-free", "-thinking", "-tiered"];
+  const suffixes = ["-xhigh", "-high", "-medium", "-low", "-minimal", "-free", "-thinking", "-tiered"];
   let stripped = true;
   while (stripped) {
     stripped = false;
@@ -78,7 +78,17 @@ export function detectCompany(modelId: string, agentKind?: string): "anthropic" 
   const lower = modelId.toLowerCase();
   if (lower.includes("claude") || lower.includes("anthropic")) return "anthropic";
   if (lower.includes("gpt") || lower.includes("o1") || lower.includes("o3") || lower.includes("chatgpt") || lower.includes("openai") || lower.includes("codex")) return "openai";
-  if (lower.includes("gemini") || lower.includes("palm") || lower.includes("gemma") || lower.includes("argon") || lower.includes("google")) return "google";
+  if (
+    lower.includes("gemini") ||
+    lower.includes("palm") ||
+    lower.includes("gemma") ||
+    lower.includes("argon") ||
+    lower.includes("carbon") ||
+    lower.includes("hydrogen") ||
+    lower.includes("google")
+  ) {
+    return "google";
+  }
   if (agentKind === "claude") return "anthropic";
   if (agentKind === "codex") return "openai";
   if (agentKind === "agy") return "google";
@@ -95,6 +105,18 @@ export function isPseudoModel(modelId: string): boolean {
   );
 }
 
+export function isAntigravityRoutingModel(modelId: string): boolean {
+  if (isPseudoModel(modelId)) return true;
+  const norm = formatModelId(modelId);
+  return (
+    norm === "gemini-pro-orchestrator" ||
+    norm.startsWith("gemini-pro-orchestrator-") ||
+    norm === "gemini-flash-worker-agy" ||
+    /^gemini-[a-z0-9-]+-worker(?:-agy)?$/.test(norm)
+  );
+}
+
+/** Concrete versioned model enums only; dynamic orchestrator/worker enums resolve through displayName + release dates. */
 export const STATIC_MODEL_ALIASES: Record<string, string> = {
   m37: "gemini-3-1-pro-high",
   m36: "gemini-3-1-pro-low",
@@ -123,9 +145,11 @@ export const STATIC_MODEL_ALIASES: Record<string, string> = {
   m318: "gemini-3-8-flash-high",
   m319: "gemini-3-8-flash-medium",
   m320: "gemini-3-8-flash-low",
+  m322: "gemini-3-8-flash-tiered",
   m399: "claude-opus-5-5-low",
   m400: "claude-opus-5-5-medium",
   m401: "claude-opus-5-5-high",
+  m402: "claude-opus-5-5-high",
   m403: "claude-sonnet-5-5-low",
   m404: "claude-sonnet-5-5-medium",
   m405: "claude-sonnet-5-5-high",
@@ -133,6 +157,13 @@ export const STATIC_MODEL_ALIASES: Record<string, string> = {
   m418: "gemini-4-argon-medium",
   m419: "gemini-4-argon-low",
   m421: "gemini-4-argon",
+  m427: "gemini-4-carbon-high",
+  m437: "gemini-4-carbon-medium",
+  m438: "gemini-4-carbon-low",
+  m525: "gemini-4-hydrogen-high",
+  m526: "gemini-4-hydrogen-medium",
+  m527: "gemini-4-hydrogen-low",
+  m528: "gemini-4-hydrogen-xhigh",
 };
 
 const KNOWN_CODENAMES: Record<string, string> = {
@@ -161,44 +192,174 @@ function lookupAlias(raw: string, table: Map<string, string>): string | undefine
   return undefined;
 }
 
+function parseDisplayName(displayName: string): { concreteModelId?: string; unversionedFamily?: string } | null {
+  const trimmed = displayName.trim();
+  if (!trimmed) return null;
+
+  // "Orchestrator (Carbon)", "Orchestrator (Argon)", or versioned "Orchestrator (Gemini 4.2 Carbon)" / "Orchestrator (Carbon 4.2)"
+  const orchMatch = trimmed.match(/^orchestrator\s*\(([^)]+)\)$/i);
+  if (orchMatch) {
+    const inner = orchMatch[1].trim();
+    if (!inner) return null;
+    if (/\d/.test(inner)) {
+      const nameVer = inner.match(/^(?:gemini[\s_-]+)?([a-z][a-z0-9-]*)\s+(\d+(?:[._-]\d+)?)$/i);
+      if (nameVer) {
+        return { concreteModelId: formatModelId(`gemini-${nameVer[2]}-${nameVer[1]}`) };
+      }
+      const prefixed = /^gemini[\s_-]/i.test(inner) ? inner : `gemini-${inner}`;
+      return { concreteModelId: formatModelId(prefixed) };
+    }
+    const fam = formatModelId(inner.replace(/^gemini[\s_-]+/i, ""));
+    return fam ? { unversionedFamily: fam } : null;
+  }
+
+  // Only treat as a display label (not a raw enum like MODEL_PLACEHOLDER_M668) when it has spaces or parentheses
+  if (!/[\s()]/.test(trimmed)) return null;
+
+  const base = trimmed.replace(/(?:\s*\([^)]+\))+\s*$/, "").trim();
+  if (!base) return null;
+
+  if (/\d/.test(base)) {
+    return { concreteModelId: formatModelId(base) };
+  }
+
+  if (/^gemini[\s_-]+/i.test(base) || /\(\s*orchestrator\s*\)/i.test(trimmed)) {
+    const fam = formatModelId(base.replace(/^gemini[\s_-]+/i, ""));
+    if (fam) return { unversionedFamily: fam };
+  }
+
+  return { concreteModelId: formatModelId(base) };
+}
+
+function extractRoutingFamily(slug: string): string | null {
+  const norm = formatModelId(slug);
+  if (norm === "gemini-pro-orchestrator") return "carbon";
+  if (norm === "gemini-pro-orchestrator-g1-pro") return "argon";
+  if (norm.startsWith("gemini-pro-orchestrator-")) {
+    const suffix = norm.slice("gemini-pro-orchestrator-".length);
+    return suffix || null;
+  }
+  if (norm === "gemini-flash-worker-agy") return "flash";
+  const workerMatch = norm.match(/^gemini-([a-z0-9]+)-worker(?:-agy)?$/);
+  if (workerMatch) return workerMatch[1];
+  return null;
+}
+
+export interface ResolvedAntigravityModel {
+  rawModelId: string;
+  modelId: string;
+  canonicalModelId: string;
+  unversionedFamily?: string;
+}
+
 export function resolveAntigravityModel(
   modelEnum: string | null | undefined,
-  servedModel: string | null | undefined
-): { rawModelId: string; modelId: string; canonicalModelId: string } {
+  servedModel: string | null | undefined,
+  displayName?: string | null
+): ResolvedAntigravityModel {
   const aliases = modelAliasTable();
   const rawEnum = modelEnum?.trim() || null;
   const rawServed = servedModel?.trim() || null;
-  const rawModelId = rawEnum || rawServed || "unknown";
+  const rawDisplay = displayName?.trim() || null;
 
-  // Step 1: Enum in alias table
+  // Step 1: Concrete static enum alias
   if (rawEnum) {
     const alias = lookupAlias(rawEnum, aliases);
     if (alias) {
       const modelId = formatModelId(alias);
       return {
-        rawModelId,
+        rawModelId: rawEnum,
+        modelId,
+        canonicalModelId: canonical(modelId),
+      };
+    }
+
+    // Stored raw_model_id from a previous unversioned family scan (re-evaluated during repairAntigravityRecords)
+    const storedDisp = parseDisplayName(rawEnum);
+    if (storedDisp?.unversionedFamily) {
+      const fallback = `gemini-${storedDisp.unversionedFamily}`;
+      return {
+        rawModelId: rawEnum,
+        modelId: fallback,
+        canonicalModelId: fallback,
+        unversionedFamily: storedDisp.unversionedFamily,
+      };
+    }
+    const storedRouteFam = extractRoutingFamily(rawEnum);
+    if (storedRouteFam) {
+      const formatted = formatModelId(rawEnum);
+      return {
+        rawModelId: rawEnum,
+        modelId: formatted,
+        canonicalModelId: canonical(formatted),
+        unversionedFamily: storedRouteFam,
+      };
+    }
+  }
+
+  // Step 2: Non-routing served model
+  if (rawServed && !isAntigravityRoutingModel(rawServed)) {
+    const servedDisp = parseDisplayName(rawServed);
+    if (!servedDisp) {
+      const codename = KNOWN_CODENAMES[rawServed.toLowerCase()];
+      const modelId = codename ? formatModelId(codename) : formatModelId(rawServed);
+      return {
+        rawModelId: rawEnum || rawServed,
         modelId,
         canonicalModelId: canonical(modelId),
       };
     }
   }
 
-  // Step 2: Served model (check known codenames or non-pseudo)
-  if (rawServed && !isPseudoModel(rawServed)) {
-    const codename = KNOWN_CODENAMES[rawServed.toLowerCase()];
-    const modelId = codename ? formatModelId(codename) : formatModelId(rawServed);
-    return {
-      rawModelId,
-      modelId,
-      canonicalModelId: canonical(modelId),
-    };
+  // Step 3: Display name (#21) — resolves ahead of routing servedModel slugs
+  const dispSource = rawDisplay || (rawServed && parseDisplayName(rawServed) ? rawServed : null);
+  if (dispSource) {
+    const parsed = parseDisplayName(dispSource);
+    if (parsed?.concreteModelId) {
+      return {
+        rawModelId: rawEnum || dispSource,
+        modelId: parsed.concreteModelId,
+        canonicalModelId: canonical(parsed.concreteModelId),
+      };
+    }
+    if (parsed?.unversionedFamily) {
+      const fallback = rawServed ? formatModelId(rawServed) : `gemini-${parsed.unversionedFamily}`;
+      return {
+        rawModelId: dispSource,
+        modelId: fallback,
+        canonicalModelId: canonical(fallback),
+        unversionedFamily: parsed.unversionedFamily,
+      };
+    }
   }
 
-  // Step 3: Raw enum fallback
+  // Step 4: Routing servedModel family fallback when displayName is absent
+  if (rawServed) {
+    const routeFam = extractRoutingFamily(rawServed);
+    if (routeFam) {
+      const modelId = formatModelId(rawServed);
+      return {
+        rawModelId: rawServed,
+        modelId,
+        canonicalModelId: canonical(modelId),
+        unversionedFamily: routeFam,
+      };
+    }
+    if (!isPseudoModel(rawServed)) {
+      const modelId = formatModelId(rawServed);
+      return {
+        rawModelId: rawEnum || rawServed,
+        modelId,
+        canonicalModelId: canonical(modelId),
+      };
+    }
+  }
+
+  // Step 5: Raw enum fallback
   if (rawEnum) {
     const modelId = formatModelId(rawEnum);
     return {
-      rawModelId,
+      rawModelId: rawEnum,
       modelId,
       canonicalModelId: canonical(modelId),
     };
@@ -210,4 +371,3 @@ export function resolveAntigravityModel(
     canonicalModelId: "unknown",
   };
 }
-

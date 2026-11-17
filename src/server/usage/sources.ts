@@ -3,7 +3,7 @@ import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { Database } from "bun:sqlite";
 import { formatYMD } from "../../shared/usage";
-import { canonical, detectCompany, formatModelId, resolveAntigravityModel } from "./model-id";
+import { canonical, detectCompany, formatModelId, isAntigravityRoutingModel, resolveAntigravityModel } from "./model-id";
 
 /** quota-and-usage.md §3.1: records that could not be parsed, counted over one scan. */
 export interface ScanStats {
@@ -19,6 +19,7 @@ export interface RawUsageRecord {
   rawModelId?: string;
   modelId: string;
   canonicalModelId: string;
+  unversionedFamily?: string;
   company: "anthropic" | "openai" | "google" | "other";
   inputTokens: number;
   outputTokens: number;
@@ -305,6 +306,24 @@ export function scanAntigravityDb(path: string): RawUsageRecord[] {
 
     const sessionId = path.slice(path.lastIndexOf("/") + 1).replace(/\.db$/, "");
 
+    interface ParsedGenStep {
+      idx: number;
+      uuid: string | null;
+      ts: number;
+      respId?: string;
+      modelEnum?: string;
+      servedModel?: string;
+      displayName?: string;
+      inp: number;
+      out: number;
+      cr: number;
+      cw: number;
+      total: number;
+    }
+
+    const parsedSteps: ParsedGenStep[] = [];
+    const enumHints = new Map<string, { servedModel?: string; displayName?: string }>();
+
     // Gen metadata
     const genRows: any[] = db.query("SELECT idx, data FROM gen_metadata WHERE data IS NOT NULL ORDER BY idx").all();
     for (const r of genRows) {
@@ -321,14 +340,22 @@ export function scanAntigravityDb(path: string): RawUsageRecord[] {
       const usageSub = parseProto(usageFld.data);
       const inp = usageSub.find((x) => x.fieldNum === 2)?.val || 0;
       const totOut = usageSub.find((x) => x.fieldNum === 3)?.val || 0;
-      if (totOut === 0) continue;
+      const cw = usageSub.find((x) => x.fieldNum === 4)?.val || 0;
       const cr = usageSub.find((x) => x.fieldNum === 5)?.val || 0;
-      const respOut = usageSub.find((x) => x.fieldNum === 10)?.val;
+      const thinkOut = usageSub.find((x) => x.fieldNum === 9)?.val || 0;
+      const respOut = usageSub.find((x) => x.fieldNum === 10)?.val || 0;
+      const out = totOut > 0 ? totOut : thinkOut + respOut;
+      const total = inp + out + cr + cw;
+      if (total <= 0) continue;
+
       const respIdFld = usageSub.find((x) => x.fieldNum === 11);
       const respId = respIdFld && respIdFld.data ? Buffer.from(respIdFld.data).toString("utf-8") : undefined;
 
       const servedModelFld = payloadSub.find((x) => x.fieldNum === 19);
-      const servedModel = servedModelFld && servedModelFld.data ? Buffer.from(servedModelFld.data).toString("utf-8") : undefined;
+      const servedModel = servedModelFld && servedModelFld.data ? Buffer.from(servedModelFld.data).toString("utf-8").trim() || undefined : undefined;
+
+      const displayNameFld = payloadSub.find((x) => x.fieldNum === 21);
+      const displayName = displayNameFld && displayNameFld.data ? Buffer.from(displayNameFld.data).toString("utf-8").trim() || undefined : undefined;
 
       let modelEnum: string | undefined;
       const f20s = payloadSub.filter((x) => x.fieldNum === 20);
@@ -338,38 +365,65 @@ export function scanAntigravityDb(path: string): RawUsageRecord[] {
         const k = pair.find((x) => x.fieldNum === 1);
         const v = pair.find((x) => x.fieldNum === 2);
         if (k?.data && Buffer.from(k.data).toString("utf-8") === "model_enum") {
-          modelEnum = v?.data ? Buffer.from(v.data).toString("utf-8") : undefined;
+          modelEnum = v?.data ? Buffer.from(v.data).toString("utf-8").trim() || undefined : undefined;
           break;
         }
       }
 
-      const resolved = resolveAntigravityModel(modelEnum, servedModel);
-
-      const out = respOut !== undefined ? respOut : totOut;
-      const total = inp + out + cr;
+      if (modelEnum && (displayName || (servedModel && !isAntigravityRoutingModel(servedModel)))) {
+        const prev = enumHints.get(modelEnum) || {};
+        enumHints.set(modelEnum, {
+          servedModel: servedModel && !isAntigravityRoutingModel(servedModel) ? servedModel : prev.servedModel,
+          displayName: displayName || prev.displayName,
+        });
+      }
 
       const uuid = uuidFld && uuidFld.data ? Buffer.from(uuidFld.data).toString("utf-8") : null;
       const ts = uuid ? timestamps.get(uuid) : null;
       if (!ts) continue;
 
-      const date = formatLocalDate(ts);
-      const key = respId ? `${sessionId}:${respId}` : `${sessionId}:${r.idx}:${uuid || ts}`;
+      parsedSteps.push({
+        idx: r.idx,
+        uuid,
+        ts,
+        respId,
+        modelEnum,
+        servedModel,
+        displayName,
+        inp,
+        out,
+        cr,
+        cw,
+        total,
+      });
+    }
+
+    for (const s of parsedSteps) {
+      const hint = s.modelEnum ? enumHints.get(s.modelEnum) : undefined;
+      const effectiveServed =
+        (!s.servedModel || isAntigravityRoutingModel(s.servedModel)) && hint?.servedModel ? hint.servedModel : s.servedModel;
+      const effectiveDisplay = s.displayName || hint?.displayName;
+      const resolved = resolveAntigravityModel(s.modelEnum, effectiveServed, effectiveDisplay);
+
+      const date = formatLocalDate(s.ts);
+      const key = s.respId ? `${sessionId}:${s.respId}` : `${sessionId}:${s.idx}:${s.uuid || s.ts}`;
 
       records.push({
         agent: "agy",
         sessionId,
         messageKey: key,
-        timestampMs: ts,
+        timestampMs: s.ts,
         date,
         rawModelId: resolved.rawModelId,
         modelId: resolved.modelId,
         canonicalModelId: resolved.canonicalModelId,
-        company: detectCompany(resolved.modelId, "agy"),
-        inputTokens: inp,
-        outputTokens: out,
-        cacheReadTokens: cr,
-        cacheWriteTokens: 0,
-        totalTokens: total,
+        ...(resolved.unversionedFamily ? { unversionedFamily: resolved.unversionedFamily } : {}),
+        company: detectCompany(resolved.canonicalModelId, "agy"),
+        inputTokens: s.inp,
+        outputTokens: s.out,
+        cacheReadTokens: s.cr,
+        cacheWriteTokens: s.cw,
+        totalTokens: s.total,
       });
     }
   } finally {
@@ -388,9 +442,12 @@ export function scanAntigravityCacheDb(path: string): RawUsageRecord[] {
     db.run("PRAGMA query_only = ON;");
     db.run("PRAGMA busy_timeout = 2000;");
 
+    const cols = (db.query("PRAGMA table_info('session_usage')").all() as Array<{ name: string }>).map((c) => c.name);
+    const displaySelect = cols.includes("display_name") ? "display_name" : "NULL as display_name";
+
     const rows: any[] = db
       .query(`
-        SELECT session_id, model_enum, served_model, model_id, timestamp,
+        SELECT session_id, model_enum, served_model, ${displaySelect}, model_id, timestamp,
                input_tokens, output_tokens, cache_read_tokens, cache_write_tokens,
                response_id, step_index, id
         FROM session_usage
@@ -398,11 +455,11 @@ export function scanAntigravityCacheDb(path: string): RawUsageRecord[] {
       .all();
 
     for (const r of rows) {
-      const resolved = resolveAntigravityModel(r.model_enum, r.served_model || r.model_id);
-      const inp = r.input_tokens || 0;
-      const out = r.output_tokens || 0;
-      const cr = r.cache_read_tokens || 0;
-      const cw = r.cache_write_tokens || 0;
+      const resolved = resolveAntigravityModel(r.model_enum, r.served_model || r.model_id, r.display_name);
+      const inp = Number(r.input_tokens) || 0;
+      const out = Number(r.output_tokens) || 0;
+      const cr = Number(r.cache_read_tokens) || 0;
+      const cw = Number(r.cache_write_tokens) || 0;
       const total = inp + out + cr + cw;
       if (total <= 0) continue;
 
@@ -421,7 +478,8 @@ export function scanAntigravityCacheDb(path: string): RawUsageRecord[] {
         rawModelId: resolved.rawModelId,
         modelId: resolved.modelId,
         canonicalModelId: resolved.canonicalModelId,
-        company: detectCompany(resolved.modelId, "agy"),
+        ...(resolved.unversionedFamily ? { unversionedFamily: resolved.unversionedFamily } : {}),
+        company: detectCompany(resolved.canonicalModelId, "agy"),
         inputTokens: inp,
         outputTokens: out,
         cacheReadTokens: cr,
