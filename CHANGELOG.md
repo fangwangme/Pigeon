@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.17] - 2026-11-18
+
+### Added
+- **Antigravity artifact review card & `interaction_dismiss`**: Recognized completed `write_file` / `edit_file` calls with `ArtifactMetadata.RequestFeedback: true` inside the session's Antigravity brain directory as reviewable `pendingPlan` cards (**Full text**, **Proceed**, and **Skip `✕`**), added `interaction_dismiss` to clear the active card across viewers and downgrade reported status from `blocked` to `idle` until the pane's next Core status or interaction change, and restricted artifact interactions to turns where Herdr reports `blocked` (#35).
+- **Copy terminal ID**: Added **Copy terminal ID** (`activePaneId`) with monospace subtitle to the session `⋯` menu (#35).
+- **Interactive finger-tracking edge swipe-back**: Upgraded left-edge (`<= 44px`) back gestures across non-Home routes and full-screen sheets to track the finger in real time, revealing the `inert` parent page underneath with parallax and edge shadow and completing or springing back by drag distance or flick velocity, without false blocks on non-overflowing or left-resting horizontal containers or open overlays (#35).
+
+### Fixed
+- **Composer replies on unstructured `blocked` panes**: Passed `force: true` on `terminal.send` when Herdr reports `blocked` without structured choice options so free-text replies and Antigravity artifact feedback send immediately, while keeping `ERR_AGENT_BLOCKED` protection when numbered options or a pending question await a pick (#35).
+- **Keyboard toast placement & localized command errors**: Positioned `.toast` notices above the open software keyboard (`[data-keyboard="open"]`) and rejected `request()` calls with localized `errorText` messages instead of raw server strings (#35).
+- **Cleaner year & multi-month heatmaps**: Displayed day numbers only on the first row (Monday) in `week-columns` usage heatmaps (`year`, `all`, and ranges over six weeks) while keeping day numbers on all rows in `strip` and `week-rows` (`30d`) (#35).
+
 ## [0.1.16] - 2026-11-18
 
 ### Fixed
