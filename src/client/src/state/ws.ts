@@ -28,7 +28,7 @@ const PAIRING_CHECK_TIMEOUT_MS = 5000;
 const CONNECTING_TIMEOUT_MS = 10000;
 const WAKEUP_PING_TIMEOUT_MS = 3000;
 const HEARTBEAT_INTERVAL_MS = 5000;
-const HEARTBEAT_TIMEOUT_MS = 10000;
+const HEARTBEAT_TIMEOUT_MS = 15000;
 
 let socket: WebSocket | null = null;
 let pingInterval: ReturnType<typeof setInterval> | null = null;

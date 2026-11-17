@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.15] - 2026-11-17
 
+### Changed
+- **Heartbeat timeout back to 15 s**: The client now gives a connection up after 15 s without a `pong` instead of 10 s, so a briefly lossy network no longer kills a live connection and forces a slower full reconnect (#31).
+
 ### Added
 - **Debug mode for connection timing**: `pigeon start --debug` turns on debug logging for that run only (nothing is persisted). The log then records HTTP requests, refused WebSocket upgrades, bootstrap timing and size, and the phone's own connection timeline (page load, visibility, every attempt with outcome and duration), which the phone keeps locally and hands over once it reaches a daemon in debug mode (#31).
 

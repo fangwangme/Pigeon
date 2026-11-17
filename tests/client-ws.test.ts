@@ -233,7 +233,7 @@ describe("socket teardown on resume (protocol.md §2.2)", () => {
 });
 
 describe("heartbeat (protocol.md §2.1)", () => {
-  test("sends a ping every 5 s and reconnects when no pong arrives for 10 s", async () => {
+  test("sends a ping every 5 s and reconnects only after no pong arrives for more than 15 s", async () => {
     const origWs = globalThis.WebSocket;
     const origDoc = (globalThis as any).document;
     const origWindow = (globalThis as any).window;
@@ -295,6 +295,12 @@ describe("heartbeat (protocol.md §2.1)", () => {
       jest.advanceTimersByTime(5_000);
       await flush();
       expect(first.sent.filter((m: any) => m.type === "ping").length).toBe(2);
+      expect(sockets.length).toBe(1);
+
+      jest.advanceTimersByTime(5_000); // 15 s without a pong: still within the timeout
+      await flush();
+      expect(first.sent.filter((m: any) => m.type === "ping").length).toBe(3);
+      expect(first.closeCalled).toBe(false);
       expect(sockets.length).toBe(1);
 
       jest.advanceTimersByTime(5_000);

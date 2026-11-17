@@ -321,7 +321,7 @@ describe("debug mode (protocol.md §2.3)", () => {
     dead.open();
     welcome(true);
     await flush();
-    await tick(15_000); // no pong: the heartbeat gives the socket up
+    await tick(20_000); // no pong: the heartbeat gives the socket up
     expect(diags(dead).flatMap((m) => m.payload.events).some((e: any) => e.ev.includes("heartbeat"))).toBe(false);
 
     const next = last();
