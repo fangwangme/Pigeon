@@ -56,8 +56,6 @@ function fromRateRow(row: any): ModelPrice {
   };
 }
 
-const AGY_SCAN_VERSION = "2";
-
 export interface UsageStoreOptions {
   dbPath?: string;
   home?: string;
@@ -72,7 +70,6 @@ export class UsageStore {
   private discoverLs: () => Promise<AntigravityLsConnection | null>;
   private agyCacheDbPath: string;
   private lastScannedAt = 0;
-  private agyScanMigrated = false;
   private pricedCatalogs = new WeakMap<PricingManager, number>();
 
   constructor(options: UsageStoreOptions = {}) {
@@ -245,21 +242,6 @@ export class UsageStore {
       this.syncPricePeriods(pricing);
     }
 
-    const needsAgyScanMigration = !this.hasCurrentAgyScanVersion();
-    if (needsAgyScanMigration) {
-      const clearPath = this.db.prepare("DELETE FROM scan_file_state WHERE path = ?");
-      this.db.transaction(() => {
-        this.db.run(
-          "DELETE FROM scan_file_state WHERE path LIKE '%/antigravity%/conversations/%.db' OR path LIKE '%/antigravity-cache/cache.db'"
-        );
-        for (const item of allFiles) {
-          if (item.agent === "agy" || item.agent === "agy-cache") {
-            clearPath.run(item.path);
-          }
-        }
-      })();
-    }
-
     const resolveFamily = this.createGeminiFamilyResolver(pricing);
     const priceCache = new Map<string, { price: ModelPrice | null }>();
     const resolvePrice = (date: string, modelId: string): ModelPrice | null => {
@@ -370,10 +352,6 @@ export class UsageStore {
       }
 
       setFileState.run(item.path, fingerprintMtime, fingerprintSize);
-    }
-
-    if (needsAgyScanMigration) {
-      this.markCurrentAgyScanVersion();
     }
 
     if (pricing.arePricesAvailable()) {
@@ -519,24 +497,6 @@ export class UsageStore {
     })();
 
     return updated;
-  }
-
-  private hasCurrentAgyScanVersion(): boolean {
-    if (this.agyScanMigrated) return true;
-    const row = this.db.query("SELECT val FROM usage_meta WHERE key = 'agy_scan_version'").get() as { val?: string } | null;
-    if (row?.val === AGY_SCAN_VERSION) {
-      this.agyScanMigrated = true;
-      return true;
-    }
-    return false;
-  }
-
-  private markCurrentAgyScanVersion(): void {
-    this.db.run(
-      "INSERT INTO usage_meta (key, val) VALUES ('agy_scan_version', ?) ON CONFLICT(key) DO UPDATE SET val = excluded.val",
-      [AGY_SCAN_VERSION]
-    );
-    this.agyScanMigrated = true;
   }
 
   private createGeminiFamilyResolver(pricing: PricingManager): (family: string, date: string) => string | null {
