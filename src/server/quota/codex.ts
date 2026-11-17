@@ -8,21 +8,17 @@ export interface CodexQuotaProviderOptions {
   home?: string;
   usageUrl?: string;
   creditsUrl?: string;
-  tokenUrl?: string;
   env?: NodeJS.ProcessEnv;
   now?: () => number;
 }
 
 const DEFAULT_USAGE_URL = "https://chatgpt.com/backend-api/wham/usage";
 const DEFAULT_CREDITS_URL = "https://chatgpt.com/backend-api/wham/rate-limit-reset-credits";
-const DEFAULT_TOKEN_URL = "https://auth.openai.com/oauth/token";
-const CODEX_CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann";
 
 export class CodexQuotaProvider {
   private home: string;
   private usageUrl: string;
   private creditsUrl: string;
-  private tokenUrl: string;
   private env: NodeJS.ProcessEnv;
   private now: () => number;
 
@@ -30,7 +26,6 @@ export class CodexQuotaProvider {
     this.home = options.home ?? process.env.HOME ?? "";
     this.usageUrl = options.usageUrl ?? DEFAULT_USAGE_URL;
     this.creditsUrl = options.creditsUrl ?? DEFAULT_CREDITS_URL;
-    this.tokenUrl = options.tokenUrl ?? DEFAULT_TOKEN_URL;
     this.env = options.env ?? process.env;
     this.now = options.now ?? (() => Date.now());
   }

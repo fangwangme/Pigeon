@@ -1,11 +1,11 @@
 import { createSignal, For, onCleanup, onMount, Show } from "solid-js";
 import { navigate, state } from "../state/store";
 import { fetchQuota } from "../state/ws";
+import { QUOTA_PROVIDER_KEYS as ORDERED_PROVIDERS, scanIntervalToMs } from "../../../shared/defaults";
 import { quotaLevel, quotaPace } from "../../../shared/quota";
 import { FeatureDisabledNotice, Icon, QuotaUsageTabs } from "./ui";
 import { t } from "../i18n";
 
-const ORDERED_PROVIDERS = ["claude", "codex", "antigravity"] as const;
 
 const PROVIDER_NAMES: Record<string, string> = {
   claude: "CLAUDE CODE",
@@ -31,28 +31,54 @@ export function QuotaPage() {
   const [initialLoading, setInitialLoading] = createSignal(false);
   const [now, setNow] = createSignal(Date.now());
 
+  const isLoading = () => !state.configReady || state.quotaLoading || initialLoading() || refreshing();
+
+  const checkStaleRefresh = () => {
+    if (!state.connected || !state.configReady || !state.quotaEnabled) return;
+    if (typeof document !== "undefined" && document.visibilityState !== "visible") return;
+    if (isLoading()) return;
+    const staleMs = scanIntervalToMs(state.usageScanInterval) + 30_000;
+    if (state.quotaUpdated === null || Date.now() - state.quotaUpdated > staleMs) {
+      void fetchQuota();
+    }
+  };
+
   onMount(() => {
     if (state.quotaEnabled && state.configReady && (!state.quotaSnapshots || state.quotaSnapshots.length === 0)) {
       setInitialLoading(true);
       void fetchQuota().finally(() => {
         setInitialLoading(false);
       });
+    } else {
+      checkStaleRefresh();
     }
-    const timer = setInterval(() => setNow(Date.now()), 30000);
-    onCleanup(() => clearInterval(timer));
+    const onVisibility = () => {
+      if (document.visibilityState === "visible") checkStaleRefresh();
+    };
+    if (typeof document !== "undefined") {
+      document.addEventListener("visibilitychange", onVisibility);
+    }
+    const timer = setInterval(() => {
+      setNow(Date.now());
+      checkStaleRefresh();
+    }, 30000);
+    onCleanup(() => {
+      clearInterval(timer);
+      if (typeof document !== "undefined") {
+        document.removeEventListener("visibilitychange", onVisibility);
+      }
+    });
   });
 
   const doRefresh = async () => {
     if (!state.quotaEnabled || refreshing()) return;
     setRefreshing(true);
     try {
-      await fetchQuota();
+      await fetchQuota(true);
     } finally {
       setRefreshing(false);
     }
   };
-
-  const isLoading = () => !state.configReady || state.quotaLoading || initialLoading() || refreshing();
 
   const backTarget = () => (state.route.name === "quota" ? (state.route.from ?? "home") : "home");
 

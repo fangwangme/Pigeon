@@ -1,5 +1,5 @@
 import type { ClientMessage, ClientConfig } from "../types/protocol";
-import { ACCENT_NAMES } from "../shared/defaults";
+import { ACCENT_NAMES, QUOTA_PROVIDER_KEYS, SCAN_INTERVALS, USAGE_AGENT_KINDS } from "../shared/defaults";
 import { isObj } from "./sessions/common";
 
 // Runtime validation for frames from the phone — the network trust boundary (architecture.md §5).
@@ -132,8 +132,8 @@ export function validateClientMessage(raw: unknown): ValidationResult {
       return err ? fail(id, err) : ok();
     }
     case "quota_get":
-      if (p !== undefined && !isObj(p)) {
-        return fail(id, "quota_get payload must be an object");
+      if (p !== undefined && (!isObj(p) || (p.refresh !== undefined && typeof p.refresh !== "boolean"))) {
+        return fail(id, "quota_get payload must be an object with optional boolean refresh");
       }
       return ok();
     case "usage_get": {
@@ -198,8 +198,8 @@ export function validateClientMessage(raw: unknown): ValidationResult {
   }
 }
 
-const VALID_PROVIDERS = new Set(["claude", "codex", "antigravity"]);
-const VALID_AGENT_KINDS = new Set(["claude", "codex", "agy", "opencode", "pi"]);
+const VALID_PROVIDERS = new Set<string>(QUOTA_PROVIDER_KEYS);
+const VALID_AGENT_KINDS = new Set<string>(USAGE_AGENT_KINDS);
 
 function isDateStr(v: unknown): v is string {
   return typeof v === "string" && /^\d{4}-\d{2}-\d{2}$/.test(v);
@@ -224,8 +224,7 @@ const CONFIG_CHECKS: Record<keyof ClientConfig, (v: unknown) => boolean> = {
   quotaDisplay: (v) => v === "remaining" || v === "used",
   quotaButton: (v) => typeof v === "boolean",
   quotaShowAccount: (v) => typeof v === "boolean",
-  usageScanMode: (v) => v === "realtime" || v === "scheduled",
-  usageScanInterval: (v) => v === "1m" || v === "2m" || v === "5m" || v === "10m" || v === "15m",
+  usageScanInterval: (v) => typeof v === "string" && (SCAN_INTERVALS as string[]).includes(v),
   quotaProviders: (v) => {
     if (!isObj(v)) return false;
     const keys = Object.keys(v);

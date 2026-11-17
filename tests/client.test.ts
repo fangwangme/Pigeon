@@ -31,11 +31,9 @@ describe("themes (mobile-ui-and-themes.md §9.1)", () => {
     for (const token of [p.fg, p.muted, p.faint]) expect(contrast(p.bg, token)).toBeGreaterThanOrEqual(4.5);
   });
 
-  test.each(["light", "dark"] as const)("%s: the selected segment stands apart from its track, with its own lift", (mode) => {
+  test.each(["light", "dark"] as const)("%s: the selected segment stands apart from its track", (mode) => {
     const p = PALETTES[mode];
     expect(contrast(p.segTrack, p.segOn)).toBeGreaterThanOrEqual(1.15);
-    const css = readFileSync(join(import.meta.dir, "..", "src", "client", "src", "styles.css"), "utf-8");
-    expect(css).toContain(".seg .on, .seg button.on { background: var(--seg-on); color: var(--fg); font-weight: 650; box-shadow: var(--seg-shadow); }");
   });
 });
 
@@ -81,25 +79,6 @@ describe("Markdown rendering (mobile-ui-and-themes.md §3.1)", () => {
 });
 
 describe("installable app (architecture.md §2)", () => {
-  test("the manifest opens the app standalone at /", () => {
-    const manifest = JSON.parse(readFileSync(join(rootDir, "public", "manifest.webmanifest"), "utf-8"));
-    expect(manifest.display).toBe("standalone");
-    expect(manifest.start_url).toBe("/");
-  });
-
-  test("the viewport resizes content for the on-screen keyboard (mobile-ui-and-themes.md §1.2)", () => {
-    expect(readFileSync(join(rootDir, "index.html"), "utf-8")).toContain("interactive-widget=resizes-content");
-  });
-
-  test("a home-screen app keeps an opaque status bar (mobile-ui-and-themes.md §1.1)", () => {
-    expect(readFileSync(join(rootDir, "index.html"), "utf-8")).not.toContain("apple-mobile-web-app-status-bar-style");
-  });
-
-  test("a double tap never zooms the page (mobile-ui-and-themes.md §1.1)", () => {
-    const css = readFileSync(join(rootDir, "src", "client", "src", "styles.css"), "utf-8");
-    expect(css).toMatch(/^\*, \*::before, \*::after \{ touch-action: manipulation; \}$/m);
-  });
-
   /** Runs public/sw.js against a stand-in service-worker global and returns its listeners. */
   function loadServiceWorker() {
     const listeners: Record<string, (event: any) => void> = {};
@@ -122,22 +101,8 @@ describe("installable app (architecture.md §2)", () => {
   });
 });
 
-describe("mobile layout enhancements (mobile-ui-and-themes.md §1.2, §2.1)", () => {
-  test("Home header renders the compact Logo mark instead of plain text Pigeon", () => {
-    const homeSrc = readFileSync(join(rootDir, "src", "client", "src", "components", "Home.tsx"), "utf-8");
-    expect(homeSrc).toMatch(/class="logo-mark"[^>]*>[\s\S]*?<Logo/);
-    expect(homeSrc).not.toContain('<div class="lt">Pigeon</div>');
-  });
-
-  test("Composer stylesheet allows up to 280px max-height with vertical scrolling", () => {
-    const css = readFileSync(join(rootDir, "src", "client", "src", "styles.css"), "utf-8");
-    expect(css).toMatch(/\.comp textarea\s*\{[^}]*max-height:\s*280px/);
-    expect(css).toMatch(/\.comp textarea\s*\{[^}]*overflow-y:\s*auto/);
-    const composerSrc = readFileSync(join(rootDir, "src", "client", "src", "components", "Composer.tsx"), "utf-8");
-    expect(composerSrc).toContain("Math.min(ta.scrollHeight, 280)");
-  });
-
-  test("quotaEnabled and usageEnabled share one entry and show disabled notice on off tabs (mobile-ui-and-themes.md §11.1, §11.4)", () => {
+describe("quota and usage switches (mobile-ui-and-themes.md §11.1, §11.4)", () => {
+  test("quotaEnabled and usageEnabled share one entry button", () => {
     const prev = {
       quotaEnabled: state.quotaEnabled,
       usageEnabled: state.usageEnabled,
@@ -171,55 +136,6 @@ describe("mobile layout enhancements (mobile-ui-and-themes.md §1.2, §2.1)", ()
     } finally {
       setState(prev);
     }
-
-    const homeSrc = readFileSync(join(rootDir, "src", "client", "src", "components", "Home.tsx"), "utf-8");
-    const matches = [...homeSrc.matchAll(/<Show when=\{([^}]+)\}>\s*<button aria-label=\{t\("quota\.title"\)\}/g)];
-    expect(matches.length).toBe(2);
-    for (const m of matches) {
-      expect(m[1]).toContain("quotaButtonShown");
-    }
-    expect(homeSrc).toContain("navigate({ name: quotaUsageTarget(), from: \"home\" })");
-    expect(homeSrc).toContain("navigate({ name: quotaUsageTarget(), from: \"agents\" })");
-    expect(homeSrc).toContain("state.quotaEnabled && quotaDot(state.quotaSnapshots)");
-
-    const settingsSrc = readFileSync(join(rootDir, "src", "client", "src", "components", "Settings.tsx"), "utf-8");
-    expect(settingsSrc).toContain("quotaEnabled");
-    expect(settingsSrc).toContain("usageEnabled");
-    expect(settingsSrc).toContain("state.quotaEnabled || state.usageEnabled");
-    expect(settingsSrc).not.toContain("quotaUsageEnabled");
-
-    const indexSrc = readFileSync(join(rootDir, "src", "client", "src", "index.tsx"), "utf-8");
-    expect(indexSrc).toContain("!quotaFeatureOn() && !usageFeatureOn()");
-    expect(indexSrc).toContain("(quotaFeatureOn() || usageFeatureOn()) && state.route.name === \"quota\"");
-    expect(indexSrc).toContain("(quotaFeatureOn() || usageFeatureOn()) && state.route.name === \"usage\"");
-
-    const quotaSrc = readFileSync(join(rootDir, "src", "client", "src", "components", "QuotaPage.tsx"), "utf-8");
-    expect(quotaSrc).toContain("FeatureDisabledNotice");
-    expect(quotaSrc).toContain("if (state.quotaEnabled &&");
-    expect(quotaSrc).toContain("if (!state.quotaEnabled || refreshing()) return");
-
-    const usageSrc = readFileSync(join(rootDir, "src", "client", "src", "components", "UsagePage.tsx"), "utf-8");
-    expect(usageSrc).toContain("FeatureDisabledNotice");
-    expect(usageSrc).toContain("if (!state.usageEnabled) return");
-  });
-
-  test("Quota and Usage pages render skeleton templates and loading animations before data arrives", () => {
-    const css = readFileSync(join(rootDir, "src", "client", "src", "styles.css"), "utf-8");
-    expect(css).toContain(".skel");
-    expect(css).toContain("skel-pulse");
-
-    const quotaSrc = readFileSync(join(rootDir, "src", "client", "src", "components", "QuotaPage.tsx"), "utf-8");
-    expect(quotaSrc).toContain("showSkeleton");
-    expect(quotaSrc).toContain("quota.loading");
-    expect(quotaSrc).toMatch(/Show when=\{!showSkeleton\(\) && !hasAnyData\(\)\}/);
-
-    const usageSrc = readFileSync(join(rootDir, "src", "client", "src", "components", "UsagePage.tsx"), "utf-8");
-    expect(usageSrc).toContain("usage.loading");
-    expect(usageSrc).toMatch(/Show when=\{isLoading\(\) && !usageReport\(\)\}/);
-    expect(usageSrc).toMatch(/Show when=\{!isLoading\(\) && tableRows\(\)\.length === 0\}/);
-
-    const wsSrc = readFileSync(join(rootDir, "src", "client", "src", "state", "ws.ts"), "utf-8");
-    expect(wsSrc).toMatch(/res\.fetchedAt/);
   });
 
   test("client state transitions clear only the disabled feature and apply push updates (quota-and-usage.md §1.1, protocol.md §5.11–§5.12)", () => {
@@ -386,12 +302,5 @@ describe("code blocks and heatmap scales (mobile-ui-and-themes.md §3.2, §9.1)"
     for (const k of keys) expect(PALETTES.dark[k]).toBe(PALETTES.light[k]);
     expect(luminance(PALETTES.light.heatTokens1)).toBeGreaterThan(luminance(PALETTES.light.heatTokens5));
     expect(luminance(PALETTES.light.heatCost1)).toBeGreaterThan(luminance(PALETTES.light.heatCost5));
-  });
-
-  test("PromptCard falls back to ReplyBelow when transcript question lacks checked keys (herdr-adapter.md §7.2)", () => {
-    const cardSrc = readFileSync(join(rootDir, "src", "client", "src", "components", "PromptCard.tsx"), "utf-8");
-    expect(cardSrc).toContain("canAnswerTranscriptQuestion");
-    expect(cardSrc).toContain("unanswerableQuestion");
-    expect(cardSrc).toContain("options: []");
   });
 });

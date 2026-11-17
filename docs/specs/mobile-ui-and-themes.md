@@ -98,7 +98,7 @@ Each list page has its own sheet holding only what applies to that page (user de
   - LRU by `lastAccess`, at most 10 panes;
   - expired entries are swept at startup;
   - entries for panes absent from a snapshot are deleted, but only from a snapshot taken while `herdrConnected` is true, so a Herdr outage does not wipe the cache.
-- **Restore**: opening a pane that has no view in memory shows its cached transcript as soon as it is read, if the entry's `sessionId` is the pane's current session as far as the client knows. While cached content is on screen, the header shows a "syncing" indicator (small spinner and "同步中 / Syncing" text). It clears when the server's first answer for that pane (`normalized_turns` or the resume `turns_delta`) arrives. The cache survives reloads; a pane opened after a reload is restored from it.
+- **Restore**: opening a pane that has no view in memory shows its cached transcript as soon as it is read, if the entry's `sessionId` is the pane's current session as far as the client knows. While cached content is on screen, the header shows a "syncing" indicator (small spinner and "同步中 / Syncing" text). It clears when the server's first answer for that pane (`normalized_turns` or the resume `turns_delta`) arrives, and when the connection closes (`protocol.md` §3.3). The cache survives reloads; a pane opened after a reload is restored from it.
 - **Invalidation**: the server's answer names a different `sessionId`, or `session.bound` is false → the cached entry is deleted and the fresh data shown.
 - **Writes**, and only these, each saving the pane's view with its prompt queue:
   - when leaving a pane;
@@ -229,7 +229,7 @@ Without a valid pairing only the pairing guide shows: scan the QR code from `pig
 - In an in-app browser (WeChat, QQ, Weibo, Telegram, Line, Facebook, Instagram, recognized by user agent) the page sends no pairing request, so a single-use code is not spent in a browser the user then leaves. It asks to open the link in Safari or Chrome and offers to copy it.
 
 ### 8.3 Connection
-- Daemon unreachable or Herdr offline: a banner at the top ("电脑未连接" / "Herdr 没有响应"), retried every 3 s, gone when back.
+- Daemon unreachable or Herdr offline: a banner at the top ("电脑未连接 · 正在重连" / "Herdr 没有响应"), retried as `protocol.md` §2.2 says (at once after a drop, then every 3 s), gone when back. The text names no fixed retry period.
 - A failed send keeps the draft and shows a toast with the reason.
 - A new client build shows **有新版本 · 重新加载** (`architecture.md` §4.1).
 - Close code `4409` (incompatible protocol) shows **应用版本过旧 · 重新加载** and does not reconnect (`protocol.md` §2.2).
@@ -284,11 +284,12 @@ Behavior and numbers come from `quota-and-usage.md`; this section is the present
 - Colors (`quota-and-usage.md` §2.4): the bar uses the provider's agent color at level normal, `--warn` at warn, `--danger` when exhausted; the primary figure is `--fg` at normal and the level color otherwise. Pace text: **节奏正常**, **超出 N% · 约 <eta> 后用完**, **低于节奏 N%**, muted, except **超出**, which is `--warn`. A window with no pace shows no marker.
 - Reset credits and Claude extra usage (`extraUsage`, when enabled, even at `$0`) are listed under a provider's windows.
 - A provider error shows as a red line naming the provider and the cause, above its card; the card keeps the previous snapshot. No enabled provider with data: an empty state with a link to **管理查询的服务** (§11.4).
-- Loading state: while querying initial quota, the page renders pulsing skeleton cards for enabled providers with a loading spinner and message, hiding the empty state until loading finishes. The header subtitle reflects the server's actual fetch timestamp; tapping Refresh reads the daemon's cached state (`protocol.md` §4.16) without triggering upstream provider requests, while background refreshes push `quota_updated` (§5.11) silently.
+- Loading state: while querying initial quota, the page renders pulsing skeleton cards for enabled providers with a loading spinner and message, hiding the empty state until loading finishes. The header subtitle reflects the server's actual fetch timestamp. Opening the page reads the daemon's cached state (`protocol.md` §4.16). Tapping Refresh asks the daemon to fetch quota now (`quota_get` with `refresh: true`) and spins until the answer arrives; it refreshes quota only. Every completed refresh, scheduled or requested, arrives as `quota_updated` (§5.11) and updates the open page silently.
 - Under the cards: **管理查询的服务**, and one line explaining the colors.
 
 ### 11.3 Usage page
-- Loading state: while querying initial usage report, the page renders skeleton figure cards, a skeleton heatmap placeholder, and skeleton list rows with a loading spinner and message, hiding the empty state until loading finishes. The header subtitle reflects the server's actual scan completion timestamp (`scannedAt`).
+- Loading state: while querying initial usage report, the page renders skeleton figure cards, a skeleton heatmap placeholder, and skeleton list rows with a loading spinner and message, hiding the empty state until loading finishes. The header subtitle reflects the server's actual scan completion timestamp (`scannedAt`). Opening the page and changing its range or filter read the usage database (`protocol.md` §4.17). Tapping Refresh asks the daemon to scan now (`usage_get` with `force: true`) and refreshes usage only. Every completed scan arrives as `usage_updated` (§5.12), and the open page re-reads its report silently.
+- **Self-refresh (both pages)**: while the quota or usage page is open and visible, when the data it shows is older than `client.usageScanInterval` plus 30 seconds (a missed push), the page re-reads the cache once with the same request it opened with, without `refresh` or `force`. It checks this when it opens, when it becomes visible again, and at least every 30 seconds while open.
 - **Range chips** at the top: **今天** (default) / **7 天** / **30 天** / **今年** / **全部** / **自定义**. **自定义** opens a bottom sheet with start and end date inputs bounded by the first day with usage and today, and **应用**; once applied, its chip shows `MM-DD ~ MM-DD`. Under the chips: the range in text, and the agent filter button (**全部 Agent** or `n/5`), which opens a sheet of the five agents with **全选**; at least one stays on, and the filter applies to the whole page.
 - **按 Token | 按花费**: one page-wide switch; it decides the heatmap's scale, the list's order and the share column.
 - **Figure cards**: 花费, Token, 会话, each with the change against the comparison (`quota-and-usage.md` §3.5), and one line naming what is compared (e.g. **与上周一（11-02）截至 17:33 比较**). Increase is `--danger`, decrease `--addfg`.
@@ -308,7 +309,6 @@ Behavior and numbers come from `quota-and-usage.md`; this section is the present
   - **查询额度的服务** card: Claude Code, Codex, Antigravity, each a switch (`client.quotaProviders`) with a subtitle (**已登录 · <plan>** when `quotaShowAccount` is on and a plan is known, **已登录** otherwise, or **不查询** when off).
 - When `usageEnabled` is on:
   - **Token 用量** (summary: **今日 $x · 近 7 天 $y**)
-  - **用量统计模式**: 定时扫描 / 实时扫描 (`client.usageScanMode`, 默认 `scheduled`)
 - Shared items visible whenever `quotaEnabled` or `usageEnabled` is on:
   - **列表页显示额度按钮** (`client.quotaButton`, issue #25: shared entry button for Quota/Usage on Home and All Agents)
-  - Shared background refresh interval (`client.usageScanInterval`: **1m**, **2m**, **5m** default, **10m**, **15m**; shown when `quotaEnabled` is on, OR when `usageEnabled` is on with `usageScanMode` set to `scheduled`).
+  - **刷新间隔** (`client.usageScanInterval`: **1m**, **2m**, **5m**, **10m**, **15m** default). There is no scan-mode choice (issue #29). The note under the card says that the computer refreshes the enabled quota and usage together at this interval, even when no phone is connected, and that each page's refresh button refreshes that page right away.

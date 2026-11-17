@@ -1,6 +1,7 @@
-import { createEffect, createMemo, createSignal, For, on, Show } from "solid-js";
+import { createEffect, createMemo, createSignal, For, on, onCleanup, onMount, Show } from "solid-js";
 import { navigate, state } from "../state/store";
 import { request } from "../state/ws";
+import { scanIntervalToMs, USAGE_AGENT_KINDS as AGENT_KEYS } from "../../../shared/defaults";
 import { cacheHitPercent, daysBetween, formatYMD, heatmapLayout, type UsagePreset } from "../../../shared/usage";
 import type {
   UsageDayPayload,
@@ -11,7 +12,6 @@ import type {
 import { FeatureDisabledNotice, formatModelName, Icon, QuotaUsageTabs } from "./ui";
 import { t, locale } from "../i18n";
 
-const AGENT_KEYS = ["claude", "codex", "agy", "opencode", "pi"] as const;
 
 const AGENT_NAMES: Record<string, string> = {
   claude: "Claude Code",
@@ -161,6 +161,33 @@ export function UsagePage() {
       { defer: true }
     )
   );
+
+  const checkStaleRefresh = () => {
+    if (!state.connected || !state.configReady || !state.usageEnabled) return;
+    if (typeof document !== "undefined" && document.visibilityState !== "visible") return;
+    if (loading()) return;
+    if (range() === "custom" && (!customFrom() || !customTo())) return;
+    const rep = usageReport();
+    if (!rep) return;
+    const staleMs = scanIntervalToMs(state.usageScanInterval) + 30_000;
+    if (Date.now() - rep.scannedAt > staleMs) {
+      void loadUsage();
+    }
+  };
+
+  onMount(() => {
+    checkStaleRefresh();
+    const timer = setInterval(checkStaleRefresh, 30_000);
+    if (typeof document !== "undefined") {
+      document.addEventListener("visibilitychange", checkStaleRefresh);
+    }
+    onCleanup(() => {
+      clearInterval(timer);
+      if (typeof document !== "undefined") {
+        document.removeEventListener("visibilitychange", checkStaleRefresh);
+      }
+    });
+  });
 
   const openDaySheet = async (date: string) => {
     setSelectedDay(date);

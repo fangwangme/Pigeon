@@ -3,8 +3,8 @@ import { beforeEach, describe, expect, spyOn, test } from "bun:test";
 // @ts-ignore
 import { createStore as createBrowserStore } from "solid-js/store/dist/store.js";
 import * as cache from "../src/client/src/state/pane-cache";
-import { load, save, remove, clearAll, sweep, meta, PANE_CACHE_TTL_MS, MAX_CACHED_PANES, DB_VERSION } from "../src/client/src/state/pane-cache";
-import { handleServerMessage, initWebSocket, selectPane } from "../src/client/src/state/ws";
+import { load, save, clearAll, sweep, PANE_CACHE_TTL_MS, DB_VERSION } from "../src/client/src/state/pane-cache";
+import { handleServerMessage, selectPane } from "../src/client/src/state/ws";
 import { state, setState } from "../src/client/src/state/store";
 import type { NormalizedTurn } from "../src/types/protocol";
 

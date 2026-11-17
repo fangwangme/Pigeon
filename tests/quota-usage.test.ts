@@ -292,7 +292,7 @@ describe("quota config and usage request validation (quota-and-usage.md §2.5, p
     }
   });
 
-  test("UsageService with autoScan: false does not start timer, and rebuild() serializes with scan()", async () => {
+  test("UsageService rebuild() serializes with scan()", async () => {
     const d = tempDir("usage-service");
     const fakeHome = join(d, "home");
     const origData = process.env.XDG_DATA_HOME;
@@ -305,10 +305,7 @@ describe("quota config and usage request validation (quota-and-usage.md §2.5, p
       const service = new UsageService({
         store,
         pricing: new PricingManager({ cachePath: join(d, "pricing.json"), fetch: (() => Promise.reject()) as any }),
-        autoScan: false,
       });
-
-      expect((service as any).backgroundTimer).toBeNull();
 
       // Hook into rebuildAll to hold execution via deferred promise
       let rebuildStarted = false;
@@ -361,11 +358,11 @@ describe("quota config and usage request validation (quota-and-usage.md §2.5, p
   });
 
   test("split quotaEnabled & usageEnabled: defaults, legacy config drop, validation, and independent command gating (quota-and-usage.md §1.1, protocol.md §4.16–§4.19, §6.3)", async () => {
-    // 1. Fresh config has quotaEnabled: false, usageEnabled: true, usageScanInterval: "5m"
+    // 1. Fresh config has quotaEnabled: false, usageEnabled: true, usageScanInterval: "15m"
     const freshCfg = new ConfigManager(join(dir, "fresh-config.json"), { HOME: dir }).getClientConfig();
     expect(freshCfg.quotaEnabled).toBe(false);
     expect(freshCfg.usageEnabled).toBe(true);
-    expect(freshCfg.usageScanInterval).toBe("5m");
+    expect(freshCfg.usageScanInterval).toBe("15m");
     expect((freshCfg as any).quotaUsageEnabled).toBeUndefined();
 
     // 2. Legacy config with quotaUsageEnabled drops it and never inherits into new switches
@@ -436,7 +433,7 @@ describe("quota config and usage request validation (quota-and-usage.md §2.5, p
     expect(dbAfter).toEqual(dbBefore);
   });
 
-  test("online phone gating, read-only quota_get, connect stale catch-up, toggle refresh, and push notifications (quota-and-usage.md §1.1, §2.6, protocol.md §5.11–§5.12)", async () => {
+  test("startup refresh, read-only quota_get, provider error retention, toggle refresh, and push notifications (quota-and-usage.md §1.1, §2.6, protocol.md §5.11–§5.12)", async () => {
     const d = tempDir("quota-online-lifecycle");
     const fakeHome = join(d, "home");
     mkdirSync(fakeHome, { recursive: true });
@@ -497,30 +494,16 @@ describe("quota config and usage request validation (quota-and-usage.md §2.5, p
     });
 
     try {
-      // 1. No phone WS online: 0 provider fetches, 0 usage scans, and timers are inactive
-      await new Promise((r) => setTimeout(r, 15));
-      expect(fetchCount).toBe(0);
-      expect(scanCount).toBe(0);
-      expect((qService as any).backgroundTimer).toBeNull();
-      expect((uService as any).backgroundTimer).toBeNull();
-
-      // 2. First phone WS connects while cache never refreshed -> immediate 1 fetch + 1 scan, timers armed, push emitted
-      const phone1 = fakeWs();
-      wsSrv.handleOpen(phone1.ws);
+      // 1. Daemon refreshes enabled items at start even with no phone connected
       await (qService as any).refreshAllPromise;
       await (uService as any).scanPromise;
       expect(fetchCount).toBe(1);
       expect(scanCount).toBe(1);
-      expect((qService as any).backgroundTimer).not.toBeNull();
-      expect((uService as any).backgroundTimer).not.toBeNull();
 
-      const qPush1 = phone1.sent.find((m) => m.type === "quota_updated");
-      const uPush1 = phone1.sent.find((m) => m.type === "usage_updated");
-      expect(qPush1?.payload?.fetchedAt).toBe(fakeNow);
-      expect(uPush1?.payload?.scannedAt).toBe(fakeNow);
-
-      // 3. Multiple quota_get calls within one interval invoke fetch at most once (total stays 1)
-      fakeNow += 60_000; // +1m (< 5m interval)
+      // 2. Connecting a phone does not re-fetch; plain quota_get reads cache only
+      const phone1 = fakeWs();
+      wsSrv.handleOpen(phone1.ws);
+      fakeNow += 60_000;
       for (let i = 0; i < 3; i++) {
         await wsSrv.handleMessage(phone1.ws, JSON.stringify({ type: "quota_get", id: `qg_${i}`, payload: {} }));
       }
@@ -528,136 +511,32 @@ describe("quota config and usage request validation (quota-and-usage.md §2.5, p
       const qAck = phone1.sent.filter((m) => m.type === "ack" && m.replyTo?.startsWith("qg_")).at(-1);
       expect(qAck?.payload?.providers?.[0]?.snapshot?.windows?.[0]?.usedPercent).toBe(10);
 
-      // Second phone connects within same interval -> cache is fresh, so still no extra fetch
-      const phone2 = fakeWs();
-      wsSrv.handleOpen(phone2.ws);
-      expect(fetchCount).toBe(1);
-
-      // Disconnecting phone1 keeps timers alive while phone2 is online
-      wsSrv.handleClose(phone1.ws);
-      expect((qService as any).backgroundTimer).not.toBeNull();
-
-      // Disconnecting phone2 leaves 0 online clients -> timers stop cleanly
-      wsSrv.handleClose(phone2.ws);
-      expect((qService as any).backgroundTimer).toBeNull();
-      expect((uService as any).backgroundTimer).toBeNull();
-
-      // 4. Phone reconnects after > 5m interval (stale) -> immediately refreshes once
-      fakeNow += 301_000; // > 5m (300_000ms)
-      const phone3 = fakeWs();
-      wsSrv.handleOpen(phone3.ws);
-      await (qService as any).refreshAllPromise;
-      await (uService as any).scanPromise;
-      expect(fetchCount).toBe(2);
-      expect(scanCount).toBe(2);
-
-      // 5. Provider failure retains previous snapshot next to the error and does not extra-retry
+      // 3. Provider failure retains previous snapshot next to the error and emits quota_updated
       shouldFail = true;
-      fakeNow += 310_000;
+      const errNow = (fakeNow += 310_000);
       await qService.fetchAll();
-      expect(fetchCount).toBe(3);
+      expect(fetchCount).toBe(2);
+      const qPush = phone1.sent.find((m) => m.type === "quota_updated");
+      expect(qPush).toBeDefined();
 
-      await wsSrv.handleMessage(phone3.ws, JSON.stringify({ type: "quota_get", id: "qg_err", payload: {} }));
-      expect(fetchCount).toBe(3);
-      const errAck = phone3.sent.filter((m) => m.type === "ack" && m.replyTo === "qg_err").at(-1);
+      await wsSrv.handleMessage(phone1.ws, JSON.stringify({ type: "quota_get", id: "qg_err", payload: {} }));
+      expect(fetchCount).toBe(2);
+      const errAck = phone1.sent.filter((m) => m.type === "ack" && m.replyTo === "qg_err").at(-1);
       const claudeState = errAck?.payload?.providers?.find((p: any) => p.provider === "claude");
-      expect(claudeState?.snapshot?.windows?.[0]?.usedPercent).toBe(20);
+      expect(claudeState?.snapshot?.windows?.[0]?.usedPercent).toBe(10);
       expect(claudeState?.error?.message).toMatch(/429 rate limited/);
+      expect(claudeState?.error?.at).toBe(errNow);
 
-      // 6. Toggling a switch off -> on triggers immediate refresh only for that item
+      // 4. Toggling a switch off -> on triggers immediate refresh only for that item
       shouldFail = false;
-      await wsSrv.handleMessage(phone3.ws, JSON.stringify({ type: "config_patch", id: "p_qoff", payload: { client: { quotaEnabled: false } } }));
-      expect((qService as any).backgroundTimer).toBeNull();
-      expect((uService as any).backgroundTimer).not.toBeNull();
-
+      await wsSrv.handleMessage(phone1.ws, JSON.stringify({ type: "config_patch", id: "p_qoff", payload: { client: { quotaEnabled: false } } }));
       const scansBeforeToggle = scanCount;
-      await wsSrv.handleMessage(phone3.ws, JSON.stringify({ type: "config_patch", id: "p_qon", payload: { client: { quotaEnabled: true } } }));
+      await wsSrv.handleMessage(phone1.ws, JSON.stringify({ type: "config_patch", id: "p_qon", payload: { client: { quotaEnabled: true } } }));
       await (qService as any).refreshAllPromise;
-      expect(fetchCount).toBe(4);
+      expect(fetchCount).toBe(3);
       expect(scanCount).toBe(scansBeforeToggle);
     } finally {
       wsSrv.destroy();
-    }
-  });
-
-  test("repeated phone connects within an interval keep the running background timer without pushing the next refresh back", async () => {
-    const d = tempDir("timer-stability");
-    const fakeHome = join(d, "home");
-    mkdirSync(fakeHome, { recursive: true });
-
-    const cfgMgr = new ConfigManager(join(d, "config.json"), { HOME: fakeHome });
-    cfgMgr.patchClientConfig({
-      quotaEnabled: true,
-      usageEnabled: true,
-      usageScanMode: "scheduled",
-      usageScanInterval: "5m",
-      quotaProviders: { claude: true, codex: false, antigravity: false },
-    });
-
-    let fetchCount = 0;
-    const qService = new QuotaService({
-      configManager: cfgMgr,
-      claude: {
-        fetch: async () => {
-          fetchCount++;
-          return { provider: "claude", windows: [], credits: [], fetchedAt: Date.now() };
-        },
-      } as any,
-      codex: { fetch: async () => ({ provider: "codex", windows: [], credits: [], fetchedAt: Date.now() }) } as any,
-      antigravity: { fetch: async () => ({ provider: "antigravity", windows: [], credits: [], fetchedAt: Date.now() }) } as any,
-    });
-    const store = new UsageStore({ dbPath: join(d, "usage.db"), home: fakeHome, discoverLs: async () => null });
-    const uService = new UsageService({
-      configManager: cfgMgr,
-      store,
-      pricing: new PricingManager({ cachePath: join(d, "pricing.json"), fetch: (() => Promise.reject()) as any }),
-    });
-    let scanCount = 0;
-    const origScan = store.scanIncremental.bind(store);
-    store.scanIncremental = async (pricing) => {
-      scanCount++;
-      return origScan(pricing);
-    };
-
-    const qIntervalSpy = spyOn(qService, "getScanIntervalMs").mockReturnValue(50);
-    const uIntervalSpy = spyOn(uService, "getScanIntervalMs").mockReturnValue(50);
-
-    try {
-      qService.setClientOnline(true);
-      uService.setClientOnline(true);
-      await (qService as any).refreshAllPromise;
-      await (uService as any).scanPromise;
-      expect(fetchCount).toBe(1);
-      expect(scanCount).toBe(1);
-
-      const qTimer = (qService as any).backgroundTimer;
-      const uTimer = (uService as any).backgroundTimer;
-
-      // Repeatedly reconnect/open additional phones every 15ms (< 50ms interval):
-      // without the guard, clearInterval+setInterval each time would starve the 50ms timer indefinitely.
-      for (let i = 0; i < 12; i++) {
-        await new Promise((r) => setTimeout(r, 15));
-        qService.setClientOnline(true);
-        uService.setClientOnline(true);
-        expect((qService as any).backgroundTimer).toBe(qTimer);
-        expect((uService as any).backgroundTimer).toBe(uTimer);
-        if (fetchCount >= 2 && scanCount >= 2) break;
-      }
-      expect(fetchCount).toBeGreaterThanOrEqual(2);
-      expect(scanCount).toBeGreaterThanOrEqual(2);
-
-      // Changing the configured interval replaces the running timers cleanly.
-      qIntervalSpy.mockReturnValue(120);
-      uIntervalSpy.mockReturnValue(120);
-      qService.updateConfig();
-      uService.updateConfig();
-      expect((qService as any).backgroundTimer).not.toBe(qTimer);
-      expect((uService as any).backgroundTimer).not.toBe(uTimer);
-    } finally {
-      qIntervalSpy.mockRestore();
-      uIntervalSpy.mockRestore();
-      qService.destroy();
-      uService.destroy();
     }
   });
 

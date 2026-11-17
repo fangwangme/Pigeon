@@ -10,8 +10,7 @@ export const DEFAULT_CLIENT_CONFIG: ClientConfig = {
   quotaDisplay: "remaining",
   quotaButton: true,
   quotaShowAccount: false,
-  usageScanMode: "scheduled",
-  usageScanInterval: "5m",
+  usageScanInterval: "15m",
 };
 
 const SCAN_INTERVAL_MS: Record<UsageScanInterval, number> = {
@@ -22,9 +21,17 @@ const SCAN_INTERVAL_MS: Record<UsageScanInterval, number> = {
   "15m": 900_000,
 };
 
-/** Converts `usageScanInterval` to milliseconds, defaulting to `"5m"`. */
+export const SCAN_INTERVALS = Object.keys(SCAN_INTERVAL_MS) as UsageScanInterval[];
+
+/** Quota providers in display order (`quota-and-usage.md` §2.2). */
+export const QUOTA_PROVIDER_KEYS = ["claude", "codex", "antigravity"] as const;
+
+/** Agent kinds that usage is counted for (`quota-and-usage.md` §3.1). */
+export const USAGE_AGENT_KINDS = ["claude", "codex", "agy", "opencode", "pi"] as const;
+
+/** Converts `usageScanInterval` to milliseconds, defaulting to `"15m"`. */
 export function scanIntervalToMs(interval?: UsageScanInterval): number {
-  return (interval && SCAN_INTERVAL_MS[interval]) || SCAN_INTERVAL_MS["5m"];
+  return (interval && SCAN_INTERVAL_MS[interval]) || SCAN_INTERVAL_MS["15m"];
 }
 
 export const ACCENT_NAMES = ["blue", "purple", "green", "orange", "pink"] as const;

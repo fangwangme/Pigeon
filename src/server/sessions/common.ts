@@ -1,4 +1,4 @@
-import { closeSync, fstatSync, openSync, readSync, statSync } from "node:fs";
+import { closeSync, fstatSync, openSync, readSync, statSync, type Stats } from "node:fs";
 import type {
   FileDiffSummary,
   NormalizedToolCall,
@@ -44,6 +44,20 @@ export function claudeSlug(path: string): string {
  */
 export function isEnoent(err: unknown): boolean {
   return typeof err === "object" && err !== null && (err as NodeJS.ErrnoException).code === "ENOENT";
+}
+
+/** `statSync`, or null when the path does not exist. */
+export function safeStat(path: string): Stats | null {
+  try {
+    return statSync(path);
+  } catch (err) {
+    if (isEnoent(err)) return null;
+    throw err;
+  }
+}
+
+export function mtimeOf(path: string | undefined): number | null {
+  return path ? (safeStat(path)?.mtimeMs ?? null) : null;
 }
 
 export function fileFallbackTs(path: string): number {

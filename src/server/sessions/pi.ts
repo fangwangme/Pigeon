@@ -1,12 +1,8 @@
 import { existsSync, readdirSync, realpathSync, statSync } from "node:fs";
 import { join } from "node:path";
 import type { PastSession } from "../../types/protocol";
-import { fileFallbackTs, isObj, JsonlTail, lineDiff, readHeadJsonLines, readTailJsonLines, str, TurnBuilder, type SessionRead } from "./common";
+import { fileFallbackTs, isObj, JsonlTail, lineDiff, mtimeOf, readHeadJsonLines, readTailJsonLines, str, TurnBuilder, type SessionRead } from "./common";
 import type { PaneFacts, SessionSource } from "./source";
-
-function mtimeOf(path: string | undefined): number | null {
-  return path && existsSync(path) ? statSync(path).mtimeMs : null;
-}
 
 /** Pi (`agent-session-normalization.md` §2.5). Session ids are file names without `.jsonl`. */
 export class PiSource implements SessionSource {

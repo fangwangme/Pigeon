@@ -111,7 +111,7 @@ describe("antigravity & codex quota providers (quota-and-usage.md §2.2, §2.3)"
     writeFileSync(join(agyCliDir, "app_storage.json"), JSON.stringify({ "agy.onboarding.lastLoginUsername": "alice@example.com" }), "utf-8");
 
     const provider = new AntigravityQuotaProvider({ home: dir, now: () => 1_700_000_000_000 });
-    const qs = new QuotaService({ autoScan: false, antigravity: provider, claude: { fetch: async () => ({ provider: "claude", windows: [], credits: [], fetchedAt: 1 }) } as any, codex: { fetch: async () => ({ provider: "codex", windows: [], credits: [], fetchedAt: 1 }) } as any });
+    const qs = new QuotaService({ antigravity: provider, claude: { fetch: async () => ({ provider: "claude", windows: [], credits: [], fetchedAt: 1 }) } as any, codex: { fetch: async () => ({ provider: "codex", windows: [], credits: [], fetchedAt: 1 }) } as any });
     const cfg = { ...DEFAULT_CLIENT_CONFIG, quotaEnabled: true, quotaProviders: { claude: false, codex: false, antigravity: true } };
     await qs.fetchAll(cfg);
     const res = await qs.getQuota(cfg);
@@ -131,7 +131,6 @@ describe("antigravity & codex quota providers (quota-and-usage.md §2.2, §2.3)"
     const H = 3_600_000;
     const w = (id: string, periodMs: number | null, family?: string) => ({ id, label: id, usedPercent: 0, periodMs, resetsAt: null, ...(family ? { family } : {}) });
     const qs = new QuotaService({
-      autoScan: false,
       claude: { fetch: async () => ({ provider: "claude", windows: [w("7d", 168 * H), w("7d-fable", 168 * H, "Fable"), w("5h", 5 * H), w("5h-fable", 5 * H, "Fable")], credits: [], fetchedAt: 1 }) } as any,
       codex: { fetch: async () => ({ provider: "codex", windows: [w("other", null), w("weekly", 168 * H), w("primary", 5 * H)], credits: [], fetchedAt: 1 }) } as any,
       antigravity: { fetch: async () => ({ provider: "antigravity", windows: [], credits: [], fetchedAt: 1 }) } as any,
@@ -171,7 +170,6 @@ describe("antigravity & codex quota providers (quota-and-usage.md §2.2, §2.3)"
       home: dir,
       usageUrl: `http://127.0.0.1:${srv.port}/usage`,
       creditsUrl: `http://127.0.0.1:${srv.port}/credits`,
-      tokenUrl: `http://127.0.0.1:${srv.port}/token`,
       env: { ...process.env, CODEX_HOME: join(dir, ".codex") },
       now: () => 1_700_000_000_000,
     });
@@ -232,7 +230,6 @@ describe("antigravity & codex quota providers (quota-and-usage.md §2.2, §2.3)"
       quotaProviders: { claude: false } as any,
     };
     const qs = new QuotaService({
-      autoScan: false,
       claude: { fetch: async () => ({ provider: "claude", windows: [], credits: [], fetchedAt: 1 }) } as any,
       codex: { fetch: async () => ({ provider: "codex", windows: [], credits: [], fetchedAt: 1 }) } as any,
       antigravity: { fetch: async () => ({ provider: "antigravity", windows: [], credits: [], fetchedAt: 1 }) } as any,

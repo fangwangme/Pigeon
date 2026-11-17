@@ -7,6 +7,7 @@ import { ago, Icon, Logo } from "./ui";
 import { LOCALES, rich, t, type LocalePref, type MessageId } from "../i18n";
 import { fmtCost } from "./UsagePage";
 import { formatYMD } from "../../../shared/usage";
+import { QUOTA_PROVIDER_KEYS, SCAN_INTERVALS, USAGE_AGENT_KINDS } from "../../../shared/defaults";
 
 /** §8.1: the newest devices shown before the rest are folded away. */
 const DEVICES_SHOWN = 5;
@@ -181,7 +182,7 @@ export function Settings() {
         if (connected && configReady && usageEnabled) {
           void request({
             type: "usage_get",
-            payload: { preset: "7d", agents: ["claude", "codex", "agy", "opencode", "pi"] },
+            payload: { preset: "7d", agents: [...USAGE_AGENT_KINDS] },
           })
             .then((res: UsageGetPayload) => {
               if (res && res.totals && res.days) {
@@ -200,7 +201,7 @@ export function Settings() {
   const quotaSummaryText = () => {
     const items: string[] = [];
     const used = state.quotaDisplay === "used";
-    for (const pKey of ["claude", "codex", "antigravity"] as const) {
+    for (const pKey of QUOTA_PROVIDER_KEYS) {
       if (state.quotaProviders[pKey] === false) continue;
       const snap = state.quotaSnapshots.find((s) => s.provider === pKey)?.snapshot;
       if (!snap || !snap.windows.length) continue;
@@ -346,35 +347,6 @@ export function Settings() {
                 </div>
                 <Icon name="chevR" sm />
               </button>
-              <div class="li">
-                <div class="tx">{t("settings.usageScanMode")}</div>
-                <div
-                  class="seg"
-                  style={{
-                    display: "grid",
-                    "grid-template-columns": "repeat(2, minmax(0, 1fr))",
-                    width: "180px",
-                    padding: "2px",
-                    "border-radius": "9px",
-                    flex: "none",
-                  }}
-                >
-                  <button
-                    class={state.usageScanMode !== "realtime" ? "on" : ""}
-                    style={{ height: "30px", "font-size": "12.5px" }}
-                    onClick={() => sendConfigPatch({ usageScanMode: "scheduled" })}
-                  >
-                    {t("settings.usageScanScheduled")}
-                  </button>
-                  <button
-                    class={state.usageScanMode === "realtime" ? "on" : ""}
-                    style={{ height: "30px", "font-size": "12.5px" }}
-                    onClick={() => sendConfigPatch({ usageScanMode: "realtime" })}
-                  >
-                    {t("settings.usageScanRealtime")}
-                  </button>
-                </div>
-              </div>
             </Show>
 
             <Show when={state.quotaEnabled || state.usageEnabled}>
@@ -382,15 +354,12 @@ export function Settings() {
                 <div class="tx">{t("settings.showQuotaButton")}</div>
                 <span class={`tg${state.quotaButton ? "" : " off"}`} />
               </button>
-            </Show>
-
-            <Show when={state.quotaEnabled || (state.usageEnabled && state.usageScanMode !== "realtime")}>
               <div class="li" style={{ "justify-content": "space-between", "align-items": "center" }}>
                 <div class="tx">{t("settings.usageScanInterval")}</div>
                 <div style={{ display: "inline-flex", gap: "6px" }}>
-                  <For each={["1m", "2m", "5m", "10m", "15m"] as const}>
+                  <For each={SCAN_INTERVALS}>
                     {(interval) => {
-                      const isSel = () => (state.usageScanInterval || "5m") === interval;
+                      const isSel = () => (state.usageScanInterval || "15m") === interval;
                       return (
                         <button
                           style={{
@@ -417,12 +386,12 @@ export function Settings() {
             </Show>
           </div>
           <Show when={state.quotaEnabled || state.usageEnabled}>
-            <p class="note">{t("settings.usageScanModeHint")}</p>
+            <p class="note">{t("settings.refreshIntervalHint")}</p>
           </Show>
           <Show when={state.quotaEnabled}>
             <div class="sec">{t("settings.queriedProviders")}</div>
             <div class="card">
-              <For each={["claude", "codex", "antigravity"] as const}>
+              <For each={QUOTA_PROVIDER_KEYS}>
                 {(pKey) => {
                   const isOn = () => state.quotaProviders[pKey] !== false;
                   const snap = () => state.quotaSnapshots.find((s) => s.provider === pKey);

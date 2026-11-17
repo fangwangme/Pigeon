@@ -1,6 +1,5 @@
-// Issue #13, #25. quota-and-usage.md §3, protocol.md §4.17–§4.19, §5.12.
+// Issue #13, #25, #29. quota-and-usage.md §3, protocol.md §4.17–§4.19, §5.12.
 import { formatYMD, resolveRange, type UsagePreset } from "../../shared/usage";
-import { scanIntervalToMs } from "../../shared/defaults";
 import type { UsageDayPayload, UsageGetPayload, UsageModelPayload } from "../../types/protocol";
 import { PricingManager } from "./pricing";
 import { UsageStore } from "./store";
@@ -12,7 +11,6 @@ export interface UsageServiceOptions {
   pricing?: PricingManager;
   configManager?: ConfigManager;
   now?: () => number;
-  autoScan?: boolean;
   onUpdated?: (payload: { scannedAt: number }) => void;
 }
 
@@ -20,23 +18,16 @@ export class UsageService {
   private store: UsageStore;
   private pricing: PricingManager;
   private configManager?: ConfigManager;
-  private autoScan: boolean;
   private now: () => number;
   private onUpdated?: (payload: { scannedAt: number }) => void;
   private scanPromise: Promise<{ scannedFiles: number; recordsAdded: number }> | null = null;
-  private backgroundTimer: ReturnType<typeof setInterval> | null = null;
-  private timerIntervalMs: number | null = null;
-  private hasOnlineClients = false;
   private hasScannedOnce = false;
-  private lastEnabled = true;
   private lastScanTime: number | null = null;
   private lastScanDurationMs = 0;
   private lastScanError: string | null = null;
 
   constructor(options: UsageServiceOptions = {}) {
     this.configManager = options.configManager;
-    this.autoScan = options.autoScan !== false;
-    this.lastEnabled = options.configManager?.getClientConfig().usageEnabled !== false;
     // The usage database sits in the daemon's state directory; the agents' files are under the config's home.
     const stateDir = options.configManager?.getServerConfig().stateDir;
     this.store =
@@ -50,71 +41,11 @@ export class UsageService {
     this.onUpdated = cb;
   }
 
-  public getScanMode(): "realtime" | "scheduled" {
-    return this.configManager?.getClientConfig().usageScanMode ?? "scheduled";
-  }
-
-  public getScanIntervalMs(): number {
-    return scanIntervalToMs(this.configManager?.getClientConfig().usageScanInterval);
-  }
-
   private isEnabled(): boolean {
     return this.configManager ? this.configManager.getClientConfig().usageEnabled !== false : true;
   }
 
-  private isStale(): boolean {
-    const last = this.lastScanTime ?? this.store.getLastScannedAt?.() ?? 0;
-    return last <= 0 || (this.now() - last) > this.getScanIntervalMs();
-  }
-
-  private stopBackgroundTimer(): void {
-    if (this.backgroundTimer) {
-      clearInterval(this.backgroundTimer);
-      this.backgroundTimer = null;
-    }
-    this.timerIntervalMs = null;
-  }
-
-  public setClientOnline(online: boolean): void {
-    this.hasOnlineClients = online;
-    if (!online) {
-      this.stopBackgroundTimer();
-      return;
-    }
-    this.startBackgroundTimer();
-    if (this.autoScan && this.isEnabled() && this.getScanMode() === "scheduled" && this.isStale()) {
-      void this.scan().catch((err) => console.error("[Pigeon] connect usage scan failed:", err));
-    }
-  }
-
-  public startBackgroundTimer(): void {
-    if (!this.autoScan || !this.hasOnlineClients || !this.isEnabled() || this.getScanMode() !== "scheduled") {
-      this.stopBackgroundTimer();
-      return;
-    }
-    const intervalMs = this.getScanIntervalMs();
-    if (this.backgroundTimer && this.timerIntervalMs === intervalMs) return;
-    this.stopBackgroundTimer();
-    const backgroundScan = () => void this.scan().catch((err) => console.error("[Pigeon] background usage scan failed:", err));
-    // §3.7: scheduled mode scans in the background while at least one phone is connected; never keeps a CLI process alive.
-    this.backgroundTimer = setInterval(backgroundScan, intervalMs);
-    this.backgroundTimer.unref();
-    this.timerIntervalMs = intervalMs;
-  }
-
-  /** The scan mode, interval, or feature switch may have changed (`config_patch`). */
-  public updateConfig(): void {
-    const isNowEnabled = this.isEnabled();
-    const becameEnabled = !this.lastEnabled && isNowEnabled;
-    this.lastEnabled = isNowEnabled;
-    this.startBackgroundTimer();
-    if (becameEnabled) {
-      void this.scan().catch((err) => console.error("[Pigeon] post-enable usage scan failed:", err));
-    }
-  }
-
   public destroy(): void {
-    this.stopBackgroundTimer();
     // A scan still in flight keeps the database until it settles; its own failure is reported by its caller.
     const close = () => this.store.close();
     if (this.scanPromise) this.scanPromise.then(close, close);
@@ -188,19 +119,8 @@ export class UsageService {
   }
 
   public async getUsage(req: { preset: string; from?: string; to?: string; agents: string[]; force?: boolean }): Promise<UsageGetPayload> {
-    const mode = this.getScanMode();
-    if (mode === "scheduled") {
-      // In scheduled mode, background timer keeps the cache fresh; do not scan on query unless never scanned
-      if (!this.hasScannedOnce) {
-        await this.scan();
-      }
-    } else {
-      // In realtime mode, allow query refresh with 60-second cooldown
-      const now = this.now();
-      const isCooldown = this.lastScanTime !== null && (now - this.lastScanTime < 60_000);
-      if (!isCooldown || !this.hasScannedOnce) {
-        await this.scan();
-      }
+    if (req.force || !this.hasScannedOnce) {
+      await this.scan();
     }
 
     const nowDt = new Date(this.now());
@@ -217,14 +137,14 @@ export class UsageService {
   }
 
   public async getDay(req: { date: string; agents: string[] }): Promise<UsageDayPayload> {
-    if (this.getScanMode() === "realtime" || !this.hasScannedOnce) {
+    if (!this.hasScannedOnce) {
       await this.scan();
     }
     return this.store.getDayReport(req);
   }
 
   public async getModel(req: { model: string; from: string; to: string; agents: string[] }): Promise<UsageModelPayload> {
-    if (this.getScanMode() === "realtime" || !this.hasScannedOnce) {
+    if (!this.hasScannedOnce) {
       await this.scan();
     }
     return this.store.getModelReport(req);

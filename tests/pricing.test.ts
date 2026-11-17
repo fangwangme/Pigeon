@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { mkdirSync, writeFileSync, rmSync } from "node:fs";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { PricingManager } from "../src/server/usage/pricing";
@@ -50,7 +50,7 @@ describe("PricingManager fallback and retry (quota-and-usage.md §3.3)", () => {
 
     let networkAttempts = 0;
     let shouldFail = true;
-    const mockFetch = (url: any) => {
+    const mockFetch = () => {
       networkAttempts++;
       if (shouldFail) return Promise.reject(new Error("network error"));
       return Promise.resolve({
@@ -139,4 +139,33 @@ describe("PricingManager fallback and retry (quota-and-usage.md §3.3)", () => {
       outputCostPerToken: 30 / 1_000_000,
     });
   });
+
+  test("succeeds when a pricing source takes 3s to respond (quota-and-usage.md §3.3)", async () => {
+    const cachePath = join(testDir, "slow-source-pricing.json");
+    const mockFetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.href : (input as Request).url;
+      if (!url.includes("models.dev")) return new Response("Not Found", { status: 404 });
+      await new Promise<void>((resolve, reject) => {
+        const timer = setTimeout(resolve, 3_000);
+        const onAbort = () => {
+          clearTimeout(timer);
+          reject(init?.signal?.reason ?? new Error("Aborted"));
+        };
+        if (init?.signal?.aborted) onAbort();
+        else init?.signal?.addEventListener("abort", onAbort, { once: true });
+      });
+      return Response.json({
+        anthropic: { models: { "claude-sonnet-4-6": { id: "claude-sonnet-4-6", cost: { input: 3, output: 15 } } } },
+      });
+    }) as unknown as typeof fetch;
+
+    const pm = new PricingManager({ cachePath, fetch: mockFetch });
+    await pm.initialize();
+
+    expect(pm.arePricesAvailable()).toBe(true);
+    expect(pm.getPrice("claude-sonnet-4-6")).toMatchObject({
+      inputCostPerToken: 3 / 1_000_000,
+      outputCostPerToken: 15 / 1_000_000,
+    });
+  }, 10_000);
 });

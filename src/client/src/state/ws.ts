@@ -23,10 +23,19 @@ const PROTOCOL_VERSION = "1.0.0";
 // Close codes after which reconnecting cannot help (protocol.md §2.2).
 const TERMINAL_CLOSE_CODES = new Set([4401, 4403, 4409, 1008]);
 const RECONNECT_MS = 3000;
+const PAIRING_CHECK_TIMEOUT_MS = 5000;
+const CONNECTING_TIMEOUT_MS = 10000;
+const WAKEUP_PING_TIMEOUT_MS = 3000;
+const HEARTBEAT_INTERVAL_MS = 5000;
+const HEARTBEAT_TIMEOUT_MS = 10000;
 
 let socket: WebSocket | null = null;
 let pingInterval: ReturnType<typeof setInterval> | null = null;
 let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+let connectingTimer: ReturnType<typeof setTimeout> | null = null;
+let wakeupProbeTimer: ReturnType<typeof setTimeout> | null = null;
+let connectPromise: Promise<void> | null = null;
+let canImmediateReconnect = false;
 let lastPongTime = Date.now();
 let msgId = 0;
 let configVersion = 0;
@@ -85,8 +94,19 @@ export function flushActivePaneSnapshot(): void {
 }
 
 function scheduleReconnect(): void {
-  if (reconnectTimer) clearTimeout(reconnectTimer);
-  reconnectTimer = setTimeout(() => void initWebSocket(), RECONNECT_MS);
+  if (reconnectTimer) {
+    clearTimeout(reconnectTimer);
+    reconnectTimer = null;
+  }
+  if (canImmediateReconnect) {
+    canImmediateReconnect = false;
+    void initWebSocket();
+    return;
+  }
+  reconnectTimer = setTimeout(() => {
+    reconnectTimer = null;
+    void initWebSocket();
+  }, RECONNECT_MS);
 }
 
 function nextId(): string {
@@ -124,26 +144,59 @@ async function pairWithCode(code: string): Promise<boolean> {
 }
 
 async function isAuthenticated(): Promise<boolean> {
-  const res = await fetch("/api/auth/status", { credentials: "same-origin" });
-  const data = await res.json();
-  return !!data.authenticated;
+  const controller = typeof AbortController !== "undefined" ? new AbortController() : null;
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  try {
+    const fetchPromise = fetch("/api/auth/status", {
+      credentials: "same-origin",
+      ...(controller ? { signal: controller.signal } : {}),
+    });
+    const timeoutPromise = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => {
+        controller?.abort();
+        reject(new Error("Pairing check timed out"));
+      }, PAIRING_CHECK_TIMEOUT_MS);
+    });
+    const res = await Promise.race([fetchPromise, timeoutPromise]);
+    const data = await res.json();
+    return !!data.authenticated;
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
 }
 
 function teardownSocket(ws: WebSocket | null): void {
   if (pingInterval) clearInterval(pingInterval);
   pingInterval = null;
+  if (connectingTimer) clearTimeout(connectingTimer);
+  connectingTimer = null;
+  if (wakeupProbeTimer) clearTimeout(wakeupProbeTimer);
+  wakeupProbeTimer = null;
+  pendingSelectViewId = null;
   for (const p of pending.values()) {
     p.reject(Object.assign(new Error(t("error.disconnected")), { code: "ERR_OFFLINE" }));
   }
   pending.clear();
-  setState("connected", false);
-  setState("configReady", false);
+  setState({ connected: false, configReady: false, paneSyncing: false });
   if (ws && socket === ws) socket = null;
 }
 
-/** Connects unless already paired-and-connected; shows pairing guidance when not paired. */
+/** Connects unless already paired-and-connected or an attempt is in flight; shows pairing guidance when not paired. */
 export async function initWebSocket(): Promise<void> {
   if (socket && (socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CONNECTING)) return;
+  if (connectPromise) return connectPromise;
+  connectPromise = connectOnce().finally(() => {
+    connectPromise = null;
+  });
+  return connectPromise;
+}
+
+async function connectOnce(): Promise<void> {
+  if (reconnectTimer) {
+    clearTimeout(reconnectTimer);
+    reconnectTimer = null;
+  }
+  canImmediateReconnect = false;
   let paired: boolean;
   try {
     paired = await isAuthenticated();
@@ -162,11 +215,23 @@ export async function initWebSocket(): Promise<void> {
   const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
   const ws = new WebSocket(`${proto}//${window.location.host}/ws`);
   socket = ws;
+  if (connectingTimer) clearTimeout(connectingTimer);
+  connectingTimer = setTimeout(() => {
+    connectingTimer = null;
+    if (socket !== ws || ws.readyState !== WebSocket.CONNECTING) return;
+    console.warn("[Pigeon] WebSocket connect timed out after 10s");
+    ws.close();
+  }, CONNECTING_TIMEOUT_MS);
 
   // Every handler checks it still belongs to the current socket: a replaced socket's late
   // close must not clear the new one or schedule a duplicate reconnect.
   ws.onopen = () => {
     if (socket !== ws) return;
+    if (connectingTimer) {
+      clearTimeout(connectingTimer);
+      connectingTimer = null;
+    }
+    canImmediateReconnect = true;
     setState("connected", true);
     lastPongTime = Date.now();
     let have: HaveInfo | undefined;
@@ -193,13 +258,18 @@ export async function initWebSocket(): Promise<void> {
     if (pingInterval) clearInterval(pingInterval);
     pingInterval = setInterval(() => {
       if (socket !== ws) return;
-      if (Date.now() - lastPongTime > 30000) {
-        ws.close(); // half-open connection: force a reconnect
+      if (Date.now() - lastPongTime > HEARTBEAT_TIMEOUT_MS) {
+        console.warn("[Pigeon] WebSocket heartbeat timed out; reconnecting");
+        teardownSocket(ws);
+        try {
+          ws.close(); // half-open connection: force a reconnect
+        } catch {}
+        scheduleReconnect();
         return;
       }
       sendMessage({ type: "ping", timestamp: Date.now() });
       reportPresence();
-    }, 15000);
+    }, HEARTBEAT_INTERVAL_MS);
     reportPresence();
   };
 
@@ -210,13 +280,17 @@ export async function initWebSocket(): Promise<void> {
 
   ws.onclose = (event) => {
     if (socket !== ws) return;
-    socket = null;
+    console.warn(`[Pigeon] WebSocket closed: code=${event.code} reason=${JSON.stringify(event.reason || "")}`);
     teardownSocket(ws);
     if (event.code === 4401 || event.code === 4403) {
       void clearAll();
     }
     if (TERMINAL_CLOSE_CODES.has(event.code)) {
-      if (reconnectTimer) clearTimeout(reconnectTimer);
+      canImmediateReconnect = false;
+      if (reconnectTimer) {
+        clearTimeout(reconnectTimer);
+        reconnectTimer = null;
+      }
       setState("paired", event.code === 4409);
       return;
     }
@@ -397,7 +471,13 @@ export function handleServerMessage(msg: ServerMessage): void {
       return;
 
     case "pane_bootstrap": {
-      if (msg.payload.paneId !== state.activePaneId) return;
+      const substituted = !!msg.payload.requestedPaneId && msg.payload.requestedPaneId === state.activePaneId;
+      if (msg.payload.paneId !== state.activePaneId && !substituted) return;
+      if (substituted) {
+        // The requested pane is gone: drop its view before showing the pane the server chose.
+        showPane(msg.payload.paneId, null);
+        reportPresence();
+      }
       freshDataArrivedPaneId = msg.payload.paneId;
       if (typeof msg.payload.turns?.seq === "number") {
         paneSeqs.set(msg.payload.paneId, msg.payload.turns.seq);
@@ -504,6 +584,10 @@ export function handleServerMessage(msg: ServerMessage): void {
 
     case "pong":
       lastPongTime = Date.now();
+      if (wakeupProbeTimer) {
+        clearTimeout(wakeupProbeTimer);
+        wakeupProbeTimer = null;
+      }
       return;
   }
 }
@@ -602,17 +686,10 @@ export function respondInteraction(interactionId: string, optionId: string, fing
 }
 
 /** The one navigation entry point into a pane: workspace and tab follow from it. */
-export async function selectPane(paneId: string): Promise<void> {
+/** Makes `paneId` the viewed pane, showing `memoryView` (or an empty view) until its data arrives. */
+function showPane(paneId: string, memoryView: PaneCacheEntry | null | undefined): void {
   writePref("pigeon_active_pane", paneId);
-  const previousPaneId = state.activePaneId;
-  if (previousPaneId && previousPaneId !== paneId) {
-    flushActivePaneSnapshot();
-  }
-
-  freshDataArrivedPaneId = null;
   paneRevisions.delete(paneId);
-
-  const memoryView = getMemoryPaneView(paneId);
   setState({
     activePaneId: paneId,
     cards: [],
@@ -640,6 +717,17 @@ export async function selectPane(paneId: string): Promise<void> {
     }
   }
   setUnread(paneId, false);
+}
+
+export async function selectPane(paneId: string): Promise<void> {
+  const previousPaneId = state.activePaneId;
+  if (previousPaneId && previousPaneId !== paneId) {
+    flushActivePaneSnapshot();
+  }
+
+  freshDataArrivedPaneId = null;
+  const memoryView = getMemoryPaneView(paneId);
+  showPane(paneId, memoryView);
 
   let cached: PaneCacheEntry | null = memoryView || null;
   if (!cached) {
@@ -730,14 +818,14 @@ export async function sendConfigPatch(patch: Partial<ClientConfig>): Promise<voi
   }
 }
 
-/** protocol.md §4.16: reads the daemon's cache only; never triggers upstream requests. */
-export async function fetchQuota(): Promise<QuotaProviderState[]> {
+/** protocol.md §4.16: reads the daemon's cache by default, or refreshes quota when `refresh` is true. */
+export async function fetchQuota(refresh = false): Promise<QuotaProviderState[]> {
   if (!state.quotaEnabled) {
     return [];
   }
   setState("quotaLoading", true);
   try {
-    const res = await request({ type: "quota_get", payload: {} });
+    const res = await request({ type: "quota_get", payload: refresh ? { refresh: true } : {} });
     if (res?.providers) {
       setState("quotaSnapshots", res.providers);
       const serverFetchedAt =
@@ -805,13 +893,33 @@ export function handleVisibilityChange(): void {
     flushActivePaneSnapshot();
   }
   if (document.visibilityState === "visible") {
-    const stale = Date.now() - lastPongTime > 30000;
-    if (!socket || socket.readyState !== WebSocket.OPEN || stale) {
-      const old = socket;
-      socket = null; // detach first so the old socket's close cannot touch the new one
-      teardownSocket(null);
-      old?.close();
-      void initWebSocket();
+    if (!socket || socket.readyState !== WebSocket.OPEN) {
+      if (!connectPromise && (!socket || socket.readyState !== WebSocket.CONNECTING)) {
+        if (reconnectTimer) {
+          clearTimeout(reconnectTimer);
+          reconnectTimer = null;
+        }
+        if (socket) teardownSocket(socket);
+        void initWebSocket();
+      }
+    } else {
+      sendMessage({ type: "ping", timestamp: Date.now() });
+      if (wakeupProbeTimer) clearTimeout(wakeupProbeTimer);
+      const probedWs = socket;
+      wakeupProbeTimer = setTimeout(() => {
+        wakeupProbeTimer = null;
+        if (socket !== probedWs || probedWs.readyState !== WebSocket.OPEN) return;
+        console.warn("[Pigeon] wakeup ping timed out after 3s; reconnecting");
+        if (reconnectTimer) {
+          clearTimeout(reconnectTimer);
+          reconnectTimer = null;
+        }
+        teardownSocket(probedWs);
+        try {
+          probedWs.close();
+        } catch {}
+        void initWebSocket();
+      }, WAKEUP_PING_TIMEOUT_MS);
     }
   }
   reportPresence();
