@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.14] - 2026-11-17
+
+### Changed
+- **Daemon-owned quota & usage refresh schedule**: Replaced per-service client-gated refresh timers and `usageScanMode` (`realtime` / `scheduled`) with a single daemon-level timer at `client.usageScanInterval` that refreshes enabled items together regardless of connected phones, drops `usageScanMode` on load and rejects it in `config_patch`, turns the Quota and Usage page Refresh buttons into per-item on-demand refreshes (`quota_get { refresh: true }`, `usage_get { force: true }`), adds stale cache self-refresh on open/visibility/interval, and simplifies Settings to show only the shared refresh interval (#29).
+
+### Fixed
+- **Fast WebSocket reconnect without stuck Syncing**: Implemented single-flight `initWebSocket`, 5 s pairing-check and 10 s `CONNECTING` attempt timeouts, immediate first reconnect after an open socket drops (3 s thereafter), wakeup `ping` with a 3 s `pong` deadline replacing any scheduled reconnect, close code/reason logging on both client and daemon (with connection lifetime), clearing `paneSyncing` on socket teardown, and switching to the server's substituted focused pane when `pane_bootstrap` carries `requestedPaneId` (#29).
+
 ## [0.1.13] - 2026-11-16
 
 ### Added
