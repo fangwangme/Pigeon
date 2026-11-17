@@ -17,12 +17,15 @@ Key Protocol Principles:
 ### 2.1 Heartbeat (`client <-> server`)
 - The client sends `{ "type": "ping", "timestamp": 1729650000000 }` every 15 seconds. The server answers `{ "type": "pong", "timestamp": … }`.
 - **Timeout**: If no `pong` has arrived for 30 seconds, the client closes the socket and reconnects.
-- **Wakeup**: When `document.visibilityState` becomes `visible`, the client reconnects at once if the socket is not open. Otherwise it sends a `ping` at once and reconnects when no `pong` arrives within 3 seconds, so a connection that died while the phone slept is replaced without waiting for the 30-second timeout.
+- **Wakeup**: When `document.visibilityState` becomes `visible`, the client reconnects at once if the socket is not open. Otherwise it sends a `ping` at once and reconnects when no `pong` arrives within 3 seconds, so a connection that died while the phone slept is replaced without waiting for the 30-second timeout. The wakeup reconnect replaces any reconnect already scheduled; it never adds a second one.
 - With every heartbeat, and whenever visibility or the viewed pane changes, the client sends `{ "type": "presence_update", "isVisible": true, "viewingPaneId": "w1:p2" }`. This message has no `id` and gets no reply.
 
 ### 2.2 Refusals and Closure Codes
 - A WebSocket upgrade without a valid session cookie is refused with HTTP **401**. A wrong `Host` or `Origin` is refused with HTTP **403** (`security-and-pairing.md` §4). In the browser, both show up as a plain close. Before reconnecting, the client checks `GET /api/auth/status` and shows the pairing guidance when it is not paired. When that check cannot reach the daemon (it is restarting, or the network is down), the client tries again 3 seconds later.
-- After a close that is not final, the first reconnect attempt is immediate; later attempts wait 3 seconds each.
+- After a close that is not final, the first reconnect attempt is immediate; later attempts wait 3 seconds each. A socket that opens resets this, so its own later close is again followed by an immediate attempt.
+- **One attempt at a time**: the client never has more than one connection attempt in flight. A call to connect while an attempt is running (the pairing check, or a socket still `CONNECTING`) or while a socket is open does nothing.
+- **Attempt timeouts**: the pairing check (`GET /api/auth/status`) is abandoned after 5 seconds, and a socket still `CONNECTING` after 10 seconds is closed. Each counts as a failed attempt, followed by the next attempt per the rule above.
+- **Close logging**: the daemon logs every WebSocket close with the device name, connection id, close code, close reason (empty when none), and how long the connection was open. The client logs the code and reason of every close to its console.
 - `4403`: The device was revoked (`pigeon devices revoke`). The client shows the pairing guidance and does not reconnect.
 - `4409`: Incompatible protocol major version. The client does not reconnect and shows that the app is out of date, with a reload button (`mobile-ui-and-themes.md` §8.3).
 - The client also treats `4401` and `1008` as final.
@@ -65,6 +68,8 @@ The server picks a pane. It uses `subscribePaneId` when Herdr knows that pane, o
 - **`state`**: the pane's cached `pane_state` payload (§5.4) when the pane was read before, else null. A fresh screen read follows as `pane_state` only if it differs. The bootstrap never waits for a screen read.
 - **`serverMs`**: how long the daemon took to build the message, so the client can time a switch.
 - Skills are not part of the bootstrap: the client asks with `skills_get` (§4.7) when the user types `/` at line start or opens the skills sheet.
+- **`requestedPaneId`**: present only when the hello named a `subscribePaneId` that Herdr does not know and the server sent the focused pane instead; it carries the pane the hello asked for. A client still viewing that requested pane switches its view to `paneId` (and remembers it as the viewed pane) and applies the bootstrap. A bootstrap for another pane without `requestedPaneId` is still ignored. The server sends no `have`-based resume for a substituted pane.
+- **Syncing**: the client shows Syncing (`mobile-ui-and-themes.md` §3.1) from the hello that offers `have` until the bootstrap it answers is applied. A socket close clears Syncing, so it never outlives the connection that would have ended it.
 
 `select_view` (§4.4) sends the same bootstrap for another pane, then its `ack`.
 
@@ -193,9 +198,9 @@ Updates the text and attachments of an existing queued prompt in-place, preservi
 
 ### 4.16 Quota (`quota_get`)
 ```json
-{ "type": "quota_get", "id": "cli_20", "payload": {} }
+{ "type": "quota_get", "id": "cli_20", "payload": { "refresh": true } }
 ```
-Answers strictly with the daemon's cached provider quota states (`quota-and-usage.md` §2.6) without triggering any upstream provider fetch. When `quotaEnabled` is `false` (`quota-and-usage.md` §1.1), the request is rejected with `ERR_FEATURE_DISABLED` without querying any provider. The ack carries:
+Without `refresh` (or with `refresh: false`), answers strictly with the daemon's cached provider quota states (`quota-and-usage.md` §2.6) without triggering any upstream provider fetch; opening the quota page and the home badge use this form. With `refresh: true` (the quota page's Refresh button), the daemon fetches the enabled providers now — joining a fetch already running instead of starting a second — and answers once it completes; usage is not scanned and the refresh timer is not moved. A completed refresh is also pushed as `quota_updated` (§5.11). `refresh` must be a boolean; any other value is `ERR_INVALID_PAYLOAD`. When `quotaEnabled` is `false` (`quota-and-usage.md` §1.1), the request is rejected with `ERR_FEATURE_DISABLED` without querying any provider. The ack carries:
 ```json
 { "providers": [ { "provider": "claude", "enabled": true,
     "snapshot": { "provider": "claude", "plan": "pro", "account": "you@example.com", "fetchedAt": 1794218000000, "credits": [],
@@ -209,7 +214,7 @@ One entry per provider, enabled or not; a disabled provider has `snapshot: null`
 ```json
 { "type": "usage_get", "id": "cli_21", "payload": { "preset": "custom", "from": "2026-10-01", "to": "2026-10-31", "agents": ["claude", "codex", "agy", "opencode", "pi"] } }
 ```
-`preset` is `today`, `7d`, `30d`, `year`, `all` or `custom`; `custom` requires `from` and `to` (`YYYY-MM-DD`), which other presets must not carry. An optional boolean `force` (the refresh button) rescans newly modified session files before answering in realtime mode (`quota-and-usage.md` §3.7); in scheduled mode, requests always answer from the background cache (user decision, 2026-11-11). `agents` is a non-empty list of distinct agent kinds and filters every figure in the reply. Anything else is `ERR_INVALID_PAYLOAD` and nothing is scanned. When `usageEnabled` is `false` (`quota-and-usage.md` §1.1), the request is rejected with `ERR_FEATURE_DISABLED` without scanning files or querying prices. The ack carries:
+`preset` is `today`, `7d`, `30d`, `year`, `all` or `custom`; `custom` requires `from` and `to` (`YYYY-MM-DD`), which other presets must not carry. An optional boolean `force` (the usage page's Refresh button) scans newly modified session files now — joining a scan already running instead of starting a second — and answers after it; quota is not fetched and the refresh timer is not moved (`quota-and-usage.md` §3.7, user decision 2026-11-17). Without `force`, the request answers from the usage database without scanning, except that a request arriving before the daemon's first scan since start has completed waits for that scan. `agents` is a non-empty list of distinct agent kinds and filters every figure in the reply. Anything else is `ERR_INVALID_PAYLOAD` and nothing is scanned. When `usageEnabled` is `false` (`quota-and-usage.md` §1.1), the request is rejected with `ERR_FEATURE_DISABLED` without scanning files or querying prices. The ack carries:
 - `range` (`from`, `to`), `firstDay` (the first day with usage, or null), `scannedAt`, `pricesAvailable`;
 - `totals` and, when `quota-and-usage.md` §3.5 gives one, `comparison` (`from`, `to`, `totals`); totals are `{ cost, tokens, input, output, cacheRead, cacheWrite, messages, sessions }`;
 - `days`: every day of the range with usage, newest first, each with the totals fields and `date`;
@@ -219,13 +224,13 @@ One entry per provider, enabled or not; a disabled provider has `snapshot: null`
 ```json
 { "type": "usage_day", "id": "cli_22", "payload": { "date": "2026-11-06", "agents": ["claude", "codex"] } }
 ```
-When `usageEnabled` is `false`, the request is rejected with `ERR_FEATURE_DISABLED`. The ack carries `date`, `totals`, and `agents`: per agent its totals and `models` (each model's totals), sorted by cost.
+When `usageEnabled` is `false`, the request is rejected with `ERR_FEATURE_DISABLED`. It answers from the usage database without scanning, like `usage_get` without `force` (§4.17). The ack carries `date`, `totals`, and `agents`: per agent its totals and `models` (each model's totals), sorted by cost.
 
 ### 4.19 Model Detail (`usage_model`)
 ```json
 { "type": "usage_model", "id": "cli_23", "payload": { "model": "gpt-5-6-sol", "from": "2026-10-11", "to": "2026-11-09", "agents": ["codex"] } }
 ```
-When `usageEnabled` is `false`, the request is rejected with `ERR_FEATURE_DISABLED`. The ack carries `model`, `company`, `totals`, `lastUsed`, `agents` (per agent: kind and totals) and `perDay` (every day of the range in order, with `date`, `tokens` and `cost`, zero on days without use). An unknown model is answered with zero totals, not an error.
+When `usageEnabled` is `false`, the request is rejected with `ERR_FEATURE_DISABLED`. It answers from the usage database without scanning, like `usage_get` without `force` (§4.17). The ack carries `model`, `company`, `totals`, `lastUsed`, `agents` (per agent: kind and totals) and `perDay` (every day of the range in order, with `date`, `tokens` and `cost`, zero on days without use). An unknown model is answered with zero totals, not an error.
 
 ### 4.20 Detail (`detail_get`)
 ```json
@@ -410,13 +415,13 @@ Prefetch for fast switching (user decision, 2026-11-10: only for agents that are
 ```json
 { "type": "quota_updated", "payload": { "providers": [], "fetchedAt": 1794218000000 } }
 ```
-Broadcast to every connected client when a background quota refresh completes and `client.quotaEnabled` is `true` (`quota-and-usage.md` §2.6). Carries the updated `providers` list and `fetchedAt` in the exact shape of §4.16; the client replaces its cached quota state silently without waiting for a manual refresh.
+Broadcast to every connected client when a quota refresh completes — a scheduled one or one requested with `refresh: true` — and `client.quotaEnabled` is `true` (`quota-and-usage.md` §2.6). Carries the updated `providers` list and `fetchedAt` in the exact shape of §4.16; the client replaces its cached quota state silently without waiting for a manual refresh. A client that was offline when a broadcast went out reads the cache with `quota_get` after its next `welcome`.
 
 ### 5.12 Usage Updated (`usage_updated`)
 ```json
 { "type": "usage_updated", "payload": { "scannedAt": 1794218000000 } }
 ```
-Broadcast to every connected client when a usage scan completes and `client.usageEnabled` is `true` (`quota-and-usage.md` §2.6). Carries the updated `scannedAt` timestamp; clients viewing usage views refresh silently from the daemon cache when `scannedAt` advances.
+Broadcast to every connected client when a usage scan completes — a scheduled one or one requested with `force: true` — and `client.usageEnabled` is `true` (`quota-and-usage.md` §2.6). Carries the updated `scannedAt` timestamp; clients viewing usage views refresh silently from the daemon cache when `scannedAt` advances, and re-read it after their next `welcome`.
 
 ## 6. Configuration Synchronization Protocol
 
@@ -438,9 +443,9 @@ The client part of `config.json` (appearance) is shared by all paired devices.
 { "type": "config_patch", "id": "cli_21", "payload": { "client": { "accent": "green" } } }
 ```
 *Server Behavior*:
-1. The patch is validated against a whitelist of keys and value types: `themeMode` (`system`, `light`, `dark`), `accent` (`blue`, `purple`, `green`, `orange`, `pink`), `quotaEnabled` (boolean), `usageEnabled` (boolean), `quotaProviders` (an object with any of `claude`, `codex`, `antigravity`, each a boolean), `quotaDisplay` (`remaining`, `used`), `quotaButton` (boolean), `quotaShowAccount` (boolean), `usageScanMode` (`scheduled`, `realtime`) and `usageScanInterval` (`1m`, `2m`, `5m`, `10m`, `15m`). Legacy `quotaUsageEnabled` or any other unknown key or bad value rejects the whole patch with `ERR_INVALID_PAYLOAD`, and nothing is saved.
+1. The patch is validated against a whitelist of keys and value types: `themeMode` (`system`, `light`, `dark`), `accent` (`blue`, `purple`, `green`, `orange`, `pink`), `quotaEnabled` (boolean), `usageEnabled` (boolean), `quotaProviders` (an object with any of `claude`, `codex`, `antigravity`, each a boolean), `quotaDisplay` (`remaining`, `used`), `quotaButton` (boolean), `quotaShowAccount` (boolean) and `usageScanInterval` (`1m`, `2m`, `5m`, `10m`, `15m`). Legacy `quotaUsageEnabled`, the removed `usageScanMode` (issue #29), or any other unknown key or bad value rejects the whole patch with `ERR_INVALID_PAYLOAD`, and nothing is saved.
 2. The patch is deep-merged and written to `config.json` before the reply. A write error is reported as `ERR_INTERNAL`.
-3. Defaults are `themeMode: "system"`, `accent: "blue"`, `quotaEnabled: false`, `usageEnabled: true`, `quotaDisplay: "remaining"`, `quotaButton: true`, `quotaShowAccount: false` (issue #25: account details stay hidden until the user turns them on), `usageScanMode: "scheduled"` and `usageScanInterval: "5m"`; `quotaProviders` defaults to the providers logged in on this computer (`quota-and-usage.md` §2.5). Legacy `quotaUsageEnabled` in `config.json` is dropped on load without being inherited by `quotaEnabled` or `usageEnabled`. The config version is bumped. The sender gets `ack` with `{ "version", "client" }`.
+3. Defaults are `themeMode: "system"`, `accent: "blue"`, `quotaEnabled: false`, `usageEnabled: true`, `quotaDisplay: "remaining"`, `quotaButton: true`, `quotaShowAccount: false` (issue #25: account details stay hidden until the user turns them on) and `usageScanInterval: "5m"`; `quotaProviders` defaults to the providers logged in on this computer (`quota-and-usage.md` §2.5). Legacy `quotaUsageEnabled` in `config.json` is dropped on load without being inherited by `quotaEnabled` or `usageEnabled`; a stored `usageScanMode` is dropped on load too. The config version is bumped. The sender gets `ack` with `{ "version", "client" }`.
 4. Every other client gets `{ "type": "config_updated", "payload": { "version", "client" } }`. Clients ignore a `config_sync` or `config_updated` whose version is older than one they have already applied.
 
 ## 7. Uploads (`POST /api/uploads`)
