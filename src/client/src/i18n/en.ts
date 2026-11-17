@@ -66,7 +66,7 @@ export const en = {
 
   "conn.computerDown": "Computer not connected",
   "conn.herdrDown": "Herdr not responding",
-  "conn.retrying": "retrying every 3 s",
+  "conn.retrying": "reconnecting",
 
   "error.disconnected": "Connection lost",
   "error.agentBlocked": "The agent is waiting for your answer; handle its question first",
@@ -400,9 +400,6 @@ export const en = {
   "settings.providerActive": "Logged in",
   "settings.providerPlan": "Logged in · {plan}",
   "settings.providerDisabled": "Do not query",
-  "settings.usageScanMode": "Usage calculation mode",
-  "settings.usageScanRealtime": "Realtime",
-  "settings.usageScanScheduled": "Scheduled",
   "settings.usageScanInterval": "Refresh interval",
-  "settings.usageScanModeHint": "Subscription quota and scheduled usage share the background refresh interval (5m default, active while connected); Realtime scans newly changed logs on demand.",
+  "settings.usageScanModeHint": "The computer refreshes enabled quota and usage together at this interval even when no phone is connected (5m default); each page's refresh button refreshes that page right away.",
 } as const;

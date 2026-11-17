@@ -132,8 +132,8 @@ export function validateClientMessage(raw: unknown): ValidationResult {
       return err ? fail(id, err) : ok();
     }
     case "quota_get":
-      if (p !== undefined && !isObj(p)) {
-        return fail(id, "quota_get payload must be an object");
+      if (p !== undefined && (!isObj(p) || (p.refresh !== undefined && typeof p.refresh !== "boolean"))) {
+        return fail(id, "quota_get payload must be an object with optional boolean refresh");
       }
       return ok();
     case "usage_get": {
@@ -224,7 +224,6 @@ const CONFIG_CHECKS: Record<keyof ClientConfig, (v: unknown) => boolean> = {
   quotaDisplay: (v) => v === "remaining" || v === "used",
   quotaButton: (v) => typeof v === "boolean",
   quotaShowAccount: (v) => typeof v === "boolean",
-  usageScanMode: (v) => v === "realtime" || v === "scheduled",
   usageScanInterval: (v) => v === "1m" || v === "2m" || v === "5m" || v === "10m" || v === "15m",
   quotaProviders: (v) => {
     if (!isObj(v)) return false;

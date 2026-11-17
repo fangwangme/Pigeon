@@ -67,7 +67,7 @@ export const zh: Messages = {
 
   "conn.computerDown": "电脑未连接",
   "conn.herdrDown": "Herdr 没有响应",
-  "conn.retrying": "每 3 秒重试",
+  "conn.retrying": "正在重连",
 
   "error.disconnected": "连接已断开",
   "error.agentBlocked": "Agent 正在等你回答，先处理它的问题",
@@ -401,9 +401,6 @@ export const zh: Messages = {
   "settings.providerActive": "已登录",
   "settings.providerPlan": "已登录 · {plan}",
   "settings.providerDisabled": "不查询",
-  "settings.usageScanMode": "用量计算模式",
-  "settings.usageScanRealtime": "实时扫描",
-  "settings.usageScanScheduled": "定时后台",
-  "settings.usageScanInterval": "后台刷新间隔",
-  "settings.usageScanModeHint": "订阅额度与定时用量共用后台刷新间隔（默认 5m，仅在有手机连接时运行）；实时模式在打开用量页时扫描新变动。",
+  "settings.usageScanInterval": "刷新间隔",
+  "settings.usageScanModeHint": "电脑会按此间隔一起刷新已启用的额度与用量（默认 5m，未连接手机时也会运行）；各页的刷新按钮可立即刷新该页。",
 };

@@ -146,7 +146,6 @@ export interface QuotaProvidersConfig {
   antigravity: boolean;
 }
 
-export type UsageScanMode = "realtime" | "scheduled";
 export type UsageScanInterval = "1m" | "2m" | "5m" | "10m" | "15m";
 
 /** Appearance and quota settings shared by every paired phone (`protocol.md` §6). */
@@ -159,7 +158,6 @@ export interface ClientConfig {
   quotaDisplay?: QuotaDisplayMode;
   quotaButton?: boolean;
   quotaShowAccount?: boolean;
-  usageScanMode?: UsageScanMode;
   usageScanInterval?: UsageScanInterval;
 }
 
@@ -468,6 +466,7 @@ export function hashTurn(turn: NormalizedTurn): string {
 
 export interface PaneBootstrapPayload {
   paneId: string;
+  requestedPaneId?: string;
   turns: NormalizedTurnsPayload | null;
   resume: TurnsDeltaPayload | null;
   queue: QueuedPrompt[];
@@ -506,7 +505,7 @@ export type ClientMessage =
   | { type: "skills_get"; id: string }
   | { type: "config_get"; id: string }
   | { type: "config_patch"; id: string; payload: { client: Partial<ClientConfig> } }
-  | { type: "quota_get"; id: string; payload?: Record<string, never> }
+  | { type: "quota_get"; id: string; payload?: { refresh?: boolean } }
   | { type: "usage_get"; id: string; payload: { preset: string; from?: string; to?: string; agents: string[]; force?: boolean } }
   | { type: "usage_day"; id: string; payload: { date: string; agents: string[] } }
   | { type: "usage_model"; id: string; payload: { model: string; from: string; to: string; agents: string[] } }

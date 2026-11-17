@@ -1,7 +1,6 @@
-// Issue #13, #25. quota-and-usage.md §2.6, protocol.md §4.16, §5.11.
+// Issue #13, #25, #29. quota-and-usage.md §2.6, protocol.md §4.16, §5.11.
 import type { ConfigManager } from "../config-manager";
 import type { ClientConfig, QuotaGetPayload, QuotaProviderState, QuotaSnapshot } from "../../types/protocol";
-import { scanIntervalToMs } from "../../shared/defaults";
 import { ClaudeQuotaProvider } from "./claude";
 import { CodexQuotaProvider } from "./codex";
 import { AntigravityQuotaProvider } from "./antigravity";
@@ -28,13 +27,8 @@ export class QuotaService {
   private codex: CodexQuotaProvider;
   private antigravity: AntigravityQuotaProvider;
   private configManager?: ConfigManager;
-  private autoScan: boolean;
   private now: () => number;
   private onUpdated?: (payload: QuotaGetPayload) => void;
-  private backgroundTimer: ReturnType<typeof setInterval> | null = null;
-  private timerIntervalMs: number | null = null;
-  private hasOnlineClients = false;
-  private lastEnabled = false;
   private lastFetchTime: number | null = null;
   private refreshAllPromise: Promise<void> | null = null;
 
@@ -51,75 +45,12 @@ export class QuotaService {
     this.codex = options.codex ?? new CodexQuotaProvider();
     this.antigravity = options.antigravity ?? new AntigravityQuotaProvider();
     this.configManager = options.configManager;
-    this.autoScan = options.autoScan !== false;
-    this.lastEnabled = options.configManager?.getClientConfig().quotaEnabled === true;
     this.now = options.now ?? (() => Date.now());
     this.onUpdated = options.onUpdated;
   }
 
   public setOnUpdated(cb?: (payload: QuotaGetPayload) => void): void {
     this.onUpdated = cb;
-  }
-
-  public getScanIntervalMs(): number {
-    return scanIntervalToMs(this.configManager?.getClientConfig().usageScanInterval);
-  }
-
-  private isEnabled(clientConfig?: ClientConfig): boolean {
-    const cfg = clientConfig ?? this.configManager?.getClientConfig();
-    return cfg?.quotaEnabled === true;
-  }
-
-  private isStale(): boolean {
-    return this.lastFetchTime === null || (this.now() - this.lastFetchTime) > this.getScanIntervalMs();
-  }
-
-  private stopBackgroundTimer(): void {
-    if (this.backgroundTimer) {
-      clearInterval(this.backgroundTimer);
-      this.backgroundTimer = null;
-    }
-    this.timerIntervalMs = null;
-  }
-
-  public setClientOnline(online: boolean): void {
-    this.hasOnlineClients = online;
-    if (!online) {
-      this.stopBackgroundTimer();
-      return;
-    }
-    this.startBackgroundTimer();
-    if (this.autoScan && this.isEnabled() && this.isStale()) {
-      void this.fetchAll().catch((err) => console.error("[Pigeon] connect quota fetch failed:", err));
-    }
-  }
-
-  public startBackgroundTimer(): void {
-    if (!this.autoScan || !this.hasOnlineClients || !this.configManager || !this.isEnabled()) {
-      this.stopBackgroundTimer();
-      return;
-    }
-    const intervalMs = this.getScanIntervalMs();
-    if (this.backgroundTimer && this.timerIntervalMs === intervalMs) return;
-    this.stopBackgroundTimer();
-    const backgroundFetch = () => void this.fetchAll().catch((err) => console.error("[Pigeon] background quota fetch failed:", err));
-    this.backgroundTimer = setInterval(backgroundFetch, intervalMs);
-    this.backgroundTimer.unref();
-    this.timerIntervalMs = intervalMs;
-  }
-
-  public updateConfig(): void {
-    const isNowEnabled = this.isEnabled();
-    const becameEnabled = !this.lastEnabled && isNowEnabled;
-    this.lastEnabled = isNowEnabled;
-    this.startBackgroundTimer();
-    if (becameEnabled) {
-      void this.fetchAll().catch((err) => console.error("[Pigeon] post-enable quota fetch failed:", err));
-    }
-  }
-
-  public destroy(): void {
-    this.stopBackgroundTimer();
   }
 
   private isProviderEnabled(config: ClientConfig | undefined, key: "claude" | "codex" | "antigravity"): boolean {

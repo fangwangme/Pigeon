@@ -42,6 +42,7 @@ const PUSH_DEDUPE_MS = 60_000;
 
 import { QuotaService } from "./quota/index";
 import { UsageService } from "./usage/index";
+import { scanIntervalToMs } from "../shared/defaults";
 
 export interface WsServerOptions {
   /** Identifies the client bundle being served (protocol.md §3.2). */
@@ -75,6 +76,7 @@ export interface ClientConnectionData {
   subscribedPaneId: string | null;
   watchingScreenPaneId?: string;
   lastPingTime: number;
+  openedAt?: number;
 }
 
 type Ws = ServerWebSocket<ClientConnectionData>;
@@ -127,6 +129,8 @@ export class WsServer {
   private pairingManager?: PairingManager;
   private quotaService?: QuotaService;
   private usageService?: UsageService;
+  private refreshTimer: ReturnType<typeof setInterval> | null = null;
+  private refreshIntervalMs: number | null = null;
   // protocol.md §4.2: prompts waiting for the pane's turn to end, oldest first.
   /** `item` is what the phone sees (its own text and upload ids, so **编辑** can restore them); `send` is the composed prompt. */
   private queueFilePath?: string;
@@ -170,6 +174,10 @@ export class WsServer {
     this.usageService = options.usageService;
     if (this.quotaService) this.wireQuotaService(this.quotaService);
     if (this.usageService) this.wireUsageService(this.usageService);
+    if (this.quotaService || this.usageService) {
+      this.refreshEnabledItems();
+      this.syncRefreshSchedule();
+    }
     const port = options.port ?? options.configManager?.getServerConfig().port ?? DEFAULT_PORT;
     const prodPort = options.productionPort ?? resolveProductionPort(options.configManager?.env);
     const isCompiled = process.execPath.endsWith("/pigeon") || !process.argv[1]?.endsWith(".ts");
@@ -367,21 +375,22 @@ export class WsServer {
   }
 
   public handleOpen(ws: Ws): void {
+    ws.data.openedAt = Date.now();
     this.clients.add(ws);
-    this.quotaService?.setClientOnline(true);
-    this.usageService?.setClientOnline(true);
     this.logger?.(`ws connect: ${ws.data?.session?.deviceName || "client"} (conn=${ws.data?.connectionId})`);
   }
 
-  public handleClose(ws: Ws): void {
+  public handleClose(ws: Ws, code?: number, reason?: string): void {
     this.clients.delete(ws);
-    if (this.clients.size === 0) {
-      this.quotaService?.setClientOnline(false);
-      this.usageService?.setClientOnline(false);
-    }
     this.pushManager.removePresence(ws.data.connectionId);
     this.syncMonitoredPanes();
-    this.logger?.(`ws disconnect: ${ws.data?.session?.deviceName || "client"} (conn=${ws.data?.connectionId})`);
+    const lifetimeMs = ws.data?.openedAt !== undefined ? Math.max(0, Date.now() - ws.data.openedAt) : undefined;
+    const parts = [
+      `code=${code ?? "none"}`,
+      `reason=${JSON.stringify(reason ?? "")}`,
+      ...(lifetimeMs !== undefined ? [`lifetime=${lifetimeMs}ms`] : []),
+    ];
+    this.logger?.(`ws disconnect: ${ws.data?.session?.deviceName || "client"} (conn=${ws.data?.connectionId}, ${parts.join(", ")})`);
   }
 
   private syncMonitoredPanes(): void {
@@ -493,7 +502,8 @@ export class WsServer {
           requested && this.herdrClient.hasPane(requested) ? requested : this.herdrClient.getFocusedPaneId();
         if (paneId && this.herdrClient.hasPane(paneId)) {
           const have = requested === paneId ? msg.payload.have : undefined;
-          await this.bootstrapPane(ws, paneId, have);
+          const requestedPaneId = requested && requested !== paneId ? requested : undefined;
+          await this.bootstrapPane(ws, paneId, have, requestedPaneId);
         }
         return;
       }
@@ -803,9 +813,17 @@ export class WsServer {
         return;
 
       case "config_patch": {
+        const prev = this.configManager.getClientConfig();
+        const prevQuotaEnabled = prev.quotaEnabled === true;
+        const prevUsageEnabled = prev.usageEnabled !== false;
         const client = this.configManager.patchClientConfig(msg.payload.client);
-        this.usageService?.updateConfig();
-        this.quotaService?.updateConfig();
+        this.syncRefreshSchedule();
+        if (!prevQuotaEnabled && client.quotaEnabled === true) {
+          void this.quota().fetchAll().catch((err) => console.error("[Pigeon] post-enable quota fetch failed:", err));
+        }
+        if (!prevUsageEnabled && client.usageEnabled !== false) {
+          void this.usage().scan().catch((err) => console.error("[Pigeon] post-enable usage scan failed:", err));
+        }
         this.configVersion++;
         this.logger?.("config patched: client settings updated");
         this.sendAck(ws, msg.id, { version: this.configVersion, client });
@@ -817,6 +835,9 @@ export class WsServer {
         if (this.configManager.getClientConfig().quotaEnabled !== true) {
           this.sendError(ws, msg.id, ProtocolErrors.ERR_FEATURE_DISABLED, "Quota is disabled in settings");
           return;
+        }
+        if (msg.payload?.refresh) {
+          await this.quota().fetchAll();
         }
         const res = await this.quota().getQuota(this.configManager.getClientConfig());
         this.sendAck(ws, msg.id, { providers: res.providers, fetchedAt: res.fetchedAt });
@@ -943,7 +964,7 @@ export class WsServer {
   }
 
   /** Subscribes the connection to one pane and sends everything the client needs to render it. */
-  private async bootstrapPane(ws: Ws, paneId: string, have?: HaveInfo): Promise<void> {
+  private async bootstrapPane(ws: Ws, paneId: string, have?: HaveInfo, requestedPaneId?: string): Promise<void> {
     const startMs = Date.now();
     ws.data.subscribedPaneId = paneId;
     this.syncMonitoredPanes();
@@ -1021,6 +1042,7 @@ export class WsServer {
       type: "pane_bootstrap",
       payload: {
         paneId,
+        ...(requestedPaneId ? { requestedPaneId } : {}),
         turns: lightTurns,
         resume: resumePayload,
         queue: queueItems,
@@ -1079,13 +1101,41 @@ export class WsServer {
     }
   }
 
+  private refreshEnabledItems(): void {
+    const cfg = this.configManager.getClientConfig();
+    if (cfg.quotaEnabled === true && this.quotaService) {
+      void this.quotaService.fetchAll().catch((err) => console.error("[Pigeon] quota refresh failed:", err));
+    }
+    if (cfg.usageEnabled !== false && this.usageService) {
+      void this.usageService.scan().catch((err) => console.error("[Pigeon] usage scan failed:", err));
+    }
+  }
+
+  private syncRefreshSchedule(): void {
+    const cfg = this.configManager.getClientConfig();
+    const anyEnabled = cfg.quotaEnabled === true || cfg.usageEnabled !== false;
+    if (!anyEnabled || (!this.quotaService && !this.usageService)) {
+      if (this.refreshTimer) {
+        clearInterval(this.refreshTimer);
+        this.refreshTimer = null;
+      }
+      this.refreshIntervalMs = null;
+      return;
+    }
+    const intervalMs = scanIntervalToMs(cfg.usageScanInterval);
+    if (this.refreshTimer && this.refreshIntervalMs === intervalMs) return;
+    if (this.refreshTimer) clearInterval(this.refreshTimer);
+    this.refreshTimer = setInterval(() => this.refreshEnabledItems(), intervalMs);
+    this.refreshTimer.unref?.();
+    this.refreshIntervalMs = intervalMs;
+  }
+
   private wireQuotaService(service: QuotaService): void {
     service.setOnUpdated((payload) => {
       if (this.clients.size > 0 && this.configManager.getClientConfig().quotaEnabled === true) {
         this.broadcast({ type: "quota_updated", payload });
       }
     });
-    service.setClientOnline(this.clients.size > 0);
   }
 
   private wireUsageService(service: UsageService): void {
@@ -1094,7 +1144,6 @@ export class WsServer {
         this.broadcast({ type: "usage_updated", payload });
       }
     });
-    service.setClientOnline(this.clients.size > 0);
   }
 
   private quota(): QuotaService {
@@ -1732,14 +1781,15 @@ export class WsServer {
         this.clients.delete(ws);
       }
     }
-    if (this.clients.size === 0) {
-      this.quotaService?.setClientOnline(false);
-      this.usageService?.setClientOnline(false);
-    }
     this.syncMonitoredPanes();
   }
 
   public destroy(): void {
+    if (this.refreshTimer) {
+      clearInterval(this.refreshTimer);
+      this.refreshTimer = null;
+    }
+    this.refreshIntervalMs = null;
     for (const state of this.queueStates.values()) {
       if (state.timer) clearTimeout(state.timer);
     }
@@ -1750,7 +1800,6 @@ export class WsServer {
     this.herdrClient.off("cards_updated", this.onCardsUpdated);
     this.herdrClient.off("pane_status_changed", this.onPaneStatusChanged);
     this.usageService?.destroy();
-    this.quotaService?.destroy();
     this.paneStore.destroy();
   }
 }

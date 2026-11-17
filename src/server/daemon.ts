@@ -577,8 +577,8 @@ export class PigeonDaemon {
         message(ws, msg) {
           self.wsServer.handleMessage(ws, msg).catch((err) => console.error("[pigeon] WebSocket message handling crashed:", err));
         },
-        close(ws) {
-          self.wsServer.handleClose(ws);
+        close(ws, code, reason) {
+          self.wsServer.handleClose(ws, code, reason);
         },
       },
     });

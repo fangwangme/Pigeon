@@ -10,7 +10,6 @@ export const DEFAULT_CLIENT_CONFIG: ClientConfig = {
   quotaDisplay: "remaining",
   quotaButton: true,
   quotaShowAccount: false,
-  usageScanMode: "scheduled",
   usageScanInterval: "5m",
 };
 

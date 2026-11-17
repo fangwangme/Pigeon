@@ -346,35 +346,6 @@ export function Settings() {
                 </div>
                 <Icon name="chevR" sm />
               </button>
-              <div class="li">
-                <div class="tx">{t("settings.usageScanMode")}</div>
-                <div
-                  class="seg"
-                  style={{
-                    display: "grid",
-                    "grid-template-columns": "repeat(2, minmax(0, 1fr))",
-                    width: "180px",
-                    padding: "2px",
-                    "border-radius": "9px",
-                    flex: "none",
-                  }}
-                >
-                  <button
-                    class={state.usageScanMode !== "realtime" ? "on" : ""}
-                    style={{ height: "30px", "font-size": "12.5px" }}
-                    onClick={() => sendConfigPatch({ usageScanMode: "scheduled" })}
-                  >
-                    {t("settings.usageScanScheduled")}
-                  </button>
-                  <button
-                    class={state.usageScanMode === "realtime" ? "on" : ""}
-                    style={{ height: "30px", "font-size": "12.5px" }}
-                    onClick={() => sendConfigPatch({ usageScanMode: "realtime" })}
-                  >
-                    {t("settings.usageScanRealtime")}
-                  </button>
-                </div>
-              </div>
             </Show>
 
             <Show when={state.quotaEnabled || state.usageEnabled}>
@@ -382,9 +353,6 @@ export function Settings() {
                 <div class="tx">{t("settings.showQuotaButton")}</div>
                 <span class={`tg${state.quotaButton ? "" : " off"}`} />
               </button>
-            </Show>
-
-            <Show when={state.quotaEnabled || (state.usageEnabled && state.usageScanMode !== "realtime")}>
               <div class="li" style={{ "justify-content": "space-between", "align-items": "center" }}>
                 <div class="tx">{t("settings.usageScanInterval")}</div>
                 <div style={{ display: "inline-flex", gap: "6px" }}>

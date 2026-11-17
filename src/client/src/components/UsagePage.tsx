@@ -1,6 +1,7 @@
-import { createEffect, createMemo, createSignal, For, on, Show } from "solid-js";
+import { createEffect, createMemo, createSignal, For, on, onCleanup, onMount, Show } from "solid-js";
 import { navigate, state } from "../state/store";
 import { request } from "../state/ws";
+import { scanIntervalToMs } from "../../../shared/defaults";
 import { cacheHitPercent, daysBetween, formatYMD, heatmapLayout, type UsagePreset } from "../../../shared/usage";
 import type {
   UsageDayPayload,
@@ -161,6 +162,33 @@ export function UsagePage() {
       { defer: true }
     )
   );
+
+  const checkStaleRefresh = () => {
+    if (!state.connected || !state.configReady || !state.usageEnabled) return;
+    if (typeof document !== "undefined" && document.visibilityState !== "visible") return;
+    if (loading()) return;
+    if (range() === "custom" && (!customFrom() || !customTo())) return;
+    const rep = usageReport();
+    if (!rep) return;
+    const staleMs = scanIntervalToMs(state.usageScanInterval) + 30_000;
+    if (Date.now() - rep.scannedAt > staleMs) {
+      void loadUsage();
+    }
+  };
+
+  onMount(() => {
+    checkStaleRefresh();
+    const timer = setInterval(checkStaleRefresh, 30_000);
+    if (typeof document !== "undefined") {
+      document.addEventListener("visibilitychange", checkStaleRefresh);
+    }
+    onCleanup(() => {
+      clearInterval(timer);
+      if (typeof document !== "undefined") {
+        document.removeEventListener("visibilitychange", checkStaleRefresh);
+      }
+    });
+  });
 
   const openDaySheet = async (date: string) => {
     setSelectedDay(date);
