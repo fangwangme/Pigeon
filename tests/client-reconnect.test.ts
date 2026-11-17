@@ -1,9 +1,10 @@
 import { afterEach, beforeEach, describe, expect, jest, test } from "bun:test";
-import { handleServerMessage, handleVisibilityChange, initWebSocket } from "../src/client/src/state/ws";
+import { handleOnline, handleServerMessage, handleVisibilityChange, initWebSocket } from "../src/client/src/state/ws";
 import { setState, state } from "../src/client/src/state/store";
 import type { PaneStatePayload } from "../src/types/protocol";
 
-// Issue #29. protocol.md §2.1 (wakeup), §2.2 (reconnect timing, one attempt, attempt timeouts), §3.3 (requestedPaneId, Syncing).
+// protocol.md §2.1 (wakeup), §2.2 (socket first, retry schedule, one attempt, attempt timeouts),
+// §2.3 (client_diag), §3.3 (requestedPaneId, Syncing).
 
 class FakeSocket {
   static CONNECTING = 0;
@@ -45,6 +46,8 @@ class FakeSocket {
 }
 
 let sockets: FakeSocket[] = [];
+let authChecks = 0;
+let authAnswer: () => Promise<Response> = async () => Response.json({ authenticated: true });
 const saved: Record<string, any> = {};
 const g = globalThis as any;
 const last = () => sockets[sockets.length - 1];
@@ -52,6 +55,28 @@ const last = () => sockets[sockets.length - 1];
 async function flush(): Promise<void> {
   for (let i = 0; i < 50; i++) await Promise.resolve();
 }
+
+async function tick(ms: number): Promise<void> {
+  jest.advanceTimersByTime(ms);
+  await flush();
+}
+
+function memoryStorage() {
+  const data = new Map<string, string>();
+  return {
+    getItem: (k: string) => (data.has(k) ? data.get(k)! : null),
+    setItem: (k: string, v: string) => void data.set(k, String(v)),
+    removeItem: (k: string) => void data.delete(k),
+    clear: () => data.clear(),
+  };
+}
+
+const welcome = (debug: boolean) =>
+  handleServerMessage({
+    type: "welcome",
+    replyTo: "h1",
+    payload: { protocolVersion: "1.0.0", serverVersion: "0.1.0", buildId: "build_r", debug, deviceId: "d", clientConfig: {} as any, recipes: {} },
+  } as any);
 
 function paneState(paneId: string, revision: number, screen: string): PaneStatePayload {
   return { paneId, workspaceId: "w1", tabId: "t1", agentStatus: "idle", cards: [], pendingInteraction: null, rawScreen: screen, revision };
@@ -62,11 +87,22 @@ const unboundSession = { bound: false, agent: "claude", model: { value: null, so
 beforeEach(() => {
   jest.useFakeTimers();
   sockets = [];
-  for (const key of ["WebSocket", "fetch", "window", "document"]) saved[key] = g[key];
+  authChecks = 0;
+  authAnswer = async () => Response.json({ authenticated: true });
+  for (const key of ["WebSocket", "fetch", "window", "document", "localStorage"]) saved[key] = g[key];
   g.WebSocket = FakeSocket;
-  g.fetch = async () => Response.json({ authenticated: true });
+  g.fetch = async (input: any) => {
+    const url = typeof input === "string" ? input : input?.url ?? String(input);
+    if (url.includes("/api/auth/status")) {
+      authChecks++;
+      return authAnswer();
+    }
+    throw new TypeError(`unexpected fetch ${url}`);
+  };
   g.window = { location: { protocol: "http:", host: "localhost", hash: "" }, addEventListener() {}, history: { replaceState() {} } };
   g.document = { visibilityState: "visible", addEventListener() {} };
+  g.localStorage = memoryStorage();
+  setState("paired", true);
 });
 
 afterEach(async () => {
@@ -104,62 +140,184 @@ describe("wakeup probe (protocol.md §2.1)", () => {
   });
 });
 
-describe("reconnect timing (protocol.md §2.2)", () => {
-  test("the first reconnect after a non-final close starts at once; the next waits 3 s; an open resets it", async () => {
-    await initWebSocket();
+describe("socket first (protocol.md §2.2)", () => {
+  test("an attempt opens /ws without requesting /api/auth/status first", async () => {
+    void initWebSocket();
+    await flush();
+    expect(sockets.length).toBe(1);
+    expect(last().url).toBe("ws://localhost/ws");
+    expect(authChecks).toBe(0);
+
     last().open();
+    last().drop(1006); // a socket that had opened: no pairing check before the next attempt
+    await tick(0);
+    expect(authChecks).toBe(0);
+    expect(sockets.length).toBe(2);
+  });
 
+  test("a socket that closes without opening is followed by the pairing check; not paired shows the guidance and stops", async () => {
+    authAnswer = async () => Response.json({ authenticated: false });
+    void initWebSocket();
+    await flush();
+    last().drop(1006); // e.g. the upgrade was refused with 401
+    await flush();
+    expect(authChecks).toBe(1);
+    expect(state.paired).toBe(false);
+
+    await tick(10_000);
+    expect(sockets.length).toBe(1);
+  });
+
+  test("a pairing check that says paired, or cannot reach the daemon, leads to the next attempt", async () => {
+    void initWebSocket();
+    await flush();
     last().drop(1006);
-    await flush();
+    await tick(0);
+    expect(authChecks).toBe(1);
+    expect(state.paired).toBe(true);
     expect(sockets.length).toBe(2);
 
-    last().drop(1006); // that attempt failed before opening
-    await flush();
-    expect(sockets.length).toBe(2);
-    jest.advanceTimersByTime(2_999);
-    await flush();
-    expect(sockets.length).toBe(2);
-    jest.advanceTimersByTime(1);
-    await flush();
+    authAnswer = async () => {
+      throw new TypeError("Failed to fetch"); // daemon restarting
+    };
+    last().drop(1006);
+    await tick(500);
+    expect(authChecks).toBe(2);
     expect(sockets.length).toBe(3);
-
-    last().open();
-    last().drop(1006);
-    await flush();
-    expect(sockets.length).toBe(4);
   });
 
   test("two overlapping connect calls open one socket", async () => {
-    let release!: () => void;
-    const gate = new Promise<void>((r) => (release = r));
-    g.fetch = async () => {
-      await gate;
-      return Response.json({ authenticated: true });
-    };
     const a = initWebSocket();
     const b = initWebSocket();
-    release();
     await Promise.all([a, b]);
     await flush();
     expect(sockets.length).toBe(1);
   });
+});
+
+describe("retry schedule (protocol.md §2.2)", () => {
+  test("consecutive failed attempts wait 0, 0.5, 1, 2, then 3 s; an opened socket resets the schedule", async () => {
+    void initWebSocket();
+    await flush();
+    last().open();
+
+    const expectNextAfter = async (ms: number) => {
+      const before = sockets.length;
+      last().drop(1006);
+      await flush();
+      if (ms > 0) {
+        await tick(ms - 1);
+        expect(sockets.length).toBe(before);
+        await tick(1);
+      } else {
+        await tick(0);
+      }
+      expect(sockets.length).toBe(before + 1);
+    };
+
+    await expectNextAfter(0); // the open socket's close
+    await expectNextAfter(500); // that attempt failed before opening
+    await expectNextAfter(1_000);
+    await expectNextAfter(2_000);
+    await expectNextAfter(3_000);
+    await expectNextAfter(3_000);
+
+    last().open();
+    await expectNextAfter(0);
+  });
+
+  test("an online event during a wait starts an attempt at once", async () => {
+    void initWebSocket();
+    await flush();
+    last().open();
+    last().drop(1006);
+    await tick(0);
+    last().drop(1006);
+    await tick(500);
+    last().drop(1006);
+    await flush(); // now waiting 1 s
+    const before = sockets.length;
+
+    handleOnline();
+    await tick(0);
+    expect(sockets.length).toBe(before + 1);
+  });
+
+  test("becoming visible during a wait starts an attempt at once", async () => {
+    void initWebSocket();
+    await flush();
+    last().open();
+    last().drop(1006);
+    await tick(0);
+    last().drop(1006);
+    await tick(500);
+    last().drop(1006);
+    await flush(); // now waiting 1 s
+    const before = sockets.length;
+
+    handleVisibilityChange();
+    await tick(0);
+    expect(sockets.length).toBe(before + 1);
+  });
 
   test("a socket still CONNECTING after 10 s is closed and a new attempt follows", async () => {
-    await initWebSocket();
+    void initWebSocket();
+    await flush();
     const stuck = last();
 
-    jest.advanceTimersByTime(9_999);
-    await flush();
+    await tick(9_999);
     expect(stuck.closeCalled).toBe(false);
     expect(sockets.length).toBe(1);
 
-    jest.advanceTimersByTime(1);
-    await flush();
+    await tick(1);
     expect(stuck.closeCalled).toBe(true);
-
-    jest.advanceTimersByTime(3_000);
-    await flush();
+    await tick(0);
     expect(sockets.length).toBe(2);
+  });
+});
+
+describe("debug mode (protocol.md §2.3)", () => {
+  const diags = (s: FakeSocket) => s.sent.filter((m) => m.type === "client_diag");
+  const key = (e: any) => JSON.stringify(e);
+
+  test("a failed attempt before the connection opened is sent after a debug welcome, and nothing is sent twice", async () => {
+    void initWebSocket();
+    await flush();
+    last().drop(1006); // fails before opening
+    await tick(0);
+    const second = last();
+    second.open();
+    welcome(true);
+    await flush();
+    const first = diags(second).flatMap((m) => m.payload.events);
+    expect(first.length).toBeGreaterThan(0);
+    expect(first.some((e: any) => e.code === 1006)).toBe(true);
+    for (const e of first) {
+      expect(typeof e.t).toBe("number");
+      expect(typeof e.ev).toBe("string");
+    }
+
+    second.drop(1006);
+    await tick(0);
+    const third = last();
+    third.open();
+    welcome(true);
+    await flush();
+    const again = diags(third).flatMap((m) => m.payload.events);
+    const sentBefore = new Set(first.map(key));
+    expect(again.some((e: any) => sentBefore.has(key(e)))).toBe(false);
+  });
+
+  test("after a welcome without debug the client sends no client_diag", async () => {
+    void initWebSocket();
+    await flush();
+    last().drop(1006);
+    await tick(0);
+    const s = last();
+    s.open();
+    welcome(false);
+    await flush();
+    expect(diags(s).length).toBe(0);
   });
 });
 

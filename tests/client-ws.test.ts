@@ -24,34 +24,25 @@ describe("daemon rebuilds (protocol.md §3.2)", () => {
     welcome("build_b"); // the daemon was rebuilt
     expect(state.updateAvailable).toBe(true);
   });
-});
 
-describe("reconnecting (protocol.md §2.2)", () => {
-  test("a pairing check that cannot reach the daemon is retried 3 seconds later", async () => {
-    const original = globalThis.fetch;
-    let checks = 0;
-    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
-      const url = typeof input === "string" ? input : input instanceof URL ? input.href : (input as Request)?.url ?? "";
-      if (url.includes("/api/auth/status")) {
-        checks++;
-        if (checks === 1) throw new TypeError("Failed to fetch"); // daemon restarting
-        return Response.json({ authenticated: false }); // not paired: ends the loop without a socket
-      }
-      return original(input, init);
-    }) as unknown as typeof fetch;
+  test("a page that carries its own build id compares it with the first welcome", () => {
+    const origDoc = (globalThis as any).document;
+    const meta = { content: "build_page", getAttribute: (n: string) => (n === "content" ? "build_page" : null) };
+    (globalThis as any).document = {
+      visibilityState: "visible",
+      addEventListener() {},
+      querySelector: (sel: string) => (sel.includes("pigeon-build") ? meta : null),
+    };
     try {
-      await initWebSocket();
-      expect(checks).toBe(1);
-      const start = Date.now();
-      while (checks < 2 && Date.now() - start < 4500) {
-        await Bun.sleep(100);
-      }
-      expect(checks).toBe(2);
-      expect(state.paired).toBe(false);
+      setState("updateAvailable", false);
+      welcome("build_page"); // the daemon serves the build this page was loaded with
+      expect(state.updateAvailable).toBe(false);
+      welcome("build_newer"); // a cached shell older than the daemon's client
+      expect(state.updateAvailable).toBe(true);
     } finally {
-      globalThis.fetch = original;
+      (globalThis as any).document = origDoc;
     }
-  }, 6000);
+  });
 });
 
 describe("client pane state (protocol.md §5.4)", () => {
