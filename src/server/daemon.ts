@@ -657,7 +657,12 @@ export class PigeonDaemon {
     const htmlResponse = () => {
       const accept = req.headers.get("Accept-Encoding") ?? "";
       const encoding = /\bbr\b/.test(accept) ? "br" : /\bgzip\b/.test(accept) ? "gzip" : null;
-      const headers: Record<string, string> = { "Content-Type": "text/html; charset=utf-8", "Content-Security-Policy": csp, Vary: "Accept-Encoding" };
+      const headers: Record<string, string> = {
+        "Content-Type": "text/html; charset=utf-8",
+        "Content-Security-Policy": csp,
+        "Cache-Control": "no-cache",
+        Vary: "Accept-Encoding",
+      };
       if (!encoding) return new Response(this.page, { headers });
       return new Response(this.encodedPage(encoding), { headers: { ...headers, "Content-Encoding": encoding } });
     };

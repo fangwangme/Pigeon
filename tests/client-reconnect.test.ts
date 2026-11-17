@@ -314,6 +314,24 @@ describe("debug mode (protocol.md §2.3)", () => {
     expect(again.some((e: any) => sentBefore.has(key(e)))).toBe(false);
   });
 
+  test("a heartbeat timeout on a debug connection is sent on the next connection, not onto the dead socket", async () => {
+    void initWebSocket();
+    await flush();
+    const dead = last();
+    dead.open();
+    welcome(true);
+    await flush();
+    await tick(15_000); // no pong: the heartbeat gives the socket up
+    expect(diags(dead).flatMap((m) => m.payload.events).some((e: any) => e.ev.includes("heartbeat"))).toBe(false);
+
+    const next = last();
+    expect(next).not.toBe(dead);
+    next.open();
+    welcome(true);
+    await flush();
+    expect(diags(next).flatMap((m) => m.payload.events).some((e: any) => e.ev.includes("heartbeat"))).toBe(true);
+  });
+
   test("after a welcome without debug the client sends no client_diag", async () => {
     void initWebSocket();
     await flush();

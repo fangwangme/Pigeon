@@ -4,6 +4,7 @@ import "./styles.css";
 import { goBack, navigate, quotaFeatureOn, setState, state, systemReducesTransparency, usageFeatureOn } from "./state/store";
 import { applyTheme } from "./themes";
 import { checkPairingFromUrlHash, initWebSocket, reportPresence, selectPane } from "./state/ws";
+import { dropCachedShell } from "./state/shell";
 import { AgentsPage, Home } from "./components/Home";
 import { NewSession } from "./components/NewSession";
 import { Overlays } from "./components/overlays";
@@ -150,12 +151,12 @@ if (typeof window !== "undefined") {
 
 function applyUpdate() {
   // A waiting service worker takes over and `controllerchange` reloads once. Without one, the
-  // daemon was rebuilt with an unchanged sw.js: reload, and the network-first shell is the new one.
+  // daemon was rebuilt with an unchanged sw.js: drop the cached shell so the reload fetches the new one.
   if (waitingWorker) {
     updateRequested = true;
     waitingWorker.postMessage({ type: "SKIP_WAITING" });
   } else {
-    window.location.reload();
+    void dropCachedShell().then(() => window.location.reload());
   }
 }
 

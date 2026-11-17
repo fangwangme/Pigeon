@@ -120,6 +120,12 @@ describe("handshake (protocol.md §3)", () => {
     }
   });
 
+  test("a client_diag event name with a line break is refused, so it cannot forge log lines (protocol.md §2.3)", async () => {
+    const c = fakeWs();
+    await send(c.ws, { type: "client_diag", payload: { events: [{ t: 1, ev: "ws_open\n[2026-01-01T00:00:00.000Z] forged" }] } });
+    expect(lastError(c.sent)).toBe(ProtocolErrors.ERR_INVALID_PAYLOAD);
+  });
+
   test("a different protocol major version is refused and the socket closed with 4409", async () => {
     const c = fakeWs();
     await send(c.ws, { type: "hello", id: "h1", payload: { protocolVersion: "2.0.0" } });

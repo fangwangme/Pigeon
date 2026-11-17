@@ -16,11 +16,13 @@ const RESUME_ID_RE = /^[A-Za-z0-9._-]{1,128}$/;
 const MAX_DIAG_EVENTS = 500;
 const MAX_DIAG_FIELDS = 16;
 const DIAG_FIELD_RE = /^[a-z][a-z0-9_]{0,31}$/;
+const DIAG_EVENT_RE = /^[a-z][a-z0-9_]{0,63}$/;
 const MAX_DATE_MS = 8.64e15;
 
 /** protocol.md §2.3: a numeric `t`, a short `ev`, and flat primitive fields of bounded length. */
 function isDiagEvent(e: unknown): boolean {
-  if (!isObj(e) || typeof e.t !== "number" || !(e.t >= 0 && e.t <= MAX_DATE_MS) || !isStr(e.ev, 64)) return false;
+  if (!isObj(e) || typeof e.t !== "number" || !(e.t >= 0 && e.t <= MAX_DATE_MS)) return false;
+  if (typeof e.ev !== "string" || !DIAG_EVENT_RE.test(e.ev)) return false; // written raw into one log line
   const keys = Object.keys(e);
   if (keys.length > MAX_DIAG_FIELDS) return false;
   return keys.every((k) => {

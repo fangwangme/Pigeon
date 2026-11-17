@@ -39,7 +39,7 @@ let pairingCheck: Promise<void> | null = null;
 let retryIndex = 0;
 // protocol.md §2.3: whether this connection's daemon runs in debug mode; never stored.
 let connectionDebug = false;
-let helloSentAt = 0;
+let bootstrapRequestedAt = 0;
 let hiddenAt: number | null = null;
 let lastPongTime = Date.now();
 let msgId = 0;
@@ -104,10 +104,13 @@ function conn(ev: string, fields?: Record<string, string | number | boolean>): v
   if (connectionDebug) flushConnEvents();
 }
 
+/** Only onto a socket known alive: while the wakeup probe waits, events stay unsent until its pong. */
 function flushConnEvents(): void {
+  if (!socket || socket.readyState !== WebSocket.OPEN || wakeupProbeTimer) return;
   const { events, upTo } = unsentConn();
   if (events.length === 0) return;
-  if (sendMessage({ type: "client_diag", payload: { events } })) markConnSent(upTo);
+  socket.send(JSON.stringify({ type: "client_diag", payload: { events } } satisfies ClientMessage));
+  markConnSent(upTo);
 }
 
 /** protocol.md §2.2: retries wait 0, 0.5, 1, 2, then 3 s; an opened socket resets the schedule. */
@@ -288,7 +291,7 @@ function openSocket(): void {
       };
       setState("paneSyncing", true);
     }
-    helloSentAt = Date.now();
+    bootstrapRequestedAt = Date.now();
     sendMessage({
       type: "hello",
       id: nextId(),
@@ -303,8 +306,9 @@ function openSocket(): void {
       if (socket !== ws) return;
       if (Date.now() - lastPongTime > HEARTBEAT_TIMEOUT_MS) {
         console.warn("[Pigeon] WebSocket heartbeat timed out; reconnecting");
-        conn("heartbeat_timeout", { since_pong_ms: Date.now() - lastPongTime });
+        const sincePong = Date.now() - lastPongTime;
         teardownSocket(ws);
+        conn("heartbeat_timeout", { since_pong_ms: sincePong });
         try {
           ws.close(); // half-open connection: force a reconnect
         } catch {}
@@ -563,7 +567,7 @@ export function handleServerMessage(msg: ServerMessage): void {
       conn("bootstrap", {
         resume: !!msg.payload.resume,
         server_ms: msg.payload.serverMs,
-        since_hello_ms: Date.now() - helloSentAt,
+        since_request_ms: Date.now() - bootstrapRequestedAt,
         syncing: wasSyncing,
       });
       return;
@@ -656,6 +660,7 @@ export function handleServerMessage(msg: ServerMessage): void {
       if (wakeupProbeTimer) {
         clearTimeout(wakeupProbeTimer);
         wakeupProbeTimer = null;
+        if (connectionDebug) flushConnEvents();
       }
       return;
   }
@@ -835,6 +840,7 @@ export async function selectPane(paneId: string): Promise<void> {
   if (socket && socket.readyState === WebSocket.OPEN) {
     const selectViewId = nextId();
     pendingSelectViewId = selectViewId;
+    bootstrapRequestedAt = Date.now();
     sendMessage({
       type: "select_view",
       id: selectViewId,
@@ -964,9 +970,10 @@ export function handleVisibilityChange(): void {
     if (state.activePaneId) flushActivePaneSnapshot();
   }
   if (document.visibilityState === "visible") {
-    conn("visible", hiddenAt === null ? {} : { hidden_ms: Date.now() - hiddenAt });
+    const hiddenFor: Record<string, number> = hiddenAt === null ? {} : { hidden_ms: Date.now() - hiddenAt };
     hiddenAt = null;
     if (!socket || socket.readyState !== WebSocket.OPEN) {
+      conn("visible", hiddenFor);
       if (!pairingCheck && (!socket || socket.readyState !== WebSocket.CONNECTING)) {
         if (reconnectTimer) {
           clearTimeout(reconnectTimer);
@@ -983,17 +990,19 @@ export function handleVisibilityChange(): void {
         wakeupProbeTimer = null;
         if (socket !== probedWs || probedWs.readyState !== WebSocket.OPEN) return;
         console.warn("[Pigeon] wakeup ping timed out after 3s; reconnecting");
-        conn("wakeup_timeout");
         if (reconnectTimer) {
           clearTimeout(reconnectTimer);
           reconnectTimer = null;
         }
         teardownSocket(probedWs);
+        conn("wakeup_timeout");
         try {
           probedWs.close();
         } catch {}
         void initWebSocket();
       }, WAKEUP_PING_TIMEOUT_MS);
+      // Recorded once the probe is armed, so it is not flushed onto a socket that may have died asleep.
+      conn("visible", hiddenFor);
     }
   }
   reportPresence();

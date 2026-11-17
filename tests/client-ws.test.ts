@@ -1,6 +1,7 @@
 import { describe, expect, jest, test } from "bun:test";
 import { handleServerMessage, handleVisibilityChange, initWebSocket, request, selectPane } from "../src/client/src/state/ws";
 import { setState, setUnread, state } from "../src/client/src/state/store";
+import { dropCachedShell } from "../src/client/src/state/shell";
 import type { PaneStatePayload } from "../src/types/protocol";
 
 // protocol.md §2.2 (reconnecting), §3.2 (buildId), §3.3 (cached state on (re)selection),
@@ -42,6 +43,28 @@ describe("daemon rebuilds (protocol.md §3.2)", () => {
       expect(state.updateAvailable).toBe(true);
     } finally {
       (globalThis as any).document = origDoc;
+    }
+  });
+});
+
+describe("update reload (architecture.md §4.1)", () => {
+  test("dropping the cached shell removes it from every cache and keeps the other entries", async () => {
+    const stores = new Map<string, Map<string, string>>([
+      ["pigeon-cache-v4", new Map([["/", "old shell"], ["/icon.svg", "icon"]])],
+      ["pigeon-settings", new Map([["/__locale", "zh"]])],
+    ]);
+    const origCaches = (globalThis as any).caches;
+    (globalThis as any).caches = {
+      keys: async () => [...stores.keys()],
+      open: async (name: string) => ({ delete: async (key: string) => stores.get(name)!.delete(key) }),
+    };
+    try {
+      await dropCachedShell();
+      expect(stores.get("pigeon-cache-v4")!.has("/")).toBe(false);
+      expect(stores.get("pigeon-cache-v4")!.has("/icon.svg")).toBe(true);
+      expect(stores.get("pigeon-settings")!.get("/__locale")).toBe("zh");
+    } finally {
+      (globalThis as any).caches = origCaches;
     }
   });
 });
