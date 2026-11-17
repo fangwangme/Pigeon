@@ -105,15 +105,66 @@ export function isPseudoModel(modelId: string): boolean {
   );
 }
 
+function extractRoutingFamily(slug: string): string | null {
+  const norm = formatModelId(slug);
+  if (norm === "gemini-pro-orchestrator") return "carbon";
+  if (norm === "gemini-pro-orchestrator-g1-pro") return "argon";
+  if (norm.startsWith("gemini-pro-orchestrator-")) {
+    const suffix = norm.slice("gemini-pro-orchestrator-".length);
+    return suffix || null;
+  }
+  const workerMatch = norm.match(/^gemini-([a-z0-9-]+)-worker(?:-agy)?$/);
+  if (workerMatch) return workerMatch[1];
+  return null;
+}
+
 export function isAntigravityRoutingModel(modelId: string): boolean {
-  if (isPseudoModel(modelId)) return true;
-  const norm = formatModelId(modelId);
-  return (
-    norm === "gemini-pro-orchestrator" ||
-    norm.startsWith("gemini-pro-orchestrator-") ||
-    norm === "gemini-flash-worker-agy" ||
-    /^gemini-[a-z0-9-]+-worker(?:-agy)?$/.test(norm)
-  );
+  return isPseudoModel(modelId) || extractRoutingFamily(modelId) !== null;
+}
+
+export interface AntigravityEnumHint {
+  servedModel?: string;
+  displayName?: string;
+}
+
+function hasConcreteAntigravityIdentity(servedModel?: string | null, displayName?: string | null): boolean {
+  return Boolean(displayName?.trim() || (servedModel?.trim() && !isAntigravityRoutingModel(servedModel)));
+}
+
+export function recordAntigravityEnumHint(
+  hints: Map<string, AntigravityEnumHint>,
+  modelEnum: string | null | undefined,
+  servedModel: string | null | undefined,
+  displayName: string | null | undefined
+): void {
+  const enumKey = modelEnum?.trim();
+  if (!enumKey || !hasConcreteAntigravityIdentity(servedModel, displayName)) return;
+  const cleanServed = servedModel?.trim();
+  const concreteServed = cleanServed && !isAntigravityRoutingModel(cleanServed) ? cleanServed : undefined;
+  const cleanDisplay = displayName?.trim() || undefined;
+  const prev = hints.get(enumKey);
+  if (!prev || (!prev.displayName && cleanDisplay)) {
+    hints.set(enumKey, { servedModel: concreteServed, displayName: cleanDisplay });
+  }
+}
+
+export function applyAntigravityEnumHint(
+  hints: ReadonlyMap<string, AntigravityEnumHint>,
+  modelEnum: string | null | undefined,
+  servedModel: string | null | undefined,
+  displayName: string | null | undefined
+): { servedModel?: string; displayName?: string } {
+  const cleanServed = servedModel?.trim() || undefined;
+  const cleanDisplay = displayName?.trim() || undefined;
+  if (hasConcreteAntigravityIdentity(cleanServed, cleanDisplay)) {
+    return { servedModel: cleanServed, displayName: cleanDisplay };
+  }
+  const enumKey = modelEnum?.trim();
+  const hint = enumKey ? hints.get(enumKey) : undefined;
+  return {
+    servedModel: hint?.servedModel ?? cleanServed,
+    displayName: hint?.displayName ?? cleanDisplay,
+  };
 }
 
 /** Concrete versioned model enums only; dynamic orchestrator/worker enums resolve through displayName + release dates. */
@@ -197,9 +248,9 @@ function parseDisplayName(displayName: string): { concreteModelId?: string; unve
   if (!trimmed) return null;
 
   // "Orchestrator (Carbon)", "Orchestrator (Argon)", or versioned "Orchestrator (Gemini 4.2 Carbon)" / "Orchestrator (Carbon 4.2)"
-  const orchMatch = trimmed.match(/^orchestrator\s*\(([^)]+)\)$/i);
+  const orchMatch = trimmed.match(/^orchestrator\s*\((.+)\)$/i);
   if (orchMatch) {
-    const inner = orchMatch[1].trim();
+    const inner = orchMatch[1].replace(/(?:\s*\([^)]*\))+\s*$/, "").trim();
     if (!inner) return null;
     if (/\d/.test(inner)) {
       const nameVer = inner.match(/^(?:gemini[\s_-]+)?([a-z][a-z0-9-]*)\s+(\d+(?:[._-]\d+)?)$/i);
@@ -229,20 +280,6 @@ function parseDisplayName(displayName: string): { concreteModelId?: string; unve
   }
 
   return { concreteModelId: formatModelId(base) };
-}
-
-function extractRoutingFamily(slug: string): string | null {
-  const norm = formatModelId(slug);
-  if (norm === "gemini-pro-orchestrator") return "carbon";
-  if (norm === "gemini-pro-orchestrator-g1-pro") return "argon";
-  if (norm.startsWith("gemini-pro-orchestrator-")) {
-    const suffix = norm.slice("gemini-pro-orchestrator-".length);
-    return suffix || null;
-  }
-  if (norm === "gemini-flash-worker-agy") return "flash";
-  const workerMatch = norm.match(/^gemini-([a-z0-9]+)-worker(?:-agy)?$/);
-  if (workerMatch) return workerMatch[1];
-  return null;
 }
 
 export interface ResolvedAntigravityModel {
@@ -287,11 +324,11 @@ export function resolveAntigravityModel(
     }
     const storedRouteFam = extractRoutingFamily(rawEnum);
     if (storedRouteFam) {
-      const formatted = formatModelId(rawEnum);
+      const fallback = `gemini-${storedRouteFam}`;
       return {
         rawModelId: rawEnum,
-        modelId: formatted,
-        canonicalModelId: canonical(formatted),
+        modelId: fallback,
+        canonicalModelId: fallback,
         unversionedFamily: storedRouteFam,
       };
     }
@@ -317,17 +354,17 @@ export function resolveAntigravityModel(
     const parsed = parseDisplayName(dispSource);
     if (parsed?.concreteModelId) {
       return {
-        rawModelId: rawEnum || dispSource,
+        rawModelId: dispSource,
         modelId: parsed.concreteModelId,
         canonicalModelId: canonical(parsed.concreteModelId),
       };
     }
     if (parsed?.unversionedFamily) {
-      const fallback = rawServed ? formatModelId(rawServed) : `gemini-${parsed.unversionedFamily}`;
+      const fallback = `gemini-${parsed.unversionedFamily}`;
       return {
         rawModelId: dispSource,
         modelId: fallback,
-        canonicalModelId: canonical(fallback),
+        canonicalModelId: fallback,
         unversionedFamily: parsed.unversionedFamily,
       };
     }
@@ -337,11 +374,11 @@ export function resolveAntigravityModel(
   if (rawServed) {
     const routeFam = extractRoutingFamily(rawServed);
     if (routeFam) {
-      const modelId = formatModelId(rawServed);
+      const fallback = `gemini-${routeFam}`;
       return {
         rawModelId: rawServed,
-        modelId,
-        canonicalModelId: canonical(modelId),
+        modelId: fallback,
+        canonicalModelId: fallback,
         unversionedFamily: routeFam,
       };
     }

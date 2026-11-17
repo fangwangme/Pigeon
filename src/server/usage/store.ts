@@ -56,6 +56,8 @@ function fromRateRow(row: any): ModelPrice {
   };
 }
 
+const AGY_SCAN_VERSION = "2";
+
 export interface UsageStoreOptions {
   dbPath?: string;
   home?: string;
@@ -70,6 +72,7 @@ export class UsageStore {
   private discoverLs: () => Promise<AntigravityLsConnection | null>;
   private agyCacheDbPath: string;
   private lastScannedAt = 0;
+  private agyScanMigrated = false;
   private pricedCatalogs = new WeakMap<PricingManager, number>();
 
   constructor(options: UsageStoreOptions = {}) {
@@ -242,6 +245,22 @@ export class UsageStore {
       this.syncPricePeriods(pricing);
     }
 
+    const needsAgyScanMigration = !this.hasCurrentAgyScanVersion();
+    if (needsAgyScanMigration) {
+      const clearPath = this.db.prepare("DELETE FROM scan_file_state WHERE path = ?");
+      this.db.transaction(() => {
+        this.db.run(
+          "DELETE FROM scan_file_state WHERE path LIKE '%/antigravity%/conversations/%.db' OR path LIKE '%/antigravity-cache/cache.db'"
+        );
+        for (const item of allFiles) {
+          if (item.agent === "agy" || item.agent === "agy-cache") {
+            clearPath.run(item.path);
+          }
+        }
+      })();
+    }
+
+    const resolveFamily = this.createGeminiFamilyResolver(pricing);
     const priceCache = new Map<string, { price: ModelPrice | null }>();
     const resolvePrice = (date: string, modelId: string): ModelPrice | null => {
       const canon = canonical(modelId);
@@ -259,7 +278,7 @@ export class UsageStore {
         let canon = r.canonicalModelId;
         let company = r.company;
         if (r.agent === "agy" && r.unversionedFamily) {
-          const matched = this.resolveGeminiFamily(r.unversionedFamily, r.date, pricing);
+          const matched = resolveFamily(r.unversionedFamily, r.date);
           if (matched) {
             modelId = matched;
             canon = matched;
@@ -351,6 +370,10 @@ export class UsageStore {
       }
 
       setFileState.run(item.path, fingerprintMtime, fingerprintSize);
+    }
+
+    if (needsAgyScanMigration) {
+      this.markCurrentAgyScanVersion();
     }
 
     if (pricing.arePricesAvailable()) {
@@ -498,60 +521,114 @@ export class UsageStore {
     return updated;
   }
 
-  private resolveGeminiFamily(family: string, date: string, pricing: PricingManager): string | null {
-    const target = family.trim().toLowerCase();
-    if (!target) return null;
-    const baseRe = /^gemini-(\d+)(?:-(\d+))?-([a-z][a-z0-9]*)$/;
+  private hasCurrentAgyScanVersion(): boolean {
+    if (this.agyScanMigrated) return true;
+    const row = this.db.query("SELECT val FROM usage_meta WHERE key = 'agy_scan_version'").get() as { val?: string } | null;
+    if (row?.val === AGY_SCAN_VERSION) {
+      this.agyScanMigrated = true;
+      return true;
+    }
+    return false;
+  }
 
-    const byModel = new Map<string, { model: string; major: number; minor: number; releaseDate: string | null }>();
-    const register = (modelName: string, releaseDate: string | null) => {
-      const m = modelName.match(baseRe);
-      if (!m || m[3] !== target) return;
-      const major = parseInt(m[1], 10);
-      const minor = m[2] !== undefined ? parseInt(m[2], 10) : 0;
-      const prev = byModel.get(modelName);
-      if (!prev || (!prev.releaseDate && releaseDate)) {
-        byModel.set(modelName, { model: modelName, major, minor, releaseDate: releaseDate ?? prev?.releaseDate ?? null });
+  private markCurrentAgyScanVersion(): void {
+    this.db.run(
+      "INSERT INTO usage_meta (key, val) VALUES ('agy_scan_version', ?) ON CONFLICT(key) DO UPDATE SET val = excluded.val",
+      [AGY_SCAN_VERSION]
+    );
+    this.agyScanMigrated = true;
+  }
+
+  private createGeminiFamilyResolver(pricing: PricingManager): (family: string, date: string) => string | null {
+    type Candidate = { model: string; major: number; minor: number; releaseDate: string | null };
+    const baseRe = /^gemini-(\d+)(?:-(\d+))?-([a-z][a-z0-9]*)$/;
+    let byFamily: Map<string, Map<string, Candidate>> | null = null;
+
+    const ensureIndexed = (): Map<string, Map<string, Candidate>> => {
+      if (byFamily) return byFamily;
+      byFamily = new Map();
+
+      const register = (modelName: string, releaseDate: string | null) => {
+        const m = modelName.match(baseRe);
+        if (!m) return;
+        const fam = m[3];
+        const major = parseInt(m[1], 10);
+        const minor = m[2] !== undefined ? parseInt(m[2], 10) : 0;
+        let famMap = byFamily!.get(fam);
+        if (!famMap) {
+          famMap = new Map();
+          byFamily!.set(fam, famMap);
+        }
+        const prev = famMap.get(modelName);
+        if (!prev || (!prev.releaseDate && releaseDate)) {
+          famMap.set(modelName, { model: modelName, major, minor, releaseDate: releaseDate ?? prev?.releaseDate ?? null });
+        }
+      };
+
+      const releaseRows = this.db.query("SELECT model, release_date FROM model_releases").all() as Array<{
+        model: string;
+        release_date: string;
+      }>;
+      for (const r of releaseRows) register(r.model, r.release_date);
+
+      for (const [rawKey, entry] of pricing.getCatalogEntries()) {
+        if (rawKey.includes("/")) continue;
+        register(canonical(rawKey), entry.releaseDate ?? null);
       }
+
+      const periodRows = this.db.query("SELECT DISTINCT model FROM model_price_periods WHERE model LIKE 'gemini-%'").all() as Array<{
+        model: string;
+      }>;
+      for (const r of periodRows) register(r.model, null);
+      return byFamily;
     };
 
-    const releaseRows = this.db.query("SELECT model, release_date FROM model_releases").all() as Array<{
-      model: string;
-      release_date: string;
-    }>;
-    for (const r of releaseRows) register(r.model, r.release_date);
+    const memo = new Map<string, string | null>();
+    return (family: string, date: string): string | null => {
+      const target = family.trim().toLowerCase();
+      if (!target) return null;
+      const cacheKey = `${target}:${date}`;
+      if (memo.has(cacheKey)) return memo.get(cacheKey)!;
 
-    for (const [rawKey, entry] of pricing.getCatalogEntries()) {
-      if (rawKey.includes("/")) continue;
-      register(canonical(rawKey), entry.releaseDate ?? null);
-    }
+      const famMap = ensureIndexed().get(target);
+      if (!famMap || famMap.size === 0) {
+        memo.set(cacheKey, null);
+        return null;
+      }
 
-    const periodRows = this.db.query("SELECT DISTINCT model FROM model_price_periods WHERE model LIKE 'gemini-%'").all() as Array<{
-      model: string;
-    }>;
-    for (const r of periodRows) register(r.model, null);
+      const candidates = Array.from(famMap.values());
+      const dated = candidates.filter((c) => c.releaseDate !== null);
 
-    const candidates = Array.from(byModel.values());
-    if (candidates.length === 0) return null;
+      let chosen: string;
+      if (dated.length > 0) {
+        const eligible = dated.filter((c) => c.releaseDate! <= date);
+        if (eligible.length > 0) {
+          eligible.sort((a, b) => {
+            if (b.major !== a.major) return b.major - a.major;
+            if (b.minor !== a.minor) return b.minor - a.minor;
+            return b.releaseDate!.localeCompare(a.releaseDate!);
+          });
+          chosen = eligible[0].model;
+        } else {
+          dated.sort((a, b) => {
+            const cmp = a.releaseDate!.localeCompare(b.releaseDate!);
+            if (cmp !== 0) return cmp;
+            if (a.major !== b.major) return a.major - b.major;
+            return a.minor - b.minor;
+          });
+          chosen = dated[0].model;
+        }
+      } else {
+        candidates.sort((a, b) => {
+          if (b.major !== a.major) return b.major - a.major;
+          return b.minor - a.minor;
+        });
+        chosen = candidates[0].model;
+      }
 
-    const eligible = candidates.filter((c) => c.releaseDate === null || c.releaseDate <= date);
-    if (eligible.length > 0) {
-      eligible.sort((a, b) => {
-        if (b.major !== a.major) return b.major - a.major;
-        if (b.minor !== a.minor) return b.minor - a.minor;
-        return (b.releaseDate ?? "").localeCompare(a.releaseDate ?? "");
-      });
-      return eligible[0].model;
-    }
-
-    candidates.sort((a, b) => {
-      const ra = a.releaseDate ?? "9999-99-99";
-      const rb = b.releaseDate ?? "9999-99-99";
-      if (ra !== rb) return ra.localeCompare(rb);
-      if (a.major !== b.major) return a.major - b.major;
-      return a.minor - b.minor;
-    });
-    return candidates[0].model;
+      memo.set(cacheKey, chosen);
+      return chosen;
+    };
   }
 
   public repairAntigravityRecords(pricing: PricingManager, recheckFamilies = false): number {
@@ -568,7 +645,7 @@ export class UsageStore {
           canonical_model_id LIKE '%-trial' OR
           canonical_model_id LIKE '%-xhigh' OR
           canonical_model_id LIKE 'gemini-pro-orchestrator%' OR
-          canonical_model_id = 'gemini-flash-worker-agy' OR
+          canonical_model_id LIKE 'gemini-%-worker%' OR
           (? = 1 AND raw_model_id IS NOT NULL AND raw_model_id NOT LIKE 'MODEL_PLACEHOLDER_%')
         )
       `)
@@ -576,6 +653,7 @@ export class UsageStore {
 
     if (candidateRows.length === 0) return 0;
 
+    const resolveFamily = this.createGeminiFamilyResolver(pricing);
     let repaired = 0;
     const update = this.db.prepare(`
       UPDATE usage_records
@@ -589,7 +667,7 @@ export class UsageStore {
         let modelId = resolved.modelId;
         let canon = resolved.canonicalModelId;
         if (resolved.unversionedFamily) {
-          const matched = this.resolveGeminiFamily(resolved.unversionedFamily, row.date, pricing);
+          const matched = resolveFamily(resolved.unversionedFamily, row.date);
           if (matched) {
             modelId = matched;
             canon = matched;

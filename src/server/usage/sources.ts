@@ -3,7 +3,15 @@ import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { Database } from "bun:sqlite";
 import { formatYMD } from "../../shared/usage";
-import { canonical, detectCompany, formatModelId, isAntigravityRoutingModel, resolveAntigravityModel } from "./model-id";
+import {
+  applyAntigravityEnumHint,
+  canonical,
+  detectCompany,
+  formatModelId,
+  recordAntigravityEnumHint,
+  resolveAntigravityModel,
+  type AntigravityEnumHint,
+} from "./model-id";
 
 /** quota-and-usage.md §3.1: records that could not be parsed, counted over one scan. */
 export interface ScanStats {
@@ -270,6 +278,10 @@ function parseProto(buf: Uint8Array): ProtoField[] {
       const data = buf.subarray(afterLen, afterLen + len);
       offset = afterLen + len;
       fields.push({ fieldNum, wireType, data });
+    } else if (wireType === 1 && offset + 8 <= buf.length) {
+      offset += 8;
+    } else if (wireType === 5 && offset + 4 <= buf.length) {
+      offset += 4;
     } else {
       break;
     }
@@ -322,7 +334,7 @@ export function scanAntigravityDb(path: string): RawUsageRecord[] {
     }
 
     const parsedSteps: ParsedGenStep[] = [];
-    const enumHints = new Map<string, { servedModel?: string; displayName?: string }>();
+    const enumHints = new Map<string, AntigravityEnumHint>();
 
     // Gen metadata
     const genRows: any[] = db.query("SELECT idx, data FROM gen_metadata WHERE data IS NOT NULL ORDER BY idx").all();
@@ -370,13 +382,7 @@ export function scanAntigravityDb(path: string): RawUsageRecord[] {
         }
       }
 
-      if (modelEnum && (displayName || (servedModel && !isAntigravityRoutingModel(servedModel)))) {
-        const prev = enumHints.get(modelEnum) || {};
-        enumHints.set(modelEnum, {
-          servedModel: servedModel && !isAntigravityRoutingModel(servedModel) ? servedModel : prev.servedModel,
-          displayName: displayName || prev.displayName,
-        });
-      }
+      recordAntigravityEnumHint(enumHints, modelEnum, servedModel, displayName);
 
       const uuid = uuidFld && uuidFld.data ? Buffer.from(uuidFld.data).toString("utf-8") : null;
       const ts = uuid ? timestamps.get(uuid) : null;
@@ -399,11 +405,8 @@ export function scanAntigravityDb(path: string): RawUsageRecord[] {
     }
 
     for (const s of parsedSteps) {
-      const hint = s.modelEnum ? enumHints.get(s.modelEnum) : undefined;
-      const effectiveServed =
-        (!s.servedModel || isAntigravityRoutingModel(s.servedModel)) && hint?.servedModel ? hint.servedModel : s.servedModel;
-      const effectiveDisplay = s.displayName || hint?.displayName;
-      const resolved = resolveAntigravityModel(s.modelEnum, effectiveServed, effectiveDisplay);
+      const effective = applyAntigravityEnumHint(enumHints, s.modelEnum, s.servedModel, s.displayName);
+      const resolved = resolveAntigravityModel(s.modelEnum, effective.servedModel, effective.displayName);
 
       const date = formatLocalDate(s.ts);
       const key = s.respId ? `${sessionId}:${s.respId}` : `${sessionId}:${s.idx}:${s.uuid || s.ts}`;
@@ -454,8 +457,22 @@ export function scanAntigravityCacheDb(path: string): RawUsageRecord[] {
       `)
       .all();
 
+    const hintsBySession = new Map<string, Map<string, AntigravityEnumHint>>();
     for (const r of rows) {
-      const resolved = resolveAntigravityModel(r.model_enum, r.served_model || r.model_id, r.display_name);
+      const sId = String(r.session_id);
+      let hints = hintsBySession.get(sId);
+      if (!hints) {
+        hints = new Map();
+        hintsBySession.set(sId, hints);
+      }
+      recordAntigravityEnumHint(hints, r.model_enum, r.served_model || r.model_id, r.display_name);
+    }
+
+    for (const r of rows) {
+      const sId = String(r.session_id);
+      const hints = hintsBySession.get(sId)!;
+      const effective = applyAntigravityEnumHint(hints, r.model_enum, r.served_model || r.model_id, r.display_name);
+      const resolved = resolveAntigravityModel(r.model_enum, effective.servedModel, effective.displayName);
       const inp = Number(r.input_tokens) || 0;
       const out = Number(r.output_tokens) || 0;
       const cr = Number(r.cache_read_tokens) || 0;

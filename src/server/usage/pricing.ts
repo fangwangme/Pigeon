@@ -197,7 +197,8 @@ export class PricingManager {
               for (const m of Object.values(models)) {
                 const cost = (m as any)?.cost;
                 if (!cost || typeof cost.input !== "number" || typeof cost.output !== "number") continue;
-                const rawRelease = (m as any).release_date;
+                const isFirstParty = providerPriority(_provider) < FIRST_PARTY_PROVIDERS.length;
+                const rawRelease = isFirstParty ? (m as any).release_date : undefined;
                 const releaseDate =
                   typeof rawRelease === "string" && /^\d{4}-\d{2}-\d{2}$/.test(rawRelease) ? rawRelease : undefined;
                 const price: ModelPrice = {
