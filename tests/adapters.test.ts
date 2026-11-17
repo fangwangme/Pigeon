@@ -1,5 +1,5 @@
 import { describe, expect, test, afterAll, beforeAll } from "bun:test";
-import { writeFileSync, mkdirSync, rmSync } from "node:fs";
+import { appendFileSync, writeFileSync, mkdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { Database } from "bun:sqlite";
 import { OpenCodeAdapter } from "../src/server/agent-adapters/opencode";
@@ -571,6 +571,88 @@ describe("structured session adapters (agent-session-normalization.md §2)", () 
       expect(stats?.additions).toBe(7);
       expect(stats?.deletions).toBe(1);
       expect(stats?.diffs).toHaveLength(3);
+    });
+
+    test("a completed RequestFeedback artifact sets pendingPlan from the session brain directory, rejects outside paths, and clears on a new turn (agent-session-normalization.md §2.2)", () => {
+      const brain = join(testDir, "brain_art");
+      const sessDir = join(brain, "s_art");
+      const logs = join(sessDir, ".system_generated", "logs");
+      mkdirSync(logs, { recursive: true });
+      const artifactPath = join(sessDir, "gpui_research.md");
+      writeFileSync(artifactPath, "# Research\nUse GPUI.", "utf-8");
+
+      const outsidePath = join(testDir, "outside_secret.md");
+      writeFileSync(outsidePath, "DO NOT READ", "utf-8");
+
+      const line = (o: object) => JSON.stringify(o) + "\n";
+      const logFile = join(logs, "transcript.jsonl");
+      writeFileSync(
+        logFile,
+        line({ step_index: 0, type: "USER_INPUT", content: "<USER_REQUEST>research gpui</USER_REQUEST>", created_at: new Date(1000).toISOString() }) +
+          line({
+            step_index: 1,
+            type: "PLANNER_RESPONSE",
+            tool_calls: [
+              {
+                name: "write_file",
+                args: {
+                  Path: JSON.stringify(artifactPath),
+                  ArtifactMetadata: JSON.stringify({ RequestFeedback: true, Summary: "GPUI plan", UserFacing: true }),
+                },
+              },
+            ],
+            created_at: new Date(2000).toISOString(),
+          }) +
+          line({ step_index: 2, type: "GENERIC", status: "DONE", content: "Created file.", created_at: new Date(2100).toISOString() }) +
+          line({ step_index: 3, type: "PLANNER_RESPONSE", content: "Please review the artifact.", created_at: new Date(2200).toISOString() }),
+        "utf-8"
+      );
+
+      const adapter = new AgyAdapter({ baseBrainDir: brain });
+      const firstRead = adapter.getTurns("s_art", false);
+      expect(firstRead.turns).toHaveLength(1);
+      expect(firstRead.turns[0].pendingPlan as any).toEqual({
+        markdown: "# Research\nUse GPUI.",
+        title: "gpui_research.md",
+        artifact: true,
+      });
+
+      // Escape check: a path outside ~/.gemini/antigravity-cli/brain/<id>/ is never read from disk.
+      const escLogs = join(brain, "s_esc", ".system_generated", "logs");
+      mkdirSync(escLogs, { recursive: true });
+      writeFileSync(
+        join(escLogs, "transcript.jsonl"),
+        line({ step_index: 0, type: "USER_INPUT", content: "<USER_REQUEST>escape</USER_REQUEST>", created_at: new Date(1000).toISOString() }) +
+          line({
+            step_index: 1,
+            type: "PLANNER_RESPONSE",
+            tool_calls: [
+              {
+                name: "write_file",
+                args: {
+                  Path: JSON.stringify(outsidePath),
+                  ArtifactMetadata: JSON.stringify({ RequestFeedback: true, Summary: "esc", UserFacing: true }),
+                },
+              },
+            ],
+            created_at: new Date(2000).toISOString(),
+          }) +
+          line({ step_index: 2, type: "GENERIC", status: "DONE", content: "Created file.", created_at: new Date(2100).toISOString() }),
+        "utf-8"
+      );
+      expect(adapter.getTurns("s_esc", false).turns[0].pendingPlan).toBeUndefined();
+
+      // A subsequent user turn clears the previous turn's pendingPlan.
+      appendFileSync(
+        logFile,
+        line({ step_index: 4, type: "USER_INPUT", content: "<USER_REQUEST>save it to notes</USER_REQUEST>", created_at: new Date(3000).toISOString() }) +
+          line({ step_index: 5, type: "PLANNER_RESPONSE", content: "Saved.", created_at: new Date(3100).toISOString() }),
+        "utf-8"
+      );
+      const afterReply = adapter.getTurns("s_art", true);
+      expect(afterReply.turns).toHaveLength(2);
+      expect(afterReply.turns[0].pendingPlan).toBeUndefined();
+      expect(afterReply.turns[1].pendingPlan).toBeUndefined();
     });
   });
 

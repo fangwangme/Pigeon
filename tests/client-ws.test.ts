@@ -320,3 +320,56 @@ describe("heartbeat (protocol.md §2.1)", () => {
     }
   });
 });
+
+describe("command error localization (protocol.md §8, mobile-ui-and-themes.md §8.3)", () => {
+  test("request() rejects with localized errorText instead of the raw server error string", async () => {
+    const origWs = globalThis.WebSocket;
+    const origDoc = (globalThis as any).document;
+    const origWindow = (globalThis as any).window;
+    const sent: any[] = [];
+    class OpenSocket {
+      static CONNECTING = 0;
+      static OPEN = 1;
+      static CLOSING = 2;
+      static CLOSED = 3;
+      readyState = 0;
+      onopen: ((ev: any) => void) | null = null;
+      onmessage: ((ev: any) => void) | null = null;
+      onclose: ((ev: any) => void) | null = null;
+      constructor(_url: string) {
+        sockets.push(this);
+      }
+      send(raw: string) {
+        sent.push(JSON.parse(raw));
+      }
+      close() {
+        this.readyState = 3;
+      }
+    }
+    const sockets: OpenSocket[] = [];
+    (globalThis as any).document = { visibilityState: "visible", addEventListener() {}, documentElement: { setAttribute() {}, style: { setProperty() {} } } };
+    (globalThis as any).window = { location: { protocol: "http:", host: "localhost", hash: "" }, addEventListener() {}, history: { replaceState() {} } };
+    globalThis.WebSocket = OpenSocket as any;
+    try {
+      await initWebSocket();
+      sockets[0].readyState = 1;
+      sockets[0].onopen?.({});
+      sent.length = 0;
+
+      const p = request({ type: "agent_prompt", payload: { targetPaneId: "p1", text: "hello" } });
+      const reqId = sent[0]?.id;
+      expect(typeof reqId).toBe("string");
+      handleServerMessage({ type: "error", replyTo: reqId, error: { code: "ERR_AGENT_BLOCKED", message: "blocked" } });
+
+      const err = await p.catch((e) => e);
+      expect(err.code).toBe("ERR_AGENT_BLOCKED");
+      expect(err.message).not.toBe("blocked");
+      expect(err.message.length).toBeGreaterThan("blocked".length);
+    } finally {
+      sockets[0]?.onclose?.({ code: 4409, reason: "" });
+      globalThis.WebSocket = origWs;
+      (globalThis as any).document = origDoc;
+      (globalThis as any).window = origWindow;
+    }
+  });
+});

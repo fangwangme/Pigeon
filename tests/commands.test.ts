@@ -883,3 +883,68 @@ describe("queue state machine (protocol.md §4.2, §4.14)", () => {
     await until(() => herdr.callsOf("terminal.send").length === 1);
   });
 });
+
+describe("blocked prompts and interaction_dismiss (protocol.md §4.2, §4.24, herdr-adapter.md §4)", () => {
+  const statusOf = (c: ReturnType<typeof fakeWs>, paneId: string) =>
+    c.ofType("snapshot_update").at(-1)?.payload.workspaces.flatMap((w: any) => w.tabs.flatMap((t: any) => t.panes)).find((p: any) => p.id === paneId)?.agentStatus;
+
+  const setBlocked = (paneId: string, screenText: string, app = "antigravity") => {
+    herdr.handlers["terminal.read"] = () => ({ result: { text: screenText, how: "history" } });
+    herdr.serve(PANES.map((p) => ({ ...p, cwd: dir, ...(p.paneId === paneId ? { state: "blocked", app } : {}) })), { folder: "/start" });
+    herdr.emitEvent("status", paneId, { status: { state: "blocked", app } });
+  };
+
+  test("agent_prompt on a blocked pane sends with force: true when no structured options await a pick, and refuses with ERR_AGENT_BLOCKED when structured options exist", async () => {
+    await client.connect();
+    herdr.handlers["terminal.send"] = (params) => (params.force ? { result: {} } : { error: "blocked" });
+
+    setBlocked("p2", "1 artifact · /artifact to review\n>\n");
+    const c = await viewer("p2");
+    await until(() => Boolean(c.ofType("pane_state").at(-1)?.payload.pendingInteraction));
+
+    await send(c.ws, { type: "agent_prompt", id: "b1", payload: { targetPaneId: "p2", text: "save to notes" } });
+    expect(lastAck(c)).toMatchObject({ queued: false });
+    expect(herdr.callsOf("terminal.send").at(-1)?.params).toEqual({ terminal: "p2", text: "save to notes", force: true });
+
+    // Now put a numbered permission menu on screen: force must be omitted so Core's blocked guard protects it.
+    herdr.calls.length = 0;
+    c.sent.length = 0;
+    herdr.handlers["terminal.read"] = () => ({ result: { text: "Allow command?\n1. Yes\n2. No\n", how: "history" } });
+    await client.readAndClassifyPane("p2");
+    await until(() => (c.ofType("pane_state").at(-1)?.payload.pendingInteraction?.options?.length ?? 0) === 2);
+
+    await send(c.ws, { type: "agent_prompt", id: "b2", payload: { targetPaneId: "p2", text: "accidental enter" } });
+    expect(lastError(c)).toBe(ProtocolErrors.ERR_AGENT_BLOCKED);
+    expect(herdr.callsOf("terminal.send").at(-1)?.params).toEqual({ terminal: "p2", text: "accidental enter" });
+  });
+
+  test("interaction_dismiss clears the active interaction and downgrades reported status to idle until the next Core status or interaction change", async () => {
+    await client.connect();
+    const looker = await viewer("p2");
+    const other = await viewer("p1");
+    setBlocked("p2", "1 artifact · /artifact to review\n>\n");
+    await until(() => statusOf(other, "p2") === "blocked" && Boolean(looker.ofType("pane_state").at(-1)?.payload.pendingInteraction));
+
+    const interactionId = looker.ofType("pane_state").at(-1)!.payload.pendingInteraction.interactionId;
+
+    await send(looker.ws, { type: "interaction_dismiss", id: "bad1", payload: {} });
+    expect(lastError(looker)).toBe(ProtocolErrors.ERR_INVALID_PAYLOAD);
+
+    await send(looker.ws, { type: "interaction_dismiss", id: "bad2", payload: { targetPaneId: "missing", interactionId } });
+    expect(lastError(looker)).toBe(ProtocolErrors.ERR_NOT_FOUND);
+
+    await send(looker.ws, { type: "interaction_dismiss", id: "ok1", payload: { targetPaneId: "p2", interactionId } });
+    expect(lastAck(looker)).toEqual({ status: "ok", dismissed: true, interactionId });
+    expect(looker.ofType("pane_state").at(-1)!.payload.pendingInteraction).toBeNull();
+    expect(looker.ofType("pane_state").at(-1)!.payload.agentStatus).toBe("idle");
+    await until(() => statusOf(other, "p2") === "idle");
+
+    // Next Core status change resets the dismissal so a later blocked turn reports blocked again.
+    herdr.serve(PANES.map((p) => ({ ...p, cwd: dir, ...(p.paneId === "p2" ? { state: "working", app: "antigravity" } : {}) })), { folder: "/start" });
+    herdr.emitEvent("status", "p2", { status: { state: "working", app: "antigravity" } });
+    await until(() => statusOf(other, "p2") === "working");
+
+    setBlocked("p2", "1 artifact · /artifact to review\n>\n");
+    await until(() => statusOf(other, "p2") === "blocked" && Boolean(looker.ofType("pane_state").at(-1)?.payload.pendingInteraction));
+  });
+});
