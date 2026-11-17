@@ -31,6 +31,7 @@ describe("daemon rebuilds (protocol.md §3.2)", () => {
     (globalThis as any).document = {
       visibilityState: "visible",
       addEventListener() {},
+      documentElement: { setAttribute() {}, style: { setProperty() {} } },
       querySelector: (sel: string) => (sel.includes("pigeon-build") ? meta : null),
     };
     try {

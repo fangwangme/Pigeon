@@ -100,7 +100,13 @@ beforeEach(() => {
     throw new TypeError(`unexpected fetch ${url}`);
   };
   g.window = { location: { protocol: "http:", host: "localhost", hash: "" }, addEventListener() {}, history: { replaceState() {} } };
-  g.document = { visibilityState: "visible", addEventListener() {} };
+  g.document = {
+    visibilityState: "visible",
+    addEventListener() {},
+    documentElement: { setAttribute() {}, style: { setProperty() {} } },
+    // protocol.md §3.2: the page carries its own build, so a welcome here never sets one for other files.
+    querySelector: (sel: string) => (sel.includes("pigeon-build") ? { getAttribute: () => "build_r" } : null),
+  };
   g.localStorage = memoryStorage();
   setState("paired", true);
 });
