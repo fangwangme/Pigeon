@@ -288,16 +288,20 @@ export function navigate(route: Route): void {
   }
 }
 
-export function goBack(): void {
-  const r = state.route;
-  if (r.name === "home") return;
+export function backRoute(r: Route = state.route): Route | null {
+  if (r.name === "home") return null;
   if (r.name === "session") {
-    navigate({ name: r.from === "agents" ? "agents" : "home" });
-  } else if (r.name === "quota" || r.name === "usage") {
-    navigate({ name: (r as { from?: "home" | "agents" | "settings" }).from || "home" });
-  } else {
-    navigate({ name: "home" });
+    return { name: r.from === "agents" ? "agents" : "home" };
   }
+  if (r.name === "quota" || r.name === "usage") {
+    return { name: (r as { from?: "home" | "agents" | "settings" }).from || "home" };
+  }
+  return { name: "home" };
+}
+
+export function goBack(): void {
+  const next = backRoute();
+  if (next) navigate(next);
 }
 
 export function showToast(message: string): void {

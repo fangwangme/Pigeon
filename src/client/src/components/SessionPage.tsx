@@ -617,6 +617,22 @@ export function SessionPage() {
                 </div>
               </button>
             </Show>
+            <Show when={state.activePaneId}>
+              <button
+                class="mi"
+                onClick={() => {
+                  const id = state.activePaneId!;
+                  setPanel(null);
+                  copyText(id);
+                }}
+              >
+                <Icon name="copy" />
+                <div>
+                  {t("menu.copyPaneId")}
+                  <small class="mono">{state.activePaneId}</small>
+                </div>
+              </button>
+            </Show>
             <Show when={!isTerminal()}>
               <button class="mi" onClick={() => setPanel("changes")}>
                 <Icon name="diff" />

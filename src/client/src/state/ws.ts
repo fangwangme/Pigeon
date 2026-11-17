@@ -638,17 +638,18 @@ export function handleServerMessage(msg: ServerMessage): void {
     }
 
     case "error": {
+      const message = errorText(msg.error.code, msg.error.message);
       const waiter = msg.replyTo ? pending.get(msg.replyTo) : undefined;
       if (waiter) {
         pending.delete(msg.replyTo!);
-        waiter.reject(msg.error);
+        waiter.reject({ ...msg.error, message });
       }
       if (msg.replyTo && msg.replyTo === pendingSelectViewId) {
         setState("paneSyncing", false);
         pendingSelectViewId = null;
       }
       console.error("[Pigeon] server error", msg.error.code, msg.error.message);
-      setState("lastError", { code: msg.error.code, message: errorText(msg.error.code, msg.error.message), at: Date.now() });
+      setState("lastError", { code: msg.error.code, message, at: Date.now() });
       if (msg.error.code === "ERR_INTERACTION_STALE" && state.activePaneId) {
         sendMessage({ type: "select_view", id: nextId(), payload: { paneId: state.activePaneId } });
       }
@@ -757,6 +758,12 @@ export function respondOptionIds(interactionId: string, optionIds: string[], fin
 export function respondInteraction(interactionId: string, optionId: string, fingerprint: string, otherTexts?: Record<string, string>): Promise<any> {
   if (!state.activePaneId) return Promise.reject({ code: "ERR_NOT_FOUND", message: "no pane" });
   return request({ type: "interaction_respond", payload: { targetPaneId: state.activePaneId, interactionId, optionId, fingerprint, ...(otherTexts ? { otherTexts } : {}) } });
+}
+
+/** protocol.md §4.24: clears the active interaction card and downgrades reported status to idle. */
+export function dismissInteraction(interactionId: string): Promise<any> {
+  if (!state.activePaneId) return Promise.reject({ code: "ERR_NOT_FOUND", message: "no pane" });
+  return request({ type: "interaction_dismiss", payload: { targetPaneId: state.activePaneId, interactionId } });
 }
 
 /** The one navigation entry point into a pane: workspace and tab follow from it. */

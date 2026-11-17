@@ -494,6 +494,7 @@ export type ClientMessage =
   | { type: "client_diag"; payload: { events: DiagEvent[] } }
   | { type: "select_view"; id: string; payload: { paneId: string | null; have?: HaveInfo } }
   | { type: "interaction_respond"; id: string; payload: { targetPaneId: string; interactionId: string; optionId?: string; optionIds?: string[]; otherTexts?: Record<string, string>; fingerprint: string } }
+  | { type: "interaction_dismiss"; id: string; payload: { targetPaneId: string; interactionId: string } }
   | { type: "agent_prompt"; id: string; payload: { targetPaneId: string; text: string; attachments?: string[] } }
   | { type: "agent_send_keys"; id: string; payload: { targetPaneId: string; keys: string[] } }
   | { type: "create_tab_and_agent"; id: string; payload: { workspaceId: string; agentKind: string; modelId?: string; thinking?: string; cwd?: string; firstMessage?: string; resumeSessionId?: string } }

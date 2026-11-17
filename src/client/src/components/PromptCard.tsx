@@ -1,7 +1,7 @@
 import { createMemo, createSignal, For, Show } from "solid-js";
 import { showToast, state } from "../state/store";
-import { closeAlert, isAlertClosed, respondInteraction, respondOptionIds } from "../state/ws";
-import type { InteractionCardData, NormalizedQuestion, NormalizedToolCall } from "../../../types/protocol";
+import { closeAlert, dismissInteraction, isAlertClosed, respondInteraction, respondOptionIds, sendPrompt } from "../state/ws";
+import type { InteractionCardData, NormalizedQuestion, NormalizedToolCall, NormalizedTurn } from "../../../types/protocol";
 import { focusComposer } from "./Composer";
 import { Markdown, openToolDetail } from "./Transcript";
 import { DiffBadge, Icon, Sheet } from "./ui";
@@ -279,19 +279,45 @@ function MenuQuestionCard(props: { p: InteractionCardData }) {
 }
 
 /** §4.3 */
-function PlanCard(props: { p: InteractionCardData; markdown: string }) {
+function PlanCard(props: { p: InteractionCardData; markdown: string; plan?: NonNullable<NormalizedTurn["pendingPlan"]> }) {
   const [full, setFull] = createSignal(false);
+  const [busy, setBusy] = createSignal<"proceed" | "skip" | null>(null);
+  const isArtifact = () => Boolean(props.plan?.artifact);
+  const proceed = () => {
+    if (busy()) return;
+    setBusy("proceed");
+    sendPrompt("Proceed", [])
+      .catch((e) => showToast(e.message || t("prompt.notSent")))
+      .finally(() => setBusy(null));
+  };
+  const skip = () => {
+    if (busy()) return;
+    setBusy("skip");
+    dismissInteraction(props.p.interactionId)
+      .catch((e) => showToast(e.message || t("prompt.notSent")))
+      .finally(() => setBusy(null));
+  };
   return (
     <div class="qcard">
       <div class="qtop">
         <span class="wbadge">
           <span class="wd" />
-          {t("prompt.planPending")}
+          {isArtifact() ? t("prompt.artifactPending") : t("prompt.planPending")}
         </span>
+        <Show when={props.plan?.title}>
+          <span class="mono" style={{ "font-size": "12px", color: "var(--muted)", overflow: "hidden", "text-overflow": "ellipsis", "white-space": "nowrap", "min-width": 0 }}>
+            {props.plan!.title}
+          </span>
+        </Show>
         <span class="sp" style={{ flex: 1 }} />
         <button class="lnk" onClick={() => setFull(true)}>
           {t("prompt.fullText")}
         </button>
+        <Show when={isArtifact()}>
+          <button class="x" aria-label={t("prompt.skip")} disabled={!!busy()} onClick={skip}>
+            <Icon name="x" sm />
+          </button>
+        </Show>
       </div>
       <div class="qbody">
         <div class="planbox">
@@ -299,12 +325,24 @@ function PlanCard(props: { p: InteractionCardData; markdown: string }) {
         </div>
       </div>
       <div style={{ "margin-top": "10px" }}>
-        <Show when={props.p.options.length} fallback={<ReplyBelow />}>
-          <Options p={props.p} />
+        <Show
+          when={!isArtifact()}
+          fallback={
+            <div class="optbtns">
+              <button class="btn pri blk" disabled={!!busy()} onClick={proceed}>
+                {busy() === "proceed" ? t("common.sending") : t("prompt.proceed")}
+              </button>
+              <p class="note" style={{ margin: "2px 2px 0" }}>{t("prompt.artifactHint")}</p>
+            </div>
+          }
+        >
+          <Show when={props.p.options.length} fallback={<ReplyBelow />}>
+            <Options p={props.p} />
+          </Show>
         </Show>
       </div>
       <Show when={full()}>
-        <Sheet title={t("prompt.plan")} full onClose={() => setFull(false)}>
+        <Sheet title={props.plan?.title || (isArtifact() ? t("prompt.artifact") : t("prompt.plan"))} full onClose={() => setFull(false)}>
           <Markdown md={props.markdown} />
         </Sheet>
       </Show>
@@ -349,6 +387,7 @@ function AlertDialogCard(props: { p: InteractionCardData }) {
   const close = () => {
     closeAlert(state.activePaneId, props.p.interactionId);
     setClosed(true);
+    void dismissInteraction(props.p.interactionId).catch(() => {});
   };
 
   return (
@@ -438,7 +477,7 @@ export function PromptCard(props: { collapsed: boolean; onCollapse: () => void; 
               </Show>
             }
           >
-            {(md: string) => <PlanCard p={p()} markdown={md} />}
+            {(md: string) => <PlanCard p={p()} markdown={md} plan={plan()} />}
           </Show>
           </Show>
         }

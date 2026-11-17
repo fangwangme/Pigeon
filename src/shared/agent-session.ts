@@ -59,7 +59,7 @@ export interface NormalizedTurn {
   toolCalls?: NormalizedToolCall[];
   assistantResponse?: { markdown: string; isStreaming?: boolean };
   pendingQuestion?: NormalizedQuestion;
-  pendingPlan?: { markdown: string };
+  pendingPlan?: { markdown: string; title?: string; artifact?: boolean };
 }
 
 export interface TodoItem {

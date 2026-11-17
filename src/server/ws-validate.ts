@@ -103,6 +103,11 @@ export function validateClientMessage(raw: unknown): ValidationResult {
         return fail(id, "interaction_respond otherTexts maps question numbers to 1–2000 characters of text");
       }
       return ok();
+    case "interaction_dismiss":
+      if (!isObj(p) || !isStr(p.targetPaneId) || !isStr(p.interactionId)) {
+        return fail(id, "interaction_dismiss needs targetPaneId and interactionId");
+      }
+      return ok();
     case "create_tab_and_agent":
       if (!isObj(p) || !isStr(p.workspaceId) || !isStr(p.agentKind, 32) || !optStr(p.modelId, 128) || !optStr(p.thinking, 32) || !optStr(p.cwd, 4096) || !optStr(p.firstMessage, MAX_TEXT)) {
         return fail(id, "create_tab_and_agent needs workspaceId and agentKind");

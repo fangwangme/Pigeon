@@ -1047,7 +1047,7 @@ export function UsagePage() {
                                       {w.month}
                                     </span>
                                     <For each={w.cells}>
-                                      {(c) => (
+                                      {(c, rowIdx) => (
                                         <button
                                           onClick={() => {
                                             if (c.val > 0) void openDaySheet(c.date);
@@ -1070,7 +1070,7 @@ export function UsagePage() {
                                             "box-sizing": "border-box",
                                           }}
                                         >
-                                          {c.inRange ? c.dayNum : ""}
+                                          {rowIdx() === 0 && c.inRange ? c.dayNum : ""}
                                         </button>
                                       )}
                                     </For>

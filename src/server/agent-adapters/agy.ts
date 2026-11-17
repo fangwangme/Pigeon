@@ -1,7 +1,7 @@
 import { Database } from "bun:sqlite";
-import { existsSync, openSync, readSync, closeSync, statSync, readFileSync } from "node:fs";
+import { existsSync, openSync, readSync, closeSync, statSync, readFileSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, join } from "node:path";
+import { basename, dirname, join, resolve, sep } from "node:path";
 import type {
   FileDiffSummary,
   NormalizedQuestion,
@@ -42,6 +42,64 @@ function boolArg(val: unknown): boolean {
     return s === "true" || s === "1";
   }
   return false;
+}
+
+function hasRequestFeedbackArtifact(rawMeta: unknown): boolean {
+  let meta: unknown = rawMeta;
+  if (typeof rawMeta === "string") {
+    try {
+      meta = JSON.parse(rawMeta);
+    } catch {
+      return false;
+    }
+  }
+  if (!meta || typeof meta !== "object") return false;
+  const m = meta as Record<string, unknown>;
+  return boolArg(m.RequestFeedback ?? m.requestFeedback);
+}
+
+function readSessionArtifact(sessionDir: string, call: NormalizedToolCall): { markdown: string; title?: string; artifact: true } | undefined {
+  if (call.status !== "completed" || typeof call.input !== "object" || call.input === null) return undefined;
+  const n = call.name.toLowerCase();
+  if (n !== "write_file" && n !== "edit_file") return undefined;
+  const inp = call.input as Record<string, unknown>;
+  if (!hasRequestFeedbackArtifact(inp.ArtifactMetadata ?? inp.artifactMetadata)) return undefined;
+  const filePath = (inp.Path ?? inp.path ?? call.target) as string | undefined;
+  if (!filePath || typeof filePath !== "string" || !existsSync(sessionDir)) return undefined;
+
+  let sessionReal: string;
+  try {
+    sessionReal = realpathSync(sessionDir);
+  } catch {
+    return undefined;
+  }
+  const isInside = (p: string) => p.startsWith(sessionReal + sep);
+
+  if (existsSync(filePath)) {
+    try {
+      const targetReal = realpathSync(filePath);
+      if (!isInside(targetReal)) return undefined;
+      const markdown = readFileSync(targetReal, "utf-8");
+      if (markdown) return { markdown, title: basename(filePath), artifact: true };
+    } catch {
+      return undefined;
+    }
+    return undefined;
+  }
+
+  const parentDir = dirname(filePath);
+  let candidate: string;
+  try {
+    candidate = existsSync(parentDir) ? join(realpathSync(parentDir), basename(filePath)) : resolve(filePath);
+  } catch {
+    return undefined;
+  }
+  if (!isInside(candidate)) return undefined;
+  const fallback = inp.Content ?? inp.content;
+  if (typeof fallback === "string" && fallback) {
+    return { markdown: fallback, title: basename(filePath), artifact: true };
+  }
+  return undefined;
 }
 
 function extractAgyDiff(name: string, args: Record<string, any>): { diff?: FileDiffSummary; verb?: ToolVerb } | undefined {
@@ -570,7 +628,18 @@ export class AgyAdapter {
         }
         const pCall = [...last.toolCalls].reverse().find((c) => c.name === "exit_plan_mode" && c.status === "running" && c.output === undefined);
         const plan = pCall && typeof pCall.input === "object" && pCall.input !== null ? (pCall.input as Record<string, any>).plan : undefined;
-        if (typeof plan === "string" && plan) last.pendingPlan = { markdown: plan };
+        if (typeof plan === "string" && plan) {
+          last.pendingPlan = { markdown: plan };
+        } else {
+          const sessionDir = join(this.baseBrainDir, sessionId);
+          for (let i = last.toolCalls.length - 1; i >= 0; i--) {
+            const art = readSessionArtifact(sessionDir, last.toolCalls[i]);
+            if (art) {
+              last.pendingPlan = art;
+              break;
+            }
+          }
+        }
       }
 
       const stats = computeSessionStats(turns);

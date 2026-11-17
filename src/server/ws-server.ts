@@ -324,6 +324,7 @@ export class WsServer {
       const previous = this.lastStatus.get(paneId);
       this.lastStatus.set(paneId, status);
       this.rebindPane(paneId);
+      this.syncTranscriptInteraction(paneId);
       this.transitionQueue(paneId, { type: "status", status });
       // herdr-adapter.md §4: finishing while a phone visibly watches it is finishing seen.
       if (status === "done" && this.pushManager.shouldSuppressPush(paneId)) this.herdrClient.markSeen(paneId);
@@ -761,6 +762,15 @@ export class WsServer {
         }
         this.logger?.(`${this.paneLogLabel(targetPaneId)} interaction respond: ${optionId ?? optionIds!.join(",")} (approved=${approved})`);
         this.sendAck(ws, msg.id, { approved, interactionId });
+        return;
+      }
+
+      case "interaction_dismiss": {
+        const { targetPaneId, interactionId } = msg.payload;
+        if (!this.requireKnownPane(ws, msg.id, targetPaneId)) return;
+        const dismissed = this.herdrClient.dismissInteraction(targetPaneId, interactionId);
+        this.logger?.(`${this.paneLogLabel(targetPaneId)} interaction dismiss: ${interactionId} (dismissed=${dismissed})`);
+        this.sendAck(ws, msg.id, { dismissed, interactionId });
         return;
       }
 
@@ -1442,19 +1452,23 @@ export class WsServer {
         ...(keysChecked ? { allowsOther: true } : {}),
       };
     } else if (lastTurn?.pendingPlan) {
-      const hash = createHash("sha256").update(lastTurn.pendingPlan.markdown).digest("hex").slice(0, 10);
-      interaction = {
-        id: `card_interaction_${hash}`,
-        kind: "interaction",
-        source: "transcript",
-        interactionId: `int_${hash}`,
-        title: "",
-        question: "",
-        payload: lastTurn.pendingPlan.markdown,
-        fingerprint: computeInteractionFingerprint("", lastTurn.pendingPlan.markdown, []),
-        options: [],
-        fallbackKeys: ["enter", "esc", "up", "down"],
-      };
+      if (!lastTurn.pendingPlan.artifact || this.herdrClient.getPaneHerdrStatus(paneId) === "blocked") {
+        const title = lastTurn.pendingPlan.title ?? "";
+        const hashInput = title ? `${title}\n${lastTurn.pendingPlan.markdown}` : lastTurn.pendingPlan.markdown;
+        const hash = createHash("sha256").update(hashInput).digest("hex").slice(0, 10);
+        interaction = {
+          id: `card_interaction_${hash}`,
+          kind: "interaction",
+          source: "transcript",
+          interactionId: `int_${hash}`,
+          title: "",
+          question: title,
+          payload: lastTurn.pendingPlan.markdown,
+          fingerprint: computeInteractionFingerprint(title, lastTurn.pendingPlan.markdown, []),
+          options: [],
+          fallbackKeys: ["enter", "esc", "up", "down"],
+        };
+      }
     }
     this.herdrClient.setTranscriptInteraction(paneId, interaction, !!lastTurn?.pendingQuestion && keysChecked);
   }
@@ -1505,7 +1519,14 @@ export class WsServer {
     const entry = { hash, at: Date.now() };
     this.lastPromptByPane.set(paneId, entry);
     try {
-      await this.herdrClient.sendPrompt(paneId, send, shown.attachments.length > 0);
+      let force = false;
+      if (herdrStatus === "blocked") {
+        if (!this.herdrClient.getPaneState(paneId)) {
+          await this.herdrClient.readAndClassifyPane(paneId);
+        }
+        force = !this.herdrClient.hasStructuredOptions(paneId);
+      }
+      await this.herdrClient.sendPrompt(paneId, send, shown.attachments.length > 0, force);
     } catch (err) {
       if (this.lastPromptByPane.get(paneId) === entry) {
         this.lastPromptByPane.delete(paneId);
