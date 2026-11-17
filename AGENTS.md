@@ -15,6 +15,26 @@
 - Any non-4100 port automatically isolates the admin socket to `pigeon-<port>.sock` and device pairing to `devices-<port>.json`. Never run test/dev daemons on port 4100 to avoid conflicting with the production service.
 - **Tailscale HTTPS Ports**: Production default `8443`, test default `18443`. Configurable per instance via `server.tailscaleHttpsPort` in `config.json`. Both instances coexist concurrently with independent web origins.
 
+### Worktree test daemon (测试版启动方式)
+
+Run the test daemon from the worktree root with its own state, exactly like this; do not improvise other env setups.
+
+1. **Seed once, by copying (never linking) Pigeon's state** from `~/.local/share/pigeon/`, so usage keeps the AGY desktop history that only Pigeon's cache holds:
+   - `sqlite3 -readonly ~/.local/share/pigeon/usage.db ".backup '.local/data/pigeon/usage.db'"`
+   - `cp -a ~/.local/share/pigeon/antigravity-cache .local/data/pigeon/`
+2. **Link agent data that Pigeon finds through `XDG_DATA_HOME`**, or that agent's usage disappears: `ln -s ~/.local/share/opencode .local/data/opencode`. Pigeon only reads it.
+3. **Start** (`HC_TERMINAL_SOCKET` must point at the real Herdr core, because `XDG_RUNTIME_DIR` is overridden):
+   ```bash
+   XDG_DATA_HOME=$PWD/.local/data XDG_RUNTIME_DIR=$PWD/.local/run \
+   HC_TERMINAL_SOCKET=/run/user/$(id -u)/herdr-core/default.sock \
+   PIGEON_CONFIG_PATH=$PWD/.local/data/pigeon-4101/config.json \
+   bun --watch ./src/cli/index.ts start --port 4101 --public-url https://<tailnet-host>:18443
+   ```
+   The test config sets `client.usageScanInterval` to `15m`; keep it there.
+4. **Verify it stays up**: about 30 s after start, the `bun` process must still be in the foreground and `curl http://127.0.0.1:4101/api/auth/status` must answer. A Herdr timeout at startup can make it exit; a "listening" line on screen is not proof.
+5. The phone pairs once with the test daemon (its devices are isolated): use the pairing URL it prints.
+6. While testing quota or usage, stop production (`systemctl --user stop pigeon`) so two daemons do not refresh at once; start it again afterwards (`systemctl --user start pigeon`).
+
 ## Development Workflow
 
 1. Before starting feature work, read `AGENTS.md`, `.agents/PROJECT_STATUS.md`, `.agents/LESSONS.md`, and the relevant `docs/specs/`.

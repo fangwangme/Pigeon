@@ -177,7 +177,7 @@ export class PricingManager {
     const modelsDevCatalog = new Map<string, ModelPrice>();
     const litellmCatalog = new Map<string, ModelPrice>();
     const openrouterCatalog = new Map<string, ModelPrice>();
-    const TIMEOUT_MS = 2500;
+    const TIMEOUT_MS = 30_000;
 
     // Fetch sources concurrently with bounded timeout so slow network endpoints do not stall scans
     await Promise.allSettled([

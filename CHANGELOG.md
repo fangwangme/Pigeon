@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - **Fast WebSocket reconnect without stuck Syncing**: Implemented single-flight `initWebSocket`, 5 s pairing-check and 10 s `CONNECTING` attempt timeouts, immediate first reconnect after an open socket drops (3 s thereafter), wakeup `ping` with a 3 s `pong` deadline replacing any scheduled reconnect, close code/reason logging on both client and daemon (with connection lifetime), clearing `paneSyncing` on socket teardown, and switching to the server's substituted focused pane when `pane_bootstrap` carries `requestedPaneId` (#29).
+- **Pricing fetch timeout**: Increased the per-source network timeout in `PricingManager` from 2.5 s to 30 s so slow upstream catalogs finish without leaving all usage records unpriced (#29).
 
 ## [0.1.13] - 2026-11-16
 
