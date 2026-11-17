@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.16] - 2026-11-18
+
+### Fixed
+- **Antigravity thinking output tokens & cache writes**: Direct SQLite `.db` usage scanning now counts total `output_tokens` (`#3`, covering both thinking `#9` and visible response `#10`) and `cache_write_tokens` (`#4`), matching the Desktop Language Server RPC path instead of dropping thinking tokens (#33).
+- **Antigravity orchestrator & worker model resolution**: Both `.db` and Desktop `.pb` cache scanners now read and persist `modelDisplayName` (`#21`), strip `-xhigh` / `-minimal` and parenthesized role/tier tags such as `(Orchestrator)`, inherit same-session sibling identity when a step omits display/served names, and resolve unversioned Gemini family labels (such as `Orchestrator (Carbon)`, `Orchestrator (Argon)`, or `Gemini Flash`) to the highest-version official `models.dev` release on or before the record's date (#33).
+
 ## [0.1.15] - 2026-11-17
 
 ### Changed
