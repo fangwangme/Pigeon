@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.15] - 2026-11-17
+
+### Added
+- **Debug mode for connection timing**: `pigeon start --debug` turns on debug logging for that run only (nothing is persisted). The log then records HTTP requests, refused WebSocket upgrades, bootstrap timing and size, and the phone's own connection timeline (page load, visibility, every attempt with outcome and duration), which the phone keeps locally and hands over once it reaches a daemon in debug mode (#31).
+
+### Fixed
+- **Fast first connection after reopening the app**: The client opens the WebSocket at once and checks pairing only after a socket fails before opening, retries after 0, 0.5, 1, 2, then 3 s, and retries immediately when the network comes back or the app becomes visible (#31).
+- **App opens without waiting for the network**: The service worker serves the cached app shell first and refreshes it in the background; the page knows its own build, so an older cached shell still shows the update banner. The daemon serves the page compressed (br or gzip) (#31).
+
 ## [0.1.14] - 2026-11-17
 
 ### Changed
