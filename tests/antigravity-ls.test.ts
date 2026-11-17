@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { Database } from "bun:sqlite";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import {
@@ -211,6 +212,145 @@ describe("Antigravity Language Server discovery and native cache (quota-and-usag
       const offlineRecords = scanAntigravityCacheDb(testCacheDb);
       expect(offlineRecords.length).toBe(1);
       expect(offlineRecords[0].sessionId).toBe(sampleSessionId);
+    } finally {
+      server.stop(true);
+      try {
+        rmSync(testDir, { recursive: true, force: true });
+      } catch {}
+    }
+  });
+
+  test("syncAntigravityDesktopSessions migrates legacy cache schema, persists modelDisplayName, and resolves it ahead of routing responseModel slugs (quota-and-usage.md §3.1, §3.2)", async () => {
+    const testDir = join("/tmp", `pigeon-ls-display-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`);
+    const testHome = join(testDir, "home");
+    const testConversations = join(testHome, ".gemini", "antigravity", "conversations");
+    const testCacheDb = join(testDir, "cache.db");
+
+    mkdirSync(testConversations, { recursive: true });
+    const sessionId = "a1b2c3d4e5f60123456789abcdef0123";
+    writeFileSync(join(testConversations, `${sessionId}.pb`), Buffer.from("pb-session"));
+
+    // Seed legacy cache.db without display_name column to verify in-place migration
+    const legacyDb = new Database(testCacheDb);
+    legacyDb.run(`
+      CREATE TABLE sessions (
+        session_id TEXT PRIMARY KEY,
+        client TEXT,
+        last_modified_ms INTEGER,
+        step_count INTEGER
+      );
+      CREATE TABLE session_usage (
+        id TEXT PRIMARY KEY,
+        session_id TEXT NOT NULL,
+        client TEXT,
+        model_enum TEXT,
+        served_model TEXT,
+        model_id TEXT,
+        timestamp INTEGER,
+        input_tokens INTEGER DEFAULT 0,
+        output_tokens INTEGER DEFAULT 0,
+        cache_read_tokens INTEGER DEFAULT 0,
+        cache_write_tokens INTEGER DEFAULT 0,
+        response_id TEXT,
+        step_index INTEGER DEFAULT 0
+      );
+    `);
+    legacyDb.close();
+
+    const tsBase = Date.parse("2026-11-18T12:00:00Z");
+    const server = Bun.serve({
+      port: 0,
+      fetch(req) {
+        const url = new URL(req.url);
+        if (url.pathname.endsWith("/RetrieveUserQuotaSummary")) {
+          return Response.json({ response: { groups: [] } });
+        }
+        if (url.pathname.endsWith("/GetAllCascadeTrajectories")) {
+          return Response.json({ trajectorySummaries: [{ cascadeId: sessionId, stepCount: 2 }] });
+        }
+        if (url.pathname.endsWith("/GetCascadeTrajectoryGeneratorMetadata")) {
+          return Response.json({
+            generatorMetadata: [
+              {
+                chatModel: {
+                  model: "MODEL_PLACEHOLDER_M669",
+                  responseModel: "gemini-flash-worker-agy",
+                  modelDisplayName: "Gemini 4 Hydrogen (Orchestrator)",
+                  chatStartMetadata: { createdAt: tsBase },
+                  retryInfos: [
+                    {
+                      usage: {
+                        inputTokens: "4000",
+                        outputTokens: "800",
+                        cacheReadTokens: "1200",
+                        cacheWriteTokens: "0",
+                        timestamp: tsBase,
+                        responseId: "resp_w1",
+                      },
+                    },
+                  ],
+                },
+              },
+              {
+                chatModel: {
+                  model: "MODEL_PLACEHOLDER_M669",
+                  responseModel: "gemini-flash-worker-agy",
+                  chatStartMetadata: { createdAt: tsBase + 5_000 },
+                  retryInfos: [
+                    {
+                      usage: {
+                        inputTokens: "1000",
+                        outputTokens: "200",
+                        cacheReadTokens: "0",
+                        cacheWriteTokens: "0",
+                        timestamp: tsBase + 5_000,
+                        responseId: "resp_w2",
+                      },
+                    },
+                  ],
+                },
+              },
+            ],
+          });
+        }
+        return new Response("Not found", { status: 404 });
+      },
+    });
+
+    try {
+      const conn = await discoverAntigravityLs({
+        address: `127.0.0.1:${server.port}`,
+        csrfToken: "mock-csrf",
+      });
+      expect(conn).not.toBeNull();
+
+      const synced = await syncAntigravityDesktopSessions(conn!, testCacheDb, testHome);
+      expect(synced).toBe(1);
+
+      const verifyDb = new Database(testCacheDb, { readonly: true });
+      const cols = (verifyDb.query("PRAGMA table_info('session_usage')").all() as Array<{ name: string }>).map((c) => c.name);
+      expect(cols).toContain("display_name");
+      const rawRow = verifyDb
+        .query("SELECT display_name FROM session_usage WHERE response_id = 'resp_w1'")
+        .get() as { display_name: string | null } | null;
+      expect(rawRow?.display_name).toBe("Gemini 4 Hydrogen (Orchestrator)");
+      verifyDb.close();
+
+      const records = scanAntigravityCacheDb(testCacheDb);
+      expect(records).toHaveLength(2);
+      expect(records[0]).toMatchObject({
+        canonicalModelId: "gemini-4-hydrogen",
+        inputTokens: 4000,
+        outputTokens: 800,
+        cacheReadTokens: 1200,
+        totalTokens: 6000,
+      });
+      expect(records[1]).toMatchObject({
+        canonicalModelId: "gemini-4-hydrogen",
+        inputTokens: 1000,
+        outputTokens: 200,
+        totalTokens: 1200,
+      });
     } finally {
       server.stop(true);
       try {

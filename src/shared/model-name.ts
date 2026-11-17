@@ -7,7 +7,7 @@ export function fallbackLabel(id: string): string {
 }
 
 const AGY_TIER_SUFFIX_RE = /\s*\([^)]+\)\s*$/;
-const AGY_ID_TIER_RE = /[-_](low|medium|high|minimal)$/i;
+const AGY_ID_TIER_RE = /[-_](xhigh|low|medium|high|minimal)$/i;
 
 export function stripAntigravityTier(label: string): string {
   return label.replace(AGY_TIER_SUFFIX_RE, "").trim();

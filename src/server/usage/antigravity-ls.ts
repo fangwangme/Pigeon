@@ -1,7 +1,12 @@
 import { Database } from "bun:sqlite";
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
-import { resolveAntigravityModel } from "./model-id";
+import {
+  applyAntigravityEnumHint,
+  recordAntigravityEnumHint,
+  resolveAntigravityModel,
+  type AntigravityEnumHint,
+} from "./model-id";
 
 export interface AntigravityLsConnection {
   address: string;
@@ -317,6 +322,7 @@ export function initAntigravityCacheDb(dbPath: string): Database {
       client TEXT,
       model_enum TEXT,
       served_model TEXT,
+      display_name TEXT,
       model_id TEXT,
       timestamp INTEGER,
       input_tokens INTEGER DEFAULT 0,
@@ -327,6 +333,12 @@ export function initAntigravityCacheDb(dbPath: string): Database {
       step_index INTEGER DEFAULT 0
     );
   `);
+
+  const cols = (db.query("PRAGMA table_info('session_usage')").all() as Array<{ name: string }>).map((c) => c.name);
+  if (!cols.includes("display_name")) {
+    db.run("ALTER TABLE session_usage ADD COLUMN display_name TEXT;");
+    db.run("UPDATE sessions SET last_modified_ms = 0;");
+  }
 
   db.run(`CREATE INDEX IF NOT EXISTS idx_session_usage_session ON session_usage(session_id);`);
   db.run(`CREATE INDEX IF NOT EXISTS idx_session_usage_ts ON session_usage(timestamp);`);
@@ -419,10 +431,10 @@ export async function syncAntigravityDesktopSessions(
 
     const insertUsage = db.prepare(`
       INSERT OR REPLACE INTO session_usage (
-        id, session_id, client, model_enum, served_model, model_id,
+        id, session_id, client, model_enum, served_model, display_name, model_id,
         timestamp, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens,
         response_id, step_index
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
 
     const upsertSession = db.prepare(`
@@ -459,6 +471,17 @@ export async function syncAntigravityDesktopSessions(
         const metaData = (await metaRes.json()) as any;
         const generatorMetadata = metaData?.generatorMetadata || [];
 
+        const enumHints = new Map<string, AntigravityEnumHint>();
+        for (const meta of generatorMetadata) {
+          const cm = meta?.chatModel || meta || {};
+          recordAntigravityEnumHint(
+            enumHints,
+            typeof cm.model === "string" ? cm.model : undefined,
+            typeof cm.responseModel === "string" ? cm.responseModel : undefined,
+            typeof cm.modelDisplayName === "string" ? cm.modelDisplayName : undefined
+          );
+        }
+
         db.run("BEGIN TRANSACTION;");
         inTx = true;
         db.run(`DELETE FROM session_usage WHERE session_id = ?`, [sId]);
@@ -466,10 +489,11 @@ export async function syncAntigravityDesktopSessions(
         for (let stepIdx = 0; stepIdx < generatorMetadata.length; stepIdx++) {
           const meta = generatorMetadata[stepIdx];
           const chatModel = meta?.chatModel || meta || {};
-          const modelEnum = chatModel.model;
-          const servedModel = chatModel.responseModel;
-          const displayName = chatModel.modelDisplayName;
-          const resolved = resolveAntigravityModel(modelEnum, servedModel || displayName);
+          const modelEnum = typeof chatModel.model === "string" ? chatModel.model.trim() || undefined : undefined;
+          const rawServed = typeof chatModel.responseModel === "string" ? chatModel.responseModel.trim() || undefined : undefined;
+          const rawDisplay = typeof chatModel.modelDisplayName === "string" ? chatModel.modelDisplayName.trim() || undefined : undefined;
+          const effective = applyAntigravityEnumHint(enumHints, modelEnum, rawServed, rawDisplay);
+          const resolved = resolveAntigravityModel(modelEnum, effective.servedModel, effective.displayName);
 
           let createdAt = fileMtime;
           const createdRaw = chatModel.chatStartMetadata?.createdAt;
@@ -478,16 +502,25 @@ export async function syncAntigravityDesktopSessions(
             if (!isNaN(parsed) && parsed > 0) createdAt = parsed;
           }
 
-          const retryInfos = chatModel.retryInfos || [];
+          const retryInfos =
+            Array.isArray(chatModel.retryInfos) && chatModel.retryInfos.length > 0
+              ? chatModel.retryInfos
+              : chatModel.usage
+              ? [{ usage: chatModel.usage }]
+              : [];
           for (const retry of retryInfos) {
             const usage = retry.usage || retry || {};
-            const inp = usage.inputTokens || 0;
-            const out = usage.outputTokens || 0;
-            const cr = usage.cacheReadTokens || 0;
-            const cw = usage.cacheWriteTokens || 0;
+            const inp = Number(usage.inputTokens) || 0;
+            const totOut = Number(usage.outputTokens) || 0;
+            const thinkOut = Number(usage.thinkingOutputTokens) || 0;
+            const respOut = Number(usage.responseOutputTokens) || 0;
+            const out = totOut > 0 ? totOut : thinkOut + respOut;
+            const cr = Number(usage.cacheReadTokens) || 0;
+            const cw = Number(usage.cacheWriteTokens) || 0;
             if (inp + out + cr + cw <= 0) continue;
 
-            const ts = usage.timestamp ? (usage.timestamp > 1e11 ? usage.timestamp : usage.timestamp * 1000) : createdAt;
+            const rawTs = Number(usage.timestamp);
+            const ts = rawTs > 0 ? (rawTs > 1e11 ? rawTs : rawTs * 1000) : createdAt;
             const respId = usage.responseId || retry.responseId;
             const usageId = respId ? `${sId}:${respId}` : `${sId}:${stepIdx}:${ts}`;
 
@@ -496,7 +529,8 @@ export async function syncAntigravityDesktopSessions(
               sId,
               conn.runtimeKind,
               modelEnum || null,
-              servedModel || null,
+              effective.servedModel || null,
+              effective.displayName || null,
               resolved.modelId,
               ts,
               inp,

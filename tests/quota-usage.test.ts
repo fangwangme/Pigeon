@@ -692,3 +692,304 @@ describe("quota config and usage request validation (quota-and-usage.md §2.5, p
     store.close();
   });
 });
+
+function pbVarint(n: number): number[] {
+  const out: number[] = [];
+  let v = Math.floor(n);
+  while (v >= 0x80) {
+    out.push((v & 0x7f) | 0x80);
+    v = Math.floor(v / 128);
+  }
+  out.push(v & 0x7f);
+  return out;
+}
+
+function pbFieldVarint(fieldNum: number, val: number): Buffer {
+  return Buffer.from([...pbVarint((fieldNum << 3) | 0), ...pbVarint(val)]);
+}
+
+function pbFieldBytes(fieldNum: number, data: Buffer | string): Buffer {
+  const buf = typeof data === "string" ? Buffer.from(data, "utf-8") : data;
+  return Buffer.from([...pbVarint((fieldNum << 3) | 2), ...pbVarint(buf.length), ...buf]);
+}
+
+interface MockAgyStep {
+  uuid: string;
+  tsMs: number;
+  modelEnum?: string;
+  servedModel?: string;
+  displayName?: string;
+  input?: number;
+  totOut?: number;
+  cacheWrite?: number;
+  cacheRead?: number;
+  thinkingOut?: number;
+  respOut?: number;
+  respId?: string;
+}
+
+function writeMockAntigravityDb(path: string, steps: MockAgyStep[]): void {
+  const db = new Database(path);
+  db.run("CREATE TABLE steps (idx INTEGER PRIMARY KEY, metadata BLOB);");
+  db.run("CREATE TABLE gen_metadata (idx INTEGER PRIMARY KEY, data BLOB);");
+
+  const insStep = db.prepare("INSERT INTO steps (idx, metadata) VALUES (?, ?)");
+  const insGen = db.prepare("INSERT INTO gen_metadata (idx, data) VALUES (?, ?)");
+
+  steps.forEach((s, idx) => {
+    const sec = Math.floor(s.tsMs / 1000);
+    const nanos = (s.tsMs % 1000) * 1_000_000;
+    const tsMsg = Buffer.concat([pbFieldVarint(1, sec), pbFieldVarint(2, nanos)]);
+    const stepMeta = Buffer.concat([pbFieldBytes(1, tsMsg), pbFieldBytes(12, s.uuid)]);
+    insStep.run(idx, stepMeta);
+
+    const usageParts: Buffer[] = [];
+    if (s.input !== undefined) usageParts.push(pbFieldVarint(2, s.input));
+    if (s.totOut !== undefined) usageParts.push(pbFieldVarint(3, s.totOut));
+    if (s.cacheWrite !== undefined) usageParts.push(pbFieldVarint(4, s.cacheWrite));
+    if (s.cacheRead !== undefined) usageParts.push(pbFieldVarint(5, s.cacheRead));
+    if (s.thinkingOut !== undefined) usageParts.push(pbFieldVarint(9, s.thinkingOut));
+    if (s.respOut !== undefined) usageParts.push(pbFieldVarint(10, s.respOut));
+    if (s.respId !== undefined) usageParts.push(pbFieldBytes(11, s.respId));
+
+    const payloadParts: Buffer[] = [pbFieldBytes(4, Buffer.concat(usageParts))];
+    if (s.servedModel !== undefined) payloadParts.push(pbFieldBytes(19, s.servedModel));
+    if (s.modelEnum !== undefined) {
+      payloadParts.push(pbFieldBytes(20, Buffer.concat([pbFieldBytes(1, "model_enum"), pbFieldBytes(2, s.modelEnum)])));
+    }
+    if (s.displayName !== undefined) payloadParts.push(pbFieldBytes(21, s.displayName));
+
+    const genBlob = Buffer.concat([pbFieldBytes(4, s.uuid), pbFieldBytes(1, Buffer.concat(payloadParts))]);
+    insGen.run(idx, genBlob);
+  });
+
+  db.close();
+}
+
+describe("Antigravity token accounting and contemporaneous model resolution (quota-and-usage.md §3.1–§3.3)", () => {
+  test("scanAntigravityDb counts total output including thinking tokens, reads cacheWriteTokens, normalizes (Orchestrator) and -xhigh display names, and inherits same-session sibling identity", () => {
+    const d = tempDir("agy-db-scan");
+    const dbFile = join(d, "session-orch.db");
+    const baseTs = Date.parse("2026-11-18T12:00:00Z");
+
+    writeMockAntigravityDb(dbFile, [
+      {
+        uuid: "u0",
+        tsMs: baseTs,
+        modelEnum: "MODEL_PLACEHOLDER_M669",
+        servedModel: "gemini-flash-worker-agy",
+        displayName: "Gemini 4 Hydrogen (Orchestrator)",
+        input: 10_000,
+        totOut: 1_000,
+        thinkingOut: 700,
+        respOut: 300,
+        cacheRead: 5_000,
+        cacheWrite: 200,
+        respId: "r0",
+      },
+      {
+        uuid: "u1",
+        tsMs: baseTs + 1_000,
+        modelEnum: "MODEL_PLACEHOLDER_M669",
+        servedModel: "gemini-flash-worker-agy",
+        displayName: "Gemini 4 Oxygen (Orchestrator)",
+        input: 2_000,
+        thinkingOut: 400,
+        respOut: 100,
+        respId: "r1",
+      },
+      {
+        uuid: "u2",
+        tsMs: baseTs + 2_000,
+        modelEnum: "MODEL_PLACEHOLDER_M901",
+        servedModel: "gemini-4-hydrogen-xhigh",
+        displayName: "Gemini 4 Hydrogen (XHigh)",
+        input: 1_000,
+        totOut: 200,
+        respId: "r2",
+      },
+      {
+        uuid: "u3",
+        tsMs: baseTs + 3_000,
+        modelEnum: "MODEL_PLACEHOLDER_M901",
+        input: 1_500,
+        totOut: 250,
+        respId: "r3",
+      },
+    ]);
+
+    const recs = scanAntigravityDb(dbFile);
+    expect(recs).toHaveLength(4);
+
+    expect(recs[0]).toMatchObject({
+      canonicalModelId: "gemini-4-hydrogen",
+      inputTokens: 10_000,
+      outputTokens: 1_000,
+      cacheReadTokens: 5_000,
+      cacheWriteTokens: 200,
+      totalTokens: 16_200,
+    });
+    expect(recs[1]).toMatchObject({
+      canonicalModelId: "gemini-4-oxygen",
+      inputTokens: 2_000,
+      outputTokens: 500,
+      totalTokens: 2_500,
+    });
+    expect(recs[2]).toMatchObject({
+      canonicalModelId: "gemini-4-hydrogen",
+      outputTokens: 200,
+    });
+    expect(recs[3]).toMatchObject({
+      canonicalModelId: "gemini-4-hydrogen",
+      outputTokens: 250,
+    });
+  });
+
+  test("UsageStore resolves unversioned Antigravity family labels by models.dev release_date across generations, preserves historical assignments on rebuildAll, and upgrades release-day records on catalog refresh", async () => {
+    const d = tempDir("agy-contemporaneous");
+    const fakeHome = join(d, "home");
+    const convDir = join(fakeHome, ".gemini", "antigravity-cli", "conversations");
+    mkdirSync(convDir, { recursive: true });
+
+    writeMockAntigravityDb(join(convDir, "s_nov14.db"), [
+      {
+        uuid: "n14-1",
+        tsMs: Date.parse("2026-11-14T12:00:00Z"),
+        modelEnum: "MODEL_PLACEHOLDER_M668",
+        servedModel: "gemini-pro-orchestrator-g1-pro",
+        displayName: "Orchestrator (Argon)",
+        input: 1_000_000,
+        totOut: 100_000,
+        thinkingOut: 60_000,
+        respOut: 40_000,
+        respId: "n14-r1",
+      },
+      {
+        uuid: "n14-2",
+        tsMs: Date.parse("2026-11-14T12:05:00Z"),
+        modelEnum: "MODEL_PLACEHOLDER_M669",
+        servedModel: "gemini-flash-worker-agy",
+        displayName: "Gemini Flash",
+        input: 1_000_000,
+        totOut: 100_000,
+        respId: "n14-r2",
+      },
+      {
+        uuid: "n14-3",
+        tsMs: Date.parse("2026-11-14T12:10:00Z"),
+        modelEnum: "MODEL_PLACEHOLDER_M681",
+        servedModel: "gemini-pro-orchestrator-argon",
+        input: 1_000_000,
+        totOut: 100_000,
+        respId: "n14-r3",
+      },
+    ]);
+
+    writeMockAntigravityDb(join(convDir, "s_nov18.db"), [
+      {
+        uuid: "n18-1",
+        tsMs: Date.parse("2026-11-18T12:00:00Z"),
+        modelEnum: "MODEL_PLACEHOLDER_M667",
+        servedModel: "gemini-pro-orchestrator",
+        displayName: "Orchestrator (Carbon)",
+        input: 1_000_000,
+        totOut: 100_000,
+        respId: "n18-r1",
+      },
+    ]);
+
+    writeMockAntigravityDb(join(convDir, "s_mar01.db"), [
+      {
+        uuid: "m01-1",
+        tsMs: Date.parse("2027-03-01T12:00:00Z"),
+        modelEnum: "MODEL_PLACEHOLDER_M667",
+        servedModel: "gemini-pro-orchestrator",
+        displayName: "Orchestrator (Carbon)",
+        input: 1_000_000,
+        totOut: 100_000,
+        respId: "m01-r1",
+      },
+    ]);
+
+    let includeCarbon42 = false;
+    let clock = Date.parse("2027-03-01T12:30:00Z");
+    const cachePath = join(d, "pricing-cache.json");
+
+    const mockCatalogFetch = (async (input: RequestInfo | URL) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.href : (input as Request).url;
+      if (!url.includes("models.dev")) return new Response("Not Found", { status: 404 });
+      const models: Record<string, any> = {
+        "gemini-3.5-flash": { id: "gemini-3.5-flash", release_date: "2026-05-19", cost: { input: 1.5, output: 9, cache_read: 0.15 } },
+        "gemini-3.8-flash": { id: "gemini-3.8-flash", release_date: "2026-09-02", cost: { input: 0.75, output: 3.75, cache_read: 0.075 } },
+        "gemini-4-argon": { id: "gemini-4-argon", release_date: "2026-10-13", cost: { input: 2, output: 10, cache_read: 0.1 } },
+        "gemini-4-carbon": { id: "gemini-4-carbon", release_date: "2026-11-10", cost: { input: 4, output: 20, cache_read: 0.2 } },
+      };
+      if (includeCarbon42) {
+        models["gemini-4.2-carbon"] = { id: "gemini-4.2-carbon", release_date: "2027-03-01", cost: { input: 5, output: 25, cache_read: 0.25 } };
+      }
+      return Response.json({ google: { models } });
+    }) as unknown as typeof fetch;
+
+    const pm = new PricingManager({ cachePath, now: () => clock, fetch: mockCatalogFetch });
+    const store = new UsageStore({ dbPath: join(d, "usage.db"), home: fakeHome, now: () => clock, discoverLs: async () => null });
+    const dayModels = (date: string) =>
+      store
+        .getUsageReport({ preset: "custom", from: date, to: date, agents: ["agy"] }, { from: date, to: date }, "2027-03-05", true)
+        .models.map((m) => ({ model: m.model, messages: m.messages, cost: m.cost, unpriced: m.unpriced }));
+
+    try {
+      await pm.initialize();
+      await store.scanIncremental(pm);
+
+      expect(dayModels("2026-11-14")).toEqual([
+        { model: "gemini-4-argon", messages: 2, cost: 6, unpriced: false },
+        { model: "gemini-3-8-flash", messages: 1, cost: 1.125, unpriced: false },
+      ]);
+      expect(dayModels("2026-11-18")).toEqual([{ model: "gemini-4-carbon", messages: 1, cost: 6, unpriced: false }]);
+      expect(dayModels("2027-03-01")).toEqual([{ model: "gemini-4-carbon", messages: 1, cost: 6, unpriced: false }]);
+
+      // Catalog refreshes on 2027-03-05 introducing gemini-4.2-carbon (release_date 2027-03-01)
+      includeCarbon42 = true;
+      clock = Date.parse("2027-03-05T12:00:00Z");
+      writeMockAntigravityDb(join(convDir, "s_mar05.db"), [
+        {
+          uuid: "m05-1",
+          tsMs: Date.parse("2027-03-05T12:00:00Z"),
+          modelEnum: "MODEL_PLACEHOLDER_M667",
+          servedModel: "gemini-pro-orchestrator",
+          displayName: "Orchestrator (Carbon)",
+          input: 1_000_000,
+          totOut: 100_000,
+          respId: "m05-r1",
+        },
+      ]);
+
+      await pm.initialize();
+      await store.scanIncremental(pm);
+
+      // New and release-day records resolve to gemini-4-2-carbon, while 2026-11-18 stays gemini-4-carbon
+      expect(dayModels("2027-03-05")).toEqual([{ model: "gemini-4-2-carbon", messages: 1, cost: 7.5, unpriced: false }]);
+      expect(dayModels("2027-03-01")).toEqual([{ model: "gemini-4-2-carbon", messages: 1, cost: 7.5, unpriced: false }]);
+      expect(dayModels("2026-11-18")).toEqual([{ model: "gemini-4-carbon", messages: 1, cost: 6, unpriced: false }]);
+
+      // Offline rebuildAll preserves contemporaneous model assignments for both old and new eras
+      const offlinePm = new PricingManager({
+        cachePath,
+        now: () => clock + 48 * HOUR,
+        fetch: (() => Promise.reject(new Error("offline"))) as unknown as typeof fetch,
+      });
+      await offlinePm.initialize();
+      await store.rebuildAll(offlinePm);
+
+      expect(dayModels("2026-11-14")).toEqual([
+        { model: "gemini-4-argon", messages: 2, cost: 6, unpriced: false },
+        { model: "gemini-3-8-flash", messages: 1, cost: 1.125, unpriced: false },
+      ]);
+      expect(dayModels("2026-11-18")).toEqual([{ model: "gemini-4-carbon", messages: 1, cost: 6, unpriced: false }]);
+      expect(dayModels("2027-03-01")).toEqual([{ model: "gemini-4-2-carbon", messages: 1, cost: 7.5, unpriced: false }]);
+      expect(dayModels("2027-03-05")).toEqual([{ model: "gemini-4-2-carbon", messages: 1, cost: 7.5, unpriced: false }]);
+    } finally {
+      store.close();
+    }
+  });
+});

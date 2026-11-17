@@ -8,6 +8,7 @@ export interface ModelPrice {
   outputCostPerToken: number;
   cacheReadCostPerToken?: number;
   cacheWriteCostPerToken?: number;
+  releaseDate?: string;
   source: string;
 }
 
@@ -22,6 +23,7 @@ const MODELSDEV_URL = "https://models.dev/api.json";
 const LITELLM_URL = "https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json";
 const OPENROUTER_URL = "https://openrouter.ai/api/v1/models";
 const DAY_MS = 24 * 60 * 60 * 1000;
+const CACHE_SCHEMA_VERSION = 2;
 const FIRST_PARTY_PROVIDERS = [
   "anthropic",
   "openai",
@@ -128,7 +130,7 @@ export class PricingManager {
       const raw = readFileSync(path, "utf-8");
       const data = JSON.parse(raw);
       const fetchedAt = data.fetchedAt || 0;
-      const fresh = this.now() - fetchedAt <= DAY_MS;
+      const fresh = data.schemaVersion === CACHE_SCHEMA_VERSION && this.now() - fetchedAt <= DAY_MS;
       if (data.entries) {
         for (const [k, v] of Object.entries(data.entries)) {
           if (k.includes("/")) continue;
@@ -195,11 +197,16 @@ export class PricingManager {
               for (const m of Object.values(models)) {
                 const cost = (m as any)?.cost;
                 if (!cost || typeof cost.input !== "number" || typeof cost.output !== "number") continue;
+                const isFirstParty = providerPriority(_provider) < FIRST_PARTY_PROVIDERS.length;
+                const rawRelease = isFirstParty ? (m as any).release_date : undefined;
+                const releaseDate =
+                  typeof rawRelease === "string" && /^\d{4}-\d{2}-\d{2}$/.test(rawRelease) ? rawRelease : undefined;
                 const price: ModelPrice = {
                   inputCostPerToken: cost.input / 1_000_000,
                   outputCostPerToken: cost.output / 1_000_000,
                   cacheReadCostPerToken: typeof cost.cache_read === "number" ? cost.cache_read / 1_000_000 : undefined,
                   cacheWriteCostPerToken: typeof cost.cache_write === "number" ? cost.cache_write / 1_000_000 : undefined,
+                  ...(releaseDate ? { releaseDate } : {}),
                   source: "models.dev",
                 };
                 const id = (m as any).id || "";
@@ -276,6 +283,7 @@ export class PricingManager {
       try {
         mkdirSync(dirname(this.cachePath), { recursive: true });
         const obj: Record<string, any> = {
+          schemaVersion: CACHE_SCHEMA_VERSION,
           fetchedAt: this.now(),
           entries: Object.fromEntries(this.catalog.entries()),
         };
