@@ -108,7 +108,6 @@ export const zh: Messages = {
   "menu.viewTerminal": "查看终端",
 
   "model.title": "模型与思考强度",
-  "model.model": "模型",
   "model.none": "这个 Agent 没有可选的模型。",
   "model.search": "搜索模型",
   "model.refresh": "刷新",
@@ -402,5 +401,5 @@ export const zh: Messages = {
   "settings.providerPlan": "已登录 · {plan}",
   "settings.providerDisabled": "不查询",
   "settings.usageScanInterval": "刷新间隔",
-  "settings.usageScanModeHint": "电脑会按此间隔一起刷新已启用的额度与用量（默认 15m，未连接手机时也会运行）；各页的刷新按钮可立即刷新该页。",
+  "settings.refreshIntervalHint": "电脑会按此间隔一起刷新已启用的额度与用量（默认 15m，未连接手机时也会运行）；各页的刷新按钮可立即刷新该页。",
 };

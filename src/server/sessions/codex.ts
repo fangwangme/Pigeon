@@ -1,25 +1,13 @@
-import { existsSync, readdirSync, realpathSync, statSync, type Stats } from "node:fs";
+import { existsSync, readdirSync, realpathSync } from "node:fs";
 import { join } from "node:path";
 import type { FileDiffSummary, TodoItem } from "../../shared/agent-session";
 import type { PastSession } from "../../types/protocol";
-import { countPatch, fileFallbackTs, isEnoent, isObj, JsonlTail, readFirstJsonLine, readHeadJsonLines, readTailJsonLines, str, todoStatus, TurnBuilder, type SessionRead } from "./common";
+import { countPatch, fileFallbackTs, isEnoent, isObj, JsonlTail, mtimeOf, safeStat, readFirstJsonLine, readHeadJsonLines, readTailJsonLines, str, todoStatus, TurnBuilder, type SessionRead } from "./common";
 import type { PaneFacts, SessionSource } from "./source";
 
 const MAX_LISTED_ROLLOUTS = 2000;
 const NOT_PROMPT = /^\s*<(environment_context|user_instructions|user_action)/;
 
-function safeStat(path: string): Stats | null {
-  try {
-    return statSync(path);
-  } catch (err) {
-    if (isEnoent(err)) return null;
-    throw err;
-  }
-}
-
-function mtimeOf(path: string | undefined): number | null {
-  return path ? (safeStat(path)?.mtimeMs ?? null) : null;
-}
 
 interface CodexParseState {
   pendingExec?: { callId: string; replaced: boolean };

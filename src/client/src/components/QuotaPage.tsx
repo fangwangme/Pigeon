@@ -1,12 +1,11 @@
 import { createSignal, For, onCleanup, onMount, Show } from "solid-js";
 import { navigate, state } from "../state/store";
 import { fetchQuota } from "../state/ws";
-import { scanIntervalToMs } from "../../../shared/defaults";
+import { QUOTA_PROVIDER_KEYS as ORDERED_PROVIDERS, scanIntervalToMs } from "../../../shared/defaults";
 import { quotaLevel, quotaPace } from "../../../shared/quota";
 import { FeatureDisabledNotice, Icon, QuotaUsageTabs } from "./ui";
 import { t } from "../i18n";
 
-const ORDERED_PROVIDERS = ["claude", "codex", "antigravity"] as const;
 
 const PROVIDER_NAMES: Record<string, string> = {
   claude: "CLAUDE CODE",

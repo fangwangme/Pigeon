@@ -474,17 +474,8 @@ export function handleServerMessage(msg: ServerMessage): void {
       const substituted = !!msg.payload.requestedPaneId && msg.payload.requestedPaneId === state.activePaneId;
       if (msg.payload.paneId !== state.activePaneId && !substituted) return;
       if (substituted) {
-        writePref("pigeon_active_pane", msg.payload.paneId);
-        paneRevisions.delete(msg.payload.paneId);
-        setState("activePaneId", msg.payload.paneId);
-        for (const w of state.workspaces) {
-          const t = w.tabs.find((tab) => tab.panes.some((p) => p.id === msg.payload.paneId));
-          if (t) {
-            setState("activeTabId", t.id);
-            break;
-          }
-        }
-        setUnread(msg.payload.paneId, false);
+        // The requested pane is gone: drop its view before showing the pane the server chose.
+        showPane(msg.payload.paneId, null);
         reportPresence();
       }
       freshDataArrivedPaneId = msg.payload.paneId;
@@ -695,17 +686,10 @@ export function respondInteraction(interactionId: string, optionId: string, fing
 }
 
 /** The one navigation entry point into a pane: workspace and tab follow from it. */
-export async function selectPane(paneId: string): Promise<void> {
+/** Makes `paneId` the viewed pane, showing `memoryView` (or an empty view) until its data arrives. */
+function showPane(paneId: string, memoryView: PaneCacheEntry | null | undefined): void {
   writePref("pigeon_active_pane", paneId);
-  const previousPaneId = state.activePaneId;
-  if (previousPaneId && previousPaneId !== paneId) {
-    flushActivePaneSnapshot();
-  }
-
-  freshDataArrivedPaneId = null;
   paneRevisions.delete(paneId);
-
-  const memoryView = getMemoryPaneView(paneId);
   setState({
     activePaneId: paneId,
     cards: [],
@@ -733,6 +717,17 @@ export async function selectPane(paneId: string): Promise<void> {
     }
   }
   setUnread(paneId, false);
+}
+
+export async function selectPane(paneId: string): Promise<void> {
+  const previousPaneId = state.activePaneId;
+  if (previousPaneId && previousPaneId !== paneId) {
+    flushActivePaneSnapshot();
+  }
+
+  freshDataArrivedPaneId = null;
+  const memoryView = getMemoryPaneView(paneId);
+  showPane(paneId, memoryView);
 
   let cached: PaneCacheEntry | null = memoryView || null;
   if (!cached) {

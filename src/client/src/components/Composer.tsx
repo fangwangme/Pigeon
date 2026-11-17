@@ -117,12 +117,6 @@ export function insertIntoComposer(text: string): void {
   insertHook?.(text);
 }
 
-let restoreHook: ((text: string, uploadIds: string[]) => void) | null = null;
-/** §3.5 **编辑**: a withdrawn queued prompt's text goes in at the caret and its uploads join the attachments. */
-export function restoreIntoComposer(text: string, uploadIds: string[]): void {
-  restoreHook?.(text, uploadIds);
-}
-
 let editQueueHook: ((queueId: string, text: string, uploadIds: string[]) => void) | null = null;
 /** Modifies a queued prompt in-place on the server without changing queue position. */
 export function editQueuedPrompt(queueId: string, text: string, uploadIds: string[]): void {
@@ -241,24 +235,6 @@ export function Composer(props: ComposerProps) {
     }
   };
 
-  const restore = (s: string, uploadIds: string[]) => {
-    const v = text();
-    const at = ta ? ta.selectionStart : v.length;
-    const before = v.slice(0, at);
-    const gap = before && !before.endsWith("\n") && s ? "\n" : "";
-    save(`${before}${gap}${s}${v.slice(at)}`);
-    setAtts([...atts(), ...uploadIds.map((id) => ({ key: ++keySeq, name: t("composer.attachment"), id, preview: `/api/uploads/${id}` }))]);
-    setTimeout(() => {
-      if (!ta) return;
-      ta.focus();
-      const pos = before.length + gap.length + s.length;
-      ta.setSelectionRange(pos, pos);
-      setCaret(pos);
-      grow();
-    }, 20);
-  };
-  restoreHook = restore;
-
   const startEditQueue = (queueId: string, s: string, uploadIds: string[]) => {
     savedDraftBeforeEdit = { text: text(), atts: atts() };
     setEditingQueueId(queueId);
@@ -293,7 +269,6 @@ export function Composer(props: ComposerProps) {
   cancelEditQueueHook = cancelEdit;
 
   onCleanup(() => {
-    if (restoreHook === restore) restoreHook = null;
     if (editQueueHook === startEditQueue) editQueueHook = null;
     if (cancelEditQueueHook === cancelEdit) cancelEditQueueHook = null;
   });

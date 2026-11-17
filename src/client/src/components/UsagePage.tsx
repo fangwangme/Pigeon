@@ -1,7 +1,7 @@
 import { createEffect, createMemo, createSignal, For, on, onCleanup, onMount, Show } from "solid-js";
 import { navigate, state } from "../state/store";
 import { request } from "../state/ws";
-import { scanIntervalToMs } from "../../../shared/defaults";
+import { scanIntervalToMs, USAGE_AGENT_KINDS as AGENT_KEYS } from "../../../shared/defaults";
 import { cacheHitPercent, daysBetween, formatYMD, heatmapLayout, type UsagePreset } from "../../../shared/usage";
 import type {
   UsageDayPayload,
@@ -12,7 +12,6 @@ import type {
 import { FeatureDisabledNotice, formatModelName, Icon, QuotaUsageTabs } from "./ui";
 import { t, locale } from "../i18n";
 
-const AGENT_KEYS = ["claude", "codex", "agy", "opencode", "pi"] as const;
 
 const AGENT_NAMES: Record<string, string> = {
   claude: "Claude Code",

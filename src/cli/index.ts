@@ -208,7 +208,7 @@ async function main() {
       if (!(err instanceof DaemonNotRunningError)) throw err;
       // No daemon: rebuild the same database directly.
       const { UsageService } = await import("../server/usage/index");
-      const service = new UsageService({ configManager, autoScan: false });
+      const service = new UsageService({ configManager });
       try {
         res = await service.rebuild();
       } finally {

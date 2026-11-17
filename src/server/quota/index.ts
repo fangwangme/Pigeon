@@ -1,6 +1,7 @@
 // Issue #13, #25, #29. quota-and-usage.md §2.6, protocol.md §4.16, §5.11.
 import type { ConfigManager } from "../config-manager";
 import type { ClientConfig, QuotaGetPayload, QuotaProviderState, QuotaSnapshot } from "../../types/protocol";
+import { QUOTA_PROVIDER_KEYS } from "../../shared/defaults";
 import { ClaudeQuotaProvider } from "./claude";
 import { CodexQuotaProvider } from "./codex";
 import { AntigravityQuotaProvider } from "./antigravity";
@@ -11,7 +12,6 @@ export interface QuotaServiceOptions {
   codex?: CodexQuotaProvider;
   antigravity?: AntigravityQuotaProvider;
   configManager?: ConfigManager;
-  autoScan?: boolean;
   now?: () => number;
   onUpdated?: (payload: QuotaGetPayload) => void;
 }
@@ -61,8 +61,7 @@ export class QuotaService {
     if (this.refreshAllPromise) return this.refreshAllPromise;
     this.refreshAllPromise = (async () => {
       const config = clientConfig ?? this.configManager?.getClientConfig();
-      const providerKeys: Array<"claude" | "codex" | "antigravity"> = ["claude", "codex", "antigravity"];
-      const enabledKeys = providerKeys.filter((k) => this.isProviderEnabled(config, k));
+      const enabledKeys = QUOTA_PROVIDER_KEYS.filter((k) => this.isProviderEnabled(config, k));
 
       await Promise.all(
         enabledKeys.map(async (key) => {
@@ -99,9 +98,8 @@ export class QuotaService {
 
   private buildPayload(clientConfig?: ClientConfig): { providers: QuotaProviderState[]; fetchedAt: number } {
     const config = clientConfig ?? this.configManager?.getClientConfig();
-    const providerKeys: Array<"claude" | "codex" | "antigravity"> = ["claude", "codex", "antigravity"];
 
-    const results: QuotaProviderState[] = providerKeys.map((key) => {
+    const results: QuotaProviderState[] = QUOTA_PROVIDER_KEYS.map((key) => {
       const isEnabled = this.isProviderEnabled(config, key);
       if (!isEnabled) {
         return {

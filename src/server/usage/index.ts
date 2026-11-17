@@ -11,7 +11,6 @@ export interface UsageServiceOptions {
   pricing?: PricingManager;
   configManager?: ConfigManager;
   now?: () => number;
-  autoScan?: boolean;
   onUpdated?: (payload: { scannedAt: number }) => void;
 }
 

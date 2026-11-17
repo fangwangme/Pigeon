@@ -305,7 +305,6 @@ describe("quota config and usage request validation (quota-and-usage.md §2.5, p
       const service = new UsageService({
         store,
         pricing: new PricingManager({ cachePath: join(d, "pricing.json"), fetch: (() => Promise.reject()) as any }),
-        autoScan: false,
       });
 
       // Hook into rebuildAll to hold execution via deferred promise

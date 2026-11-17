@@ -107,7 +107,6 @@ export const en = {
   "menu.viewTerminal": "View terminal",
 
   "model.title": "Model and effort",
-  "model.model": "Model",
   "model.none": "This agent has no models to choose from.",
   "model.search": "Search models",
   "model.refresh": "Refresh",
@@ -401,5 +400,5 @@ export const en = {
   "settings.providerPlan": "Logged in · {plan}",
   "settings.providerDisabled": "Do not query",
   "settings.usageScanInterval": "Refresh interval",
-  "settings.usageScanModeHint": "The computer refreshes enabled quota and usage together at this interval even when no phone is connected (15m default); each page's refresh button refreshes that page right away.",
+  "settings.refreshIntervalHint": "The computer refreshes enabled quota and usage together at this interval even when no phone is connected (15m default); each page's refresh button refreshes that page right away.",
 } as const;

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { mkdirSync, writeFileSync, rmSync } from "node:fs";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { PricingManager } from "../src/server/usage/pricing";
@@ -50,7 +50,7 @@ describe("PricingManager fallback and retry (quota-and-usage.md §3.3)", () => {
 
     let networkAttempts = 0;
     let shouldFail = true;
-    const mockFetch = (url: any) => {
+    const mockFetch = () => {
       networkAttempts++;
       if (shouldFail) return Promise.reject(new Error("network error"));
       return Promise.resolve({
