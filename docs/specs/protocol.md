@@ -15,9 +15,9 @@ Key Protocol Principles:
 ## 2. Connection Lifecycle and Heartbeat
 
 ### 2.1 Heartbeat (`client <-> server`)
-- The client sends `{ "type": "ping", "timestamp": 1729650000000 }` every 15 seconds. The server answers `{ "type": "pong", "timestamp": … }`.
-- **Timeout**: If no `pong` has arrived for 30 seconds, the client closes the socket and reconnects.
-- **Wakeup**: When `document.visibilityState` becomes `visible`, the client reconnects at once if the socket is not open. Otherwise it sends a `ping` at once and reconnects when no `pong` arrives within 3 seconds, so a connection that died while the phone slept is replaced without waiting for the 30-second timeout. The wakeup reconnect replaces any reconnect already scheduled; it never adds a second one.
+- The client sends `{ "type": "ping", "timestamp": 1729650000000 }` every 5 seconds. The server answers `{ "type": "pong", "timestamp": … }`.
+- **Timeout**: If no `pong` has arrived for 10 seconds, the client closes the socket and reconnects.
+- **Wakeup**: When `document.visibilityState` becomes `visible`, the client reconnects at once if the socket is not open. Otherwise it sends a `ping` at once and reconnects when no `pong` arrives within 3 seconds, so a connection that died while the phone slept is replaced without waiting for the 10-second timeout. The wakeup reconnect replaces any reconnect already scheduled; it never adds a second one.
 - With every heartbeat, and whenever visibility or the viewed pane changes, the client sends `{ "type": "presence_update", "isVisible": true, "viewingPaneId": "w1:p2" }`. This message has no `id` and gets no reply.
 
 ### 2.2 Refusals and Closure Codes

@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, jest, test } from "bun:test";
 import { handleServerMessage, handleVisibilityChange, initWebSocket, request, selectPane } from "../src/client/src/state/ws";
 import { setState, setUnread, state } from "../src/client/src/state/store";
 import type { PaneStatePayload } from "../src/types/protocol";
@@ -209,6 +209,89 @@ describe("socket teardown on resume (protocol.md §2.2)", () => {
       await Bun.sleep(20); // the reconnect it started finishes before the stubs go
       fakeClientWs.readyState = 3; // and its socket does not outlive the test
     } finally {
+      globalThis.WebSocket = origWs;
+      (globalThis as any).document = origDoc;
+      (globalThis as any).window = origWindow;
+      globalThis.fetch = origFetch;
+    }
+  });
+});
+
+describe("heartbeat (protocol.md §2.1)", () => {
+  test("sends a ping every 5 s and reconnects when no pong arrives for 10 s", async () => {
+    const origWs = globalThis.WebSocket;
+    const origDoc = (globalThis as any).document;
+    const origWindow = (globalThis as any).window;
+    const origFetch = globalThis.fetch;
+    const sockets: any[] = [];
+
+    class FakeSocket {
+      static CONNECTING = 0;
+      static OPEN = 1;
+      static CLOSING = 2;
+      static CLOSED = 3;
+      readyState = 0;
+      sent: any[] = [];
+      closeCalled = false;
+      onopen: ((e: any) => void) | null = null;
+      onclose: ((e: any) => void) | null = null;
+      onmessage: ((e: any) => void) | null = null;
+      constructor() {
+        sockets.push(this);
+      }
+      send(text: string) {
+        this.sent.push(JSON.parse(text));
+      }
+      close() {
+        this.closeCalled = true;
+        if (this.readyState === 1) this.readyState = 2;
+      }
+      open() {
+        this.readyState = 1;
+        this.onopen?.({});
+      }
+      drop(code = 1006) {
+        this.readyState = 3;
+        this.onclose?.({ code, reason: "" });
+      }
+    }
+
+    jest.useFakeTimers();
+    (globalThis as any).document = { visibilityState: "visible" };
+    (globalThis as any).window = { location: { protocol: "http:", host: "localhost", hash: "" } };
+    (globalThis as any).fetch = (async () => Response.json({ authenticated: true })) as any;
+    (globalThis as any).WebSocket = FakeSocket as any;
+
+    const flush = async () => {
+      for (let i = 0; i < 50; i++) await Promise.resolve();
+    };
+
+    try {
+      await initWebSocket();
+      const first = sockets[sockets.length - 1];
+      first.open();
+      first.sent.length = 0;
+
+      jest.advanceTimersByTime(5_000);
+      await flush();
+      expect(first.sent.filter((m: any) => m.type === "ping").length).toBe(1);
+      expect(sockets.length).toBe(1);
+
+      jest.advanceTimersByTime(5_000);
+      await flush();
+      expect(first.sent.filter((m: any) => m.type === "ping").length).toBe(2);
+      expect(sockets.length).toBe(1);
+
+      jest.advanceTimersByTime(5_000);
+      await flush();
+      expect(first.closeCalled).toBe(true);
+      expect(sockets.length).toBe(2);
+    } finally {
+      await flush();
+      for (const s of sockets) if (s.readyState !== 3) s.drop(4409);
+      sockets[sockets.length - 1]?.drop(4409);
+      await flush();
+      jest.useRealTimers();
       globalThis.WebSocket = origWs;
       (globalThis as any).document = origDoc;
       (globalThis as any).window = origWindow;

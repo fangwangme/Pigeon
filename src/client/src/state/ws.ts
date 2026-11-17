@@ -26,6 +26,8 @@ const RECONNECT_MS = 3000;
 const PAIRING_CHECK_TIMEOUT_MS = 5000;
 const CONNECTING_TIMEOUT_MS = 10000;
 const WAKEUP_PING_TIMEOUT_MS = 3000;
+const HEARTBEAT_INTERVAL_MS = 5000;
+const HEARTBEAT_TIMEOUT_MS = 10000;
 
 let socket: WebSocket | null = null;
 let pingInterval: ReturnType<typeof setInterval> | null = null;
@@ -256,7 +258,7 @@ async function connectOnce(): Promise<void> {
     if (pingInterval) clearInterval(pingInterval);
     pingInterval = setInterval(() => {
       if (socket !== ws) return;
-      if (Date.now() - lastPongTime > 30000) {
+      if (Date.now() - lastPongTime > HEARTBEAT_TIMEOUT_MS) {
         console.warn("[Pigeon] WebSocket heartbeat timed out; reconnecting");
         teardownSocket(ws);
         try {
@@ -267,7 +269,7 @@ async function connectOnce(): Promise<void> {
       }
       sendMessage({ type: "ping", timestamp: Date.now() });
       reportPresence();
-    }, 15000);
+    }, HEARTBEAT_INTERVAL_MS);
     reportPresence();
   };
 
