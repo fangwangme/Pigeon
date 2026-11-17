@@ -69,6 +69,12 @@ How to set up Pigeon for daily use, manage paired phones, and ship changes to yo
    ```
 3. Your phone reconnects on its own. When the restarted daemon serves a newer client build, the app shows an **`Update available · Reload`** banner (**`有新版本 · 重新加载`** in Chinese). Tap it to reload into the new build—standalone PWAs don't have a browser refresh button, so this banner is how updates reach an installed app.
 
+## Debug mode
+
+When the app is slow to connect, start the daemon with `--debug` (for the service, add it to the `pigeon start` line of the unit and restart). Only that run is in debug mode; nothing is saved, and a restart without the flag turns it off.
+
+In debug mode `pigeon.log` also gets lines marked `debug`: every HTTP request with its status and duration, refused WebSocket upgrades, how long each bootstrap took and how big it was, and the phone's own connection timeline — how the page loaded, how long it was hidden, every connection attempt with its outcome and duration. The phone keeps that timeline even while it cannot connect and hands it over as soon as it reaches a daemon in debug mode, so the slow attempts show up too.
+
 ## Without Tailscale
 
 `pigeon start --insecure-dev` serves plain HTTP on your local network and puts your machine's private LAN address into the pairing link. Use it only on a trusted network to try things out: anyone on that network who gets the pairing link can control your terminals, and without HTTPS there is no service worker, no PWA installation, and no Web Push.
