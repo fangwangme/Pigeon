@@ -61,7 +61,7 @@ const USAGE = `
 Pigeon — Mobile Remote Client for Herdr
 
 Usage:
-  pigeon start [--port <n>] [--insecure-dev] [--herdr-app-sock <path>] [--herdr-core-sock <path>] [--public-url <url>] [--admin-sock <path>]
+  pigeon start [--port <n>] [--insecure-dev] [--debug] [--herdr-app-sock <path>] [--herdr-core-sock <path>] [--public-url <url>] [--admin-sock <path>]
   pigeon pair [--ephemeral] [--json] [--port <n>]
   pigeon devices [revoke <id>] [--port <n>]
   pigeon status [--port <n>]
@@ -100,6 +100,7 @@ async function main() {
   if (command === "start") {
     let port: number | undefined = cliPort;
     let insecureDev: boolean | undefined;
+    let debug = false;
     let herdrAppSocketPath: string | undefined;
     let herdrCoreSocketPath: string | undefined;
     let publicUrl: string | undefined;
@@ -112,6 +113,8 @@ async function main() {
         i++;
       } else if (args[i] === "--insecure-dev") {
         insecureDev = true;
+      } else if (args[i] === "--debug") {
+        debug = true;
       } else if (args[i] === "--herdr-app-sock" && value) {
         herdrAppSocketPath = value;
         i++;
@@ -133,6 +136,7 @@ async function main() {
       configManager,
       port,
       insecureDev,
+      debug,
       herdrAppSocketPath,
       herdrCoreSocketPath,
       publicBaseUrl: publicUrl,
@@ -142,7 +146,7 @@ async function main() {
     });
     await daemon.start();
     daemon.fillModelCatalog();
-    console.log(`Pigeon daemon listening on port ${daemon.config.port} (insecureDev=${daemon.config.insecureDev})`);
+    console.log(`Pigeon daemon listening on port ${daemon.config.port} (insecureDev=${daemon.config.insecureDev}${debug ? ", debug" : ""})`);
 
     // Reuse the stored permanent link; only `pigeon pair` rotates it.
     const active = daemon.pairingManager.getActiveToken();

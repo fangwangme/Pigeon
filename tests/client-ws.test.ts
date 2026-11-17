@@ -1,6 +1,7 @@
 import { describe, expect, jest, test } from "bun:test";
 import { handleServerMessage, handleVisibilityChange, initWebSocket, request, selectPane } from "../src/client/src/state/ws";
 import { setState, setUnread, state } from "../src/client/src/state/store";
+import { dropCachedShell } from "../src/client/src/state/shell";
 import type { PaneStatePayload } from "../src/types/protocol";
 
 // protocol.md §2.2 (reconnecting), §3.2 (buildId), §3.3 (cached state on (re)selection),
@@ -24,34 +25,48 @@ describe("daemon rebuilds (protocol.md §3.2)", () => {
     welcome("build_b"); // the daemon was rebuilt
     expect(state.updateAvailable).toBe(true);
   });
+
+  test("a page that carries its own build id compares it with the first welcome", () => {
+    const origDoc = (globalThis as any).document;
+    const meta = { content: "build_page", getAttribute: (n: string) => (n === "content" ? "build_page" : null) };
+    (globalThis as any).document = {
+      visibilityState: "visible",
+      addEventListener() {},
+      documentElement: { setAttribute() {}, style: { setProperty() {} } },
+      querySelector: (sel: string) => (sel.includes("pigeon-build") ? meta : null),
+    };
+    try {
+      setState("updateAvailable", false);
+      welcome("build_page"); // the daemon serves the build this page was loaded with
+      expect(state.updateAvailable).toBe(false);
+      welcome("build_newer"); // a cached shell older than the daemon's client
+      expect(state.updateAvailable).toBe(true);
+    } finally {
+      (globalThis as any).document = origDoc;
+    }
+  });
 });
 
-describe("reconnecting (protocol.md §2.2)", () => {
-  test("a pairing check that cannot reach the daemon is retried 3 seconds later", async () => {
-    const original = globalThis.fetch;
-    let checks = 0;
-    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
-      const url = typeof input === "string" ? input : input instanceof URL ? input.href : (input as Request)?.url ?? "";
-      if (url.includes("/api/auth/status")) {
-        checks++;
-        if (checks === 1) throw new TypeError("Failed to fetch"); // daemon restarting
-        return Response.json({ authenticated: false }); // not paired: ends the loop without a socket
-      }
-      return original(input, init);
-    }) as unknown as typeof fetch;
+describe("update reload (architecture.md §4.1)", () => {
+  test("dropping the cached shell removes it from every cache and keeps the other entries", async () => {
+    const stores = new Map<string, Map<string, string>>([
+      ["pigeon-cache-v4", new Map([["/", "old shell"], ["/icon.svg", "icon"]])],
+      ["pigeon-settings", new Map([["/__locale", "zh"]])],
+    ]);
+    const origCaches = (globalThis as any).caches;
+    (globalThis as any).caches = {
+      keys: async () => [...stores.keys()],
+      open: async (name: string) => ({ delete: async (key: string) => stores.get(name)!.delete(key) }),
+    };
     try {
-      await initWebSocket();
-      expect(checks).toBe(1);
-      const start = Date.now();
-      while (checks < 2 && Date.now() - start < 4500) {
-        await Bun.sleep(100);
-      }
-      expect(checks).toBe(2);
-      expect(state.paired).toBe(false);
+      await dropCachedShell();
+      expect(stores.get("pigeon-cache-v4")!.has("/")).toBe(false);
+      expect(stores.get("pigeon-cache-v4")!.has("/icon.svg")).toBe(true);
+      expect(stores.get("pigeon-settings")!.get("/__locale")).toBe("zh");
     } finally {
-      globalThis.fetch = original;
+      (globalThis as any).caches = origCaches;
     }
-  }, 6000);
+  });
 });
 
 describe("client pane state (protocol.md §5.4)", () => {
@@ -218,7 +233,7 @@ describe("socket teardown on resume (protocol.md §2.2)", () => {
 });
 
 describe("heartbeat (protocol.md §2.1)", () => {
-  test("sends a ping every 5 s and reconnects when no pong arrives for 10 s", async () => {
+  test("sends a ping every 5 s and reconnects only after no pong arrives for more than 15 s", async () => {
     const origWs = globalThis.WebSocket;
     const origDoc = (globalThis as any).document;
     const origWindow = (globalThis as any).window;
@@ -280,6 +295,12 @@ describe("heartbeat (protocol.md §2.1)", () => {
       jest.advanceTimersByTime(5_000);
       await flush();
       expect(first.sent.filter((m: any) => m.type === "ping").length).toBe(2);
+      expect(sockets.length).toBe(1);
+
+      jest.advanceTimersByTime(5_000); // 15 s without a pong: still within the timeout
+      await flush();
+      expect(first.sent.filter((m: any) => m.type === "ping").length).toBe(3);
+      expect(first.closeCalled).toBe(false);
       expect(sockets.length).toBe(1);
 
       jest.advanceTimersByTime(5_000);

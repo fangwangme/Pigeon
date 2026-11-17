@@ -483,11 +483,15 @@ export interface PaneTailPayload {
   turns: NormalizedTurn[];
 }
 
+/** protocol.md §2.3: one connection event from the phone's record. */
+export type DiagEvent = { t: number; ev: string } & Record<string, string | number | boolean>;
+
 // Client -> Server messages
 export type ClientMessage =
   | { type: "hello"; id: string; payload: { protocolVersion: string; subscribePaneId?: string; have?: HaveInfo } }
   | { type: "ping"; timestamp?: number }
   | { type: "presence_update"; isVisible: boolean; viewingPaneId: string | null }
+  | { type: "client_diag"; payload: { events: DiagEvent[] } }
   | { type: "select_view"; id: string; payload: { paneId: string | null; have?: HaveInfo } }
   | { type: "interaction_respond"; id: string; payload: { targetPaneId: string; interactionId: string; optionId?: string; optionIds?: string[]; otherTexts?: Record<string, string>; fingerprint: string } }
   | { type: "agent_prompt"; id: string; payload: { targetPaneId: string; text: string; attachments?: string[] } }
@@ -515,7 +519,7 @@ export type ClientMessage =
 
 // Server -> Client messages
 export type ServerMessage =
-  | { type: "welcome"; replyTo: string; payload: { protocolVersion: string; serverVersion: string; buildId: string; environment?: { kind: "production" | "dev" | "test"; port: number }; deviceId: string; clientConfig: ClientConfig; recipes: Record<string, AgentRecipeSummary> } }
+  | { type: "welcome"; replyTo: string; payload: { protocolVersion: string; serverVersion: string; buildId: string; environment?: { kind: "production" | "dev" | "test"; port: number }; debug?: boolean; deviceId: string; clientConfig: ClientConfig; recipes: Record<string, AgentRecipeSummary> } }
   | { type: "pong"; timestamp: number }
   | { type: "ack"; replyTo: string; payload: ({ status: "ok" } | { duplicate: true }) & Record<string, any> }
   | { type: "error"; replyTo?: string; error: { code: string; message: string; details?: any } }

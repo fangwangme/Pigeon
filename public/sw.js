@@ -1,4 +1,6 @@
-const CACHE_NAME = "pigeon-cache-v3";
+const CACHE_NAME = "pigeon-cache-v4";
+// architecture.md §4.1: every navigation shares one cached shell, whatever its path or query.
+const SHELL_KEY = "/";
 
 self.addEventListener("message", (event) => {
   if (event.data && event.data.type === "SKIP_WAITING") self.skipWaiting();
@@ -27,20 +29,18 @@ self.addEventListener("fetch", (event) => {
     return;
   }
 
-  // Network-First for Navigation / HTML documents:
-  // Always fetch latest server code first; fallback to cache if offline
+  // Cache-first shell (architecture.md §4.1): answer from the cache at once and refresh it in the
+  // background; a newer shell reaches the page through the build-id update banner.
   if (event.request.mode === "navigate" || event.request.destination === "document") {
-    event.respondWith(
-      fetch(event.request)
-        .then((response) => {
-          if (response && response.status === 200) {
-            const copy = response.clone();
-            caches.open(CACHE_NAME).then((cache) => cache.put(event.request, copy));
-          }
-          return response;
-        })
-        .catch(() => caches.match(event.request).then((res) => res || caches.match("/")))
-    );
+    const refresh = fetch(event.request).then(async (response) => {
+      if (response && response.status === 200) {
+        const cache = await caches.open(CACHE_NAME);
+        await cache.put(SHELL_KEY, response.clone());
+      }
+      return response;
+    });
+    event.waitUntil(refresh.catch(() => undefined));
+    event.respondWith(caches.match(SHELL_KEY).then((cached) => cached || refresh));
     return;
   }
 

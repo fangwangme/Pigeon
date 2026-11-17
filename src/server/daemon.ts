@@ -2,6 +2,7 @@ import { join, dirname } from "node:path";
 import { homedir, networkInterfaces } from "node:os";
 import { createHash } from "node:crypto";
 import { mkdirSync, writeFileSync, appendFileSync, realpathSync, statSync } from "node:fs";
+import { brotliCompressSync, constants as zlibConstants, gzipSync } from "node:zlib";
 import type { Server } from "bun";
 import { HerdrClient } from "./herdr-client";
 import { PairingManager } from "./pairing";
@@ -29,6 +30,8 @@ export interface DaemonConfig {
   configManager: ConfigManager;
   port?: number;
   insecureDev?: boolean;
+  /** architecture.md §4.6: debug mode for this run only (`pigeon start --debug`). */
+  debug?: boolean;
   publicBaseUrl?: string;
   herdrAppSocketPath?: string;
   herdrCoreSocketPath?: string;
@@ -311,6 +314,9 @@ export class PigeonDaemon {
   public uploadStore: UploadStore;
   private bunServer: Server<ClientConnectionData> | null = null;
   private html: string;
+  private page = "";
+  private encodedPages = new Map<"br" | "gzip", Uint8Array<ArrayBuffer>>();
+  public readonly debug: boolean;
   private allowedHosts: Set<string>;
   private allowedOrigins: Set<string>;
   private icon192 = Buffer.from(PWA_ICON_192_BASE64, "base64");
@@ -327,6 +333,7 @@ export class PigeonDaemon {
     const productionPort = opts.productionPort ?? resolveProductionPort(this.configManager.env);
     const isProduction = port === productionPort;
     this.isProduction = isProduction;
+    this.debug = opts.debug ?? false;
     const tailscaleHttpsPort =
       serverCfg.tailscaleHttpsPort ??
       (isProduction ? DEFAULT_TAILSCALE_HTTPS_PORT : DEFAULT_TEST_TAILSCALE_HTTPS_PORT);
@@ -362,6 +369,8 @@ export class PigeonDaemon {
 
     // Only the HTML compiled into this build is served (never a file found via the cwd).
     this.html = opts.embeddedHtml || EMBEDDED_HTML;
+    const buildId = createHash("sha256").update(this.html).digest("hex").slice(0, 12);
+    this.page = this.buildPage(buildId);
 
     const publicUrl = new URL(this.config.publicBaseUrl);
     this.allowedHosts = new Set(["localhost", "127.0.0.1", "[::1]", publicUrl.hostname]);
@@ -440,7 +449,8 @@ export class PigeonDaemon {
     });
     this.uploadStore = new UploadStore(this.config.uploadsDir);
     this.wsServer = new WsServer({
-      buildId: createHash("sha256").update(this.html).digest("hex").slice(0, 12),
+      buildId,
+      debug: this.debug,
       herdrClient: this.herdrClient,
       pushManager: this.pushManager,
       configManager: this.configManager,
@@ -479,6 +489,33 @@ export class PigeonDaemon {
     return null;
   }
 
+  /** protocol.md §3.2: the served page names its build; test instances get the dark icons. */
+  private buildPage(buildId: string): string {
+    const html = this.isProduction
+      ? this.html
+      : this.html
+          .replaceAll(/href="\.?\/?icon-192\.png"/g, 'href="/icon-dark-192.png"')
+          .replaceAll(/href="\.?\/?icon-512\.png"/g, 'href="/icon-dark-512.png"')
+          .replaceAll(/href="\.?\/?icon\.svg"/g, 'href="/icon-dark.svg"');
+    const meta = `<meta name="pigeon-build" content="${buildId}">`;
+    const head = html.match(/<head[^>]*>/i);
+    return head ? html.replace(head[0], head[0] + meta) : meta + html;
+  }
+
+  /** architecture.md §4.1: each encoding of the page is computed once. */
+  private encodedPage(encoding: "br" | "gzip"): Uint8Array<ArrayBuffer> {
+    let body = this.encodedPages.get(encoding);
+    if (!body) {
+      const compressed =
+        encoding === "br"
+          ? brotliCompressSync(this.page, { params: { [zlibConstants.BROTLI_PARAM_QUALITY]: 11 } })
+          : gzipSync(this.page, { level: 9 });
+      body = new Uint8Array(compressed);
+      this.encodedPages.set(encoding, body);
+    }
+    return body;
+  }
+
   public log(msg: string): void {
     const timestamp = new Date().toISOString();
     const line = `[${timestamp}] ${msg}`;
@@ -513,8 +550,9 @@ export class PigeonDaemon {
     this.installProcessHandlers();
     if (this.config.logPath) {
       mkdirSync(dirname(this.config.logPath), { recursive: true });
-      writeFileSync(this.config.logPath, `[${new Date().toISOString()}] Pigeon daemon ${SERVER_VERSION} on port ${this.config.port}\n`, "utf-8");
+      writeFileSync(this.config.logPath, `[${new Date().toISOString()}] Pigeon daemon ${SERVER_VERSION} on port ${this.config.port}${this.debug ? " (debug)" : ""}\n`, "utf-8");
     }
+    this.encodedPage("br");
     await this.pairingManager.startAdminSocket();
     await this.herdrClient.connect();
 
@@ -556,17 +594,25 @@ export class PigeonDaemon {
           const url = new URL(req.url);
 
           if (url.pathname === "/ws") {
+            const refused = (res: Response) => {
+              if (self.debug) self.log(`debug ws upgrade refused: ${res.status}`);
+              return res;
+            };
             const rejected = self.checkHostAndOrigin(req);
-            if (rejected) return rejected;
+            if (rejected) return refused(rejected);
             const session = sessionOf(req);
-            if (!session) return new Response("Unauthorized", { status: 401, statusText: "ERR_UNAUTHORIZED" });
+            if (!session) return refused(new Response("Unauthorized", { status: 401, statusText: "ERR_UNAUTHORIZED" }));
             const upgraded = server.upgrade(req, {
               data: { session, connectionId: newConnectionId(), subscribedPaneId: null, lastPingTime: Date.now() },
             });
-            return upgraded ? undefined : new Response("WebSocket upgrade failed", { status: 400 });
+            return upgraded ? undefined : refused(new Response("WebSocket upgrade failed", { status: 400 }));
           }
 
-          return self.handleHttp(req);
+          if (!self.debug) return self.handleHttp(req);
+          const startMs = performance.now();
+          const res = await self.handleHttp(req);
+          self.log(`debug http ${req.method} ${url.pathname} ${res.status} ${Math.round(performance.now() - startMs)}ms`);
+          return res;
         },
 
       websocket: {
@@ -608,15 +654,18 @@ export class PigeonDaemon {
     const sessionOf = (r: Request) => this.pairingManager.validateSession(this.parseCookie(r)[cookieName]);
     const csp =
       "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self' ws: wss:; frame-ancestors 'none'; base-uri 'none'; object-src 'none'; form-action 'none';";
-    const getHtml = () => {
-      if (this.isProduction) return this.html;
-      return this.html
-        .replaceAll(/href="\.?\/?icon-192\.png"/g, 'href="/icon-dark-192.png"')
-        .replaceAll(/href="\.?\/?icon-512\.png"/g, 'href="/icon-dark-512.png"')
-        .replaceAll(/href="\.?\/?icon\.svg"/g, 'href="/icon-dark.svg"');
+    const htmlResponse = () => {
+      const accept = req.headers.get("Accept-Encoding") ?? "";
+      const encoding = /\bbr\b/.test(accept) ? "br" : /\bgzip\b/.test(accept) ? "gzip" : null;
+      const headers: Record<string, string> = {
+        "Content-Type": "text/html; charset=utf-8",
+        "Content-Security-Policy": csp,
+        "Cache-Control": "no-cache",
+        Vary: "Accept-Encoding",
+      };
+      if (!encoding) return new Response(this.page, { headers });
+      return new Response(this.encodedPage(encoding), { headers: { ...headers, "Content-Encoding": encoding } });
     };
-    const htmlResponse = () =>
-      new Response(getHtml(), { headers: { "Content-Type": "text/html; charset=utf-8", "Content-Security-Policy": csp } });
 
     if (url.pathname === "/api/pair" && req.method === "POST") {
       let body: any;

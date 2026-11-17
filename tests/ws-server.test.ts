@@ -59,6 +59,73 @@ describe("handshake (protocol.md §3)", () => {
     expect(c.ofType("pane_state")[0].payload.paneId).toBe("p1");
   });
 
+  test("debug mode (protocol.md §2.3): welcome says so and client_diag events reach the log only in debug mode", async () => {
+    const dir = tempDir("ws-debug");
+    const lines: string[] = [];
+    const diag = { type: "client_diag", payload: { events: [{ t: 1729650000000, ev: "ws_close", code: 1006, ms: 5021 }] } };
+    const debugServer = new WsServer({
+      buildId: "build_test",
+      herdrClient: client,
+      pushManager: new PushManager(join(dir, "vapid.json")),
+      configManager: config,
+      skillScanner: new SkillScanner(dir),
+      debug: true,
+      logger: (m) => lines.push(m),
+    });
+    try {
+      const c = fakeWs();
+      debugServer.handleOpen(c.ws);
+      await debugServer.handleMessage(c.ws, JSON.stringify({ type: "hello", id: "h1", payload: { protocolVersion: "1.0.0" } }));
+      expect(c.ofType("welcome")[0].payload.debug).toBe(true);
+      await debugServer.handleMessage(c.ws, JSON.stringify(diag));
+      expect(c.ofType("error").length).toBe(0);
+      const logged = lines.filter((l) => l.includes("ws_close"));
+      expect(logged.length).toBe(1);
+      expect(logged[0]).toContain("1006");
+      expect(logged[0]).toContain("Phone");
+    } finally {
+      debugServer.destroy();
+    }
+
+    const quietLines: string[] = [];
+    const quiet = new WsServer({
+      buildId: "build_test",
+      herdrClient: client,
+      pushManager: new PushManager(join(dir, "vapid2.json")),
+      configManager: config,
+      skillScanner: new SkillScanner(dir),
+      logger: (m) => quietLines.push(m),
+    });
+    try {
+      const c = fakeWs();
+      quiet.handleOpen(c.ws);
+      await quiet.handleMessage(c.ws, JSON.stringify({ type: "hello", id: "h1", payload: { protocolVersion: "1.0.0" } }));
+      expect(c.ofType("welcome")[0].payload.debug).toBe(false);
+      await quiet.handleMessage(c.ws, JSON.stringify(diag));
+      expect(c.ofType("error").length).toBe(0);
+      expect(quietLines.some((l) => l.includes("ws_close"))).toBe(false);
+    } finally {
+      quiet.destroy();
+    }
+  });
+
+  test("a malformed client_diag is answered with ERR_INVALID_PAYLOAD (protocol.md §2.3)", async () => {
+    const c = fakeWs();
+    await send(c.ws, { type: "client_diag", payload: { events: [{ t: 1, ev: "ws_open", ms: 120 }] } });
+    expect(c.ofType("error").length).toBe(0);
+    for (const payload of [{}, { events: "x" }, { events: [{ ev: "no_time" }] }, { events: [{ t: 1, ev: "nested", detail: { a: 1 } }] }]) {
+      c.sent.length = 0;
+      await send(c.ws, { type: "client_diag", payload });
+      expect(lastError(c.sent)).toBe(ProtocolErrors.ERR_INVALID_PAYLOAD);
+    }
+  });
+
+  test("a client_diag event name with a line break is refused, so it cannot forge log lines (protocol.md §2.3)", async () => {
+    const c = fakeWs();
+    await send(c.ws, { type: "client_diag", payload: { events: [{ t: 1, ev: "ws_open\n[2026-01-01T00:00:00.000Z] forged" }] } });
+    expect(lastError(c.sent)).toBe(ProtocolErrors.ERR_INVALID_PAYLOAD);
+  });
+
   test("a different protocol major version is refused and the socket closed with 4409", async () => {
     const c = fakeWs();
     await send(c.ws, { type: "hello", id: "h1", payload: { protocolVersion: "2.0.0" } });

@@ -16,19 +16,32 @@ Key Protocol Principles:
 
 ### 2.1 Heartbeat (`client <-> server`)
 - The client sends `{ "type": "ping", "timestamp": 1729650000000 }` every 5 seconds. The server answers `{ "type": "pong", "timestamp": … }`.
-- **Timeout**: If no `pong` has arrived for 10 seconds, the client closes the socket and reconnects.
-- **Wakeup**: When `document.visibilityState` becomes `visible`, the client reconnects at once if the socket is not open. Otherwise it sends a `ping` at once and reconnects when no `pong` arrives within 3 seconds, so a connection that died while the phone slept is replaced without waiting for the 10-second timeout. The wakeup reconnect replaces any reconnect already scheduled; it never adds a second one.
+- **Timeout**: If no `pong` has arrived for 15 seconds, the client closes the socket and reconnects. Shorter is not better (user decision, 2026-11-18): on a lossy link TCP retransmits with growing delays, so a live connection's `pong` is often more than 10 seconds late; closing it then forces a full new handshake over the same link, which the debug timeline showed taking 3 to 7.5 seconds. Coming back from the background does not rely on this timeout (Wakeup below).
+- **Wakeup**: When `document.visibilityState` becomes `visible`, the client reconnects at once if the socket is not open. Otherwise it sends a `ping` at once and reconnects when no `pong` arrives within 3 seconds, so a connection that died while the phone slept is replaced without waiting for the 15-second timeout. The wakeup reconnect replaces any reconnect already scheduled; it never adds a second one.
 - With every heartbeat, and whenever visibility or the viewed pane changes, the client sends `{ "type": "presence_update", "isVisible": true, "viewingPaneId": "w1:p2" }`. This message has no `id` and gets no reply.
 
 ### 2.2 Refusals and Closure Codes
-- A WebSocket upgrade without a valid session cookie is refused with HTTP **401**. A wrong `Host` or `Origin` is refused with HTTP **403** (`security-and-pairing.md` §4). In the browser, both show up as a plain close. Before reconnecting, the client checks `GET /api/auth/status` and shows the pairing guidance when it is not paired. When that check cannot reach the daemon (it is restarting, or the network is down), the client tries again 3 seconds later.
-- After a close that is not final, the first reconnect attempt is immediate; later attempts wait 3 seconds each. A socket that opens resets this, so its own later close is again followed by an immediate attempt.
-- **One attempt at a time**: the client never has more than one connection attempt in flight. A call to connect while an attempt is running (the pairing check, or a socket still `CONNECTING`) or while a socket is open does nothing.
-- **Attempt timeouts**: the pairing check (`GET /api/auth/status`) is abandoned after 5 seconds, and a socket still `CONNECTING` after 10 seconds is closed. Each counts as a failed attempt, followed by the next attempt per the rule above.
+- A WebSocket upgrade without a valid session cookie is refused with HTTP **401**. A wrong `Host` or `Origin` is refused with HTTP **403** (`security-and-pairing.md` §4). In the browser, both show up as a plain close.
+- **Socket first** (issue #31): an attempt opens `/ws` at once; it never waits for an HTTP request first. Only when a socket closes without ever having opened does the client check `GET /api/auth/status`: when it says the browser is not paired, the client shows the pairing guidance and makes no further attempt; when it says paired, or cannot reach the daemon (it is restarting, or the network is down), the next attempt follows the schedule below. The reason: on a phone coming back from sleep, a plain HTTP request can stall on a pooled connection that died while the phone slept, while a new socket opens on a fresh connection.
+- **Retry schedule**: after a close that is not final, or a failed attempt, the next attempts wait 0, 0.5, 1 and 2 seconds, then 3 seconds each. A socket that opens resets the schedule, so its own later close is again followed by an immediate attempt.
+- **Network and wakeup**: when the browser fires `online`, or the page becomes visible (§2.1), while the client waits for its next attempt, the wait is cancelled and an attempt starts at once.
+- **One attempt at a time**: the client never has more than one connection attempt in flight. A call to connect while an attempt is running (a socket still `CONNECTING`, or the pairing check after a failed socket) or while a socket is open does nothing.
+- **Attempt timeouts**: a socket still `CONNECTING` after 10 seconds is closed, and the pairing check is abandoned after 5 seconds. Each counts as a failed attempt, followed by the next attempt per the schedule.
 - **Close logging**: the daemon logs every WebSocket close with the device name, connection id, close code, close reason (empty when none), and how long the connection was open. The client logs the code and reason of every close to its console.
 - `4403`: The device was revoked (`pigeon devices revoke`). The client shows the pairing guidance and does not reconnect.
 - `4409`: Incompatible protocol major version. The client does not reconnect and shows that the app is out of date, with a reload button (`mobile-ui-and-themes.md` §8.3).
 - The client also treats `4401` and `1008` as final.
+
+### 2.3 Debug Mode (`client_diag`)
+Debug mode exists so connection delays on the phone can be located from the daemon's log (issue #31).
+- **Switch**: only a daemon started with `pigeon start --debug` is in debug mode (`architecture.md` §4.6). Nothing about it is persisted: the config has no debug key, and the phone stores no debug flag. A restart without the flag ends it. `welcome.debug` (§3.2) tells the client.
+- **Client record**: the client always keeps a small bounded record of connection events in local storage, so it survives a reload or the browser discarding the page. It holds only times, outcomes, durations and close codes — never session content. Events include: page start with navigation timing (how long the page took to arrive, so a cached shell is distinguishable from a network one), visibility changes with how long the page was hidden, `online`/`offline`, each attempt's socket start, open, close (code) or timeout, the pairing check's start and result, the wakeup probe and heartbeat timeouts, `welcome`, and the applied bootstrap with how long Syncing lasted. The oldest events are dropped when the record is full.
+- **Upload**: after a `welcome` with `debug: true`, the client sends every event not sent before, in order, then marks them sent; the attempts that failed before this connection opened are therefore included. After a `welcome` with `debug: false` it sends nothing.
+  ```json
+  { "type": "client_diag", "payload": { "events": [{ "t": 1729650000000, "ev": "ws_close", "code": 1006, "ms": 5021 }] } }
+  ```
+  `client_diag` has no `id` and gets no reply. It is validated like every frame (`src/server/ws-validate.ts`): `events` is an array of a bounded length; each event has a numeric `t` (epoch ms), a short string `ev`, and otherwise only flat string, number or boolean fields of bounded length. A malformed frame is answered with `ERR_INVALID_PAYLOAD`.
+- **Daemon**: in debug mode the daemon writes each event to its log as one line naming the device, the connection, the event's own time and its fields. Without debug mode it accepts a valid `client_diag` and writes nothing.
 
 ## 3. Handshake and Initial Synchronization
 
@@ -48,6 +61,7 @@ If the major version differs from the server's, the server answers `ERR_INCOMPAT
     "serverVersion": "0.1.0",
     "buildId": "3f9a0c21d7e4",
     "environment": { "kind": "production", "port": 4100 },
+    "debug": false,
     "deviceId": "6f1c…",
     "clientConfig": { "themeMode": "system", "accent": "blue" },
     "recipes": { "claude": { "kind": "claude", "label": "Claude Code", "models": [], "interruptKeys": ["esc"] } }
@@ -56,7 +70,9 @@ If the major version differs from the server's, the server answers `ERR_INCOMPAT
 ```
 Then come, in this order, `upstream_status` (§5.5) and `snapshot_update` (§5.3).
 
-`serverVersion` is the `package.json` version and `environment` the instance kind and port (`architecture.md` §4.8). `buildId` identifies the client bundle the daemon serves (the first 12 hex digits of its SHA-256). The first `welcome` a page receives records it. When a later `welcome` (after a reconnect) carries a different `buildId`, the daemon was rebuilt and restarted: the page shows the update banner, and tapping it reloads the page (`architecture.md` §4.1).
+`serverVersion` is the `package.json` version and `environment` the instance kind and port (`architecture.md` §4.8). `buildId` identifies the client bundle the daemon serves (the first 12 hex digits of its SHA-256). The daemon also writes it into every page it serves as `<meta name="pigeon-build" content="<buildId>">` (the hash is taken over the bundle without that tag), so a page knows the build it was loaded with even when the service worker served it from cache (`architecture.md` §4.1). When a `welcome` — the first one included — carries a `buildId` different from the page's own, the page is older than the daemon's client: it shows the update banner, and tapping it reloads the page. A page without the tag (served by the Vite dev server) takes the first `welcome`'s `buildId` as its own.
+
+`debug` is `true` only when the daemon was started with `--debug` (§2.3).
 
 ### 3.3 Initial Pane Data (`pane_bootstrap`)
 The server picks a pane. It uses `subscribePaneId` when Herdr knows that pane, otherwise Herdr's focused pane. It subscribes the connection to that pane and sends one message, which the client applies in one step:
@@ -75,7 +91,7 @@ The server picks a pane. It uses `subscribePaneId` when Herdr knows that pane, o
 
 ## 4. Client Commands (`client -> server`)
 
-Every command except `ping` and `presence_update` carries a string `id`. Success is answered with `ack` (§5.1), failure with `error` (§5.2). Commands that name a pane are answered with `ERR_NOT_FOUND` when that pane is not in the latest Herdr snapshot.
+Every command except `ping`, `presence_update` and `client_diag` (§2.3) carries a string `id`. Success is answered with `ack` (§5.1), failure with `error` (§5.2). Commands that name a pane are answered with `ERR_NOT_FOUND` when that pane is not in the latest Herdr snapshot.
 
 ### 4.1 Answer Interactive Prompt (`interaction_respond`)
 ```json

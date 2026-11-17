@@ -1,7 +1,9 @@
 import { afterAll, beforeAll, describe, expect, setSystemTime, test } from "bun:test";
 import { mkdirSync, readFileSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
 import { connect } from "node:net";
 import { join } from "node:path";
+import { brotliDecompressSync, gunzipSync } from "node:zlib";
 import { ConfigManager, resolveInstancePaths, resolveProductionPort } from "../src/server/config-manager";
 import { PigeonDaemon, resolveAccess } from "../src/server/daemon";
 import { PWA_ICON_192_BASE64, PWA_ICON_DARK_192_BASE64 } from "../src/server/pwa-assets";
@@ -525,6 +527,54 @@ describe("HTTP and WebSocket gate (security-and-pairing.md §3, §4)", () => {
     expect(prodHtmlRes.status).toBe(200);
     const prodHtml = await prodHtmlRes.text();
     expect(prodHtml).toContain('href="/icon-192.png"');
+  });
+});
+
+describe("app shell (architecture.md §4.1, protocol.md §3.2)", () => {
+  const HTML = "<!doctype html><html><head><title>Pigeon</title></head><body>" + "<p>shell</p>".repeat(200) + "</body></html>";
+  const shellDaemon = () => {
+    const dir = tempDir("shell-daemon");
+    return new PigeonDaemon({
+      configManager: new ConfigManager(join(dir, "config.json"), { HOME: dir }),
+      port: 4100,
+      publicBaseUrl: "https://pigeon.example.ts.net",
+      herdrAppSocketPath: join(dir, "no-app.sock"),
+      herdrCoreSocketPath: join(dir, "no-core.sock"),
+      adminSocketPath: join(dir, "admin.sock"),
+      devicesFilePath: join(dir, "devices.json"),
+      vapidPath: join(dir, "vapid.json"),
+      embeddedHtml: HTML,
+    });
+  };
+  const page = (daemon: PigeonDaemon, acceptEncoding?: string) =>
+    daemon.fetch(new Request("http://127.0.0.1:4100/", acceptEncoding ? { headers: { "Accept-Encoding": acceptEncoding } } : {}));
+  const body = async (res: Response) => {
+    const raw = Buffer.from(await res.arrayBuffer());
+    const enc = res.headers.get("Content-Encoding");
+    if (enc === "br") return brotliDecompressSync(raw).toString("utf-8");
+    if (enc === "gzip") return gunzipSync(raw).toString("utf-8");
+    return raw.toString("utf-8");
+  };
+
+  test("the HTML is sent as br, else gzip, else uncompressed, per Accept-Encoding, and every encoding decodes to the same page", async () => {
+    const daemon = shellDaemon();
+    const br = await page(daemon, "gzip, deflate, br");
+    const gz = await page(daemon, "gzip, deflate");
+    const plain = await page(daemon);
+    expect(br.headers.get("Content-Encoding")).toBe("br");
+    expect(gz.headers.get("Content-Encoding")).toBe("gzip");
+    expect(plain.headers.get("Content-Encoding")).toBeNull();
+    for (const res of [br, gz, plain]) expect(res.headers.get("Vary")).toContain("Accept-Encoding");
+    const pages = await Promise.all([br, gz, plain].map(body));
+    expect(pages[0]).toBe(pages[2]);
+    expect(pages[1]).toBe(pages[2]);
+    expect(pages[2]).toContain("<p>shell</p>");
+  });
+
+  test("the served page names its build with the same buildId the welcome reports", async () => {
+    const buildId = createHash("sha256").update(HTML).digest("hex").slice(0, 12);
+    const html = await body(await page(shellDaemon()));
+    expect(html).toContain(`<meta name="pigeon-build" content="${buildId}">`);
   });
 });
 

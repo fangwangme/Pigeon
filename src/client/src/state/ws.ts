@@ -18,24 +18,29 @@ import type {
 } from "../../../types/protocol";
 import { hashTurn } from "../../../types/protocol";
 import { t } from "../i18n";
+import { markConnSent, recordConn, unsentConn } from "./diag";
 
 const PROTOCOL_VERSION = "1.0.0";
 // Close codes after which reconnecting cannot help (protocol.md §2.2).
 const TERMINAL_CLOSE_CODES = new Set([4401, 4403, 4409, 1008]);
-const RECONNECT_MS = 3000;
+const RETRY_DELAYS_MS = [0, 500, 1000, 2000, 3000];
 const PAIRING_CHECK_TIMEOUT_MS = 5000;
 const CONNECTING_TIMEOUT_MS = 10000;
 const WAKEUP_PING_TIMEOUT_MS = 3000;
 const HEARTBEAT_INTERVAL_MS = 5000;
-const HEARTBEAT_TIMEOUT_MS = 10000;
+const HEARTBEAT_TIMEOUT_MS = 15000;
 
 let socket: WebSocket | null = null;
 let pingInterval: ReturnType<typeof setInterval> | null = null;
 let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 let connectingTimer: ReturnType<typeof setTimeout> | null = null;
 let wakeupProbeTimer: ReturnType<typeof setTimeout> | null = null;
-let connectPromise: Promise<void> | null = null;
-let canImmediateReconnect = false;
+let pairingCheck: Promise<void> | null = null;
+let retryIndex = 0;
+// protocol.md §2.3: whether this connection's daemon runs in debug mode; never stored.
+let connectionDebug = false;
+let bootstrapRequestedAt = 0;
+let hiddenAt: number | null = null;
 let lastPongTime = Date.now();
 let msgId = 0;
 let configVersion = 0;
@@ -93,20 +98,47 @@ export function flushActivePaneSnapshot(): void {
   if (target) saveActivePaneSnapshot(target);
 }
 
-function scheduleReconnect(): void {
+/** protocol.md §2.3: record a connection event, and send it at once to a daemon in debug mode. */
+function conn(ev: string, fields?: Record<string, string | number | boolean>): void {
+  recordConn(ev, fields);
+  if (connectionDebug) flushConnEvents();
+}
+
+/** Only onto a socket known alive: while the wakeup probe waits, events stay unsent until its pong. */
+function flushConnEvents(): void {
+  if (!socket || socket.readyState !== WebSocket.OPEN || wakeupProbeTimer) return;
+  const { events, upTo } = unsentConn();
+  if (events.length === 0) return;
+  socket.send(JSON.stringify({ type: "client_diag", payload: { events } } satisfies ClientMessage));
+  markConnSent(upTo);
+}
+
+/** protocol.md §2.2: retries wait 0, 0.5, 1, 2, then 3 s; an opened socket resets the schedule. */
+function nextRetryAt(): number {
+  const delay = RETRY_DELAYS_MS[Math.min(retryIndex, RETRY_DELAYS_MS.length - 1)];
+  retryIndex++;
+  conn("retry_wait", { ms: delay });
+  return Date.now() + delay;
+}
+
+function retryAt(due: number): void {
   if (reconnectTimer) {
     clearTimeout(reconnectTimer);
     reconnectTimer = null;
   }
-  if (canImmediateReconnect) {
-    canImmediateReconnect = false;
-    void initWebSocket();
+  const wait = due - Date.now();
+  if (wait <= 0) {
+    openSocket();
     return;
   }
   reconnectTimer = setTimeout(() => {
     reconnectTimer = null;
     void initWebSocket();
-  }, RECONNECT_MS);
+  }, wait);
+}
+
+function scheduleReconnect(): void {
+  retryAt(nextRetryAt());
 }
 
 function nextId(): string {
@@ -177,49 +209,60 @@ function teardownSocket(ws: WebSocket | null): void {
     p.reject(Object.assign(new Error(t("error.disconnected")), { code: "ERR_OFFLINE" }));
   }
   pending.clear();
+  connectionDebug = false;
   setState({ connected: false, configReady: false, paneSyncing: false });
   if (ws && socket === ws) socket = null;
 }
 
-/** Connects unless already paired-and-connected or an attempt is in flight; shows pairing guidance when not paired. */
+/** Connects unless a socket is open or an attempt is in flight (protocol.md §2.2). */
 export async function initWebSocket(): Promise<void> {
   if (socket && (socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CONNECTING)) return;
-  if (connectPromise) return connectPromise;
-  connectPromise = connectOnce().finally(() => {
-    connectPromise = null;
-  });
-  return connectPromise;
+  if (pairingCheck) return pairingCheck;
+  openSocket();
 }
 
-async function connectOnce(): Promise<void> {
-  if (reconnectTimer) {
-    clearTimeout(reconnectTimer);
-    reconnectTimer = null;
-  }
-  canImmediateReconnect = false;
+/**
+ * protocol.md §2.2: after a socket that never opened, ask whether this browser is still paired.
+ * The retry is due `due` (counted from the failure), and never opens before the check ends.
+ */
+async function checkPairing(due: number): Promise<void> {
+  const startedAt = Date.now();
+  conn("auth_check");
   let paired: boolean;
   try {
     paired = await isAuthenticated();
-  } catch {
-    // protocol.md §2.2: the daemon is restarting or the network is down; try again shortly.
-    scheduleReconnect();
+  } catch (err) {
+    conn("auth_error", { ms: Date.now() - startedAt, error: String((err as Error)?.message ?? err).slice(0, 120) });
+    retryAt(due);
     return;
   }
+  conn("auth_result", { ms: Date.now() - startedAt, paired });
   if (!paired) {
+    retryIndex = 0;
     setState("paired", false);
     void clearAll();
     return;
   }
-  setState("paired", true);
+  retryAt(due);
+}
 
+function openSocket(): void {
+  if (reconnectTimer) {
+    clearTimeout(reconnectTimer);
+    reconnectTimer = null;
+  }
   const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
   const ws = new WebSocket(`${proto}//${window.location.host}/ws`);
   socket = ws;
+  const startedAt = Date.now();
+  let opened = false;
+  conn("ws_start", { retry: retryIndex });
   if (connectingTimer) clearTimeout(connectingTimer);
   connectingTimer = setTimeout(() => {
     connectingTimer = null;
     if (socket !== ws || ws.readyState !== WebSocket.CONNECTING) return;
     console.warn("[Pigeon] WebSocket connect timed out after 10s");
+    conn("ws_timeout", { ms: Date.now() - startedAt });
     ws.close();
   }, CONNECTING_TIMEOUT_MS);
 
@@ -231,8 +274,10 @@ async function connectOnce(): Promise<void> {
       clearTimeout(connectingTimer);
       connectingTimer = null;
     }
-    canImmediateReconnect = true;
-    setState("connected", true);
+    opened = true;
+    retryIndex = 0;
+    conn("ws_open", { ms: Date.now() - startedAt });
+    setState({ connected: true, paired: true });
     lastPongTime = Date.now();
     let have: HaveInfo | undefined;
     if (state.activePaneId && state.session?.bound && state.session.sessionId && state.normalizedTurns.length > 0) {
@@ -246,6 +291,7 @@ async function connectOnce(): Promise<void> {
       };
       setState("paneSyncing", true);
     }
+    bootstrapRequestedAt = Date.now();
     sendMessage({
       type: "hello",
       id: nextId(),
@@ -260,7 +306,9 @@ async function connectOnce(): Promise<void> {
       if (socket !== ws) return;
       if (Date.now() - lastPongTime > HEARTBEAT_TIMEOUT_MS) {
         console.warn("[Pigeon] WebSocket heartbeat timed out; reconnecting");
+        const sincePong = Date.now() - lastPongTime;
         teardownSocket(ws);
+        conn("heartbeat_timeout", { since_pong_ms: sincePong });
         try {
           ws.close(); // half-open connection: force a reconnect
         } catch {}
@@ -282,20 +330,27 @@ async function connectOnce(): Promise<void> {
     if (socket !== ws) return;
     console.warn(`[Pigeon] WebSocket closed: code=${event.code} reason=${JSON.stringify(event.reason || "")}`);
     teardownSocket(ws);
+    conn("ws_close", { code: event.code, ms: Date.now() - startedAt, opened });
     if (event.code === 4401 || event.code === 4403) {
       void clearAll();
     }
     if (TERMINAL_CLOSE_CODES.has(event.code)) {
-      canImmediateReconnect = false;
       if (reconnectTimer) {
         clearTimeout(reconnectTimer);
         reconnectTimer = null;
       }
+      retryIndex = 0;
       setState("paired", event.code === 4409);
       return;
     }
-    // An HTTP 401 on the upgrade surfaces as a plain close; initWebSocket re-checks pairing first.
-    scheduleReconnect();
+    if (opened) {
+      scheduleReconnect();
+      return;
+    }
+    // A refused upgrade (HTTP 401) surfaces as a plain close before opening.
+    pairingCheck = checkPairing(nextRetryAt()).finally(() => {
+      pairingCheck = null;
+    });
   };
 }
 
@@ -402,13 +457,24 @@ function applyTurnDelta(
   debouncedSaveActivePaneSnapshot(paneId);
 }
 
+/** protocol.md §3.2: the build the daemon wrote into this page; absent under the Vite dev server. */
+function pageBuildId(): string | null {
+  if (typeof document === "undefined" || typeof document.querySelector !== "function") return null;
+  return document.querySelector('meta[name="pigeon-build"]')?.getAttribute("content") || null;
+}
+
 /** Exported for tests; the socket's onmessage is the only production caller. */
 export function handleServerMessage(msg: ServerMessage): void {
   switch (msg.type) {
     case "welcome":
       // A rebuilt daemon serves a newer client than this page runs; offer the reload (protocol.md §3.2).
-      if (loadedBuildId === null) loadedBuildId = msg.payload.buildId;
-      else if (msg.payload.buildId !== loadedBuildId) setState("updateAvailable", true);
+      {
+        const own = pageBuildId() ?? (loadedBuildId ??= msg.payload.buildId);
+        if (msg.payload.buildId !== own) setState("updateAvailable", true);
+      }
+      conn("welcome", { debug: !!msg.payload.debug });
+      connectionDebug = !!msg.payload.debug;
+      if (connectionDebug) flushConnEvents();
       // A new server process (daemon restart) numbers pane revisions and config versions from
       // scratch, so marks from the previous connection must not filter its messages.
       paneRevisions.clear();
@@ -492,11 +558,18 @@ export function handleServerMessage(msg: ServerMessage): void {
         setState("queue", msg.payload.queue);
         setState("queuePaused", Boolean(msg.payload.queuePaused));
       }
+      const wasSyncing = state.paneSyncing;
       if (msg.payload.turns) {
         applyFullTurns(msg.payload.paneId, msg.payload.turns);
       } else if (msg.payload.resume) {
         applyTurnDelta(msg.payload.paneId, msg.payload.resume);
       }
+      conn("bootstrap", {
+        resume: !!msg.payload.resume,
+        server_ms: msg.payload.serverMs,
+        since_request_ms: Date.now() - bootstrapRequestedAt,
+        syncing: wasSyncing,
+      });
       return;
     }
 
@@ -587,6 +660,7 @@ export function handleServerMessage(msg: ServerMessage): void {
       if (wakeupProbeTimer) {
         clearTimeout(wakeupProbeTimer);
         wakeupProbeTimer = null;
+        if (connectionDebug) flushConnEvents();
       }
       return;
   }
@@ -766,6 +840,7 @@ export async function selectPane(paneId: string): Promise<void> {
   if (socket && socket.readyState === WebSocket.OPEN) {
     const selectViewId = nextId();
     pendingSelectViewId = selectViewId;
+    bootstrapRequestedAt = Date.now();
     sendMessage({
       type: "select_view",
       id: selectViewId,
@@ -889,12 +964,17 @@ migrateLocalStorageCache();
 void sweep();
 
 export function handleVisibilityChange(): void {
-  if (document.visibilityState === "hidden" && state.activePaneId) {
-    flushActivePaneSnapshot();
+  if (document.visibilityState === "hidden") {
+    hiddenAt = Date.now();
+    conn("hidden");
+    if (state.activePaneId) flushActivePaneSnapshot();
   }
   if (document.visibilityState === "visible") {
+    const hiddenFor: Record<string, number> = hiddenAt === null ? {} : { hidden_ms: Date.now() - hiddenAt };
+    hiddenAt = null;
     if (!socket || socket.readyState !== WebSocket.OPEN) {
-      if (!connectPromise && (!socket || socket.readyState !== WebSocket.CONNECTING)) {
+      conn("visible", hiddenFor);
+      if (!pairingCheck && (!socket || socket.readyState !== WebSocket.CONNECTING)) {
         if (reconnectTimer) {
           clearTimeout(reconnectTimer);
           reconnectTimer = null;
@@ -915,14 +995,39 @@ export function handleVisibilityChange(): void {
           reconnectTimer = null;
         }
         teardownSocket(probedWs);
+        conn("wakeup_timeout");
         try {
           probedWs.close();
         } catch {}
         void initWebSocket();
       }, WAKEUP_PING_TIMEOUT_MS);
+      // Recorded once the probe is armed, so it is not flushed onto a socket that may have died asleep.
+      conn("visible", hiddenFor);
     }
   }
   reportPresence();
+}
+
+/** protocol.md §2.2: the network came back while a retry waits; try at once. */
+export function handleOnline(): void {
+  conn("online");
+  if (!reconnectTimer) return;
+  clearTimeout(reconnectTimer);
+  reconnectTimer = null;
+  void initWebSocket();
+}
+
+/** protocol.md §2.3: how long the page took to arrive (a cached shell arrives in a few ms). */
+function recordPageStart(): void {
+  const nav = typeof performance !== "undefined" ? (performance.getEntriesByType?.("navigation")[0] as PerformanceNavigationTiming | undefined) : undefined;
+  if (!nav) return;
+  conn("page_start", {
+    nav: nav.type,
+    first_byte_ms: Math.round(nav.responseStart),
+    html_ms: Math.round(nav.responseEnd),
+    transfer: nav.transferSize,
+    sw: typeof navigator !== "undefined" && !!navigator.serviceWorker?.controller,
+  });
 }
 
 if (typeof document !== "undefined") {
@@ -935,4 +1040,7 @@ if (typeof window !== "undefined") {
       flushActivePaneSnapshot();
     }
   });
+  window.addEventListener("online", handleOnline);
+  window.addEventListener("offline", () => conn("offline"));
+  recordPageStart();
 }

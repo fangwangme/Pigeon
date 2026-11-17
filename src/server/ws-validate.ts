@@ -13,6 +13,25 @@ const MAX_TEXT = 100_000;
 const MAX_KEYS = 16;
 const MAX_ATTACHMENTS = 10;
 const RESUME_ID_RE = /^[A-Za-z0-9._-]{1,128}$/;
+const MAX_DIAG_EVENTS = 500;
+const MAX_DIAG_FIELDS = 16;
+const DIAG_FIELD_RE = /^[a-z][a-z0-9_]{0,31}$/;
+const DIAG_EVENT_RE = /^[a-z][a-z0-9_]{0,63}$/;
+const MAX_DATE_MS = 8.64e15;
+
+/** protocol.md §2.3: a numeric `t`, a short `ev`, and flat primitive fields of bounded length. */
+function isDiagEvent(e: unknown): boolean {
+  if (!isObj(e) || typeof e.t !== "number" || !(e.t >= 0 && e.t <= MAX_DATE_MS)) return false;
+  if (typeof e.ev !== "string" || !DIAG_EVENT_RE.test(e.ev)) return false; // written raw into one log line
+  const keys = Object.keys(e);
+  if (keys.length > MAX_DIAG_FIELDS) return false;
+  return keys.every((k) => {
+    const v = e[k];
+    if (!DIAG_FIELD_RE.test(k)) return false;
+    if (typeof v === "string") return v.length <= 200;
+    return typeof v === "boolean" || (typeof v === "number" && Number.isFinite(v));
+  });
+}
 const KEY_RE = /^[a-z0-9+_-]{1,24}$/i;
 
 const isStr = (v: unknown, max = 512): v is string => typeof v === "string" && v.length > 0 && v.length <= max;
@@ -26,7 +45,7 @@ export function validateClientMessage(raw: unknown): ValidationResult {
   if (!isObj(raw) || typeof raw.type !== "string") return fail(undefined, "Message must be an object with a string 'type'");
   const { id, type } = raw;
   const p = raw.payload;
-  const needsId = type !== "ping" && type !== "presence_update";
+  const needsId = type !== "ping" && type !== "presence_update" && type !== "client_diag";
   if (needsId && !isStr(id, 128)) return fail(id, `'${type}' requires a string 'id'`);
   const ok = (): ValidationResult => ({ ok: true, msg: raw as unknown as ClientMessage });
 
@@ -39,6 +58,11 @@ export function validateClientMessage(raw: unknown): ValidationResult {
     case "presence_update":
       if (typeof raw.isVisible !== "boolean" || !(raw.viewingPaneId === null || isStr(raw.viewingPaneId))) {
         return fail(id, "presence_update needs isVisible and viewingPaneId");
+      }
+      return ok();
+    case "client_diag":
+      if (!isObj(p) || !Array.isArray(p.events) || p.events.length > MAX_DIAG_EVENTS || !p.events.every(isDiagEvent)) {
+        return fail(id, "client_diag needs payload.events of flat events with numeric t and string ev");
       }
       return ok();
     case "select_view":

@@ -67,6 +67,8 @@ export interface WsServerOptions {
   port?: number;
   productionPort?: number;
   environmentKind?: "production" | "dev" | "test";
+  /** protocol.md §2.3: debug mode for this run (`pigeon start --debug`). */
+  debug?: boolean;
   logger?: (msg: string) => void;
 }
 
@@ -153,9 +155,11 @@ export class WsServer {
   private onCardsUpdated: (state: PaneStatePayload) => void;
   private onPaneStatusChanged: (event: { paneId: string; status: string }) => void;
   private logger?: (msg: string) => void;
+  private debug: boolean;
 
   constructor(options: WsServerOptions) {
     this.logger = options.logger;
+    this.debug = options.debug ?? false;
     this.buildId = options.buildId;
     this.queueFilePath = options.queueFilePath;
     this.queueSendTimeoutMs = options.queueSendTimeoutMs ?? 30_000;
@@ -481,6 +485,7 @@ export class WsServer {
           ws.close(4409, "Incompatible protocol version");
           return;
         }
+        const helloAt = performance.now();
         this.send(ws, {
           type: "welcome",
           replyTo: msg.id,
@@ -489,6 +494,7 @@ export class WsServer {
             serverVersion: SERVER_VERSION,
             buildId: this.buildId,
             environment: this.environment,
+            debug: this.debug,
             deviceId: data.session.deviceId,
             clientConfig: this.configManager.getClientConfig(),
             recipes: this.recipeSummaries(),
@@ -503,10 +509,19 @@ export class WsServer {
         if (paneId && this.herdrClient.hasPane(paneId)) {
           const have = requested === paneId ? msg.payload.have : undefined;
           const requestedPaneId = requested && requested !== paneId ? requested : undefined;
-          await this.bootstrapPane(ws, paneId, have, requestedPaneId);
+          await this.bootstrapPane(ws, paneId, have, requestedPaneId, { via: "hello", startMs: helloAt });
         }
         return;
       }
+
+      case "client_diag":
+        if (!this.debug) return;
+        for (const e of msg.payload.events) {
+          const { t, ev, ...fields } = e;
+          const rest = Object.entries(fields).map(([k, v]) => `${k}=${typeof v === "string" ? JSON.stringify(v) : v}`);
+          this.logger?.(`debug client ${data.session.deviceName || "client"} (conn=${data.connectionId}) ${new Date(t).toISOString()} ${ev}${rest.length ? " " + rest.join(" ") : ""}`);
+        }
+        return;
 
       case "ping":
         data.lastPingTime = Date.now();
@@ -530,7 +545,7 @@ export class WsServer {
           this.sendError(ws, msg.id, ProtocolErrors.ERR_NOT_FOUND, `Unknown pane ${msg.payload.paneId}`);
           return;
         }
-        await this.bootstrapPane(ws, msg.payload.paneId, msg.payload.have);
+        await this.bootstrapPane(ws, msg.payload.paneId, msg.payload.have, undefined, { via: "select_view", startMs: performance.now() });
         this.sendAck(ws, msg.id);
         return;
       }
@@ -964,7 +979,13 @@ export class WsServer {
   }
 
   /** Subscribes the connection to one pane and sends everything the client needs to render it. */
-  private async bootstrapPane(ws: Ws, paneId: string, have?: HaveInfo, requestedPaneId?: string): Promise<void> {
+  private async bootstrapPane(
+    ws: Ws,
+    paneId: string,
+    have?: HaveInfo,
+    requestedPaneId?: string,
+    timing?: { via: "hello" | "select_view"; startMs: number }
+  ): Promise<void> {
     const startMs = Date.now();
     ws.data.subscribedPaneId = paneId;
     this.syncMonitoredPanes();
@@ -1038,7 +1059,7 @@ export class WsServer {
           ...(turnsPayload.sessionStats ? { sessionStats: toLightStats(turnsPayload.sessionStats) } : {}),
         }
       : null;
-    this.send(ws, {
+    const bootstrap = JSON.stringify({
       type: "pane_bootstrap",
       payload: {
         paneId,
@@ -1050,7 +1071,13 @@ export class WsServer {
         state: cached ?? null,
         serverMs,
       },
-    });
+    } satisfies ServerMessage);
+    ws.send(bootstrap);
+    if (this.debug && timing) {
+      this.logger?.(
+        `debug ${timing.via} (conn=${ws.data.connectionId}) pane ${paneId}: bootstrap sent after ${Math.round(performance.now() - timing.startMs)}ms, ${bootstrap.length} bytes, ${resumePayload ? "resume" : "full"}`
+      );
+    }
     if (cached) this.send(ws, { type: "pane_state", payload: cached });
     await this.herdrClient.readAndClassifyPane(paneId);
   }
