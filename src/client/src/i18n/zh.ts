@@ -402,5 +402,5 @@ export const zh: Messages = {
   "settings.providerPlan": "已登录 · {plan}",
   "settings.providerDisabled": "不查询",
   "settings.usageScanInterval": "刷新间隔",
-  "settings.usageScanModeHint": "电脑会按此间隔一起刷新已启用的额度与用量（默认 5m，未连接手机时也会运行）；各页的刷新按钮可立即刷新该页。",
+  "settings.usageScanModeHint": "电脑会按此间隔一起刷新已启用的额度与用量（默认 15m，未连接手机时也会运行）；各页的刷新按钮可立即刷新该页。",
 };

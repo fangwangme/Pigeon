@@ -311,4 +311,4 @@ Behavior and numbers come from `quota-and-usage.md`; this section is the present
   - **Token 用量** (summary: **今日 $x · 近 7 天 $y**)
 - Shared items visible whenever `quotaEnabled` or `usageEnabled` is on:
   - **列表页显示额度按钮** (`client.quotaButton`, issue #25: shared entry button for Quota/Usage on Home and All Agents)
-  - **刷新间隔** (`client.usageScanInterval`: **1m**, **2m**, **5m** default, **10m**, **15m**). There is no scan-mode choice (issue #29). The note under the card says that the computer refreshes the enabled quota and usage together at this interval, even when no phone is connected, and that each page's refresh button refreshes that page right away.
+  - **刷新间隔** (`client.usageScanInterval`: **1m**, **2m**, **5m**, **10m**, **15m** default). There is no scan-mode choice (issue #29). The note under the card says that the computer refreshes the enabled quota and usage together at this interval, even when no phone is connected, and that each page's refresh button refreshes that page right away.

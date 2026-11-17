@@ -401,5 +401,5 @@ export const en = {
   "settings.providerPlan": "Logged in · {plan}",
   "settings.providerDisabled": "Do not query",
   "settings.usageScanInterval": "Refresh interval",
-  "settings.usageScanModeHint": "The computer refreshes enabled quota and usage together at this interval even when no phone is connected (5m default); each page's refresh button refreshes that page right away.",
+  "settings.usageScanModeHint": "The computer refreshes enabled quota and usage together at this interval even when no phone is connected (15m default); each page's refresh button refreshes that page right away.",
 } as const;

@@ -359,11 +359,11 @@ describe("quota config and usage request validation (quota-and-usage.md §2.5, p
   });
 
   test("split quotaEnabled & usageEnabled: defaults, legacy config drop, validation, and independent command gating (quota-and-usage.md §1.1, protocol.md §4.16–§4.19, §6.3)", async () => {
-    // 1. Fresh config has quotaEnabled: false, usageEnabled: true, usageScanInterval: "5m"
+    // 1. Fresh config has quotaEnabled: false, usageEnabled: true, usageScanInterval: "15m"
     const freshCfg = new ConfigManager(join(dir, "fresh-config.json"), { HOME: dir }).getClientConfig();
     expect(freshCfg.quotaEnabled).toBe(false);
     expect(freshCfg.usageEnabled).toBe(true);
-    expect(freshCfg.usageScanInterval).toBe("5m");
+    expect(freshCfg.usageScanInterval).toBe("15m");
     expect((freshCfg as any).quotaUsageEnabled).toBeUndefined();
 
     // 2. Legacy config with quotaUsageEnabled drops it and never inherits into new switches

@@ -175,7 +175,7 @@ const [state, setState] = createStore<AppState>({
   quotaDisplay: "remaining",
   quotaButton: true,
   quotaShowAccount: false,
-  usageScanInterval: "5m",
+  usageScanInterval: "15m",
   quotaProviders: { claude: true, codex: true, antigravity: true },
   quotaSnapshots: [],
   quotaUpdated: null,

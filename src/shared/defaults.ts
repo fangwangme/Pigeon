@@ -10,7 +10,7 @@ export const DEFAULT_CLIENT_CONFIG: ClientConfig = {
   quotaDisplay: "remaining",
   quotaButton: true,
   quotaShowAccount: false,
-  usageScanInterval: "5m",
+  usageScanInterval: "15m",
 };
 
 const SCAN_INTERVAL_MS: Record<UsageScanInterval, number> = {
@@ -21,9 +21,9 @@ const SCAN_INTERVAL_MS: Record<UsageScanInterval, number> = {
   "15m": 900_000,
 };
 
-/** Converts `usageScanInterval` to milliseconds, defaulting to `"5m"`. */
+/** Converts `usageScanInterval` to milliseconds, defaulting to `"15m"`. */
 export function scanIntervalToMs(interval?: UsageScanInterval): number {
-  return (interval && SCAN_INTERVAL_MS[interval]) || SCAN_INTERVAL_MS["5m"];
+  return (interval && SCAN_INTERVAL_MS[interval]) || SCAN_INTERVAL_MS["15m"];
 }
 
 export const ACCENT_NAMES = ["blue", "purple", "green", "orange", "pink"] as const;
