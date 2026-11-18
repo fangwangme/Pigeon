@@ -906,12 +906,11 @@ describe("blocked prompts and interaction_dismiss (protocol.md §4.2, §4.24, he
     expect(lastAck(c)).toMatchObject({ queued: false });
     expect(herdr.callsOf("terminal.send").at(-1)?.params).toEqual({ terminal: "p2", text: "save to notes", force: true });
 
-    // Now put a numbered permission menu on screen: force must be omitted so Core's blocked guard protects it.
+    // Even while paneState still caches the earlier unstructured screen (150ms debounce window),
+    // a fresh numbered permission menu on screen is detected before send so force is omitted.
     herdr.calls.length = 0;
     c.sent.length = 0;
     herdr.handlers["terminal.read"] = () => ({ result: { text: "Allow command?\n1. Yes\n2. No\n", how: "history" } });
-    await client.readAndClassifyPane("p2");
-    await until(() => (c.ofType("pane_state").at(-1)?.payload.pendingInteraction?.options?.length ?? 0) === 2);
 
     await send(c.ws, { type: "agent_prompt", id: "b2", payload: { targetPaneId: "p2", text: "accidental enter" } });
     expect(lastError(c)).toBe(ProtocolErrors.ERR_AGENT_BLOCKED);

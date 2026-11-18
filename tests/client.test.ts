@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { PALETTES } from "../src/client/src/themes";
 import { formatModelNameWithRecipes } from "../src/client/src/utils/model-name";
 import { renderMarkdown } from "../src/client/src/utils/markdown";
-import { callCommand, callInputText } from "../src/client/src/utils/tool-call";
+import { activePlanForInteraction, callCommand, callInputText } from "../src/client/src/utils/tool-call";
 import type { NormalizedToolCall } from "../src/types/protocol";
 import { state, setState, quotaButtonShown, quotaUsageTarget } from "../src/client/src/state/store";
 import { applyClientConfigWithTransitions, sendConfigPatch, handleServerMessage, initWebSocket } from "../src/client/src/state/ws";
@@ -302,5 +302,19 @@ describe("code blocks and heatmap scales (mobile-ui-and-themes.md §3.2, §9.1)"
     for (const k of keys) expect(PALETTES.dark[k]).toBe(PALETTES.light[k]);
     expect(luminance(PALETTES.light.heatTokens1)).toBeGreaterThan(luminance(PALETTES.light.heatTokens5));
     expect(luminance(PALETTES.light.heatCost1)).toBeGreaterThan(luminance(PALETTES.light.heatCost5));
+  });
+});
+
+describe("plan and artifact card selection (mobile-ui-and-themes.md §4.3, protocol.md §5.4)", () => {
+  test("artifact pendingPlan applies only to transcript interactions while regular plans also wrap screen options", () => {
+    const artifactPlan = { markdown: "# Spec", title: "spec.md", artifact: true };
+    expect(activePlanForInteraction("transcript", artifactPlan)).toEqual(artifactPlan);
+    expect(activePlanForInteraction("screen", artifactPlan)).toBeUndefined();
+    expect(activePlanForInteraction(undefined, artifactPlan)).toBeUndefined();
+
+    const exitPlan = { markdown: "# Plan\n1. Step" };
+    expect(activePlanForInteraction("transcript", exitPlan)).toEqual(exitPlan);
+    expect(activePlanForInteraction("screen", exitPlan)).toEqual(exitPlan);
+    expect(activePlanForInteraction("transcript", { markdown: "" })).toBeUndefined();
   });
 });

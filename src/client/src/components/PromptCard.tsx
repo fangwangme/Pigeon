@@ -6,7 +6,7 @@ import { focusComposer } from "./Composer";
 import { Markdown, openToolDetail } from "./Transcript";
 import { DiffBadge, Icon, Sheet } from "./ui";
 import { t } from "../i18n";
-import { callCommand } from "../utils/tool-call";
+import { activePlanForInteraction, callCommand } from "../utils/tool-call";
 
 /** Options that hand the turn back to the user to write something (§4.1, §4.3). */
 const TELL_RE = /tell|keep planning|告诉|说明|继续规划/i;
@@ -423,7 +423,7 @@ function AlertDialogCard(props: { p: InteractionCardData }) {
 export function PromptCard(props: { collapsed: boolean; onCollapse: () => void; onExpand: () => void }) {
   const p = () => state.pendingInteraction!;
   const question = () => lastTurn()?.pendingQuestion;
-  const plan = () => lastTurn()?.pendingPlan;
+  const plan = () => activePlanForInteraction(p().source, lastTurn()?.pendingPlan);
   const isAlert = () => isAlertPrompt(p());
   // A pane refresh replaces these objects; a card is rebuilt only when its prompt changes, so
   // the page and picks the user made survive (§4.2).

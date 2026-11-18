@@ -1521,9 +1521,7 @@ export class WsServer {
     try {
       let force = false;
       if (herdrStatus === "blocked") {
-        if (!this.herdrClient.getPaneState(paneId)) {
-          await this.herdrClient.readAndClassifyPane(paneId);
-        }
+        await this.herdrClient.readAndClassifyPane(paneId);
         force = !this.herdrClient.hasStructuredOptions(paneId);
       }
       await this.herdrClient.sendPrompt(paneId, send, shown.attachments.length > 0, force);

@@ -1,4 +1,4 @@
-import { createSignal, Show, type JSX } from "solid-js";
+import { createSignal, onCleanup, onMount, Show, type JSX } from "solid-js";
 import { ICONS, type IconName } from "../icons";
 import { navigate, state } from "../state/store";
 import type { AgentStatus, PaneSummary, TabSummary, WorkspaceSummary } from "../../../types/protocol";
@@ -181,6 +181,7 @@ export function Sheet(props: {
   let vx = 0;
   let downEligible = false;
   let edgeMode: "none" | "pending" | "horiz" = "none";
+  let sheetEl: HTMLDivElement | undefined;
   const [edgeDx, setEdgeDx] = createSignal(0);
   const [edgeSettling, setEdgeSettling] = createSignal(false);
   const canSwipeDown = (target: EventTarget | null, sheetEl: HTMLElement): boolean => {
@@ -191,10 +192,43 @@ export function Sheet(props: {
     }
     return true;
   };
+  const handleTouchMove = (e: TouchEvent) => {
+    if (edgeMode === "none" || e.touches.length !== 1) return;
+    const touch = e.touches[0];
+    const dx = touch.clientX - startX;
+    const dy = Math.abs(touch.clientY - startY);
+    if (edgeMode === "pending") {
+      if (dy > 12 && dy > dx) {
+        edgeMode = "none";
+        return;
+      }
+      if (dx > 10 && dx > dy * 1.15) {
+        edgeMode = "horiz";
+        downEligible = false;
+        setEdgeSettling(false);
+      } else {
+        return;
+      }
+    }
+    if (e.cancelable) e.preventDefault();
+    const now = performance.now();
+    const dt = now - lastT;
+    if (dt > 0) vx = 0.6 * ((touch.clientX - lastX) / dt) + 0.4 * vx;
+    lastX = touch.clientX;
+    lastT = now;
+    setEdgeDx(Math.max(0, dx));
+  };
+  onMount(() => {
+    if (!sheetEl) return;
+    const el = sheetEl;
+    el.addEventListener("touchmove", handleTouchMove, { passive: false });
+    onCleanup(() => el.removeEventListener("touchmove", handleTouchMove));
+  });
   return (
     <div class="overlay" role="dialog" aria-modal="true">
       <div class="scrim" onClick={() => props.onClose()} />
       <div
+        ref={sheetEl}
         class={`sheet${props.full ? " full" : ""}`}
         style={
           edgeDx() > 0 || edgeSettling()
@@ -217,32 +251,6 @@ export function Sheet(props: {
           vx = 0;
           downEligible = canSwipeDown(e.target, e.currentTarget);
           edgeMode = props.full && startX <= 44 && !canScrollRightward(e.target, e.currentTarget) ? "pending" : "none";
-        }}
-        onTouchMove={(e) => {
-          if (edgeMode === "none" || e.touches.length !== 1) return;
-          const touch = e.touches[0];
-          const dx = touch.clientX - startX;
-          const dy = Math.abs(touch.clientY - startY);
-          if (edgeMode === "pending") {
-            if (dy > 12 && dy > dx) {
-              edgeMode = "none";
-              return;
-            }
-            if (dx > 10 && dx > dy * 1.15) {
-              edgeMode = "horiz";
-              downEligible = false;
-              setEdgeSettling(false);
-            } else {
-              return;
-            }
-          }
-          if (e.cancelable) e.preventDefault();
-          const now = performance.now();
-          const dt = now - lastT;
-          if (dt > 0) vx = 0.6 * ((touch.clientX - lastX) / dt) + 0.4 * vx;
-          lastX = touch.clientX;
-          lastT = now;
-          setEdgeDx(Math.max(0, dx));
         }}
         onTouchEnd={(e) => {
           const t0 = e.changedTouches[0];
