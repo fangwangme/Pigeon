@@ -1,8 +1,22 @@
-import { describe, expect, jest, test } from "bun:test";
+import { afterEach, describe, expect, jest, test } from "bun:test";
 import { handleServerMessage, handleVisibilityChange, initWebSocket, request, selectPane } from "../src/client/src/state/ws";
-import { setState, setUnread, state } from "../src/client/src/state/store";
+import { setState, state } from "../src/client/src/state/store";
 import { dropCachedShell } from "../src/client/src/state/shell";
 import type { PaneStatePayload } from "../src/types/protocol";
+
+afterEach(() => {
+  setState({
+    updateAvailable: false,
+    accent: "blue",
+    activePaneId: null,
+    rawScreen: "",
+    pendingInteraction: null,
+    paneLoaded: false,
+    session: null,
+    normalizedTurns: [],
+    todos: null,
+  });
+});
 
 // protocol.md §2.2 (reconnecting), §3.2 (buildId), §3.3 (cached state on (re)selection),
 // §5.4 (revision filter), §6.3 (config versions).
@@ -131,21 +145,6 @@ describe("queue and session info (protocol.md §5.6, §5.8)", () => {
     });
     expect(state.todos).toEqual([{ text: "Ship", status: "pending" }]);
     expect(state.session?.model).toEqual({ value: "opus", source: "launch" });
-  });
-});
-
-describe("unread marks (mobile-ui-and-themes.md §2.1, issue #3)", () => {
-  test("viewing a pane clears its unread mark", () => {
-    setUnread("u1", true);
-    expect(state.unread.u1).toBe(true);
-    selectPane("u1");
-    expect("u1" in state.unread).toBe(false);
-  });
-
-  test("a closed pane's unread mark is dropped", () => {
-    setUnread("gone", true);
-    handleServerMessage({ type: "snapshot_update", payload: { workspaces: [], workingAgents: [] } } as any);
-    expect("gone" in state.unread).toBe(false);
   });
 });
 

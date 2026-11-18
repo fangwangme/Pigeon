@@ -10,7 +10,7 @@ To achieve zero-dependency execution across supported platforms, Pigeon adopts a
 
 ## 2. Multi-Platform Binary Targets
 
-The Pigeon CLI and daemon compile into standalone binaries using Bun's native compilation and cross-target bundling (`bun build --compile --minify`):
+The Pigeon CLI and daemon compile into standalone binaries (bundling both `./src/cli/index.ts` and `./src/server/usage/scan-worker.ts`) using Bun's native compilation and cross-target bundling (`bun build --compile --minify`):
 
 | Target Triple / Target Key | Platform (`os`) | Architecture (`cpu`) | Bun Target | Binary Asset Name |
 | :--- | :--- | :--- | :--- | :--- |

@@ -483,7 +483,7 @@ export function SessionPage() {
                     >
                       <div class="newempty">
                         <div style={{ "margin-bottom": "8px" }}>{t("session.noStructuredSession")}</div>
-                        <button class="btn primary" onClick={() => openTerminal()}>
+                        <button class="btn pri" onClick={() => openTerminal()}>
                           {t("session.openTerminal")}
                         </button>
                       </div>

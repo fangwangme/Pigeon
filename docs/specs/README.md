@@ -11,7 +11,8 @@ Specs describe what the system does and why. They are the authoritative standard
 5. [`mobile-ui-and-themes.md`](mobile-ui-and-themes.md) — Mobile UX: workspace and all-agents lists, the conversation page, prompt cards, composer, new and resumed sessions, settings, light/dark themes with accent, Liquid Glass, and English/Chinese localization.
 6. [`push.md`](push.md) — Web Push notification subsystem (VAPID keypair, presence-based push suppression, and privacy-preserving alerts).
 7. [`agent-session-normalization.md`](agent-session-normalization.md) — Binding panes to agent sessions, the Claude Code, Codex, Pi, OpenCode, and AGY record formats, the NormalizedTurn model, todos, and session diffs.
-8. [`quota-and-usage.md`](quota-and-usage.md) — Subscription quota for Claude Code, Codex and Antigravity (credential refresh, pace and level), and token usage and estimated cost for every agent (sources, pricing, ranges, comparison, heatmap layout).
+8. [`quota-and-usage.md`](quota-and-usage.md) — Subscription quota for Claude Code, Codex and Antigravity (read-only credential loading, pace and level), and token usage and estimated cost for every agent (sources, pricing, ranges, comparison, heatmap layout).
+9. [`distribution.md`](distribution.md) — Multi-platform standalone binary compilation, `@fangwangme/pigeon` npm launcher/platform packages, CI checks, and OIDC Trusted Publishing release workflow.
 
 ## Core Rules for Spec Integrity
 - **Spec Lead**: Any behavior change updates the spec first in the change's own branch.

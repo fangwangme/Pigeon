@@ -23,7 +23,6 @@ export interface Palette {
   delfg: string;
   code: string;
   bubble: string;
-  unread: string;
   /** Liquid Glass fills and edges (§9.2). */
   lgFill: string;
   lgFillStrong: string;
@@ -80,7 +79,6 @@ export const PALETTES: Record<"light" | "dark", Palette> = {
     delfg: "#FF7D7D",
     code: "#18181B",
     bubble: "#2B2B30",
-    unread: "#4C8DFF",
     lgFill: "rgba(46,46,54,.36)",
     lgFillStrong: "rgba(32,32,38,.66)",
     lgEdge: "rgba(255,255,255,.15)",
@@ -134,7 +132,6 @@ export const PALETTES: Record<"light" | "dark", Palette> = {
     delfg: "#B82E2E",
     code: "#F1F1EE",
     bubble: "#EBEBE8",
-    unread: "#2F6FE4",
     lgFill: "rgba(255,255,255,.46)",
     lgFillStrong: "rgba(255,255,255,.76)",
     lgEdge: "rgba(255,255,255,.75)",
@@ -198,7 +195,6 @@ const KEBAB: Record<keyof Palette, string> = {
   delfg: "delfg",
   code: "code",
   bubble: "bubble",
-  unread: "unread",
   lgFill: "lg-fill",
   lgFillStrong: "lg-fill-strong",
   lgEdge: "lg-edge",

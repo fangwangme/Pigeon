@@ -118,6 +118,13 @@ afterEach(async () => {
   last()?.drop(4409);
   await flush();
   for (const key of Object.keys(saved)) g[key] = saved[key];
+  setState({
+    activePaneId: null,
+    session: null,
+    normalizedTurns: [],
+    rawScreen: "",
+    paneSyncing: false,
+  });
   jest.useRealTimers();
 });
 

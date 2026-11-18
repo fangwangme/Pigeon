@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { PALETTES } from "../src/client/src/themes";
-import { formatModelNameWithRecipes } from "../src/client/src/utils/model-name";
+import { formatModelNameWithRecipes } from "../src/shared/model-name";
 import { renderMarkdown } from "../src/client/src/utils/markdown";
 import { activePlanForInteraction, callCommand, callInputText } from "../src/client/src/utils/tool-call";
 import type { NormalizedToolCall } from "../src/types/protocol";

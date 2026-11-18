@@ -42,8 +42,6 @@ export interface AgentRecipe {
   label: string;
   /** Program started in the new tab (`herdr-adapter.md` §5); none starts the machine's shell. */
   command?: string;
-  defaultModel?: string;
-  defaultThinking?: string;
   /** `resume` is the value the resume argument takes (`herdr-adapter.md` §5); set only when `resumable`. */
   launchArgs(options?: { modelId?: string; thinking?: string; resume?: string; firstMessage?: string }): string[];
   /** True when the CLI takes the first message via its own flag in `argv` instead of Herdr's positional `task` (`herdr-adapter.md` §5). */

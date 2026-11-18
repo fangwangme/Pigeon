@@ -1,12 +1,27 @@
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { createServer, type Server, type Socket } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { HerdrTopology } from "../../src/types/herdr";
 
-/** A fresh directory under $TMPDIR (the only writable temp location in sandboxed runs). */
+const createdTempDirs: string[] = [];
+let tempCleanupRegistered = false;
+
+/** A fresh directory under $TMPDIR (the only writable temp location in sandboxed runs), cleaned on exit. */
 export function tempDir(prefix: string): string {
-  return mkdtempSync(join(tmpdir(), `pigeon-${prefix}-`));
+  const dir = mkdtempSync(join(tmpdir(), `pigeon-${prefix}-`));
+  createdTempDirs.push(dir);
+  if (!tempCleanupRegistered) {
+    tempCleanupRegistered = true;
+    process.once("exit", () => {
+      for (const d of createdTempDirs) {
+        try {
+          rmSync(d, { recursive: true, force: true });
+        } catch {}
+      }
+    });
+  }
+  return dir;
 }
 
 /** A port the OS just reported free, for a test daemon; never 4100. */

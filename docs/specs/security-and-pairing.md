@@ -20,7 +20,7 @@ To prevent manual input errors, brute-force enumeration, and accidental disclosu
    - Time-to-Live (TTL): By default for personal Tailscale/LAN remote control, pairing links are non-expiring (permanent until manually rotated via `pigeon pair`). Ephemeral tokens with explicit TTL can be requested on demand.
    - Brute-Force Limit: After 5 failed attempts against the active token (counted globally, not per IP), the token is revoked. A new one needs `pigeon pair` on the machine. Note: `POST /api/pair` does not enforce Host or Origin checks (§4), so any device on the same network could trigger 5 failed attempts to revoke a permanent pairing link (without being able to pair through it); this is accepted under the personal-network threat model and recovered by regenerating a code with `pigeon pair`.
    - Verification: Constant-time comparison (`crypto.timingSafeEqual`) to prevent timing side-channel attacks.
-   - Credential Exchange: Scanned URL Fragment `#code=` exchanged for a 1-year persistent session cookie `__Host-pigeon_session`.
+   - Credential Exchange: Scanned URL Fragment `#code=` exchanged for a 1-year persistent session cookie (`__Host-pigeon_session` on HTTPS production, `__Host-pigeon_session_<port>` on HTTPS non-production instances, or `pigeon_session` / `pigeon_session_<port>` without `Secure` in plain HTTP modes).
 3. **URL Fragment Confidentiality**:
    - The `#code=...` fragment is **never transmitted across the wire** to the server in HTTP request headers or logged in reverse proxy access logs.
    - It is read client-side via JavaScript (`location.hash`) on the landing page.
@@ -32,7 +32,7 @@ To prevent manual input errors, brute-force enumeration, and accidental disclosu
    - The body is validated (`code` a string of at most 64 characters, optional `deviceName` a string of at most 128). A malformed body gets HTTP 400.
    - The server verifies the token, generates a unique server-side `deviceId` (UUID v4), and sanitizes `deviceName` (max 32 characters, stripping ANSI and control characters).
    - **Re-pairing replaces**: when the request carries a session cookie that is still valid, that device record is removed in the same exchange and its connections close with `4403` (§5), so scanning the permanent QR code again from a paired browser does not add a device (user decision, 2026-11-07). A missing or unknown cookie changes nothing.
-   - The server sets a session cookie (`__Host-pigeon_session` on the production instance, or `__Host-pigeon_session_<port>` on non-production test instances so concurrent instances on the same Tailscale hostname never overwrite each other's cookie):
+   - The server sets a session cookie (`__Host-pigeon_session` on HTTPS production, `__Host-pigeon_session_<port>` on HTTPS non-production test instances so concurrent instances on the same Tailscale hostname never overwrite each other's cookie; plain HTTP modes omit `__Host-` and `Secure`):
      ```http
      Set-Cookie: __Host-pigeon_session=<SESSION_TOKEN>; Path=/; Secure; HttpOnly; SameSite=Strict; Max-Age=31536000
      ```
@@ -44,30 +44,31 @@ To prevent manual input errors, brute-force enumeration, and accidental disclosu
 The HTTP server answers only the routes below. Every other path is 404, and nothing is served from the filesystem: the HTML is the single-file bundle compiled into the binary.
 - **Permitted Unauthenticated** (no user or terminal data):
   - `GET /`, `/index.html` and `/pair`: the same single-file app shell. It holds no data until a paired WebSocket is open, and it must load in order to run the pairing exchange.
-  - `GET /manifest.webmanifest` (also as `/manifest.json`), `/sw.js`, `/icon.svg`, `/icon-192.png`, `/icon-512.png`, `/icon-light.svg`, `/icon-light-192.png`, `/icon-light-512.png`, and any path starting with `/apple-touch-icon` (iOS asks for it by itself; it gets the 192 px icon): PWA install assets.
-    - **PWA Icons by Instance** (issue #21): To allow distinguishing production and test PWAs installed on the same mobile device, icon assets are served based on the instance port (`architecture.md` §4.6):
-      - **Production instance (port 4100)**: returns light icons (`/icon.svg`, `/icon-192.png`, `/icon-512.png`). Manifest icons and HTML `apple-touch-icon` link to these light icons.
-      - **Test instances (any non-4100 port)**: returns dark icons (`/icon-dark.svg`, `/icon-dark-192.png`, `/icon-dark-512.png` generated from `public/icon-dark.svg`). The generic routes `/icon.svg`, `/icon-192.png`, `/icon-512.png` return the dark icon assets on non-4100 ports, and the manifest and HTML `apple-touch-icon` link to the dark icon assets.
+  - `GET /manifest.webmanifest` (also as `/manifest.json`), `/sw.js`, `/icon.svg`, `/icon-192.png`, `/icon-512.png`, `/icon-light.svg`, `/icon-light-192.png`, `/icon-light-512.png`, `/icon-dark.svg`, `/icon-dark-192.png`, `/icon-dark-512.png`, and any path starting with `/apple-touch-icon` (iOS asks for it by itself; it gets the 192 px icon): PWA install assets.
+    - **PWA Icons by Instance** (issue #21): To allow distinguishing production and test PWAs installed on the same mobile device, icon assets are served based on whether `port === productionPort` (`architecture.md` §4.6):
+      - **Production instance**: `/icon.svg`, `/icon-192.png`, `/icon-512.png` and the manifest return light icons, while `/icon-dark*` remains directly fetchable.
+      - **Test instances (`port !== productionPort`)**: `/icon.svg`, `/icon-192.png`, `/icon-512.png` and the manifest return dark icons (`public/icon-dark.svg`), while `/icon-light*` remains directly fetchable.
   - `POST /api/pair`: the rate-limited token exchange.
   - `GET /api/auth/status`: whether this browser's cookie is a valid session.
   - `GET /api/version` and `GET /api/push/vapid-public-key`: public constants.
 - **Strictly Authenticated**:
-  - `POST /api/push/subscribe` (HTTP 401 without a session).
+  - `POST /api/push/subscribe` and `POST /api/push/unsubscribe` (HTTP 401 without a session).
   - `POST /api/uploads` (HTTP 401 without a session; the Origin and Host checks of §4 apply too, `protocol.md` §7).
+  - `GET /api/uploads/:id` and `GET /api/agent-media/agy/<sessionId>/<name>` (HTTP 401 without a session; Host check always, and Origin check when `Origin` is present, `protocol.md` §7, §7.1).
   - WebSocket upgrades (`/ws`) must present a valid session cookie; otherwise the upgrade is rejected with HTTP 401. A session token in the query string is not accepted.
 
 ## 4. Host and Origin Validation
 
 To protect against Cross-Site WebSocket Hijacking (CSWSH) and DNS Rebinding attacks:
 
-Both checks run on the WebSocket upgrade and on `POST /api/uploads`, before the session check. `GET /api/uploads/:id` runs the Host check, and the Origin check only when an `Origin` header is present (`protocol.md` §7):
-- **Origin Check**: The `Origin` header must be present and must equal, exactly (scheme, host and port), the origin of `publicBaseUrl`. In `--insecure-dev`, the origins `http://{localhost,127.0.0.1,[::1]}` on the daemon port and on the Vite dev port 5173 are also accepted, as is the LAN host on port 5173. Anything else is HTTP 403.
-- **Host Whitelist**: The host name in `Host`, compared without its port and with IPv6 brackets kept, must be `localhost`, `127.0.0.1`, `[::1]`, or the host of `publicBaseUrl`. Anything else is HTTP 403. This defeats DNS rebinding.
+Both checks run on the WebSocket upgrade and on `POST /api/uploads`, before the session check. `GET /api/uploads/:id` and `GET /api/agent-media/agy/<sessionId>/<name>` run the Host check, and the Origin check only when an `Origin` header is present (`protocol.md` §7):
+- **Origin Check**: The `Origin` header must be present and must equal one of the allowed origins: the `publicBaseUrl` origin, origins from resolved access alternatives (`architecture.md` §4.2), detected Tailscale DNSName origins (`http://<DNSName>:<port>`, `https://<DNSName>`, `https://<DNSName>:<port>`, `https://<DNSName>:<tailscaleHttpsPort>`), and — on non-production instances or with `--insecure-dev` — `http://{localhost,127.0.0.1,[::1]}:{<port>,5173}` and Vite port `5173` on `publicBaseUrl`/`DNSName` (with `--insecure-dev` also allowing LAN alternatives). Anything else is HTTP 403.
+- **Host Whitelist**: The host name in `Host`, compared without its port and with IPv6 brackets kept, must be `localhost`, `127.0.0.1`, `[::1]`, the host of `publicBaseUrl`, a resolved access-alternative host, or the detected Tailscale DNSName. Anything else is HTTP 403. This defeats DNS rebinding.
 - **Proxy Headers**: `X-Forwarded-*` headers are ignored.
 
 ## 5. Local Admin Channel & Storage Security
 
-- **Admin IPC Socket**: Daemon listens on `$XDG_RUNTIME_DIR/pigeon.sock`, or `<stateDir>/admin.sock` without `XDG_RUNTIME_DIR` (mode `0600`). The path is resolved from the environment at every start.
+- **Admin IPC Socket**: Daemon listens on `$XDG_RUNTIME_DIR/pigeon.sock`, or `<stateDir>/pigeon.sock` (`pigeon-<port>.sock` on test instances) without `XDG_RUNTIME_DIR` (mode `0600`). The path is resolved from the environment at every start.
   - If the socket already answers, another daemon is running and startup fails. A stale socket file nobody answers on is replaced. A daemon removes only a socket it created.
   - `pigeon start` reuses the active pairing token for its QR code; `pigeon pair` rotates it (`--ephemeral` for a single-use, 10-minute token).
   - `pigeon start` prints the pairing link and its QR code at every start, also when stdout is not a terminal (user decision, 2026-11-11): the link is copied from the log when the QR code does not open. The user's own computer and its logs are trusted.
@@ -88,7 +89,7 @@ Both checks run on the WebSocket upgrade and on `POST /api/uploads`, before the 
 
 The quota feature (`quota-and-usage.md` §2) reads the credentials of the agents on this computer. It never writes them (user decision, 2026-11-11): refreshing a token would race the agent's own refresh of a rotating refresh token and could sign the agent out.
 
-- **What is read**: the Claude Code credential file (and, on macOS, its Keychain item), Codex's `auth.json`, and the Antigravity CLI's OAuth token cache. Only providers enabled in `client.quotaProviders` are read. Usage scanning (`quota-and-usage.md` §3.1) reads the agents' session data and never their credentials.
+- **What is read**: the Claude Code credential file (and, on macOS, its Keychain item) plus `~/.claude.json` (`oauthAccount.emailAddress`, read-only), Codex's `auth.json`, and the Antigravity CLI's OAuth token cache. Only providers enabled in `client.quotaProviders` are read. Usage scanning (`quota-and-usage.md` §3.1) reads the agents' session data and never their credentials.
 - **What is written**: nothing of an agent's. An expired or rejected token is reported as a provider error (`quota-and-usage.md` §2.3).
 - **Never leaves the daemon**: access tokens, refresh tokens and ID tokens are never sent to the phone, logged, or written anywhere else. Errors name the provider and the cause, never a token or a header value. The phone receives only the snapshot of `quota-and-usage.md` §2.1 (plan, account email, windows, credits).
 - **Outbound hosts** (HTTPS only): `api.anthropic.com`, `chatgpt.com`, Google's Cloud Code endpoint for Antigravity, the push services named by the phones' subscriptions (`push.md` §3), and the price lists at `models.dev`, `raw.githubusercontent.com` (LiteLLM) and `openrouter.ai`. The Antigravity language server is reached on the loopback interface only. Responses are untrusted input, validated before use (`architecture.md` §5).

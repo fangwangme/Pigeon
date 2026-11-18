@@ -53,7 +53,7 @@ function printQr(url: string, permanent: boolean): void {
   console.log("=======================================================\n");
   console.log(`Pairing URL: ${url}\n`);
   qrcode.generate(url, { small: true });
-  console.log("\nScan the QR code above with your phone's Chromium browser.");
+  console.log("\nScan the QR code above with your phone's browser.");
   console.log(permanent ? "This pairing link stays valid until you run `pigeon pair` again." : "This pairing link expires in 10 minutes.");
   console.log("=======================================================\n");
 }
@@ -65,7 +65,7 @@ Usage:
   pigeon start [--port <n>] [--insecure-dev] [--debug] [--herdr-app-sock <path>] [--herdr-core-sock <path>] [--public-url <url>] [--admin-sock <path>]
   pigeon pair [--ephemeral] [--json] [--port <n>]
   pigeon devices [revoke <id>] [--port <n>]
-  pigeon status [--port <n>]
+  pigeon status [--json] [--port <n>]
   pigeon rebuild-cache [--json] [--port <n>] [--yes]
 
 The admin commands reach the daemon on the configured port, or on --port.

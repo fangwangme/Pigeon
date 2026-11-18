@@ -29,11 +29,6 @@ export function resolveLocale(pref: LocalePref, languages: readonly string[]): L
   return "en";
 }
 
-/** §10.3: a language's messages with English filling every gap. */
-export function withFallback(partial: Partial<Messages>): Messages {
-  return { ...(en as Messages), ...partial };
-}
-
 function fill(text: string, params?: Params): string {
   return params ? text.replace(/\{(\w+)\}/g, (whole, name) => (name in params ? String(params[name]) : whole)) : text;
 }

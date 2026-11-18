@@ -1,7 +1,7 @@
 import { existsSync, readdirSync, realpathSync, statSync } from "node:fs";
 import { join } from "node:path";
 import type { PastSession } from "../../types/protocol";
-import { fileFallbackTs, isObj, JsonlTail, lineDiff, mtimeOf, readHeadJsonLines, readTailJsonLines, str, TurnBuilder, type SessionRead } from "./common";
+import { extractBlocksText, fileFallbackTs, isObj, JsonlTail, lineDiff, mtimeOf, readListingJsonLines, str, TurnBuilder, type SessionRead } from "./common";
 import type { PaneFacts, SessionSource } from "./source";
 
 /** Pi (`agent-session-normalization.md` §2.5). Session ids are file names without `.jsonl`. */
@@ -87,34 +87,19 @@ export class PiSource implements SessionSource {
         this.paths.set(f.id, f.path);
         let title: string | undefined;
         let model: string | undefined;
-        for (const r of readHeadJsonLines(f.path)) {
+        for (const r of readListingJsonLines(f.path, statSync(f.path).size)) {
           if (isObj(r) && r.type === "model_change" && str(r.provider) && str(r.modelId)) model = `${r.provider}/${r.modelId}`;
           if (isObj(r) && r.type === "message" && isObj(r.message)) {
             const m = r.message;
             if (m.role === "assistant" && str(m.provider) && str(m.model)) model = `${m.provider}/${m.model}`;
             if (!title && m.role === "user") {
-              title = blocksText(m.content);
-            }
-          }
-        }
-        if (statSync(f.path).size > 262_144) {
-          for (const r of readTailJsonLines(f.path)) {
-            if (isObj(r) && r.type === "model_change" && str(r.provider) && str(r.modelId)) model = `${r.provider}/${r.modelId}`;
-            if (isObj(r) && r.type === "message" && isObj(r.message)) {
-              const m = r.message;
-              if (m.role === "assistant" && str(m.provider) && str(m.model)) model = `${m.provider}/${m.model}`;
+              title = extractBlocksText(m.content);
             }
           }
         }
         return { id: f.id, title: (title || f.id).slice(0, 120), updatedAt: f.mtime, ...(model ? { model } : {}) };
       });
   }
-}
-
-function blocksText(content: unknown): string {
-  if (typeof content === "string") return content;
-  if (!Array.isArray(content)) return "";
-  return content.filter((b) => isObj(b) && b.type === "text").map((b: any) => b.text).join("\n");
 }
 
 function applyRecord(b: TurnBuilder, r: unknown): void {
@@ -124,7 +109,7 @@ function applyRecord(b: TurnBuilder, r: unknown): void {
   const m = r.message;
   const ts = b.resolveTs(r.timestamp ?? m.timestamp);
   if (m.role === "user") {
-    const text = blocksText(m.content);
+    const text = extractBlocksText(m.content);
     if (text) {
       b.prompt(text, ts);
     }
@@ -132,7 +117,7 @@ function applyRecord(b: TurnBuilder, r: unknown): void {
   }
   if (m.role === "toolResult") {
     const id = str(m.toolCallId);
-    if (id) b.toolResult(id, blocksText(m.content), m.isError === true, ts);
+    if (id) b.toolResult(id, extractBlocksText(m.content), m.isError === true, ts);
     return;
   }
   if (m.role !== "assistant") return;

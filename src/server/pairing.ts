@@ -361,18 +361,6 @@ export class PairingManager extends EventEmitter {
           socket.write(JSON.stringify({ id, result: tokenInfo }) + "\n");
           break;
         }
-        case "pair.status": {
-          socket.write(
-            JSON.stringify({
-              id,
-              result: {
-                hasActiveToken: !!this.activeToken,
-                expiresAt: this.activeToken?.expiresAt || null,
-              },
-            }) + "\n"
-          );
-          break;
-        }
         case "devices.list": {
           socket.write(JSON.stringify({ id, result: this.listDevices() }) + "\n");
           break;

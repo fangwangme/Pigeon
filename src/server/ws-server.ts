@@ -484,8 +484,6 @@ export class WsServer {
         kind: r.kind,
         label: r.label,
         models: this.modelCatalog.models(r.kind),
-        defaultModel: r.defaultModel,
-        defaultThinking: r.defaultThinking,
         interruptKeys: r.interruptKeys,
         resumable: r.resumable,
         launchModel: r.launchModel !== false,
@@ -534,7 +532,7 @@ export class WsServer {
         this.sendError(ws, replyTo, code, err.message);
       } else {
         const errCode = (err as any)?.code;
-        if (typeof errCode === "string" && (UNREACHABLE_CODES.has(errCode) || errCode === "ECONNREFUSED" || errCode === "ENOENT")) {
+        if (typeof errCode === "string" && UNREACHABLE_CODES.has(errCode)) {
           this.sendError(ws, replyTo, ProtocolErrors.ERR_UPSTREAM_OFFLINE, err instanceof Error ? err.message : String(err));
         } else {
           console.error(`[pigeon] handling '${msg.type}' failed:`, err);
@@ -1006,8 +1004,7 @@ export class WsServer {
             this.sendError(ws, msg.id, ProtocolErrors.ERR_NOT_FOUND, `Turn ${turnId} not found`);
             return;
           }
-          const item = turn.items?.find((i: any) => i.kind === "reasoning" && i.text) as { kind: "reasoning"; text?: string } | undefined;
-          const reasoningText = item?.text || turn.reasoning?.text;
+          const reasoningText = turn.reasoning?.text;
           if (!reasoningText) {
             this.sendError(ws, msg.id, ProtocolErrors.ERR_NOT_FOUND, `Reasoning text not found in turn ${turnId}`);
             return;
@@ -1017,7 +1014,7 @@ export class WsServer {
         }
         if (kind === "file") {
           const { filePath } = msg.payload;
-          const diff = ((sessionState.stats as any)?.files || sessionState.stats?.diffs || []).find((d: any) => d.filePath === filePath);
+          const diff = (sessionState.stats?.diffs ?? []).find((d) => d.filePath === filePath);
           if (!diff) {
             this.sendError(ws, msg.id, ProtocolErrors.ERR_NOT_FOUND, `Diff for ${filePath} not found`);
             return;
@@ -1025,17 +1022,13 @@ export class WsServer {
           this.sendAck(ws, msg.id, { diff });
           return;
         }
-        if (kind === "subagent") {
-          const { subagentId } = msg.payload;
-          const result = subagentId ? this.agentAdapters.getSubagent(sessionState.agent, sessionState.sessionId, subagentId) : null;
-          if (!result) {
-            this.sendError(ws, msg.id, ProtocolErrors.ERR_NOT_FOUND, `Sub-agent ${subagentId} not found`);
-            return;
-          }
-          this.sendAck(ws, msg.id, { subagent: result.subagent, turns: result.turns.map(toLightTurn) });
+        const { subagentId } = msg.payload;
+        const result = subagentId ? this.agentAdapters.getSubagent(sessionState.agent, sessionState.sessionId, subagentId) : null;
+        if (!result) {
+          this.sendError(ws, msg.id, ProtocolErrors.ERR_NOT_FOUND, `Sub-agent ${subagentId} not found`);
           return;
         }
-        this.sendError(ws, msg.id, ProtocolErrors.ERR_INVALID_PAYLOAD, `Unknown detail kind ${kind}`);
+        this.sendAck(ws, msg.id, { subagent: result.subagent, turns: result.turns.map(toLightTurn) });
         return;
       }
 
@@ -1614,11 +1607,6 @@ export class WsServer {
       throw err;
     }
     if (replyTo) this.sendAck(ws, replyTo, { queued: false });
-  }
-
-  public clearSendingPrompt(paneId: string, queueId?: string): void {
-    const qId = queueId ?? this.queueStates.get(paneId)?.batch[0] ?? "";
-    this.transitionQueue(paneId, { type: "timeout", queueId: qId });
   }
 
   public getQueueStatus(): Record<string, { length: number; state: "idle" | "sending" }> {

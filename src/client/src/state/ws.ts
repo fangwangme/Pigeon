@@ -1,13 +1,12 @@
 import { reconcile } from "solid-js/store";
-import { state, setState, applySyncedClientConfig, setUnread, showToast, writePref } from "./store";
-import { load, save, remove, clearAll, sweep, meta, migrateLocalStorageCache, getMemoryPaneView, applyPaneTail, type PaneCacheEntry } from "./pane-cache";
+import { state, setState, applySyncedClientConfig, showToast, writePref } from "./store";
+import { load, save, remove, clearAll, sweep, migrateLocalStorageCache, getMemoryPaneView, applyPaneTail, type PaneCacheEntry } from "./pane-cache";
 import type {
   ClientMessage,
   ServerMessage,
   SnapshotPayload,
   PaneStatePayload,
   ClientConfig,
-  AgentStatus,
   HaveInfo,
   QuotaProviderState,
   NormalizedTurn,
@@ -47,7 +46,6 @@ let configVersion = 0;
 // The client bundle this page was loaded with, as named by its first `welcome` (protocol.md §3.2).
 let loadedBuildId: string | null = null;
 const paneRevisions = new Map<string, number>();
-const lastStatus = new Map<string, AgentStatus>();
 const pending = new Map<
   string,
   { resolve: (p: any) => void; reject: (e: { code: string; message: string }) => void; cmd: string; startedAt: number }
@@ -287,14 +285,7 @@ function openSocket(): void {
     lastPongTime = Date.now();
     let have: HaveInfo | undefined;
     if (state.activePaneId && state.session?.bound && state.session.sessionId && state.normalizedTurns.length > 0) {
-      const turnCount = state.normalizedTurns.length;
-      have = {
-        sessionId: state.session.sessionId,
-        turnCount,
-        ...(turnCount >= 2
-          ? { anchorHash: hashTurn(state.normalizedTurns[turnCount - 2]) }
-          : { lastTurnHash: hashTurn(state.normalizedTurns[turnCount - 1]) }),
-      };
+      have = buildHaveInfo(state.session.sessionId, state.normalizedTurns);
       setState("paneSyncing", true);
     }
     bootstrapRequestedAt = Date.now();
@@ -387,20 +378,15 @@ function applyPaneState(p: PaneStatePayload): void {
   }
 }
 
-/** mobile-ui-and-themes.md §2.1: a pane that finished while this phone was not looking is unread. */
-function trackUnread(snap: SnapshotPayload): void {
-  const viewing = typeof document === "undefined" || document.visibilityState === "visible" ? state.activePaneId : null;
-  for (const w of snap.workspaces) {
-    for (const t of w.tabs) {
-      for (const p of t.panes) {
-        const prev = lastStatus.get(p.id);
-        lastStatus.set(p.id, p.agentStatus);
-        if (p.agentStatus === "done" && prev && prev !== "done" && p.id !== viewing) setUnread(p.id, true);
-      }
-    }
-  }
-  const alive = new Set(snap.workspaces.flatMap((w) => w.tabs.flatMap((t) => t.panes.map((p) => p.id))));
-  for (const id of Object.keys(state.unread)) if (!alive.has(id)) setUnread(id, false);
+function buildHaveInfo(sessionId: string, turns: NormalizedTurn[]): HaveInfo {
+  const turnCount = turns.length;
+  return {
+    sessionId,
+    turnCount,
+    ...(turnCount >= 2
+      ? { anchorHash: hashTurn(turns[turnCount - 2]) }
+      : { lastTurnHash: hashTurn(turns[turnCount - 1]) }),
+  };
 }
 
 /** Apply a full turn payload (`pane_bootstrap.turns` or `normalized_turns`) and update the pane cache. */
@@ -424,8 +410,8 @@ function applyFullTurns(
     paneSyncing: false,
   });
   setState("normalizedTurns", reconcile(payload.turns));
-  const metaInfo = meta(paneId);
-  if (!payload.session?.bound || (metaInfo && metaInfo.sessionId !== payload.session?.sessionId)) {
+  const cachedView = getMemoryPaneView(paneId);
+  if (!payload.session?.bound || (cachedView && cachedView.sessionId !== payload.session?.sessionId)) {
     void remove(paneId);
   } else if (payload.session?.sessionId && payload.turns?.length) {
     saveActivePaneSnapshot(paneId);
@@ -531,7 +517,6 @@ export function handleServerMessage(msg: ServerMessage): void {
     }
 
     case "snapshot_update":
-      trackUnread(msg.payload);
       setState("workspaces", reconcile(msg.payload.workspaces));
       if (state.herdrConnected) {
         const alive = msg.payload.workspaces.flatMap((w) => w.tabs.flatMap((t) => t.panes.map((p) => p.id)));
@@ -808,7 +793,6 @@ function showPane(paneId: string, memoryView: PaneCacheEntry | null | undefined)
       break;
     }
   }
-  setUnread(paneId, false);
 }
 
 export async function selectPane(paneId: string): Promise<void> {
@@ -844,14 +828,7 @@ export async function selectPane(paneId: string): Promise<void> {
       paneSyncing: true,
     });
     if (cached.sessionId && cached.turns.length > 0) {
-      const turnCount = cached.turns.length;
-      have = {
-        sessionId: cached.sessionId,
-        turnCount,
-        ...(turnCount >= 2
-          ? { anchorHash: hashTurn(cached.turns[turnCount - 2]) }
-          : { lastTurnHash: hashTurn(cached.turns[turnCount - 1]) }),
-      };
+      have = buildHaveInfo(cached.sessionId, cached.turns);
     }
   }
 

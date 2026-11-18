@@ -27,7 +27,7 @@ import {
   type HomePrefs,
 } from "./list-prefs";
 
-export type { SkillEntry, AgentRecipeSummary, AgentsFilter, HomePrefs };
+export type { AgentsFilter };
 
 export type Route =
   | { name: "home" }
@@ -79,7 +79,6 @@ export interface AppState {
   homePrefs: HomePrefs;
   foldedGroupOpen: boolean;
   collapsed: Record<string, boolean>;
-  unread: Record<string, boolean>;
   canInstallPWA: boolean;
   configReady: boolean;
   quotaLoading: boolean;
@@ -166,7 +165,6 @@ const [state, setState] = createStore<AppState>({
   homePrefs: readJson<HomePrefs>("pigeon_home_prefs", DEFAULT_HOME_PREFS),
   foldedGroupOpen: readPref("pigeon_folded_group_open") === "1",
   collapsed: readJson<Record<string, boolean>>("pigeon_collapsed", {}),
-  unread: readJson<Record<string, boolean>>("pigeon_unread", {}),
   canInstallPWA: false,
   configReady: false,
   quotaLoading: false,
@@ -268,13 +266,6 @@ export function toggleFoldedGroup(): void {
 export function toggleCollapsed(workspaceId: string): void {
   setState("collapsed", workspaceId, (v) => !v);
   writePref("pigeon_collapsed", JSON.stringify(state.collapsed));
-}
-
-export function setUnread(paneId: string, value: boolean): void {
-  if (!!state.unread[paneId] === value) return;
-  // A store merges objects, so a key is removed by setting it to undefined.
-  setState("unread", paneId, value ? true : undefined!);
-  writePref("pigeon_unread", JSON.stringify(state.unread));
 }
 
 export function navigate(route: Route): void {

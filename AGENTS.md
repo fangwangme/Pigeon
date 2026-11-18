@@ -12,7 +12,7 @@
 - **Formal / Production (正式版)**: Port `4100`. Uses `$XDG_RUNTIME_DIR/pigeon.sock` and `devices.json`. Default Tailscale HTTPS port is `8443`.
 - **Test / Development (测试版)**: Port `4101` (`bun run dev:server` or `bun ./src/cli/index.ts start --port 4101`). Default Tailscale HTTPS port is `18443`.
 - **Client Dev Server (Vite 前端调试)**: Port `5173` (`bun run dev`), proxies `/api` and `/ws` to the test daemon on `4101`.
-- Any non-4100 port automatically isolates the admin socket to `pigeon-<port>.sock` and device pairing to `devices-<port>.json`. Never run test/dev daemons on port 4100 to avoid conflicting with the production service.
+- Any non-4100 port automatically isolates the admin socket to `pigeon-<port>.sock` and state/device pairing to `<XDG_DATA_HOME>/pigeon-<port>/devices.json` (compared against the production `server.port`, default `4100`). Never run test/dev daemons on port 4100 to avoid conflicting with the production service.
 - **Tailscale HTTPS Ports**: Production default `8443`, test default `18443`. Configurable per instance via `server.tailscaleHttpsPort` in `config.json`. Both instances coexist concurrently with independent web origins.
 
 ### Worktree test daemon (测试版启动方式)
@@ -20,10 +20,11 @@
 Run the test daemon from the worktree root with its own state, exactly like this; do not improvise other env setups.
 
 1. **Seed once, by copying (never linking) Pigeon's state** from `~/.local/share/pigeon/`, so usage keeps the AGY desktop history that only Pigeon's cache holds:
+   - `mkdir -p .local/data/pigeon .local/run`
    - `sqlite3 -readonly ~/.local/share/pigeon/usage.db ".backup '.local/data/pigeon/usage.db'"`
    - `cp -a ~/.local/share/pigeon/antigravity-cache .local/data/pigeon/`
 2. **Link agent data that Pigeon finds through `XDG_DATA_HOME`**, or that agent's usage disappears: `ln -s ~/.local/share/opencode .local/data/opencode`. Pigeon only reads it.
-3. **Start** (`HC_TERMINAL_SOCKET` must point at the real Herdr core, because `XDG_RUNTIME_DIR` is overridden):
+3. **Start** (`HC_TERMINAL_SOCKET` must point at the real Herdr core, because `XDG_RUNTIME_DIR` is overridden; pass `--debug` when diagnosing connection or RPC latency):
    ```bash
    XDG_DATA_HOME=$PWD/.local/data XDG_RUNTIME_DIR=$PWD/.local/run \
    HC_TERMINAL_SOCKET=/run/user/$(id -u)/herdr-core/default.sock \

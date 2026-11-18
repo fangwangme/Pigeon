@@ -42,7 +42,6 @@ export type TurnItem =
   | { kind: "text"; markdown: string }
   | { kind: "tool"; call: NormalizedToolCall }
   | { kind: "todo"; done: number; total: number }
-  | { kind: "reasoning"; text?: string; hasText?: boolean; durationMs?: number; isStreaming?: boolean }
   | { kind: "error"; errorKind: string; text: string; count?: number }
   | { kind: "compact"; summary: string };
 

@@ -1,11 +1,11 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { createServer } from "node:net";
 import { sendAdminCommand } from "../src/cli/index";
 import { AgentAdapterManager } from "../src/server/agent-adapters/index";
 import { ConfigManager } from "../src/server/config-manager";
-import { HerdrClient } from "../src/server/herdr-client";
+import { HerdrClient, HerdrError } from "../src/server/herdr-client";
 import { ModelCatalog } from "../src/server/model-catalog";
 import { PairingManager } from "../src/server/pairing";
 import { PushManager } from "../src/server/push";
@@ -113,18 +113,6 @@ describe("prompt queue (protocol.md §4.2, §4.13, §5.8)", () => {
       sinceTurnIndex: 1,
       appendTurns: [{ turnId: "t1", turnNumber: 1, timestamp: Date.now(), userPrompt: { text: "also run lint" } }],
     });
-    await until(() => c.ofType("prompt_queue").at(-1).payload.items.length === 0);
-  });
-
-  test("an unbound pane clears sending prompt immediately after send without waiting for transcript", async () => {
-    await client.connect();
-    // p1 has no session registered in paneStore (unbound)
-    const c = await viewer("p1");
-    await send(c.ws, { type: "agent_prompt", id: "a1", payload: { targetPaneId: "p1", text: "unbound prompt" } });
-    herdr.emitEvent("status", "p1", { status: { state: "idle", app: "claude-code" } });
-    await until(() => herdr.callsOf("terminal.send").length === 1);
-    expect(herdr.callsOf("terminal.send")[0].params).toEqual({ terminal: "p1", text: "unbound prompt" });
-    // Immediately cleared because pane is unbound
     await until(() => c.ofType("prompt_queue").at(-1).payload.items.length === 0);
   });
 
@@ -301,22 +289,6 @@ describe("prompt queue (protocol.md §4.2, §4.13, §5.8)", () => {
     expect(lastError(c)).toBe("ERR_NOT_FOUND");
   });
 
-  test("a sending prompt is removed after timeout when no user turn appears", async () => {
-    await client.connect();
-    server.paneStore.registerPaneSession("p1", "claude", "ses_timeout");
-    const c = await viewer("p1");
-    await send(c.ws, { type: "agent_prompt", id: "a1", payload: { targetPaneId: "p1", text: "times out" } });
-    const queueId = lastAck(c).queueId;
-
-    herdr.emitEvent("status", "p1", { status: { state: "idle", app: "claude-code" } });
-    await until(() => herdr.callsOf("terminal.send").length === 1);
-    expect(c.ofType("prompt_queue").at(-1).payload.items[0]).toMatchObject({ queueId, sending: true });
-
-    // Trigger clearSendingPrompt directly as simulation of timeout
-    (server as any).clearSendingPrompt("p1", queueId);
-    await until(() => c.ofType("prompt_queue").at(-1).payload.items.length === 0);
-  });
-
   test("a prompt to an idle agent is sent at once", async () => {
     const c = await viewer("p2");
     await send(c.ws, { type: "agent_prompt", id: "a1", payload: { targetPaneId: "p2", text: "hi" } });
@@ -479,6 +451,45 @@ describe("duplicate prompts (protocol.md §4.2)", () => {
     await send(c.ws, { type: "agent_prompt", id: "g3", payload: { targetPaneId: "p2", text: "continue" } });
     expect(ackOf(c, "g3")).toMatchObject({ queued: false });
     expect(herdr.callsOf("terminal.send")).toHaveLength(2);
+  });
+
+  test("a resend while the first immediate send is still pending is acked as duplicate; after send failure it goes out", async () => {
+    const c = await viewer("p2");
+
+    let resolveSend!: () => void;
+    let rejectSend!: (err: unknown) => void;
+    const sendSpy = spyOn(client, "sendPrompt");
+
+    // 1. First immediate send stays in flight; a resend during the wait is flagged as duplicate.
+    sendSpy.mockImplementationOnce(() => new Promise<void>((resolve) => { resolveSend = resolve; }));
+    const firstSend = send(c.ws, { type: "agent_prompt", id: "m1", payload: { targetPaneId: "p2", text: "run tests" } });
+    expect(sendSpy).toHaveBeenCalledTimes(1);
+
+    await send(c.ws, { type: "agent_prompt", id: "m2", payload: { targetPaneId: "p2", text: "run tests" } });
+    expect(ackOf(c, "m2")).toEqual({ duplicate: true });
+    expect(sendSpy).toHaveBeenCalledTimes(1);
+
+    resolveSend();
+    await firstSend;
+    expect(ackOf(c, "m1")).toMatchObject({ queued: false });
+    expect(sendSpy).toHaveBeenCalledTimes(1);
+
+    // 2. When an in-flight immediate send rejects, its dedupe entry is removed so the retry goes out.
+    sendSpy.mockImplementationOnce(() => new Promise<void>((_resolve, reject) => { rejectSend = reject; }));
+    const failingSend = send(c.ws, { type: "agent_prompt", id: "f1", payload: { targetPaneId: "p2", text: "retry me" } });
+    expect(sendSpy).toHaveBeenCalledTimes(2);
+
+    await send(c.ws, { type: "agent_prompt", id: "f_dup", payload: { targetPaneId: "p2", text: "retry me" } });
+    expect(ackOf(c, "f_dup")).toEqual({ duplicate: true });
+    expect(sendSpy).toHaveBeenCalledTimes(2);
+
+    rejectSend(new HerdrError("blocked", "blocked"));
+    await failingSend;
+    expect(c.ofType("error").at(-1)?.error?.code).toBe(ProtocolErrors.ERR_AGENT_BLOCKED);
+
+    await send(c.ws, { type: "agent_prompt", id: "f2", payload: { targetPaneId: "p2", text: "retry me" } });
+    expect(ackOf(c, "f2")).toMatchObject({ queued: false });
+    expect(sendSpy).toHaveBeenCalledTimes(3);
   });
 });
 

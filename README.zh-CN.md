@@ -97,7 +97,7 @@ pigeon start
 
 - **Tailscale HTTPS 加密隧道**：启动时自动将 `https://<machine>.<tailnet>.ts.net:8443` 映射到 `127.0.0.1:4100`，手机无需暴露任何公网端口即可获得受信任 HTTPS 环境，完整解锁 PWA 安装与 Web Push 推送。
 - **双本地 Socket 对接 Herdr**：通过 `herdr-app.sock` 管理工作区与标签页，通过 `herdr-core` 订阅终端状态变化、读取屏幕并投递按键/输入。
-- **增量日志解析与本地服务查询**：按偏移增量监听各 Agent 会话目录中的日志更新；若本机正在运行 Antigravity Language Server，则通过回环接口实时获取额度分组。
+- **增量日志解析与本地服务查询**：按偏移增量监听各 Agent 会话目录中的日志更新；若本机正在运行 Antigravity Language Server，则通过回环接口实时获取额度分组与 Desktop `.pb` 会话用量元数据。
 - **Fragment 扫码配对**：配对码放在 URL `#code=...` 片段中传输，不会进入 HTTP 请求头或访问日志，验证后签发 `HttpOnly` 会话 Cookie；随时可在应用 **设置** 或通过 `pigeon devices` 管理或吊销设备。
 
 完整架构与协议定义见 [`docs/specs/`](docs/specs/)。
@@ -111,15 +111,15 @@ pigeon start
 
 ## 配对与常用 CLI 命令
 
-守护进程运行期间，可在另一终端执行管理命令（加上 `--port <n>` 可操作指定测试实例）：
+守护进程运行期间，可在另一终端执行管理命令（`pigeon start` 支持 `--port <n>`、`--debug`、`--insecure-dev` 与 `--public-url`；管理子命令可加 `--port <n>` 操作指定实例，部分支持 `--json`）：
 
 - 轮换配对链接并重新生成二维码：
   ```bash
-  pigeon pair
+  pigeon pair [--json]
   ```
 - 生成 10 分钟内有效的一次性配对链接：
   ```bash
-  pigeon pair --ephemeral
+  pigeon pair --ephemeral [--json]
   ```
 - 查看已配对设备列表：
   ```bash
@@ -131,11 +131,11 @@ pigeon start
   ```
 - 查看 Herdr 连接状态、访问地址、活跃会话、队列、最近用量扫描与数据源报错：
   ```bash
-  pigeon status
+  pigeon status [--json]
   ```
-- 从各 Agent 磁盘日志全量重建本地用量与费用数据库：
+- 从各 Agent 磁盘日志全量重建本地用量与费用数据库（非正式端口实例需传 `--yes`）：
   ```bash
-  pigeon rebuild-cache
+  pigeon rebuild-cache [--json] [--yes]
   ```
 
 ## 从源码构建

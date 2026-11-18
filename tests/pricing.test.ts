@@ -1,12 +1,11 @@
 import { describe, expect, test } from "bun:test";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { tmpdir } from "node:os";
 import { PricingManager } from "../src/server/usage/pricing";
+import { tempDir } from "./helpers/fixtures";
 
 describe("PricingManager fallback and retry (quota-and-usage.md §3.3)", () => {
-  const testDir = join(tmpdir(), `pigeon_pricing_test_${Date.now()}`);
-  mkdirSync(testDir, { recursive: true });
+  const testDir = tempDir("pricing");
 
   test("falls back to stale cache (>24h) on network failure and keeps prices available", async () => {
     const cachePath = join(testDir, "stale-pricing.json");

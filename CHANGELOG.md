@@ -23,6 +23,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **2 s WebSocket reconnect & wakeup reliability**: Shortened `CONNECTING`, pairing check, and wakeup ping timeouts from 10 s / 5 s / 3 s to 2 s, guarded periodic heartbeat checks while a wakeup probe is in flight, and replaced stale `CONNECTING` sockets immediately on `online` and wake-from-hidden transitions (#35).
 - **Usage error/retry recovery & Herdr startup timeout tolerance**: Rendered localized error + **重试 / Retry** states instead of infinite spinners on failed Usage report/day/model sheets, automatically reloaded open unloaded sheets after WebSocket reconnect, and tolerated `HerdrClient.connect()` startup snapshot timeouts without aborting daemon startup (#35).
 
+### Changed
+- **Codebase audit, deduplication & spec sync**: Removed dead server/client/CSS symbols (`unread`, `metaIndex`, `withFallback`, `TurnBuilder.touch()`, duplicate `pricing.json` fallback, dead `reasoning` turn item branch), removed silent error swallowing in session/usage stores and Codex/Pi/Claude/AGY scanners, consolidated shared helpers (`formatModelNameWithRecipes`, `readListingJsonLines`, `extractBlocksText`, `readTailscaleSelf`, `UsageOverlay`/`UsageBottomSheet`, `windowStatusColor`), pruned redundant tests with proper store reset isolation, and synchronized `docs/specs/` and `README*` with shipped behavior (#35).
+
 ## [0.1.16] - 2026-11-18
 
 ### Fixed

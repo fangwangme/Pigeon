@@ -99,7 +99,7 @@ interface NormalizedTurn {
   turnNumber: number;
   timestamp: number;
   /** Time of the turn's latest record. */
-  updatedAt: number;
+  updatedAt?: number;
   userPrompt?: { text: string; files?: string[] };
   reasoning?: { text: string; durationMs?: number; isStreaming?: boolean };
   /** Text and tool calls in the order the agent produced them. */

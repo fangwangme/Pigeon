@@ -129,7 +129,7 @@ if (typeof window !== "undefined") {
       swipeMode = "none";
       return;
     }
-    if (document.querySelector(".overlay, .img-viewer-overlay, .alert-dialog-overlay, .menuwrap")) {
+    if (document.querySelector(".overlay, .img-viewer-overlay, .alert-dialog-overlay, .menuwrap, [data-overlay]")) {
       swipeMode = "none";
       return;
     }

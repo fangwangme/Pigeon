@@ -9,7 +9,6 @@ import { PigeonDaemon, resolveAccess } from "../src/server/daemon";
 import { PWA_ICON_192_BASE64, PWA_ICON_DARK_192_BASE64 } from "../src/server/pwa-assets";
 import { PairingManager, generateBase32Token } from "../src/server/pairing";
 import { PushManager } from "../src/server/push";
-import { formatLocalTimestamp } from "../src/shared/time";
 import { freePort, tempDir } from "./helpers/fixtures";
 
 function pairingIn(dir: string, publicBaseUrl = "https://pigeon.example.ts.net") {
@@ -239,16 +238,6 @@ describe("push keys and presence (push.md §3, §4)", () => {
     expect(push.sendNotification(blocked("p2")).suppressed).toBe(false);
     push.removePresence("c1");
     expect(push.shouldSuppressPush("p1")).toBe(false);
-  });
-
-  test("push notification done triggers on transition into done from any status (push.md §4.1)", () => {
-    let lastStatus: string | undefined = "blocked";
-    const status: string = "done";
-    const previous = lastStatus;
-    const isBlocked = status === "blocked" && previous !== "blocked";
-    const isDone = status === "done" && previous !== "done";
-    expect(isBlocked).toBe(false);
-    expect(isDone).toBe(true);
   });
 });
 
@@ -613,7 +602,6 @@ describe("daemon log file (architecture.md §4.6, issue #21)", () => {
       expect(text).not.toContain("stale line");
       expect(text.split("\n")[0]).toContain(String(port));
       expect(text.split("\n")[0]).toMatch(/^\[\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}[+-]\d{2}:\d{2}\] /);
-      expect(formatLocalTimestamp(new Date(2026, 10, 18, 14, 4, 35, 78))).toMatch(/^2026-11-18T14:04:35\.078[+-]\d{2}:\d{2}$/);
     } finally {
       await daemon.stop();
     }

@@ -57,15 +57,12 @@ export function findFilesRecursive(dir: string, ext: string | string[]): string[
   return result;
 }
 
+let warnedMissingZstd = false;
+
 // 1. Claude scanner
 export function scanClaudeFile(path: string, stats: ScanStats = { skipped: 0 }): RawUsageRecord[] {
   const records = new Map<string, RawUsageRecord>();
-  let content = "";
-  try {
-    content = readFileSync(path, "utf-8");
-  } catch {
-    return [];
-  }
+  const content = readFileSync(path, "utf-8");
 
   const lines = content.split("\n");
   for (let i = 0; i < lines.length; i++) {
@@ -120,17 +117,24 @@ export function scanClaudeFile(path: string, stats: ScanStats = { skipped: 0 }):
 // 2. Codex scanner
 export function scanCodexFile(path: string, stats: ScanStats = { skipped: 0 }): RawUsageRecord[] {
   const records: RawUsageRecord[] = [];
-  let content = "";
-  try {
-    if (path.endsWith(".zst")) {
-      const proc = Bun.spawnSync(["zstd", "-dc", path]);
-      if (proc.exitCode !== 0) return [];
-      content = proc.stdout.toString();
-    } else {
-      content = readFileSync(path, "utf-8");
+  let content: string;
+  if (path.endsWith(".zst")) {
+    let proc: ReturnType<typeof Bun.spawnSync>;
+    try {
+      proc = Bun.spawnSync(["zstd", "-dc", path], { stdout: "pipe", stderr: "ignore" });
+    } catch (err) {
+      if ((err as any)?.code === "ENOENT" && !warnedMissingZstd) {
+        warnedMissingZstd = true;
+        console.warn("[Pigeon] zstd is not installed; compressed Codex usage logs will be retried later");
+      }
+      throw err;
     }
-  } catch {
-    return [];
+    if (proc.exitCode !== 0) {
+      throw new Error(`zstd exited with code ${proc.exitCode} for ${path}`);
+    }
+    content = (proc.stdout ?? "").toString();
+  } else {
+    content = readFileSync(path, "utf-8");
   }
 
   let currentModel = "gpt-4o";
@@ -630,12 +634,7 @@ export function scanOpenCodeDb(
 // 6. Pi scanner
 export function scanPiFile(path: string, stats: ScanStats = { skipped: 0 }): RawUsageRecord[] {
   const records: RawUsageRecord[] = [];
-  let content = "";
-  try {
-    content = readFileSync(path, "utf-8");
-  } catch {
-    return [];
-  }
+  const content = readFileSync(path, "utf-8");
 
   let currentModel = "pi";
   let sessionId = path.slice(path.lastIndexOf("/") + 1).replace(/\.jsonl$/, "");

@@ -66,11 +66,6 @@ async function setup(
             await server.handleMessage(c.ws, JSON.stringify({ type: "detail_get", id: reqId, payload: { paneId, kind: "tool", turnId: turn.turnId, callId: item.call.id } }));
             const ack = c.ofType("ack").find((a) => a.replyTo === reqId)?.payload;
             if (ack?.call) calls.push(ack.call);
-          } else if (item.kind === "reasoning") {
-            const reqId = `dr_${turn.turnId}`;
-            await server.handleMessage(c.ws, JSON.stringify({ type: "detail_get", id: reqId, payload: { paneId, kind: "reasoning", turnId: turn.turnId } }));
-            const ack = c.ofType("ack").find((a) => a.replyTo === reqId)?.payload;
-            if (ack?.text) turn.reasoning = { text: ack.text };
           }
         }
         if (calls.length) turn.toolCalls = calls;

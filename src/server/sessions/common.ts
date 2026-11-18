@@ -195,6 +195,22 @@ export function readTailJsonLines(path: string, maxBytes = 262_144): unknown[] {
   }
 }
 
+export const SESSION_HEAD_TAIL_BYTES = 262_144;
+
+/** agent-session-normalization.md §2.6: files larger than 512 KB read only first and last 256 KB. */
+export function readListingJsonLines(path: string, size: number): unknown[] {
+  if (size <= SESSION_HEAD_TAIL_BYTES * 2) {
+    return readHeadJsonLines(path, size + 1);
+  }
+  return [...readHeadJsonLines(path), ...readTailJsonLines(path)];
+}
+
+export function extractBlocksText(content: unknown): string {
+  if (typeof content === "string") return content;
+  if (Array.isArray(content)) return content.filter((b) => isObj(b) && b.type === "text").map((b) => b.text).join("\n");
+  return "";
+}
+
 export const isObj = (v: unknown): v is Record<string, any> => typeof v === "object" && v !== null && !Array.isArray(v);
 export const str = (v: unknown): string | undefined => (typeof v === "string" ? v : undefined);
 
@@ -364,11 +380,6 @@ export class TurnBuilder {
     const turn = this.current(timestamp);
     turn.items!.push({ kind: "compact", summary });
     turn.updatedAt = Math.max(turn.updatedAt ?? turn.timestamp, timestamp);
-  }
-
-  public touch(timestamp: number): void {
-    const turn = this.turns[this.turns.length - 1];
-    if (turn) turn.updatedAt = Math.max(turn.updatedAt ?? turn.timestamp, timestamp);
   }
 
   public toolUse(use: ToolUse, timestamp: number): void {

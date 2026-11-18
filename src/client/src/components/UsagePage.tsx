@@ -1,4 +1,4 @@
-import { createEffect, createMemo, createSignal, For, on, onCleanup, onMount, Show } from "solid-js";
+import { createEffect, createMemo, createSignal, For, on, onCleanup, onMount, Show, type JSX } from "solid-js";
 import { navigate, state } from "../state/store";
 import { request } from "../state/ws";
 import { scanIntervalToMs, USAGE_AGENT_KINDS as AGENT_KEYS } from "../../../shared/defaults";
@@ -104,6 +104,43 @@ function SheetStatus(props: { error: string | null; onRetry: () => void }) {
         </button>
       </div>
     </Show>
+  );
+}
+
+function UsageOverlay(props: { onClose: () => void; children: JSX.Element }) {
+  return (
+    <div data-overlay="" style={{ position: "fixed", inset: 0, "z-index": 50, background: "rgba(0,0,0,.5)" }}>
+      <button
+        onClick={props.onClose}
+        aria-label={t("common.close")}
+        style={{ position: "absolute", inset: 0, background: "none", border: 0 }}
+      />
+      {props.children}
+    </div>
+  );
+}
+
+function UsageBottomSheet(props: { onClose: () => void; maxHeight?: string; scrollable?: boolean; children: JSX.Element }) {
+  return (
+    <UsageOverlay onClose={props.onClose}>
+      <div
+        style={{
+          position: "absolute",
+          left: 0,
+          right: 0,
+          bottom: 0,
+          background: "var(--surface)",
+          "border-top": "1px solid var(--line2)",
+          "border-radius": "24px 24px 0 0",
+          padding: "10px 18px 40px",
+          ...(props.maxHeight ? { "max-height": props.maxHeight } : {}),
+          ...(props.scrollable ? { "overflow-y": "auto" } : {}),
+        }}
+      >
+        <div style={{ width: "40px", height: "5px", "border-radius": "3px", background: "var(--line2)", margin: "0 auto 10px" }} />
+        {props.children}
+      </div>
+    </UsageOverlay>
   );
 }
 
@@ -474,55 +511,7 @@ export function UsagePage() {
       return { layout, cells, activeDays, currentStreak, longestStreak, vmax };
     }
 
-    // Week rows (<= 42 days, Monday-to-Sunday rows)
-    if (layout === "week-rows") {
-      // Find Monday of the first week
-      const dow1 = (startDt.getDay() + 6) % 7;
-      const firstMonday = new Date(y1, m1 - 1, d1 - dow1);
-      const dow2 = (endDt.getDay() + 6) % 7;
-      const lastSunday = new Date(y2, m2 - 1, d2 + (6 - dow2));
-
-      const weeks = [];
-      let currentWeekCells = [];
-      let currentWeekDays: Date[] = [];
-
-      for (let cur = new Date(firstMonday); cur <= lastSunday; cur.setDate(cur.getDate() + 1)) {
-        const ymd = formatYMD(cur);
-        const inRange = cur >= startDt && cur <= endDt;
-        const sum = inRange ? dayMap.get(ymd) : undefined;
-        const val = sum ? (m === "tokens" ? sum.tokens : sum.cost) : 0;
-
-        currentWeekCells.push({
-          date: ymd,
-          dayNum: cur.getDate(),
-          inRange,
-          color: inRange ? getCellColor(val) : "transparent",
-          textColor: getCellTextColor(val),
-          val,
-        });
-        currentWeekDays.push(new Date(cur));
-
-        if (currentWeekCells.length === 7) {
-          let monthLabel = "";
-          for (const d of currentWeekDays) {
-            if (d >= startDt && d <= endDt && d.getDate() === 1) {
-              monthLabel = formatMonthName(d.getMonth());
-              break;
-            }
-          }
-          if (!monthLabel && weeks.length === 0) {
-            const ref = currentWeekDays.find((d) => d >= startDt && d <= endDt) ?? currentWeekDays[0];
-            monthLabel = formatMonthName(ref.getMonth());
-          }
-          weeks.push({ month: monthLabel, cells: currentWeekCells });
-          currentWeekCells = [];
-          currentWeekDays = [];
-        }
-      }
-      return { layout, weeks, activeDays, currentStreak, longestStreak, vmax };
-    }
-
-    // Week columns (longer periods, weeks as vertical columns, reverse scroll)
+    // Week rows (<= 42 days, Monday-to-Sunday rows) & Week columns (longer periods)
     const dow1 = (startDt.getDay() + 6) % 7;
     const firstMonday = new Date(y1, m1 - 1, d1 - dow1);
     const dow2 = (endDt.getDay() + 6) % 7;
@@ -691,7 +680,7 @@ export function UsagePage() {
                 display: "inline-flex",
                 "align-items": "center",
                 "justify-content": "center",
-                animation: isLoading() ? "spin .8s linear infinite" : "none",
+                animation: isLoading() ? "sp .8s linear infinite" : "none",
               }}
             >
               <Icon name="refresh" />
@@ -1497,39 +1486,19 @@ export function UsagePage() {
 
       {/* Day Sheet */}
       <Show when={sheet() === "day" && selectedDay()}>
-        <div style={{ position: "fixed", inset: 0, "z-index": 50, background: "rgba(0,0,0,.5)" }}>
-          <button
-            onClick={() => setSheet("none")}
-            aria-label={t("common.close")}
-            style={{ position: "absolute", inset: 0, background: "none", border: 0 }}
-          />
-          <div
-            style={{
-              position: "absolute",
-              left: 0,
-              right: 0,
-              bottom: 0,
-              background: "var(--surface)",
-              "border-top": "1px solid var(--line2)",
-              "border-radius": "24px 24px 0 0",
-              padding: "10px 18px 40px",
-              "max-height": "85vh",
-              "overflow-y": "auto",
-            }}
-          >
-            <div style={{ width: "40px", height: "5px", "border-radius": "3px", background: "var(--line2)", margin: "0 auto 10px" }} />
-            <div style={{ display: "flex", "align-items": "center" }}>
-              <span style={{ "font-weight": 650, "font-size": "17px", flex: 1 }}>
-                {selectedDay()}
-              </span>
-              <button
-                class="cbtn"
-                aria-label={t("common.close")}
-                onClick={() => setSheet("none")}
-              >
-                <Icon name="x" />
-              </button>
-            </div>
+        <UsageBottomSheet onClose={() => setSheet("none")} maxHeight="85vh" scrollable>
+          <div style={{ display: "flex", "align-items": "center" }}>
+            <span style={{ "font-weight": 650, "font-size": "17px", flex: 1 }}>
+              {selectedDay()}
+            </span>
+            <button
+              class="cbtn"
+              aria-label={t("common.close")}
+              onClick={() => setSheet("none")}
+            >
+              <Icon name="x" />
+            </button>
+          </div>
 
             <Show when={dayData()} fallback={<SheetStatus error={dayError()} onRetry={() => selectedDay() && void openDaySheet(selectedDay()!)} />}>
               {(() => {
@@ -1601,33 +1570,12 @@ export function UsagePage() {
                 );
               })()}
             </Show>
-          </div>
-        </div>
+        </UsageBottomSheet>
       </Show>
 
       {/* Model Sheet */}
       <Show when={sheet() === "model" && selectedModel()}>
-        <div style={{ position: "fixed", inset: 0, "z-index": 50, background: "rgba(0,0,0,.5)" }}>
-          <button
-            onClick={() => setSheet("none")}
-            aria-label={t("common.close")}
-            style={{ position: "absolute", inset: 0, background: "none", border: 0 }}
-          />
-          <div
-            style={{
-              position: "absolute",
-              left: 0,
-              right: 0,
-              bottom: 0,
-              background: "var(--surface)",
-              "border-top": "1px solid var(--line2)",
-              "border-radius": "24px 24px 0 0",
-              padding: "10px 18px 40px",
-              "max-height": "85vh",
-              "overflow-y": "auto",
-            }}
-          >
-            <div style={{ width: "40px", height: "5px", "border-radius": "3px", background: "var(--line2)", margin: "0 auto 10px" }} />
+        <UsageBottomSheet onClose={() => setSheet("none")} maxHeight="85vh" scrollable>
             <div style={{ display: "flex", "align-items": "flex-start", gap: "8px" }}>
               <div style={{ flex: 1, "min-width": 0 }}>
                 <div
@@ -1768,31 +1716,12 @@ export function UsagePage() {
                 );
               })()}
             </Show>
-          </div>
-        </div>
+        </UsageBottomSheet>
       </Show>
 
       {/* Custom Range Sheet */}
       <Show when={sheet() === "custom"}>
-        <div style={{ position: "fixed", inset: 0, "z-index": 50, background: "rgba(0,0,0,.5)" }}>
-          <button
-            onClick={() => setSheet("none")}
-            aria-label={t("common.close")}
-            style={{ position: "absolute", inset: 0, background: "none", border: 0 }}
-          />
-          <div
-            style={{
-              position: "absolute",
-              left: 0,
-              right: 0,
-              bottom: 0,
-              background: "var(--surface)",
-              "border-top": "1px solid var(--line2)",
-              "border-radius": "24px 24px 0 0",
-              padding: "10px 18px 40px",
-            }}
-          >
-            <div style={{ width: "40px", height: "5px", "border-radius": "3px", background: "var(--line2)", margin: "0 auto 10px" }} />
+        <UsageBottomSheet onClose={() => setSheet("none")}>
             <div style={{ display: "flex", "align-items": "center" }}>
               <div style={{ flex: 1 }}>
                 <div style={{ "font-weight": 650, "font-size": "17px" }}>{t("usage.customTitle")}</div>
@@ -1867,18 +1796,12 @@ export function UsagePage() {
             >
               {t("usage.apply")}
             </button>
-          </div>
-        </div>
+        </UsageBottomSheet>
       </Show>
 
       {/* Agent Filter Sheet */}
       <Show when={sheet() === "filter"}>
-        <div style={{ position: "fixed", inset: 0, "z-index": 50, background: "rgba(0,0,0,.5)" }}>
-          <button
-            onClick={() => setSheet("none")}
-            aria-label={t("common.close")}
-            style={{ position: "absolute", inset: 0, background: "none", border: 0 }}
-          />
+        <UsageOverlay onClose={() => setSheet("none")}>
           <div
             style={{
               position: "absolute",
@@ -1978,7 +1901,7 @@ export function UsagePage() {
               {t("common.close")}
             </button>
           </div>
-        </div>
+        </UsageOverlay>
       </Show>
     </div>
   );

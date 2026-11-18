@@ -1,6 +1,5 @@
 // Icon paths (24×24, stroke) shared by the PWA. Drawn for Pigeon; no third-party marks.
 export const ICONS = {
-  "menu": "<path d=\"M4 7h16M4 12h16M4 17h10\"/>",
   "search": "<circle cx=\"11\" cy=\"11\" r=\"7\"/><path d=\"M20 20l-3.5-3.5\"/>",
   "sliders": "<path d=\"M4 8h9M17 8h3M4 16h3M11 16h9\"/><circle cx=\"15\" cy=\"8\" r=\"2\"/><circle cx=\"9\" cy=\"16\" r=\"2\"/>",
   "plus": "<path d=\"M12 5v14M5 12h14\"/>",

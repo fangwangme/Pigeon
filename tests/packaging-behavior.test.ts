@@ -132,4 +132,13 @@ describe("packaging behavior end-to-end (distribution.md §3, §5, issue #9 revi
       rmSync(tmpDir, { recursive: true, force: true });
     }
   });
+
+  test("publish-npm authenticates through OIDC, never an npm token (distribution.md §4.2, §5)", () => {
+    const content = readFileSync(join(rootDir, ".github", "workflows", "release.yml"), "utf8");
+    const publishNpmJob = content.slice(content.indexOf("\n  publish-npm:"));
+    expect(publishNpmJob).toContain("id-token: write");
+    expect(publishNpmJob).toContain('node-version: "24"');
+    expect(content).not.toContain("NPM_TOKEN");
+    expect(content).not.toContain("NODE_AUTH_TOKEN");
+  });
 });

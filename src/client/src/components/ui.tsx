@@ -3,7 +3,7 @@ import { ICONS, type IconName } from "../icons";
 import { navigate, state } from "../state/store";
 import type { AgentStatus, PaneSummary, TabSummary, WorkspaceSummary } from "../../../types/protocol";
 import { t } from "../i18n";
-import { formatModelNameWithRecipes } from "../utils/model-name";
+import { formatModelNameWithRecipes } from "../../../shared/model-name";
 
 export function Icon(props: { name: IconName; sm?: boolean; class?: string }) {
   return <svg class={`i${props.sm ? " sm" : ""}${props.class ? ` ${props.class}` : ""}`} viewBox="0 0 24 24" innerHTML={ICONS[props.name]} aria-hidden="true" />;
@@ -70,13 +70,6 @@ export type RowStatus = "blocked" | "working" | "done" | "idle" | "terminal";
 /** mobile-ui-and-themes.md §2.1: status indicator dot styled and colored by state. */
 export function StatusIcon(props: { status: RowStatus; class?: string }) {
   return <span class={`sdot ${props.status}${props.class ? ` ${props.class}` : ""}`} aria-label={props.status} />;
-}
-
-export function modelLabel(
-  model: string | null | undefined,
-  agent?: string | ReadonlyArray<string | null | undefined> | null
-): string {
-  return formatModelNameWithRecipes(state.recipes, agent, model);
 }
 
 /** mobile-ui-and-themes.md §6.4 "Model names": the one rule for every place a model is shown. */
@@ -170,7 +163,6 @@ export function Sheet(props: {
   right?: JSX.Element;
   full?: boolean;
   children: JSX.Element;
-  noHeader?: boolean;
   /** The body does not scroll; the children hold their own scroller below a fixed part. */
   flush?: boolean;
 }) {
@@ -302,29 +294,27 @@ export function Sheet(props: {
         }}
       >
         <div class="grab" />
-        <Show when={!props.noHeader}>
-          <div class="sh">
-            <Show
-              when={props.onBack}
-              fallback={
-                <button class="cbtn" aria-label={t("common.close")} onClick={() => props.onClose()}>
-                  <Icon name="x" />
-                </button>
-              }
-            >
-              <button class="cbtn" aria-label={t("common.back")} onClick={() => props.onBack!()}>
-                <Icon name="chevL" />
+        <div class="sh">
+          <Show
+            when={props.onBack}
+            fallback={
+              <button class="cbtn" aria-label={t("common.close")} onClick={() => props.onClose()}>
+                <Icon name="x" />
               </button>
+            }
+          >
+            <button class="cbtn" aria-label={t("common.back")} onClick={() => props.onBack!()}>
+              <Icon name="chevL" />
+            </button>
+          </Show>
+          <div class="t">
+            {props.title}
+            <Show when={props.sub}>
+              <small>{props.sub}</small>
             </Show>
-            <div class="t">
-              {props.title}
-              <Show when={props.sub}>
-                <small>{props.sub}</small>
-              </Show>
-            </div>
-            <div>{props.right}</div>
           </div>
-        </Show>
+          <div>{props.right}</div>
+        </div>
         <div class={`body${props.flush ? " flush" : ""}`}>{props.children}</div>
       </div>
     </div>

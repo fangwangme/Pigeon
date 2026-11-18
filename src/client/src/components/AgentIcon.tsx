@@ -137,24 +137,6 @@ export const AgentIcon: Component<{ kind?: string | null; class?: string }> = (p
             <path d="M517.36 400H634.72V634.72H517.36Z" />
           </svg>
         </Match>
-        <Match when={normKind() === "terminal"}>
-          {/* Skeumorphic dark terminal window with traffic lights & green prompt */}
-          <svg viewBox="0 0 24 24" class="ag-svg" xmlns="http://www.w3.org/2000/svg">
-            <defs>
-              <linearGradient id="pigeon-term-bezel" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="0%" stop-color="#3A3F4B" />
-                <stop offset="100%" stop-color="#1E222A" />
-              </linearGradient>
-            </defs>
-            <rect x="1.5" y="2.5" width="21" height="19" rx="4" fill="url(#pigeon-term-bezel)" stroke="rgba(255,255,255,0.15)" stroke-width="0.8" />
-            <circle cx="5.2" cy="6.2" r="1.3" fill="#FF5F56" />
-            <circle cx="8.6" cy="6.2" r="1.3" fill="#FFBD2E" />
-            <circle cx="12" cy="6.2" r="1.3" fill="#27C93F" />
-            <rect x="3" y="9.5" width="18" height="10.5" rx="2" fill="#0D1117" />
-            <path d="M5.5 12.5l2.4 2-2.4 2" stroke="#4EC95F" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" />
-            <rect x="9.8" y="15.2" width="4" height="1.8" rx="0.4" fill="#4EC95F" />
-          </svg>
-        </Match>
       </Switch>
     </div>
   );

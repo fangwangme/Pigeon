@@ -2,7 +2,7 @@ import { existsSync, readdirSync, realpathSync } from "node:fs";
 import { join } from "node:path";
 import type { FileDiffSummary, TodoItem } from "../../shared/agent-session";
 import type { PastSession } from "../../types/protocol";
-import { countPatch, fileFallbackTs, isEnoent, isObj, JsonlTail, mtimeOf, safeStat, readFirstJsonLine, readHeadJsonLines, readTailJsonLines, str, todoStatus, TurnBuilder, type SessionRead } from "./common";
+import { countPatch, fileFallbackTs, isEnoent, isObj, JsonlTail, mtimeOf, safeStat, readFirstJsonLine, readListingJsonLines, str, todoStatus, TurnBuilder, type SessionRead } from "./common";
 import type { PaneFacts, SessionSource } from "./source";
 
 const MAX_LISTED_ROLLOUTS = 2000;
@@ -156,7 +156,7 @@ export class CodexSource implements SessionSource {
         }
         return undefined;
       };
-      for (const r of readHeadJsonLines(path)) {
+      for (const r of readListingJsonLines(path, safeStat(path)?.size ?? 0)) {
         const m = readModelFromRecord(r);
         if (m) model = m;
         const p = isObj(r) && r.type === "response_item" ? r.payload : null;
@@ -165,12 +165,6 @@ export class CodexSource implements SessionSource {
           if (t && !NOT_PROMPT.test(t)) {
             title = t;
           }
-        }
-      }
-      if ((safeStat(path)?.size ?? 0) > 262_144) {
-        for (const r of readTailJsonLines(path)) {
-          const m = readModelFromRecord(r);
-          if (m) model = m;
         }
       }
       out.push({ id: meta.id, title: (title ?? meta.id).slice(0, 120), updatedAt: mtime, ...(model ? { model } : {}) });

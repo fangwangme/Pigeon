@@ -1,6 +1,6 @@
 import { createEffect, createSignal, For, on, onMount, Show } from "solid-js";
 import { navigate, setLocalePref, setReduceTransparency, setState, showToast, state, systemReducesTransparency } from "../state/store";
-import { initWebSocket, isInAppBrowser, request, sendConfigPatch } from "../state/ws";
+import { copyText, initWebSocket, isInAppBrowser, request, sendConfigPatch } from "../state/ws";
 import { ACCENTS, resolveMode } from "../themes";
 import type { AccentName, DeviceInfo, QuotaProvidersConfig, ThemeMode, UsageGetPayload } from "../../../types/protocol";
 import { ago, Icon, Logo } from "./ui";
@@ -521,8 +521,7 @@ export function Settings() {
                   const env = state.environment;
                   if (!env || env.kind === "production") return v;
                   if (env.kind === "dev") return `${v} (dev)`;
-                  if (env.kind === "test") return `${v} (test:${env.port})`;
-                  return v;
+                  return `${v} (test:${env.port})`;
                 })()}
               </span>
             </div>
@@ -553,7 +552,7 @@ export function Settings() {
 export function Pairing() {
   const [copied, setCopied] = createSignal(false);
   const copyPairLink = () => {
-    navigator.clipboard.writeText(window.location.href);
+    copyText(window.location.href);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   };

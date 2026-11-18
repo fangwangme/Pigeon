@@ -126,8 +126,6 @@ export class UsageStore {
         updated_watermark INTEGER NOT NULL DEFAULT 0
       );
 
-      DROP TABLE IF EXISTS daily_pricing_snapshots;
-
       CREATE TABLE IF NOT EXISTS model_price_periods (
         model TEXT NOT NULL,
         effective_from TEXT NOT NULL,
@@ -150,30 +148,26 @@ export class UsageStore {
       );
     `);
 
-    try {
-      const cols = (this.db.query("PRAGMA table_info('usage_records')").all() as any[]).map((c) => c.name);
-      if (!cols.includes("raw_model_id")) {
-        this.db.run("ALTER TABLE usage_records ADD COLUMN raw_model_id TEXT;");
-      }
-      const scanCols = (this.db.query("PRAGMA table_info('scan_file_state')").all() as any[]).map((c) => c.name);
-      if (!scanCols.includes("watermark")) {
-        this.db.run("ALTER TABLE scan_file_state ADD COLUMN watermark INTEGER NOT NULL DEFAULT 0;");
-      }
-      if (!scanCols.includes("updated_watermark")) {
-        this.db.run("ALTER TABLE scan_file_state ADD COLUMN updated_watermark INTEGER NOT NULL DEFAULT 0;");
-      }
-    } catch {}
+    const cols = (this.db.query("PRAGMA table_info('usage_records')").all() as any[]).map((c) => c.name);
+    if (!cols.includes("raw_model_id")) {
+      this.db.run("ALTER TABLE usage_records ADD COLUMN raw_model_id TEXT;");
+    }
+    const scanCols = (this.db.query("PRAGMA table_info('scan_file_state')").all() as any[]).map((c) => c.name);
+    if (!scanCols.includes("watermark")) {
+      this.db.run("ALTER TABLE scan_file_state ADD COLUMN watermark INTEGER NOT NULL DEFAULT 0;");
+    }
+    if (!scanCols.includes("updated_watermark")) {
+      this.db.run("ALTER TABLE scan_file_state ADD COLUMN updated_watermark INTEGER NOT NULL DEFAULT 0;");
+    }
   }
 
   public getLastScannedAt(): number {
     if (this.lastScannedAt > 0) return this.lastScannedAt;
-    try {
-      const row: any = this.db.query("SELECT val FROM usage_meta WHERE key = 'last_scanned_at'").get();
-      if (row?.val) {
-        this.lastScannedAt = Number(row.val);
-        return this.lastScannedAt;
-      }
-    } catch {}
+    const row: any = this.db.query("SELECT val FROM usage_meta WHERE key = 'last_scanned_at'").get();
+    if (row?.val) {
+      this.lastScannedAt = Number(row.val);
+      return this.lastScannedAt;
+    }
     return 0;
   }
 
