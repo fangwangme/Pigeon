@@ -32,7 +32,7 @@ To prevent manual input errors, brute-force enumeration, and accidental disclosu
    - The body is validated (`code` a string of at most 64 characters, optional `deviceName` a string of at most 128). A malformed body gets HTTP 400.
    - The server verifies the token, generates a unique server-side `deviceId` (UUID v4), and sanitizes `deviceName` (max 32 characters, stripping ANSI and control characters).
    - **Re-pairing replaces**: when the request carries a session cookie that is still valid, that device record is removed in the same exchange and its connections close with `4403` (§5), so scanning the permanent QR code again from a paired browser does not add a device (user decision, 2026-11-07). A missing or unknown cookie changes nothing.
-   - The server sets a session cookie:
+   - The server sets a session cookie (`__Host-pigeon_session` on the production instance, or `__Host-pigeon_session_<port>` on non-production test instances so concurrent instances on the same Tailscale hostname never overwrite each other's cookie):
      ```http
      Set-Cookie: __Host-pigeon_session=<SESSION_TOKEN>; Path=/; Secure; HttpOnly; SameSite=Strict; Max-Age=31536000
      ```

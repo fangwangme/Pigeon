@@ -190,6 +190,7 @@ async function isAuthenticated(): Promise<boolean> {
       }, PAIRING_CHECK_TIMEOUT_MS);
     });
     const res = await Promise.race([fetchPromise, timeoutPromise]);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = await res.json();
     return !!data.authenticated;
   } finally {

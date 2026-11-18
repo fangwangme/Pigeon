@@ -16,6 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Composer replies on unstructured `blocked` panes**: Passed `force: true` on `terminal.send` when Herdr reports `blocked` without structured choice options so free-text replies and Antigravity artifact feedback send immediately, while keeping `ERR_AGENT_BLOCKED` protection when numbered options or a pending question await a pick (#35).
 - **Keyboard toast placement & localized command errors**: Positioned `.toast` notices above the open software keyboard (`[data-keyboard="open"]`) and rejected `request()` calls with localized `errorText` messages instead of raw server strings (#35).
 - **Cleaner year & multi-month heatmaps**: Displayed day numbers only on the first row (Monday) in `week-columns` usage heatmaps (`year`, `all`, and ranges over six weeks) while keeping day numbers on all rows in `strip` and `week-rows` (`30d`) (#35).
+- **Port-isolated session cookies for test instances**: Named session cookies `__Host-pigeon_session_<port>` (or `pigeon_session_<port>`) on non-production ports while keeping `__Host-pigeon_session` on production, prevented `resolveProductionPort` from reading `pigeon-<port>/config.json` as the production port, and checked HTTP status before parsing `/api/auth/status` JSON so concurrent instances on the same Tailscale hostname never overwrite each other's login session (#35).
 
 ## [0.1.16] - 2026-11-18
 

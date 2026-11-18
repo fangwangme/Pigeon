@@ -41,6 +41,7 @@ export interface DeviceSession {
 export interface PairingOptions {
   publicBaseUrl: string;
   insecureDev?: boolean;
+  cookieSuffix?: string;
   adminSocketPath: string;
   devicesFilePath: string;
   /** `pigeon rebuild-cache` (`quota-and-usage.md` §3.7): rebuilds the daemon's own usage database. */
@@ -74,6 +75,7 @@ export class PairingManager extends EventEmitter {
   private persistedUse = new Map<string, number>();
   private publicBaseUrl: string;
   private insecureDev: boolean;
+  private cookieSuffix?: string;
   private adminSocketPath: string;
   private devicesFilePath: string;
   private rebuildUsage?: () => Promise<unknown>;
@@ -84,6 +86,7 @@ export class PairingManager extends EventEmitter {
     super();
     this.publicBaseUrl = options.publicBaseUrl.replace(/\/+$/, "");
     this.insecureDev = !!options.insecureDev;
+    this.cookieSuffix = options.cookieSuffix;
     this.adminSocketPath = options.adminSocketPath;
     this.devicesFilePath = options.devicesFilePath;
     this.rebuildUsage = options.rebuildUsage;
@@ -144,7 +147,8 @@ export class PairingManager extends EventEmitter {
 
   public getCookieName(): string {
     const isHttps = this.publicBaseUrl.startsWith("https://");
-    return !this.insecureDev && isHttps ? "__Host-pigeon_session" : "pigeon_session";
+    const base = !this.insecureDev && isHttps ? "__Host-pigeon_session" : "pigeon_session";
+    return this.cookieSuffix ? `${base}_${this.cookieSuffix}` : base;
   }
 
   public getActiveToken(): { token: string; expiresAt: number; permanent: boolean } | null {

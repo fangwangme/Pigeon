@@ -48,7 +48,11 @@ export interface InstancePaths {
 
 export function resolveProductionPort(env: NodeJS.ProcessEnv = process.env): number {
   try {
-    const prodConfigPath = resolveConfigPath(undefined, env);
+    const prodEnv =
+      env.PIGEON_CONFIG_PATH && /[\\/]pigeon-\d+[\\/]config\.json$/.test(env.PIGEON_CONFIG_PATH)
+        ? { ...env, PIGEON_CONFIG_PATH: undefined }
+        : env;
+    const prodConfigPath = resolveConfigPath(undefined, prodEnv);
     if (existsSync(prodConfigPath)) {
       const raw = JSON.parse(readFileSync(prodConfigPath, "utf-8"));
       if (raw && typeof raw === "object" && raw.server && typeof raw.server.port === "number") {

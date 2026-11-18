@@ -422,6 +422,7 @@ export class PigeonDaemon {
     this.pairingManager = new PairingManager({
       publicBaseUrl: this.config.publicBaseUrl,
       insecureDev,
+      cookieSuffix: isProduction ? undefined : String(this.config.port),
       adminSocketPath: this.config.adminSocketPath,
       devicesFilePath: this.config.devicesFilePath,
       rebuildUsage: () => usageService.rebuild(),
