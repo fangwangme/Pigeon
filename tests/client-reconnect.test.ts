@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, jest, test } from "bun:test";
-import { handleOnline, handleServerMessage, handleVisibilityChange, initWebSocket } from "../src/client/src/state/ws";
+import { handleOnline, handleServerMessage, handleVisibilityChange, initWebSocket, request } from "../src/client/src/state/ws";
 import { setState, state } from "../src/client/src/state/store";
 import type { PaneStatePayload } from "../src/types/protocol";
 
@@ -122,7 +122,7 @@ afterEach(async () => {
 });
 
 describe("wakeup probe (protocol.md §2.1)", () => {
-  test("on visible with an open socket a ping goes out at once; a pong within 3 s keeps the socket, no pong opens a new one", async () => {
+  test("on visible with an open socket a ping goes out at once; a pong within 2 s keeps the socket, no pong opens a new one", async () => {
     await initWebSocket();
     const first = last();
     first.open();
@@ -132,7 +132,7 @@ describe("wakeup probe (protocol.md §2.1)", () => {
     expect(first.sent.filter((m) => m.type === "ping").length).toBe(1);
     jest.advanceTimersByTime(1_000);
     handleServerMessage({ type: "pong", timestamp: Date.now() } as any);
-    jest.advanceTimersByTime(3_000);
+    jest.advanceTimersByTime(2_000);
     await flush();
     expect(sockets.length).toBe(1);
     expect(first.closeCalled).toBe(false);
@@ -140,9 +140,32 @@ describe("wakeup probe (protocol.md §2.1)", () => {
     handleVisibilityChange();
     expect(first.sent.filter((m) => m.type === "ping").length).toBe(2);
     expect(sockets.length).toBe(1);
-    jest.advanceTimersByTime(3_000);
+    jest.advanceTimersByTime(2_000);
     await flush();
     expect(sockets.length).toBe(2);
+  });
+
+  test("periodic heartbeat check yields to an active 2 s wakeup probe after long sleep", async () => {
+    await initWebSocket();
+    const first = last();
+    first.open();
+    welcome(false);
+    await flush();
+
+    // Advance 19 s without pong (pingInterval at 5s/10s/15s each see <= 15s, next fires at 20s with 20s > 15s).
+    g.document.visibilityState = "hidden";
+    handleVisibilityChange();
+    await tick(19_000);
+    g.document.visibilityState = "visible";
+    handleVisibilityChange();
+    // At t=20s, periodic pingInterval ticks with lastPongTime 20s old — must wait for wakeup probe rather than closing early
+    await tick(1_100);
+    expect(first.closeCalled).toBe(false);
+    expect(sockets.length).toBe(1);
+    handleServerMessage({ type: "pong", timestamp: Date.now() } as any);
+    await tick(1_500);
+    expect(first.closeCalled).toBe(false);
+    expect(sockets.length).toBe(1);
   });
 });
 
@@ -266,12 +289,12 @@ describe("retry schedule (protocol.md §2.2)", () => {
     expect(sockets.length).toBe(before + 1);
   });
 
-  test("a socket still CONNECTING after 10 s is closed and a new attempt follows", async () => {
+  test("a socket still CONNECTING after 2 s is closed and a new attempt follows", async () => {
     void initWebSocket();
     await flush();
     const stuck = last();
 
-    await tick(9_999);
+    await tick(1_999);
     expect(stuck.closeCalled).toBe(false);
     expect(sockets.length).toBe(1);
 
@@ -279,6 +302,27 @@ describe("retry schedule (protocol.md §2.2)", () => {
     expect(stuck.closeCalled).toBe(true);
     await tick(0);
     expect(sockets.length).toBe(2);
+  });
+
+  test("an online event or wake from hidden replaces a stale CONNECTING socket immediately", async () => {
+    void initWebSocket();
+    await flush();
+    const first = last();
+    expect(sockets.length).toBe(1);
+
+    handleOnline();
+    await flush();
+    expect(first.closeCalled).toBe(true);
+    expect(sockets.length).toBe(2);
+
+    const second = last();
+    g.document.visibilityState = "hidden";
+    handleVisibilityChange();
+    g.document.visibilityState = "visible";
+    handleVisibilityChange();
+    await flush();
+    expect(second.closeCalled).toBe(true);
+    expect(sockets.length).toBe(3);
   });
 });
 
@@ -342,6 +386,39 @@ describe("debug mode (protocol.md §2.3)", () => {
     welcome(false);
     await flush();
     expect(diags(s).length).toBe(0);
+  });
+
+  test("failed offline or dropped RPC requests record rpc_error in client_diag without payload text", async () => {
+    await expect(
+      request({ type: "usage_model", payload: { model: "gemini-4-hydrogen", from: "2026-11-18", to: "2026-11-18", agents: ["agy"] } })
+    ).rejects.toMatchObject({ code: "ERR_OFFLINE" });
+
+    void initWebSocket();
+    await flush();
+    const first = last();
+    first.open();
+    welcome(true);
+    await flush();
+
+    const offlineEvs = diags(first).flatMap((m) => m.payload.events).filter((e: any) => e.ev === "rpc_error");
+    expect(offlineEvs).toHaveLength(1);
+    expect(offlineEvs[0]).toMatchObject({ ev: "rpc_error", cmd: "usage_model", code: "ERR_OFFLINE" });
+    expect(JSON.stringify(offlineEvs[0])).not.toContain("gemini-4-hydrogen");
+
+    const inFlight = request({ type: "usage_day", payload: { date: "2026-11-18", agents: ["agy"] } });
+    await tick(120);
+    first.drop(1006);
+    await expect(inFlight).rejects.toMatchObject({ code: "ERR_OFFLINE" });
+
+    await tick(0);
+    const second = last();
+    second.open();
+    welcome(true);
+    await flush();
+    const dropEvs = diags(second).flatMap((m) => m.payload.events).filter((e: any) => e.ev === "rpc_error");
+    expect(dropEvs).toHaveLength(1);
+    expect(dropEvs[0]).toMatchObject({ ev: "rpc_error", cmd: "usage_day", code: "ERR_OFFLINE" });
+    expect(dropEvs[0].ms).toBeGreaterThanOrEqual(120);
   });
 });
 

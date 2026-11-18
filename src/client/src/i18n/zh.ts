@@ -387,6 +387,10 @@ export const zh: Messages = {
   "usage.agentAndModel": "Agent 与模型",
   "usage.level": "第 {level} 级",
   "usage.levelEmpty": "0（无用量）",
+  "usage.hitShort": "命中 {pct}%",
+  "usage.sortCacheHit": "按命中率",
+  "usage.retry": "重试",
+  "usage.loadFailed": "读取用量详情失败",
 
   "settings.quotaUsage": "额度与用量",
   "settings.quotaEnabled": "启用订阅额度查询",

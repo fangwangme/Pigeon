@@ -24,9 +24,9 @@ const PROTOCOL_VERSION = "1.0.0";
 // Close codes after which reconnecting cannot help (protocol.md §2.2).
 const TERMINAL_CLOSE_CODES = new Set([4401, 4403, 4409, 1008]);
 const RETRY_DELAYS_MS = [0, 500, 1000, 2000, 3000];
-const PAIRING_CHECK_TIMEOUT_MS = 5000;
-const CONNECTING_TIMEOUT_MS = 10000;
-const WAKEUP_PING_TIMEOUT_MS = 3000;
+const PAIRING_CHECK_TIMEOUT_MS = 2000;
+const CONNECTING_TIMEOUT_MS = 2000;
+const WAKEUP_PING_TIMEOUT_MS = 2000;
 const HEARTBEAT_INTERVAL_MS = 5000;
 const HEARTBEAT_TIMEOUT_MS = 15000;
 
@@ -48,7 +48,10 @@ let configVersion = 0;
 let loadedBuildId: string | null = null;
 const paneRevisions = new Map<string, number>();
 const lastStatus = new Map<string, AgentStatus>();
-const pending = new Map<string, { resolve: (p: any) => void; reject: (e: { code: string; message: string }) => void }>();
+const pending = new Map<
+  string,
+  { resolve: (p: any) => void; reject: (e: { code: string; message: string }) => void; cmd: string; startedAt: number }
+>();
 let freshDataArrivedPaneId: string | null = null;
 let lastAlivePanesKey = "";
 let pendingSelectViewId: string | null = null;
@@ -206,11 +209,13 @@ function teardownSocket(ws: WebSocket | null): void {
   if (wakeupProbeTimer) clearTimeout(wakeupProbeTimer);
   wakeupProbeTimer = null;
   pendingSelectViewId = null;
+  connectionDebug = false;
+  const now = Date.now();
   for (const p of pending.values()) {
+    recordConn("rpc_error", { cmd: p.cmd, code: "ERR_OFFLINE", ms: Math.max(0, now - p.startedAt) });
     p.reject(Object.assign(new Error(t("error.disconnected")), { code: "ERR_OFFLINE" }));
   }
   pending.clear();
-  connectionDebug = false;
   setState({ connected: false, configReady: false, paneSyncing: false });
   if (ws && socket === ws) socket = null;
 }
@@ -262,7 +267,7 @@ function openSocket(): void {
   connectingTimer = setTimeout(() => {
     connectingTimer = null;
     if (socket !== ws || ws.readyState !== WebSocket.CONNECTING) return;
-    console.warn("[Pigeon] WebSocket connect timed out after 10s");
+    console.warn("[Pigeon] WebSocket connect timed out after 2s");
     conn("ws_timeout", { ms: Date.now() - startedAt });
     ws.close();
   }, CONNECTING_TIMEOUT_MS);
@@ -305,6 +310,7 @@ function openSocket(): void {
     if (pingInterval) clearInterval(pingInterval);
     pingInterval = setInterval(() => {
       if (socket !== ws) return;
+      if (wakeupProbeTimer) return;
       if (Date.now() - lastPongTime > HEARTBEAT_TIMEOUT_MS) {
         console.warn("[Pigeon] WebSocket heartbeat timed out; reconnecting");
         const sincePong = Date.now() - lastPongTime;
@@ -643,6 +649,7 @@ export function handleServerMessage(msg: ServerMessage): void {
       const waiter = msg.replyTo ? pending.get(msg.replyTo) : undefined;
       if (waiter) {
         pending.delete(msg.replyTo!);
+        conn("rpc_error", { cmd: waiter.cmd, code: msg.error.code, ms: Math.max(0, Date.now() - waiter.startedAt) });
         waiter.reject({ ...msg.error, message });
       }
       if (msg.replyTo && msg.replyTo === pendingSelectViewId) {
@@ -706,12 +713,15 @@ export function refreshModels(agent?: string): Promise<any> {
 
 export function request(msg: WithoutId<Command>): Promise<any> {
   const id = nextId();
+  const cmd = msg.type;
+  const startedAt = Date.now();
   return new Promise((resolve, reject) => {
     if (!sendMessage({ ...msg, id } as ClientMessage)) {
+      conn("rpc_error", { cmd, code: "ERR_OFFLINE", ms: 0 });
       reject({ code: "ERR_OFFLINE", message: t("common.offline") });
       return;
     }
-    pending.set(id, { resolve, reject });
+    pending.set(id, { resolve, reject, cmd, startedAt });
   });
 }
 
@@ -978,10 +988,18 @@ export function handleVisibilityChange(): void {
     if (state.activePaneId) flushActivePaneSnapshot();
   }
   if (document.visibilityState === "visible") {
+    const cameFromHidden = hiddenAt !== null;
     const hiddenFor: Record<string, number> = hiddenAt === null ? {} : { hidden_ms: Date.now() - hiddenAt };
     hiddenAt = null;
     if (!socket || socket.readyState !== WebSocket.OPEN) {
       conn("visible", hiddenFor);
+      if (cameFromHidden && socket && socket.readyState === WebSocket.CONNECTING) {
+        const stale = socket;
+        teardownSocket(stale);
+        try {
+          stale.close();
+        } catch {}
+      }
       if (!pairingCheck && (!socket || socket.readyState !== WebSocket.CONNECTING)) {
         if (reconnectTimer) {
           clearTimeout(reconnectTimer);
@@ -997,7 +1015,7 @@ export function handleVisibilityChange(): void {
       wakeupProbeTimer = setTimeout(() => {
         wakeupProbeTimer = null;
         if (socket !== probedWs || probedWs.readyState !== WebSocket.OPEN) return;
-        console.warn("[Pigeon] wakeup ping timed out after 3s; reconnecting");
+        console.warn("[Pigeon] wakeup ping timed out after 2s; reconnecting");
         if (reconnectTimer) {
           clearTimeout(reconnectTimer);
           reconnectTimer = null;
@@ -1016,9 +1034,18 @@ export function handleVisibilityChange(): void {
   reportPresence();
 }
 
-/** protocol.md §2.2: the network came back while a retry waits; try at once. */
+/** protocol.md §2.2: the network came back while a retry waits or a socket hangs connecting; try at once. */
 export function handleOnline(): void {
   conn("online");
+  if (socket && socket.readyState === WebSocket.CONNECTING) {
+    const stale = socket;
+    teardownSocket(stale);
+    try {
+      stale.close();
+    } catch {}
+    if (!pairingCheck) void initWebSocket();
+    return;
+  }
   if (!reconnectTimer) return;
   clearTimeout(reconnectTimer);
   reconnectTimer = null;

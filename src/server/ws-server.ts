@@ -113,6 +113,57 @@ export function newConnectionId(): string {
   return `conn_${randomBytes(6).toString("hex")}`;
 }
 
+function safeLogVal(v: string): string {
+  return /[^\w.:/+@-]/.test(v) ? JSON.stringify(v) : v;
+}
+
+function summarizeRpcForDebug(msg: ClientMessage): string {
+  switch (msg.type) {
+    case "usage_get": {
+      const p = msg.payload;
+      return `preset=${p.preset}${p.from ? ` from=${p.from} to=${p.to}` : ""}${p.force ? " force=true" : ""} agents=${p.agents.length}`;
+    }
+    case "usage_day":
+      return `date=${msg.payload.date} agents=${msg.payload.agents.length}`;
+    case "usage_model":
+      return `model=${JSON.stringify(msg.payload.model)} from=${msg.payload.from} to=${msg.payload.to} agents=${msg.payload.agents.length}`;
+    case "quota_get":
+      return `refresh=${!!msg.payload?.refresh}`;
+    case "detail_get":
+      return `pane=${safeLogVal(msg.payload.paneId)} kind=${msg.payload.kind}`;
+    case "select_view":
+      return `pane=${msg.payload.paneId === null ? "null" : safeLogVal(msg.payload.paneId)}`;
+    case "agent_prompt":
+      return `pane=${safeLogVal(msg.payload.targetPaneId)} chars=${msg.payload.text.length} attachments=${msg.payload.attachments?.length ?? 0}`;
+    case "queue_update":
+      return `pane=${safeLogVal(msg.payload.targetPaneId)} queueId=${safeLogVal(msg.payload.queueId)} chars=${msg.payload.text.length}`;
+    case "queue_cancel":
+      return `pane=${safeLogVal(msg.payload.targetPaneId)} queueId=${safeLogVal(msg.payload.queueId)}`;
+    case "queue_resume":
+    case "screen_watch":
+      return `pane=${safeLogVal(msg.payload.paneId)}`;
+    case "agent_send_keys":
+      return `pane=${safeLogVal(msg.payload.targetPaneId)} keys=${msg.payload.keys.length}`;
+    case "interaction_respond":
+    case "interaction_dismiss":
+      return `pane=${safeLogVal(msg.payload.targetPaneId)} interaction=${safeLogVal(msg.payload.interactionId)}`;
+    case "create_tab_and_agent":
+      return `ws=${safeLogVal(msg.payload.workspaceId)} agent=${safeLogVal(msg.payload.agentKind)}${msg.payload.modelId ? ` model=${safeLogVal(msg.payload.modelId)}` : ""}`;
+    case "sessions_list":
+    case "launch_defaults":
+      return `ws=${safeLogVal(msg.payload.workspaceId)} agent=${safeLogVal(msg.payload.agentKind)}`;
+    case "close_tab":
+    case "tab_rename":
+      return `tab=${safeLogVal(msg.payload.tabId)}`;
+    case "device_revoke":
+      return `device=${safeLogVal(msg.payload.deviceId)}`;
+    case "models_refresh":
+      return msg.payload?.agent ? `agent=${safeLogVal(msg.payload.agent)}` : "all";
+    default:
+      return "";
+  }
+}
+
 export class WsServer {
   private buildId: string;
   private herdrClient: HerdrClient;
@@ -157,6 +208,7 @@ export class WsServer {
   private onPaneStatusChanged: (event: { paneId: string; status: string }) => void;
   private logger?: (msg: string) => void;
   private debug: boolean;
+  private rpcTrace = new Map<string, { bytes: number; errorCode?: string }>();
 
   constructor(options: WsServerOptions) {
     this.logger = options.logger;
@@ -451,14 +503,28 @@ export class WsServer {
       parsed = JSON.parse(text);
     } catch {
       this.sendError(ws, undefined, ProtocolErrors.ERR_INVALID_PAYLOAD, "Malformed JSON payload");
+      if (this.debug) {
+        this.logger?.(`debug rpc invalid (conn=${ws.data?.connectionId}, id=none) -> error ${ProtocolErrors.ERR_INVALID_PAYLOAD} 0ms`);
+      }
       return;
     }
     const validation = validateClientMessage(parsed);
     if (!validation.ok) {
       this.sendError(ws, validation.id, ProtocolErrors.ERR_INVALID_PAYLOAD, validation.error);
+      if (this.debug) {
+        const rawType = typeof (parsed as any)?.type === "string" && /^[a-z0-9_]{1,64}$/i.test((parsed as any).type)
+          ? (parsed as any).type
+          : "invalid";
+        const safeId = validation.id && /^[A-Za-z0-9_.-]{1,128}$/.test(validation.id) ? validation.id : "none";
+        this.logger?.(`debug rpc ${rawType} (conn=${ws.data?.connectionId}, id=${safeId}) -> error ${ProtocolErrors.ERR_INVALID_PAYLOAD} 0ms`);
+      }
       return;
     }
     const msg = validation.msg;
+    const rpcId = "id" in msg ? msg.id : undefined;
+    const traceKey = this.debug && rpcId ? `${ws.data?.connectionId ?? ""}:${rpcId}` : null;
+    const rpcStart = traceKey ? performance.now() : 0;
+    if (traceKey) this.rpcTrace.set(traceKey, { bytes: 0 });
     try {
       await this.dispatch(ws, msg);
     } catch (err) {
@@ -473,6 +539,19 @@ export class WsServer {
         } else {
           console.error(`[pigeon] handling '${msg.type}' failed:`, err);
           this.sendError(ws, replyTo, ProtocolErrors.ERR_INTERNAL, err instanceof Error ? err.message : String(err));
+        }
+      }
+    } finally {
+      if (traceKey) {
+        const trace = this.rpcTrace.get(traceKey) ?? { bytes: 0 };
+        this.rpcTrace.delete(traceKey);
+        const ms = Math.round(performance.now() - rpcStart);
+        const summary = summarizeRpcForDebug(msg);
+        const mid = summary ? ` ${summary}` : "";
+        if (trace.errorCode) {
+          this.logger?.(`debug rpc ${msg.type} (conn=${ws.data?.connectionId}, id=${rpcId})${mid} -> error ${trace.errorCode} ${ms}ms`);
+        } else {
+          this.logger?.(`debug rpc ${msg.type} (conn=${ws.data?.connectionId}, id=${rpcId})${mid} -> ok ${ms}ms ${trace.bytes}B`);
         }
       }
     }
@@ -1169,6 +1248,7 @@ export class WsServer {
   }
 
   private wireQuotaService(service: QuotaService): void {
+    service.setDebugLogger(this.debug ? this.logger : undefined);
     service.setOnUpdated((payload) => {
       if (this.clients.size > 0 && this.configManager.getClientConfig().quotaEnabled === true) {
         this.broadcast({ type: "quota_updated", payload });
@@ -1177,6 +1257,7 @@ export class WsServer {
   }
 
   private wireUsageService(service: UsageService): void {
+    service.setDebugLogger(this.debug ? this.logger : undefined);
     service.setOnUpdated((payload) => {
       if (this.clients.size > 0 && this.configManager.getClientConfig().usageEnabled !== false) {
         this.broadcast({ type: "usage_updated", payload });
@@ -1805,7 +1886,16 @@ export class WsServer {
   }
 
   private send(ws: Ws, msg: ServerMessage): void {
-    ws.send(JSON.stringify(msg));
+    const json = JSON.stringify(msg);
+    ws.send(json);
+    if (this.debug && "replyTo" in msg && typeof msg.replyTo === "string" && msg.replyTo) {
+      const key = `${ws.data?.connectionId ?? ""}:${msg.replyTo}`;
+      const trace = this.rpcTrace.get(key);
+      if (trace) {
+        trace.bytes += Buffer.byteLength(json);
+        if (msg.type === "error") trace.errorCode = msg.error.code;
+      }
+    }
   }
 
   private sendAck(ws: Ws, replyTo: string, payload?: Record<string, any>): void {

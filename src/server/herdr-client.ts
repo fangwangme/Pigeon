@@ -192,9 +192,12 @@ export class HerdrClient extends EventEmitter {
     try {
       await this.refreshSnapshot();
     } catch (err) {
-      // Herdr offline at startup is an expected state; it surfaces as `upstream_status` and the
-      // subscription and reconciliation loops keep retrying.
-      if (!(err instanceof HerdrError) || !UNREACHABLE_CODES.has(err.code)) throw err;
+      // Herdr offline or slow to list remote terminals at startup is an expected state; it surfaces
+      // as `upstream_status` and the subscription and reconciliation loops keep retrying.
+      if (!(err instanceof HerdrError) || (!UNREACHABLE_CODES.has(err.code) && err.code !== "timeout")) throw err;
+      if (err.code === "timeout") {
+        this.logger?.(`herdr startup snapshot timed out (${err.message}); will retry`);
+      }
     } finally {
       this.isConnecting = false;
     }
@@ -228,6 +231,10 @@ export class HerdrClient extends EventEmitter {
   /** Background poll failures: unreachable Herdr is reported through connection state; anything else is a bug. */
   private reportBackgroundError(what: string, err: unknown): void {
     if (err instanceof HerdrError && UNREACHABLE_CODES.has(err.code)) return;
+    if (what === "snapshot" && err instanceof HerdrError && err.code === "timeout") {
+      this.logger?.(`herdr background snapshot timed out (${err.message})`);
+      return;
+    }
     console.error(`[pigeon] Herdr ${what} failed:`, err);
   }
 

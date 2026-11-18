@@ -49,7 +49,7 @@ jobs:
         run: bun run build:client
 
       - name: Compile standalone binary
-        run: bun build --compile --minify ./src/cli/index.ts --target=${{ matrix.bun_target }} --outfile dist/pigeon
+        run: bun build --compile --minify ./src/cli/index.ts ./src/server/usage/scan-worker.ts --target=${{ matrix.bun_target }} --outfile dist/pigeon
 
       - name: Package archive
         run: |

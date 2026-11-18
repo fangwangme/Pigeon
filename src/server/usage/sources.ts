@@ -511,8 +511,18 @@ export function scanAntigravityCacheDb(path: string): RawUsageRecord[] {
   return records;
 }
 
+export interface OpenCodeScanCursor {
+  lastRowId: number;
+  lastUpdatedMs: number;
+  onProgress?: (maxRowId: number, maxUpdatedMs: number) => void;
+}
+
 // 5. OpenCode scanner
-export function scanOpenCodeDb(path: string, stats: ScanStats = { skipped: 0 }): RawUsageRecord[] {
+export function scanOpenCodeDb(
+  path: string,
+  stats: ScanStats = { skipped: 0 },
+  cursor?: OpenCodeScanCursor
+): RawUsageRecord[] {
   const records: RawUsageRecord[] = [];
   let db: Database | null = null;
   try {
@@ -523,12 +533,52 @@ export function scanOpenCodeDb(path: string, stats: ScanStats = { skipped: 0 }):
     const hasSessionMessage = (db.query("SELECT 1 FROM sqlite_master WHERE type='table' AND name='session_message'").get() as any) !== undefined;
     const hasMessage = (db.query("SELECT 1 FROM sqlite_master WHERE type='table' AND name='message'").get() as any) !== undefined;
     const tableName = hasSessionMessage ? "session_message" : (hasMessage ? "message" : null);
-    if (!tableName) return [];
+    if (!tableName) {
+      cursor?.onProgress?.(cursor.lastRowId, cursor.lastUpdatedMs);
+      return [];
+    }
 
-    const rows: any[] = db
-      .query(`SELECT id, session_id, time_created, data FROM ${tableName} WHERE data IS NOT NULL`)
-      .all();
+    const cols = (db.query(`PRAGMA table_info('${tableName}')`).all() as Array<{ name: string }>).map((c) => c.name);
+    const hasTimeUpdated = cols.includes("time_updated");
+    const maxRowRow = db.query(`SELECT COALESCE(MAX(rowid), 0) as max_rid FROM ${tableName}`).get() as { max_rid: number };
+    const effectiveLastRowId = cursor && cursor.lastRowId > 0 && cursor.lastRowId <= maxRowRow.max_rid ? cursor.lastRowId : 0;
+
+    let rows: any[];
+    if (effectiveLastRowId > 0) {
+      const rowThreshold = Math.max(0, effectiveLastRowId - 50);
+      if (hasTimeUpdated && cursor!.lastUpdatedMs > 0) {
+        const overlap = cursor!.lastUpdatedMs > 1e11 ? 60_000 : 60;
+        const updThreshold = Math.max(0, cursor!.lastUpdatedMs - overlap);
+        rows = db
+          .query(
+            `SELECT rowid as _rid, id, session_id, time_created, time_updated, data
+             FROM ${tableName}
+             WHERE data IS NOT NULL AND rowid IN (
+               SELECT rowid FROM ${tableName} WHERE rowid > ?
+               UNION
+               SELECT rowid FROM ${tableName} WHERE COALESCE(time_updated, time_created, 0) >= ?
+             )`
+          )
+          .all(rowThreshold, updThreshold);
+      } else {
+        rows = db
+          .query(`SELECT rowid as _rid, id, session_id, time_created, data FROM ${tableName} WHERE data IS NOT NULL AND rowid > ?`)
+          .all(rowThreshold);
+      }
+    } else {
+      rows = db
+        .query(`SELECT rowid as _rid, id, session_id, time_created${hasTimeUpdated ? ", time_updated" : ""}, data FROM ${tableName} WHERE data IS NOT NULL`)
+        .all();
+    }
+
+    let maxRowId = effectiveLastRowId;
+    let maxUpdatedMs = effectiveLastRowId > 0 ? (cursor?.lastUpdatedMs ?? 0) : 0;
+
     for (const r of rows) {
+      if (typeof r._rid === "number" && r._rid > maxRowId) maxRowId = r._rid;
+      const rawUpd = hasTimeUpdated ? Number(r.time_updated ?? r.time_created ?? 0) : Number(r.time_created ?? 0);
+      if (Number.isFinite(rawUpd) && rawUpd > maxUpdatedMs) maxUpdatedMs = rawUpd;
+
       if (!r.data) continue;
       let d: any;
       try {
@@ -569,6 +619,7 @@ export function scanOpenCodeDb(path: string, stats: ScanStats = { skipped: 0 }):
         totalTokens: total,
       });
     }
+    cursor?.onProgress?.(maxRowId, maxUpdatedMs);
   } finally {
     if (db) db.close();
   }

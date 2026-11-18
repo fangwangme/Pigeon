@@ -128,6 +128,75 @@ describe("handshake (protocol.md §3)", () => {
     expect(lastError(c.sent)).toBe(ProtocolErrors.ERR_INVALID_PAYLOAD);
   });
 
+  test("debug mode logs RPC timings, byte sizes, safe parameters, and errors without leaking prompt text (architecture.md §4.6)", async () => {
+    const dir = tempDir("ws-debug-rpc");
+    const lines: string[] = [];
+    const debugServer = new WsServer({
+      buildId: "build_test",
+      herdrClient: client,
+      pushManager: new PushManager(join(dir, "vapid.json")),
+      configManager: config,
+      skillScanner: new SkillScanner(dir),
+      debug: true,
+      logger: (m) => lines.push(m),
+    });
+    try {
+      const c = fakeWs();
+      debugServer.handleOpen(c.ws);
+      await debugServer.handleMessage(
+        c.ws,
+        JSON.stringify({ type: "agent_prompt", id: "cmd_p", payload: { targetPaneId: "p1", text: "TOP_SECRET_PROMPT_BODY" } })
+      );
+      await debugServer.handleMessage(
+        c.ws,
+        JSON.stringify({ type: "detail_get", id: "cmd_err", payload: { paneId: "p1", kind: "tool", turnId: "t0", callId: "c0" } })
+      );
+      await debugServer.handleMessage(
+        c.ws,
+        JSON.stringify({ type: "forged\n[2026] evil", id: "bad_id" })
+      );
+
+      const promptLog = lines.find((l) => l.includes("debug rpc agent_prompt") && l.includes("id=cmd_p"));
+      expect(promptLog).toBeDefined();
+      expect(promptLog).toContain("pane=p1");
+      expect(promptLog).toContain("chars=22");
+      expect(promptLog).toContain("-> ok ");
+      expect(lines.some((l) => l.includes("TOP_SECRET_PROMPT_BODY"))).toBe(false);
+
+      const errLog = lines.find((l) => l.includes("debug rpc detail_get") && l.includes("id=cmd_err"));
+      expect(errLog).toBeDefined();
+      expect(errLog).toContain("-> error ERR_NOT_FOUND");
+
+      const forgedLog = lines.find((l) => l.includes("id=bad_id") && l.includes("ERR_INVALID_PAYLOAD"));
+      expect(forgedLog).toBeDefined();
+      expect(forgedLog).toContain("debug rpc invalid");
+      expect(lines.some((l) => l.includes("evil"))).toBe(false);
+    } finally {
+      debugServer.destroy();
+    }
+
+    const quietLines: string[] = [];
+    const quietServer = new WsServer({
+      buildId: "build_test",
+      herdrClient: client,
+      pushManager: new PushManager(join(dir, "vapid2.json")),
+      configManager: config,
+      skillScanner: new SkillScanner(dir),
+      logger: (m) => quietLines.push(m),
+    });
+    try {
+      const c = fakeWs();
+      quietServer.handleOpen(c.ws);
+      await quietServer.handleMessage(
+        c.ws,
+        JSON.stringify({ type: "agent_prompt", id: "cmd_q", payload: { targetPaneId: "p1", text: "hello" } })
+      );
+      expect(quietLines.some((l) => l.includes("debug rpc"))).toBe(false);
+    } finally {
+      quietServer.destroy();
+    }
+  });
+
   test("a different protocol major version is refused and the socket closed with 4409", async () => {
     const c = fakeWs();
     await send(c.ws, { type: "hello", id: "h1", payload: { protocolVersion: "2.0.0" } });

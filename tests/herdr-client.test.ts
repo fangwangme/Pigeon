@@ -476,4 +476,31 @@ describe("connection lifecycle (herdr-adapter.md §3.2, §3.4)", () => {
     }
     expect(client.getPaneFacts("t1")?.agentKind).toBe("claude");
   });
+
+  test("startup snapshot timeout is tolerated without crashing connect(), while sendPrompt timeout still throws ERR/timeout (§3.4)", async () => {
+    const logs: string[] = [];
+    const slowClient = new HerdrClient({
+      appSocketPath: herdr.appSocketPath,
+      coreSocketPath: herdr.coreSocketPath,
+      debounceMs: 5,
+      panePollMs: 60_000,
+      requestTimeoutMs: 40,
+      logger: (m) => logs.push(m),
+    });
+    try {
+      herdr.serve([{ paneId: "t1", app: "claude-code", state: "idle" }]);
+      herdr.handlers["terminal.list"] = () => "no-reply";
+      await slowClient.connect();
+      expect(logs.some((l) => l.includes("startup snapshot timed out"))).toBe(true);
+
+      herdr.handlers["terminal.list"] = () => ({
+        result: { terminals: topologyOf([{ paneId: "t1", app: "claude-code", state: "idle" }]).terminals, hidden_finished: 0, machines: [] },
+      });
+      await slowClient.refreshSnapshot();
+      herdr.handlers["terminal.send"] = () => "no-reply";
+      await expect(slowClient.sendPrompt("t1", "hi")).rejects.toMatchObject({ code: "timeout" });
+    } finally {
+      slowClient.disconnect();
+    }
+  });
 });

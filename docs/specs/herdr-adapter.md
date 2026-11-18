@@ -65,7 +65,7 @@ Herdr has no "output changed" event. The panes that connected clients are viewin
 Herdr is connected while both the App and the Core answer. Losing either one is an expected state:
 - it is reported through `upstream_status` (`herdrConnected: false`), so a closed Herdr window shows as Herdr offline even though the Core keeps the terminals running;
 - the subscription reconnects every 3 seconds, and the 30-second snapshot retries the App;
-- startup does not fail when Herdr is not running.
+- startup does not fail when Herdr is not running or when its initial snapshot times out; it starts disconnected and retries.
 
 `disconnect()` stops every timer and socket. Before `connect()`, the client opens no sockets and starts no timers.
 

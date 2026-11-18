@@ -71,6 +71,42 @@ function todayYMD(): string {
   return formatYMD(new Date());
 }
 
+function SheetStatus(props: { error: string | null; onRetry: () => void }) {
+  return (
+    <Show when={props.error} fallback={<div style={{ padding: "20px 0", color: "var(--muted)" }}>{t("common.loading")}</div>}>
+      <div
+        style={{
+          padding: "20px 0",
+          display: "flex",
+          "flex-direction": "column",
+          "align-items": "flex-start",
+          gap: "10px",
+          color: "var(--muted)",
+          "font-size": "13.5px",
+        }}
+      >
+        <span>{props.error}</span>
+        <button
+          onClick={props.onRetry}
+          style={{
+            height: "34px",
+            padding: "0 16px",
+            "border-radius": "10px",
+            border: 0,
+            background: "var(--accent)",
+            color: "var(--onaccent)",
+            font: "inherit",
+            "font-size": "13px",
+            "font-weight": 600,
+          }}
+        >
+          {t("usage.retry")}
+        </button>
+      </div>
+    </Show>
+  );
+}
+
 export function UsagePage() {
   const [range, setRange] = createSignal<UsagePreset>(
     state.route.name === "usage" && state.route.initialPreset ? state.route.initialPreset : "today"
@@ -87,14 +123,22 @@ export function UsagePage() {
 
   const [usageReport, setUsageReport] = createSignal<UsageGetPayload | null>(null);
   const [loading, setLoading] = createSignal(false);
+  const [reportError, setReportError] = createSignal<string | null>(null);
+  const [modelSort, setModelSort] = createSignal<"metric" | "cacheHit">("metric");
   const isLoading = () => !state.configReady || loading();
 
   // Sheets
   const [sheet, setSheet] = createSignal<"none" | "day" | "model" | "custom" | "filter">("none");
   const [selectedDay, setSelectedDay] = createSignal<string | null>(null);
   const [dayData, setDayData] = createSignal<UsageDayPayload | null>(null);
+  const [dayError, setDayError] = createSignal<string | null>(null);
   const [selectedModel, setSelectedModel] = createSignal<string | null>(null);
   const [modelData, setModelData] = createSignal<UsageModelPayload | null>(null);
+  const [modelError, setModelError] = createSignal<string | null>(null);
+
+  let usageReqSeq = 0;
+  let dayReqSeq = 0;
+  let modelReqSeq = 0;
 
   const HEAT_CELL = 24;
   const [selectedLegendBucket, setSelectedLegendBucket] = createSignal<number | null>(null);
@@ -109,7 +153,9 @@ export function UsagePage() {
 
   const loadUsage = async (force = false) => {
     if (!state.usageEnabled) return;
+    const seq = ++usageReqSeq;
     setLoading(true);
+    setReportError(null);
     try {
       const res: UsageGetPayload = await request({
         type: "usage_get",
@@ -121,6 +167,7 @@ export function UsagePage() {
           force,
         },
       });
+      if (seq !== usageReqSeq) return;
       setUsageReport(res);
       if (!customFrom() && res.firstDay) {
         setCustomFrom(res.firstDay);
@@ -128,10 +175,15 @@ export function UsagePage() {
         setDraftFrom(res.firstDay);
         setDraftTo(todayYMD());
       }
-    } catch (err) {
+    } catch (err: any) {
       console.error("[Pigeon] usage_get error", err);
+      if (seq === usageReqSeq) {
+        setReportError(err?.message || t("usage.loadFailed"));
+      }
     } finally {
-      setLoading(false);
+      if (seq === usageReqSeq) {
+        setLoading(false);
+      }
     }
   };
 
@@ -190,17 +242,23 @@ export function UsagePage() {
   });
 
   const openDaySheet = async (date: string) => {
+    const seq = ++dayReqSeq;
     setSelectedDay(date);
     setSheet("day");
     setDayData(null);
+    setDayError(null);
     try {
       const res: UsageDayPayload = await request({
         type: "usage_day",
         payload: { date, agents: Array.from(activeAgents()) },
       });
+      if (seq !== dayReqSeq) return;
       setDayData(res);
-    } catch (err) {
+    } catch (err: any) {
       console.error("[Pigeon] usage_day error", err);
+      if (seq === dayReqSeq) {
+        setDayError(err?.message || t("usage.loadFailed"));
+      }
     }
   };
 
@@ -212,9 +270,11 @@ export function UsagePage() {
   });
 
   const openModelSheet = async (model: string) => {
+    const seq = ++modelReqSeq;
     setSelectedModel(model);
     setSheet("model");
     setModelData(null);
+    setModelError(null);
     try {
       const res: UsageModelPayload = await request({
         type: "usage_model",
@@ -225,11 +285,30 @@ export function UsagePage() {
           agents: Array.from(activeAgents()),
         },
       });
+      if (seq !== modelReqSeq) return;
       setModelData(res);
-    } catch (err) {
+    } catch (err: any) {
       console.error("[Pigeon] usage_model error", err);
+      if (seq === modelReqSeq) {
+        setModelError(err?.message || t("usage.loadFailed"));
+      }
     }
   };
+
+  createEffect(
+    on(
+      () => state.configReady,
+      (ready) => {
+        if (!ready || !state.usageEnabled) return;
+        if (sheet() === "model" && selectedModel() && !modelData()) {
+          void openModelSheet(selectedModel()!);
+        } else if (sheet() === "day" && selectedDay() && !dayData()) {
+          void openDaySheet(selectedDay()!);
+        }
+      },
+      { defer: true }
+    )
+  );
 
   const isSingleDay = () => rangeSpan().len === 1;
 
@@ -552,8 +631,14 @@ export function UsagePage() {
       });
     }
 
-    // Model rows: sorted strictly by tokens descending
-    let models = [...rep.models].sort((a, b) => b.tokens - a.tokens);
+    const sortByHit = modelSort() === "cacheHit";
+    // Model rows: sorted by cache hit when requested, else by active metric (cost or tokens)
+    const models = [...rep.models].sort((a, b) => {
+      if (sortByHit) {
+        return cacheHitPercent(b.cacheRead, b.tokens) - cacheHitPercent(a.cacheRead, a.tokens) || b.tokens - a.tokens;
+      }
+      return m === "cost" ? (b.cost - a.cost || b.tokens - a.tokens) : b.tokens - a.tokens;
+    });
     let maxVal = 0;
     for (const mdl of models) {
       const val = m === "tokens" ? mdl.tokens : mdl.cost;
@@ -562,10 +647,14 @@ export function UsagePage() {
 
     return models.map((mdl) => {
       const val = m === "tokens" ? mdl.tokens : mdl.cost;
+      const hitPct = cacheHitPercent(mdl.cacheRead, mdl.tokens);
+      const hitStr = t("usage.hitShort", { pct: hitPct.toFixed(1) });
       const agentsStr = mdl.agents.map((ag) => AGENT_NAMES[ag] || ag).join(", ");
       const sessionStr = t("usage.sessionCount", { count: mdl.sessions.toString() });
-      const sub = agentsStr ? `${sessionStr} · ${agentsStr}` : sessionStr;
-      const barW = maxVal > 0 ? `${Math.min(100, (val / maxVal) * 100)}%` : "0%";
+      const sub = agentsStr ? `${sessionStr} · ${hitStr} · ${agentsStr}` : `${sessionStr} · ${hitStr}`;
+      const barW = sortByHit
+        ? `${Math.min(100, hitPct)}%`
+        : maxVal > 0 ? `${Math.min(100, (val / maxVal) * 100)}%` : "0%";
 
       return {
         id: mdl.model,
@@ -1167,10 +1256,28 @@ export function UsagePage() {
             }}
           >
             {/* List Header */}
-            <div style={{ display: "flex", "align-items": "center", padding: "0 14px", "min-height": "34px" }}>
+            <div style={{ display: "flex", "align-items": "center", gap: "8px", padding: "0 14px", "min-height": "34px" }}>
               <span style={{ "font-weight": 650, "font-size": "15px", flex: 1 }}>
                 {isSingleDay() ? t("usage.byModel") : group() === "date" ? t("usage.byDate") : t("usage.byModel")}
               </span>
+              <Show when={isSingleDay() || group() === "model"}>
+                <button
+                  onClick={() => setModelSort((s) => (s === "cacheHit" ? "metric" : "cacheHit"))}
+                  style={{
+                    height: "30px",
+                    padding: "0 10px",
+                    "border-radius": "8px",
+                    border: modelSort() === "cacheHit" ? "1px solid var(--accent)" : "1px solid var(--line)",
+                    background: modelSort() === "cacheHit" ? "var(--accentbg)" : "var(--bg)",
+                    color: modelSort() === "cacheHit" ? "var(--accent)" : "var(--muted)",
+                    font: "inherit",
+                    "font-size": "12px",
+                    "font-weight": 550,
+                  }}
+                >
+                  {t("usage.sortCacheHit")}
+                </button>
+              </Show>
               <Show when={!isSingleDay()}>
                 <div
                   style={{
@@ -1245,8 +1352,44 @@ export function UsagePage() {
               </div>
             </Show>
 
-            {/* Empty state (only when loading finished and no rows) */}
-            <Show when={!isLoading() && tableRows().length === 0}>
+            {/* Error state when report failed to load */}
+            <Show when={!isLoading() && !usageReport() && reportError()}>
+              <div
+                style={{
+                  "border-top": "1px solid var(--line)",
+                  "margin-top": "8px",
+                  padding: "22px 14px",
+                  display: "flex",
+                  "flex-direction": "column",
+                  "align-items": "center",
+                  gap: "10px",
+                  "text-align": "center",
+                  color: "var(--muted)",
+                  "font-size": "13.5px",
+                }}
+              >
+                <span>{reportError()}</span>
+                <button
+                  onClick={() => void loadUsage()}
+                  style={{
+                    height: "34px",
+                    padding: "0 16px",
+                    "border-radius": "10px",
+                    border: 0,
+                    background: "var(--accent)",
+                    color: "var(--onaccent)",
+                    font: "inherit",
+                    "font-size": "13px",
+                    "font-weight": 600,
+                  }}
+                >
+                  {t("usage.retry")}
+                </button>
+              </div>
+            </Show>
+
+            {/* Empty state (only when loading finished with a report and no rows) */}
+            <Show when={!isLoading() && !!usageReport() && tableRows().length === 0}>
               <div
                 style={{
                   "border-top": "1px solid var(--line)",
@@ -1417,7 +1560,7 @@ export function UsagePage() {
               </button>
             </div>
 
-            <Show when={dayData()} fallback={<div style={{ padding: "20px 0", color: "var(--muted)" }}>{t("common.loading")}</div>}>
+            <Show when={dayData()} fallback={<SheetStatus error={dayError()} onRetry={() => selectedDay() && void openDaySheet(selectedDay()!)} />}>
               {(() => {
                 const d = dayData()!;
                 return (
@@ -1539,7 +1682,7 @@ export function UsagePage() {
               </button>
             </div>
 
-            <Show when={modelData()} fallback={<div style={{ padding: "20px 0", color: "var(--muted)" }}>{t("common.loading")}</div>}>
+            <Show when={modelData()} fallback={<SheetStatus error={modelError()} onRetry={() => selectedModel() && void openModelSheet(selectedModel()!)} />}>
               {(() => {
                 const mdl = modelData()!;
                 const col = COMPANY_COLORS[mdl.company || "other"] || "var(--co-other)";
