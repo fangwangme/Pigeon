@@ -75,7 +75,7 @@ const welcome = (debug: boolean) =>
   handleServerMessage({
     type: "welcome",
     replyTo: "h1",
-    payload: { protocolVersion: "1.0.0", serverVersion: "0.1.0", buildId: "build_r", debug, deviceId: "d", clientConfig: {} as any, recipes: {} },
+    payload: { protocolVersion: "1.0.0", serverVersion: "0.1.0", buildId: "build_r", debug, deviceId: "d", clientConfig: { quotaEnabled: false } as any, recipes: {} },
   } as any);
 
 function paneState(paneId: string, revision: number, screen: string): PaneStatePayload {
@@ -108,7 +108,7 @@ beforeEach(() => {
     querySelector: (sel: string) => (sel.includes("pigeon-build") ? { getAttribute: () => "build_r" } : null),
   };
   g.localStorage = memoryStorage();
-  setState("paired", true);
+  setState({ paired: true, quotaEnabled: false });
 });
 
 afterEach(async () => {

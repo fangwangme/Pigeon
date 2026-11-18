@@ -124,7 +124,6 @@ export function UsagePage() {
   const [usageReport, setUsageReport] = createSignal<UsageGetPayload | null>(null);
   const [loading, setLoading] = createSignal(false);
   const [reportError, setReportError] = createSignal<string | null>(null);
-  const [modelSort, setModelSort] = createSignal<"metric" | "cacheHit">("metric");
   const isLoading = () => !state.configReady || loading();
 
   // Sheets
@@ -631,14 +630,8 @@ export function UsagePage() {
       });
     }
 
-    const sortByHit = modelSort() === "cacheHit";
-    // Model rows: sorted by cache hit when requested, else by active metric (cost or tokens)
-    const models = [...rep.models].sort((a, b) => {
-      if (sortByHit) {
-        return cacheHitPercent(b.cacheRead, b.tokens) - cacheHitPercent(a.cacheRead, a.tokens) || b.tokens - a.tokens;
-      }
-      return m === "cost" ? (b.cost - a.cost || b.tokens - a.tokens) : b.tokens - a.tokens;
-    });
+    // Model rows: sorted strictly by tokens descending
+    let models = [...rep.models].sort((a, b) => b.tokens - a.tokens);
     let maxVal = 0;
     for (const mdl of models) {
       const val = m === "tokens" ? mdl.tokens : mdl.cost;
@@ -647,14 +640,10 @@ export function UsagePage() {
 
     return models.map((mdl) => {
       const val = m === "tokens" ? mdl.tokens : mdl.cost;
-      const hitPct = cacheHitPercent(mdl.cacheRead, mdl.tokens);
-      const hitStr = t("usage.hitShort", { pct: hitPct.toFixed(1) });
       const agentsStr = mdl.agents.map((ag) => AGENT_NAMES[ag] || ag).join(", ");
       const sessionStr = t("usage.sessionCount", { count: mdl.sessions.toString() });
-      const sub = agentsStr ? `${sessionStr} · ${hitStr} · ${agentsStr}` : `${sessionStr} · ${hitStr}`;
-      const barW = sortByHit
-        ? `${Math.min(100, hitPct)}%`
-        : maxVal > 0 ? `${Math.min(100, (val / maxVal) * 100)}%` : "0%";
+      const sub = agentsStr ? `${sessionStr} · ${agentsStr}` : sessionStr;
+      const barW = maxVal > 0 ? `${Math.min(100, (val / maxVal) * 100)}%` : "0%";
 
       return {
         id: mdl.model,
@@ -1256,28 +1245,10 @@ export function UsagePage() {
             }}
           >
             {/* List Header */}
-            <div style={{ display: "flex", "align-items": "center", gap: "8px", padding: "0 14px", "min-height": "34px" }}>
+            <div style={{ display: "flex", "align-items": "center", padding: "0 14px", "min-height": "34px" }}>
               <span style={{ "font-weight": 650, "font-size": "15px", flex: 1 }}>
                 {isSingleDay() ? t("usage.byModel") : group() === "date" ? t("usage.byDate") : t("usage.byModel")}
               </span>
-              <Show when={isSingleDay() || group() === "model"}>
-                <button
-                  onClick={() => setModelSort((s) => (s === "cacheHit" ? "metric" : "cacheHit"))}
-                  style={{
-                    height: "30px",
-                    padding: "0 10px",
-                    "border-radius": "8px",
-                    border: modelSort() === "cacheHit" ? "1px solid var(--accent)" : "1px solid var(--line)",
-                    background: modelSort() === "cacheHit" ? "var(--accentbg)" : "var(--bg)",
-                    color: modelSort() === "cacheHit" ? "var(--accent)" : "var(--muted)",
-                    font: "inherit",
-                    "font-size": "12px",
-                    "font-weight": 550,
-                  }}
-                >
-                  {t("usage.sortCacheHit")}
-                </button>
-              </Show>
               <Show when={!isSingleDay()}>
                 <div
                   style={{

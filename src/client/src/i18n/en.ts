@@ -386,8 +386,6 @@ export const en = {
   "usage.agentAndModel": "Agents & models",
   "usage.level": "Level {level}",
   "usage.levelEmpty": "0 (Empty)",
-  "usage.hitShort": "Hit {pct}%",
-  "usage.sortCacheHit": "Cache hit",
   "usage.retry": "Retry",
   "usage.loadFailed": "Couldn't load usage details",
 
