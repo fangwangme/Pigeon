@@ -14,6 +14,7 @@ import { ModelCatalog } from "./model-catalog";
 import { MAX_UPLOAD_BYTES, UploadStore } from "./uploads";
 import { QuotaService } from "./quota/index";
 import { UsageService } from "./usage/index";
+import { formatLocalTimestamp } from "../shared/time";
 import {
   PWA_MANIFEST,
   PWA_MANIFEST_DARK,
@@ -518,7 +519,7 @@ export class PigeonDaemon {
   }
 
   public log(msg: string): void {
-    const timestamp = new Date().toISOString();
+    const timestamp = formatLocalTimestamp();
     const line = `[${timestamp}] ${msg}`;
     if (this.config.logPath) appendFileSync(this.config.logPath, line + "\n", "utf-8");
   }
@@ -551,7 +552,7 @@ export class PigeonDaemon {
     this.installProcessHandlers();
     if (this.config.logPath) {
       mkdirSync(dirname(this.config.logPath), { recursive: true });
-      writeFileSync(this.config.logPath, `[${new Date().toISOString()}] Pigeon daemon ${SERVER_VERSION} on port ${this.config.port}${this.debug ? " (debug)" : ""}\n`, "utf-8");
+      writeFileSync(this.config.logPath, `[${formatLocalTimestamp()}] Pigeon daemon ${SERVER_VERSION} on port ${this.config.port}${this.debug ? " (debug)" : ""}\n`, "utf-8");
     }
     this.encodedPage("br");
     await this.pairingManager.startAdminSocket();

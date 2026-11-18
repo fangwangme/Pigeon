@@ -182,6 +182,8 @@ export function Sheet(props: {
   let downEligible = false;
   let edgeMode: "none" | "pending" | "horiz" = "none";
   let sheetEl: HTMLDivElement | undefined;
+  let settleTimer: ReturnType<typeof setTimeout> | undefined;
+  onCleanup(() => clearTimeout(settleTimer));
   const [edgeDx, setEdgeDx] = createSignal(0);
   const [edgeSettling, setEdgeSettling] = createSignal(false);
   const canSwipeDown = (target: EventTarget | null, sheetEl: HTMLElement): boolean => {
@@ -267,7 +269,9 @@ export function Sheet(props: {
             }
             setEdgeSettling(true);
             setEdgeDx(done ? width : 0);
-            setTimeout(() => {
+            clearTimeout(settleTimer);
+            settleTimer = setTimeout(() => {
+              settleTimer = undefined;
               setEdgeSettling(false);
               setEdgeDx(0);
               if (done) act();
@@ -286,7 +290,11 @@ export function Sheet(props: {
             edgeMode = "none";
             setEdgeSettling(true);
             setEdgeDx(0);
-            setTimeout(() => setEdgeSettling(false), 200);
+            clearTimeout(settleTimer);
+            settleTimer = setTimeout(() => {
+              settleTimer = undefined;
+              setEdgeSettling(false);
+            }, 200);
           } else {
             edgeMode = "none";
           }

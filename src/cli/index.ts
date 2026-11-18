@@ -2,6 +2,7 @@ import { connect } from "node:net";
 import { existsSync } from "node:fs";
 import { PigeonDaemon } from "../server/daemon";
 import { ConfigManager, resolveInstancePaths, resolveProductionPort } from "../server/config-manager";
+import { formatLocalTimestamp } from "../shared/time";
 import qrcode from "qrcode-terminal";
 
 export const ADMIN_TIMEOUT_MS = 5000;
@@ -190,7 +191,7 @@ async function main() {
         }
       }
       if (status.lastUsageScan) {
-        const timeStr = status.lastUsageScan.time ? new Date(status.lastUsageScan.time).toISOString() : "never";
+        const timeStr = status.lastUsageScan.time ? formatLocalTimestamp(status.lastUsageScan.time) : "never";
         console.log(`  Last usage scan:   ${timeStr} (${status.lastUsageScan.durationMs || 0}ms)`);
       }
       if (status.sourceErrors) {

@@ -14,6 +14,7 @@ import { claudeQuestionSteps, getAgentRecipe, listAgentRecipes, type AnswerStep,
 import { ModelCatalog } from "./model-catalog";
 import { validateClientMessage } from "./ws-validate";
 import { computeInteractionFingerprint } from "./card-classifier";
+import { formatLocalTimestamp } from "../shared/time";
 import {
   type ClientMessage,
   type ServerMessage,
@@ -520,7 +521,7 @@ export class WsServer {
         for (const e of msg.payload.events) {
           const { t, ev, ...fields } = e;
           const rest = Object.entries(fields).map(([k, v]) => `${k}=${typeof v === "string" ? JSON.stringify(v) : v}`);
-          this.logger?.(`debug client ${data.session.deviceName || "client"} (conn=${data.connectionId}) ${new Date(t).toISOString()} ${ev}${rest.length ? " " + rest.join(" ") : ""}`);
+          this.logger?.(`debug client ${data.session.deviceName || "client"} (conn=${data.connectionId}) ${formatLocalTimestamp(t)} ${ev}${rest.length ? " " + rest.join(" ") : ""}`);
         }
         return;
 

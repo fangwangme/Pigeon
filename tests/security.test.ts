@@ -9,6 +9,7 @@ import { PigeonDaemon, resolveAccess } from "../src/server/daemon";
 import { PWA_ICON_192_BASE64, PWA_ICON_DARK_192_BASE64 } from "../src/server/pwa-assets";
 import { PairingManager, generateBase32Token } from "../src/server/pairing";
 import { PushManager } from "../src/server/push";
+import { formatLocalTimestamp } from "../src/shared/time";
 import { freePort, tempDir } from "./helpers/fixtures";
 
 function pairingIn(dir: string, publicBaseUrl = "https://pigeon.example.ts.net") {
@@ -536,6 +537,7 @@ describe("HTTP and WebSocket gate (security-and-pairing.md §3, §4)", () => {
     mkdirSync(join(testEnvDir, "pigeon-4101"), { recursive: true });
     writeFileSync(join(testEnvDir, "pigeon-4101", "config.json"), JSON.stringify({ server: { port: 4101 } }));
     expect(resolveProductionPort({ HOME: testEnvDir, PIGEON_CONFIG_PATH: join(testEnvDir, "pigeon-4101", "config.json") } as any)).toBe(4100);
+    expect(resolveProductionPort({ HOME: testEnvDir, PIGEON_CONFIG_PATH: "pigeon-4101/config.json" } as any)).toBe(4100);
   });
 });
 
@@ -610,6 +612,8 @@ describe("daemon log file (architecture.md §4.6, issue #21)", () => {
       const text = readFileSync(logPath, "utf-8");
       expect(text).not.toContain("stale line");
       expect(text.split("\n")[0]).toContain(String(port));
+      expect(text.split("\n")[0]).toMatch(/^\[\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}[+-]\d{2}:\d{2}\] /);
+      expect(formatLocalTimestamp(new Date(2026, 10, 18, 14, 4, 35, 78))).toMatch(/^2026-11-18T14:04:35\.078[+-]\d{2}:\d{2}$/);
     } finally {
       await daemon.stop();
     }

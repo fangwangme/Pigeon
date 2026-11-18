@@ -41,7 +41,7 @@ Debug mode exists so connection delays on the phone can be located from the daem
   { "type": "client_diag", "payload": { "events": [{ "t": 1729650000000, "ev": "ws_close", "code": 1006, "ms": 5021 }] } }
   ```
   `client_diag` has no `id` and gets no reply. It is validated like every frame (`src/server/ws-validate.ts`): `events` is an array of a bounded length; each event has a numeric `t` (epoch ms), a short string `ev`, and otherwise only flat string, number or boolean fields of bounded length. A malformed frame is answered with `ERR_INVALID_PAYLOAD`.
-- **Daemon**: in debug mode the daemon writes each event to its log as one line naming the device, the connection, the event's own time and its fields. Without debug mode it accepts a valid `client_diag` and writes nothing.
+- **Daemon**: in debug mode the daemon writes each event to its log as one line naming the device, the connection, the event's own time (in local ISO 8601 format like `pigeon.log`, `architecture.md` §4.6) and its fields. Without debug mode it accepts a valid `client_diag` and writes nothing.
 
 ## 3. Handshake and Initial Synchronization
 

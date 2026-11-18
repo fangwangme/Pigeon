@@ -387,7 +387,6 @@ function AlertDialogCard(props: { p: InteractionCardData }) {
   const close = () => {
     closeAlert(state.activePaneId, props.p.interactionId);
     setClosed(true);
-    void dismissInteraction(props.p.interactionId).catch(() => {});
   };
 
   return (

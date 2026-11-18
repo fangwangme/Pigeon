@@ -7,6 +7,7 @@ import { ModelCatalog } from "../src/server/model-catalog";
 import { PushManager } from "../src/server/push";
 import { SkillScanner } from "../src/server/skill-scanner";
 import { WsServer } from "../src/server/ws-server";
+import { formatLocalTimestamp } from "../src/shared/time";
 import { ProtocolErrors, hashTurn, fnv1a32, type NormalizedTurn, toLightTurn } from "../src/types/protocol";
 import { FakeHerdr, fakeWs, tempDir, topologyOf } from "./helpers/fixtures";
 
@@ -81,6 +82,7 @@ describe("handshake (protocol.md §3)", () => {
       expect(c.ofType("error").length).toBe(0);
       const logged = lines.filter((l) => l.includes("ws_close"));
       expect(logged.length).toBe(1);
+      expect(logged[0]).toContain(formatLocalTimestamp(1729650000000));
       expect(logged[0]).toContain("1006");
       expect(logged[0]).toContain("Phone");
     } finally {
