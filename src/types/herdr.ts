@@ -39,15 +39,12 @@ export interface HerdrCoreStatus {
   /** idle, working, done, blocked or error. */
   state: string;
   app?: string;
-  msg?: string;
-  title?: string;
 }
 
 export interface HerdrCoreTerminal {
   address: string;
   name?: string | null;
   cwd: string;
-  state: "live" | "finished";
   /** When the terminal was started (milliseconds since the epoch). */
   created_ms?: number;
   /** What runs in it now: the foreground process group leader. */

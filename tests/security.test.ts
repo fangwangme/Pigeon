@@ -239,16 +239,6 @@ describe("push keys and presence (push.md §3, §4)", () => {
     push.removePresence("c1");
     expect(push.shouldSuppressPush("p1")).toBe(false);
   });
-
-  test("push notification done triggers on transition into done from any status (push.md §4.1)", () => {
-    let lastStatus: string | undefined = "blocked";
-    const status: string = "done";
-    const previous = lastStatus;
-    const isBlocked = status === "blocked" && previous !== "blocked";
-    const isDone = status === "done" && previous !== "done";
-    expect(isBlocked).toBe(false);
-    expect(isDone).toBe(true);
-  });
 });
 
 describe("reachable address (architecture.md §4.2)", () => {
@@ -527,6 +517,16 @@ describe("HTTP and WebSocket gate (security-and-pairing.md §3, §4)", () => {
     expect(prodHtmlRes.status).toBe(200);
     const prodHtml = await prodHtmlRes.text();
     expect(prodHtml).toContain('href="/icon-192.png"');
+
+    // 3. Session cookie names are isolated by port on non-production instances so concurrent
+    // instances on the same Tailscale hostname never overwrite each other's cookie (§2.4).
+    expect(prodDaemon.pairingManager.getCookieName()).toBe("__Host-pigeon_session");
+    expect(daemon.pairingManager.getCookieName()).toBe(`__Host-pigeon_session_${port}`);
+    const testEnvDir = tempDir("prod-port-env");
+    mkdirSync(join(testEnvDir, "pigeon-4101"), { recursive: true });
+    writeFileSync(join(testEnvDir, "pigeon-4101", "config.json"), JSON.stringify({ server: { port: 4101 } }));
+    expect(resolveProductionPort({ HOME: testEnvDir, PIGEON_CONFIG_PATH: join(testEnvDir, "pigeon-4101", "config.json") } as any)).toBe(4100);
+    expect(resolveProductionPort({ HOME: testEnvDir, PIGEON_CONFIG_PATH: "pigeon-4101/config.json" } as any)).toBe(4100);
   });
 });
 
@@ -601,6 +601,7 @@ describe("daemon log file (architecture.md §4.6, issue #21)", () => {
       const text = readFileSync(logPath, "utf-8");
       expect(text).not.toContain("stale line");
       expect(text.split("\n")[0]).toContain(String(port));
+      expect(text.split("\n")[0]).toMatch(/^\[\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}[+-]\d{2}:\d{2}\] /);
     } finally {
       await daemon.stop();
     }

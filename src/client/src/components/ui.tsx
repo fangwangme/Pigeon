@@ -1,9 +1,9 @@
-import { Show, type JSX } from "solid-js";
+import { createSignal, onCleanup, onMount, Show, type JSX } from "solid-js";
 import { ICONS, type IconName } from "../icons";
 import { navigate, state } from "../state/store";
 import type { AgentStatus, PaneSummary, TabSummary, WorkspaceSummary } from "../../../types/protocol";
 import { t } from "../i18n";
-import { formatModelNameWithRecipes } from "../utils/model-name";
+import { formatModelNameWithRecipes } from "../../../shared/model-name";
 
 export function Icon(props: { name: IconName; sm?: boolean; class?: string }) {
   return <svg class={`i${props.sm ? " sm" : ""}${props.class ? ` ${props.class}` : ""}`} viewBox="0 0 24 24" innerHTML={ICONS[props.name]} aria-hidden="true" />;
@@ -72,13 +72,6 @@ export function StatusIcon(props: { status: RowStatus; class?: string }) {
   return <span class={`sdot ${props.status}${props.class ? ` ${props.class}` : ""}`} aria-label={props.status} />;
 }
 
-export function modelLabel(
-  model: string | null | undefined,
-  agent?: string | ReadonlyArray<string | null | undefined> | null
-): string {
-  return formatModelNameWithRecipes(state.recipes, agent, model);
-}
-
 /** mobile-ui-and-themes.md §6.4 "Model names": the one rule for every place a model is shown. */
 export function formatModelName(
   agent: string | ReadonlyArray<string | null | undefined> | null | undefined,
@@ -144,6 +137,23 @@ export function findPane(paneId: string | null): { ws: WorkspaceSummary; tab: Ta
 
 export { ago } from "../i18n";
 
+/** Whether `target` sits inside a horizontal scroller that can still scroll rightward (reveal content on its left). */
+export function canScrollRightward(target: EventTarget | null, stopAt?: Element | null): boolean {
+  let el = target as HTMLElement | null;
+  while (el && el !== stopAt && el !== document.body && el !== document.documentElement) {
+    if (el.scrollWidth > el.clientWidth + 1) {
+      try {
+        const style = window.getComputedStyle(el);
+        if (style.overflowX === "auto" || style.overflowX === "scroll") {
+          if (style.flexDirection.includes("reverse") || el.scrollLeft > 0) return true;
+        }
+      } catch {}
+    }
+    el = el.parentElement;
+  }
+  return false;
+}
+
 /** A bottom sheet over a scrim; a tap on the scrim closes it. */
 export function Sheet(props: {
   title?: JSX.Element;
@@ -153,13 +163,21 @@ export function Sheet(props: {
   right?: JSX.Element;
   full?: boolean;
   children: JSX.Element;
-  noHeader?: boolean;
   /** The body does not scroll; the children hold their own scroller below a fixed part. */
   flush?: boolean;
 }) {
   let startX = 0;
   let startY = 0;
-  let eligible = false;
+  let lastX = 0;
+  let lastT = 0;
+  let vx = 0;
+  let downEligible = false;
+  let edgeMode: "none" | "pending" | "horiz" = "none";
+  let sheetEl: HTMLDivElement | undefined;
+  let settleTimer: ReturnType<typeof setTimeout> | undefined;
+  onCleanup(() => clearTimeout(settleTimer));
+  const [edgeDx, setEdgeDx] = createSignal(0);
+  const [edgeSettling, setEdgeSettling] = createSignal(false);
   const canSwipeDown = (target: EventTarget | null, sheetEl: HTMLElement): boolean => {
     let el = target as HTMLElement | null;
     while (el && el !== sheetEl) {
@@ -168,54 +186,135 @@ export function Sheet(props: {
     }
     return true;
   };
+  const handleTouchMove = (e: TouchEvent) => {
+    if (edgeMode === "none" || e.touches.length !== 1) return;
+    const touch = e.touches[0];
+    const dx = touch.clientX - startX;
+    const dy = Math.abs(touch.clientY - startY);
+    if (edgeMode === "pending") {
+      if (dy > 12 && dy > dx) {
+        edgeMode = "none";
+        return;
+      }
+      if (dx > 10 && dx > dy * 1.15) {
+        edgeMode = "horiz";
+        downEligible = false;
+        setEdgeSettling(false);
+      } else {
+        return;
+      }
+    }
+    if (e.cancelable) e.preventDefault();
+    const now = performance.now();
+    const dt = now - lastT;
+    if (dt > 0) vx = 0.6 * ((touch.clientX - lastX) / dt) + 0.4 * vx;
+    lastX = touch.clientX;
+    lastT = now;
+    setEdgeDx(Math.max(0, dx));
+  };
+  onMount(() => {
+    if (!sheetEl) return;
+    const el = sheetEl;
+    el.addEventListener("touchmove", handleTouchMove, { passive: false });
+    onCleanup(() => el.removeEventListener("touchmove", handleTouchMove));
+  });
   return (
     <div class="overlay" role="dialog" aria-modal="true">
       <div class="scrim" onClick={() => props.onClose()} />
       <div
+        ref={sheetEl}
         class={`sheet${props.full ? " full" : ""}`}
+        style={
+          edgeDx() > 0 || edgeSettling()
+            ? {
+                transform: `translate3d(${Math.round(edgeDx())}px, 0, 0)`,
+                transition: edgeSettling() ? "transform 200ms cubic-bezier(.2,.85,.3,1)" : "none",
+              }
+            : undefined
+        }
         onTouchStart={(e) => {
-          if (e.touches.length !== 1) {
-            eligible = false;
+          if (e.touches.length !== 1 || edgeSettling()) {
+            downEligible = false;
+            edgeMode = "none";
             return;
           }
           startX = e.touches[0].clientX;
           startY = e.touches[0].clientY;
-          eligible = canSwipeDown(e.target, e.currentTarget);
+          lastX = startX;
+          lastT = performance.now();
+          vx = 0;
+          downEligible = canSwipeDown(e.target, e.currentTarget);
+          edgeMode = props.full && startX <= 44 && !canScrollRightward(e.target, e.currentTarget) ? "pending" : "none";
         }}
         onTouchEnd={(e) => {
-          if (!eligible) return;
-          eligible = false;
-          const t = e.changedTouches[0];
-          if (!t) return;
-          const dy = t.clientY - startY;
-          const dx = Math.abs(t.clientX - startX);
+          const t0 = e.changedTouches[0];
+          if (edgeMode === "horiz") {
+            edgeMode = "none";
+            const dx = t0 ? t0.clientX - startX : edgeDx();
+            const width = window.innerWidth || 390;
+            const done = dx >= Math.min(120, width * 0.32) || (vx >= 0.5 && dx > 32);
+            const act = () => (props.onBack ? props.onBack() : props.onClose());
+            if (window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) {
+              setEdgeDx(0);
+              if (done) act();
+              return;
+            }
+            setEdgeSettling(true);
+            setEdgeDx(done ? width : 0);
+            clearTimeout(settleTimer);
+            settleTimer = setTimeout(() => {
+              settleTimer = undefined;
+              setEdgeSettling(false);
+              setEdgeDx(0);
+              if (done) act();
+            }, 200);
+            return;
+          }
+          edgeMode = "none";
+          if (!downEligible || !t0) return;
+          downEligible = false;
+          const dy = t0.clientY - startY;
+          const dx = Math.abs(t0.clientX - startX);
           if (dy > 70 && dy > dx * 1.5) props.onClose();
+        }}
+        onTouchCancel={() => {
+          if (edgeMode === "horiz") {
+            edgeMode = "none";
+            setEdgeSettling(true);
+            setEdgeDx(0);
+            clearTimeout(settleTimer);
+            settleTimer = setTimeout(() => {
+              settleTimer = undefined;
+              setEdgeSettling(false);
+            }, 200);
+          } else {
+            edgeMode = "none";
+          }
+          downEligible = false;
         }}
       >
         <div class="grab" />
-        <Show when={!props.noHeader}>
-          <div class="sh">
-            <Show
-              when={props.onBack}
-              fallback={
-                <button class="cbtn" aria-label={t("common.close")} onClick={() => props.onClose()}>
-                  <Icon name="x" />
-                </button>
-              }
-            >
-              <button class="cbtn" aria-label={t("common.back")} onClick={() => props.onBack!()}>
-                <Icon name="chevL" />
+        <div class="sh">
+          <Show
+            when={props.onBack}
+            fallback={
+              <button class="cbtn" aria-label={t("common.close")} onClick={() => props.onClose()}>
+                <Icon name="x" />
               </button>
+            }
+          >
+            <button class="cbtn" aria-label={t("common.back")} onClick={() => props.onBack!()}>
+              <Icon name="chevL" />
+            </button>
+          </Show>
+          <div class="t">
+            {props.title}
+            <Show when={props.sub}>
+              <small>{props.sub}</small>
             </Show>
-            <div class="t">
-              {props.title}
-              <Show when={props.sub}>
-                <small>{props.sub}</small>
-              </Show>
-            </div>
-            <div>{props.right}</div>
           </div>
-        </Show>
+          <div>{props.right}</div>
+        </div>
         <div class={`body${props.flush ? " flush" : ""}`}>{props.children}</div>
       </div>
     </div>

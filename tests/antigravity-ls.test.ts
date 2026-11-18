@@ -48,12 +48,6 @@ describe("Antigravity Language Server discovery and native cache (quota-and-usag
     expect(cli?.runtimeKind).toBe("cli");
     expect(cli?.port).toBe(41845);
     expect(cli?.csrfToken).toBe("cli-secret");
-
-    // Verify sorting order: desktop has higher priority than cli
-    const priorityOrder: Record<string, number> = { desktop: 3, ide: 2, cli: 1 };
-    candidates.sort((a, b) => priorityOrder[b.runtimeKind] - priorityOrder[a.runtimeKind]);
-    expect(candidates[0].runtimeKind).toBe("desktop");
-    expect(candidates[1].runtimeKind).toBe("cli");
   });
 
   test("daemon hub file discovery reads port and csrf token for live processes", () => {

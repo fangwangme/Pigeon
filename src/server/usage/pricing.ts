@@ -95,15 +95,6 @@ export class PricingManager {
       return;
     }
 
-    // Fallback seed cache from pigeon if present
-    const pigeonPricing = join(dirname(this.cachePath), "pricing.json");
-    if (!this.loaded && !cacheResult.hasEntries && existsSync(pigeonPricing) && this.loadFromSeedCache(pigeonPricing)) {
-      this.loaded = true;
-      this.pricesAvailable = true;
-      this.lastFetchAt = now;
-      return;
-    }
-
     // 2. Try fetching from network
     let networkOk = false;
     try {
@@ -142,36 +133,6 @@ export class PricingManager {
       return { fresh: false, hasEntries: false, fetchedAt: 0 };
     }
     return { fresh: false, hasEntries: false, fetchedAt: 0 };
-  }
-
-  private loadFromSeedCache(path: string): boolean {
-    try {
-      const raw = readFileSync(path, "utf-8");
-      const data = JSON.parse(raw);
-      const entries = data?.pricing?.entries || data?.entries;
-      if (entries) {
-        for (const [k, v] of Object.entries(entries)) {
-          const rec = v as any;
-          const p = rec?.pricing || rec;
-          if (p && typeof p.input_cost_per_token === "number") {
-            const canonicalKey = canonical(k);
-            const price: ModelPrice = {
-              inputCostPerToken: p.input_cost_per_token,
-              outputCostPerToken: p.output_cost_per_token || 0,
-              cacheReadCostPerToken: p.cache_read_input_token_cost,
-              cacheWriteCostPerToken: p.cache_creation_input_token_cost,
-              source: rec?.source || "seed-cache",
-            };
-            if (!this.catalog.has(canonicalKey)) this.catalog.set(canonicalKey, price);
-            this.catalog.set(pricingKey(k), price);
-          }
-        }
-        return this.catalog.size > 0;
-      }
-    } catch {
-      return false;
-    }
-    return false;
   }
 
   private async refreshFromNetwork(): Promise<boolean> {

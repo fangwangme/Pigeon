@@ -14,6 +14,7 @@ import { claudeQuestionSteps, getAgentRecipe, listAgentRecipes, type AnswerStep,
 import { ModelCatalog } from "./model-catalog";
 import { validateClientMessage } from "./ws-validate";
 import { computeInteractionFingerprint } from "./card-classifier";
+import { formatLocalTimestamp } from "../shared/time";
 import {
   type ClientMessage,
   type ServerMessage,
@@ -112,6 +113,57 @@ export function newConnectionId(): string {
   return `conn_${randomBytes(6).toString("hex")}`;
 }
 
+function safeLogVal(v: string): string {
+  return /[^\w.:/+@-]/.test(v) ? JSON.stringify(v) : v;
+}
+
+function summarizeRpcForDebug(msg: ClientMessage): string {
+  switch (msg.type) {
+    case "usage_get": {
+      const p = msg.payload;
+      return `preset=${p.preset}${p.from ? ` from=${p.from} to=${p.to}` : ""}${p.force ? " force=true" : ""} agents=${p.agents.length}`;
+    }
+    case "usage_day":
+      return `date=${msg.payload.date} agents=${msg.payload.agents.length}`;
+    case "usage_model":
+      return `model=${JSON.stringify(msg.payload.model)} from=${msg.payload.from} to=${msg.payload.to} agents=${msg.payload.agents.length}`;
+    case "quota_get":
+      return `refresh=${!!msg.payload?.refresh}`;
+    case "detail_get":
+      return `pane=${safeLogVal(msg.payload.paneId)} kind=${msg.payload.kind}`;
+    case "select_view":
+      return `pane=${msg.payload.paneId === null ? "null" : safeLogVal(msg.payload.paneId)}`;
+    case "agent_prompt":
+      return `pane=${safeLogVal(msg.payload.targetPaneId)} chars=${msg.payload.text.length} attachments=${msg.payload.attachments?.length ?? 0}`;
+    case "queue_update":
+      return `pane=${safeLogVal(msg.payload.targetPaneId)} queueId=${safeLogVal(msg.payload.queueId)} chars=${msg.payload.text.length}`;
+    case "queue_cancel":
+      return `pane=${safeLogVal(msg.payload.targetPaneId)} queueId=${safeLogVal(msg.payload.queueId)}`;
+    case "queue_resume":
+    case "screen_watch":
+      return `pane=${safeLogVal(msg.payload.paneId)}`;
+    case "agent_send_keys":
+      return `pane=${safeLogVal(msg.payload.targetPaneId)} keys=${msg.payload.keys.length}`;
+    case "interaction_respond":
+    case "interaction_dismiss":
+      return `pane=${safeLogVal(msg.payload.targetPaneId)} interaction=${safeLogVal(msg.payload.interactionId)}`;
+    case "create_tab_and_agent":
+      return `ws=${safeLogVal(msg.payload.workspaceId)} agent=${safeLogVal(msg.payload.agentKind)}${msg.payload.modelId ? ` model=${safeLogVal(msg.payload.modelId)}` : ""}`;
+    case "sessions_list":
+    case "launch_defaults":
+      return `ws=${safeLogVal(msg.payload.workspaceId)} agent=${safeLogVal(msg.payload.agentKind)}`;
+    case "close_tab":
+    case "tab_rename":
+      return `tab=${safeLogVal(msg.payload.tabId)}`;
+    case "device_revoke":
+      return `device=${safeLogVal(msg.payload.deviceId)}`;
+    case "models_refresh":
+      return msg.payload?.agent ? `agent=${safeLogVal(msg.payload.agent)}` : "all";
+    default:
+      return "";
+  }
+}
+
 export class WsServer {
   private buildId: string;
   private herdrClient: HerdrClient;
@@ -156,6 +208,7 @@ export class WsServer {
   private onPaneStatusChanged: (event: { paneId: string; status: string }) => void;
   private logger?: (msg: string) => void;
   private debug: boolean;
+  private rpcTrace = new Map<string, { bytes: number; errorCode?: string }>();
 
   constructor(options: WsServerOptions) {
     this.logger = options.logger;
@@ -324,6 +377,7 @@ export class WsServer {
       const previous = this.lastStatus.get(paneId);
       this.lastStatus.set(paneId, status);
       this.rebindPane(paneId);
+      this.syncTranscriptInteraction(paneId);
       this.transitionQueue(paneId, { type: "status", status });
       // herdr-adapter.md §4: finishing while a phone visibly watches it is finishing seen.
       if (status === "done" && this.pushManager.shouldSuppressPush(paneId)) this.herdrClient.markSeen(paneId);
@@ -430,8 +484,6 @@ export class WsServer {
         kind: r.kind,
         label: r.label,
         models: this.modelCatalog.models(r.kind),
-        defaultModel: r.defaultModel,
-        defaultThinking: r.defaultThinking,
         interruptKeys: r.interruptKeys,
         resumable: r.resumable,
         launchModel: r.launchModel !== false,
@@ -449,14 +501,28 @@ export class WsServer {
       parsed = JSON.parse(text);
     } catch {
       this.sendError(ws, undefined, ProtocolErrors.ERR_INVALID_PAYLOAD, "Malformed JSON payload");
+      if (this.debug) {
+        this.logger?.(`debug rpc invalid (conn=${ws.data?.connectionId}, id=none) -> error ${ProtocolErrors.ERR_INVALID_PAYLOAD} 0ms`);
+      }
       return;
     }
     const validation = validateClientMessage(parsed);
     if (!validation.ok) {
       this.sendError(ws, validation.id, ProtocolErrors.ERR_INVALID_PAYLOAD, validation.error);
+      if (this.debug) {
+        const rawType = typeof (parsed as any)?.type === "string" && /^[a-z0-9_]{1,64}$/i.test((parsed as any).type)
+          ? (parsed as any).type
+          : "invalid";
+        const safeId = validation.id && /^[A-Za-z0-9_.-]{1,128}$/.test(validation.id) ? validation.id : "none";
+        this.logger?.(`debug rpc ${rawType} (conn=${ws.data?.connectionId}, id=${safeId}) -> error ${ProtocolErrors.ERR_INVALID_PAYLOAD} 0ms`);
+      }
       return;
     }
     const msg = validation.msg;
+    const rpcId = "id" in msg ? msg.id : undefined;
+    const traceKey = this.debug && rpcId ? `${ws.data?.connectionId ?? ""}:${rpcId}` : null;
+    const rpcStart = traceKey ? performance.now() : 0;
+    if (traceKey) this.rpcTrace.set(traceKey, { bytes: 0 });
     try {
       await this.dispatch(ws, msg);
     } catch (err) {
@@ -466,11 +532,24 @@ export class WsServer {
         this.sendError(ws, replyTo, code, err.message);
       } else {
         const errCode = (err as any)?.code;
-        if (typeof errCode === "string" && (UNREACHABLE_CODES.has(errCode) || errCode === "ECONNREFUSED" || errCode === "ENOENT")) {
+        if (typeof errCode === "string" && UNREACHABLE_CODES.has(errCode)) {
           this.sendError(ws, replyTo, ProtocolErrors.ERR_UPSTREAM_OFFLINE, err instanceof Error ? err.message : String(err));
         } else {
           console.error(`[pigeon] handling '${msg.type}' failed:`, err);
           this.sendError(ws, replyTo, ProtocolErrors.ERR_INTERNAL, err instanceof Error ? err.message : String(err));
+        }
+      }
+    } finally {
+      if (traceKey) {
+        const trace = this.rpcTrace.get(traceKey) ?? { bytes: 0 };
+        this.rpcTrace.delete(traceKey);
+        const ms = Math.round(performance.now() - rpcStart);
+        const summary = summarizeRpcForDebug(msg);
+        const mid = summary ? ` ${summary}` : "";
+        if (trace.errorCode) {
+          this.logger?.(`debug rpc ${msg.type} (conn=${ws.data?.connectionId}, id=${rpcId})${mid} -> error ${trace.errorCode} ${ms}ms`);
+        } else {
+          this.logger?.(`debug rpc ${msg.type} (conn=${ws.data?.connectionId}, id=${rpcId})${mid} -> ok ${ms}ms ${trace.bytes}B`);
         }
       }
     }
@@ -519,7 +598,7 @@ export class WsServer {
         for (const e of msg.payload.events) {
           const { t, ev, ...fields } = e;
           const rest = Object.entries(fields).map(([k, v]) => `${k}=${typeof v === "string" ? JSON.stringify(v) : v}`);
-          this.logger?.(`debug client ${data.session.deviceName || "client"} (conn=${data.connectionId}) ${new Date(t).toISOString()} ${ev}${rest.length ? " " + rest.join(" ") : ""}`);
+          this.logger?.(`debug client ${data.session.deviceName || "client"} (conn=${data.connectionId}) ${formatLocalTimestamp(t)} ${ev}${rest.length ? " " + rest.join(" ") : ""}`);
         }
         return;
 
@@ -764,6 +843,15 @@ export class WsServer {
         return;
       }
 
+      case "interaction_dismiss": {
+        const { targetPaneId, interactionId } = msg.payload;
+        if (!this.requireKnownPane(ws, msg.id, targetPaneId)) return;
+        const dismissed = this.herdrClient.dismissInteraction(targetPaneId, interactionId);
+        this.logger?.(`${this.paneLogLabel(targetPaneId)} interaction dismiss: ${interactionId} (dismissed=${dismissed})`);
+        this.sendAck(ws, msg.id, { dismissed, interactionId });
+        return;
+      }
+
       case "create_tab_and_agent": {
         const { workspaceId, agentKind, modelId, thinking, cwd, firstMessage, resumeSessionId } = msg.payload;
         const recipe = getAgentRecipe(agentKind);
@@ -916,8 +1004,7 @@ export class WsServer {
             this.sendError(ws, msg.id, ProtocolErrors.ERR_NOT_FOUND, `Turn ${turnId} not found`);
             return;
           }
-          const item = turn.items?.find((i: any) => i.kind === "reasoning" && i.text) as { kind: "reasoning"; text?: string } | undefined;
-          const reasoningText = item?.text || turn.reasoning?.text;
+          const reasoningText = turn.reasoning?.text;
           if (!reasoningText) {
             this.sendError(ws, msg.id, ProtocolErrors.ERR_NOT_FOUND, `Reasoning text not found in turn ${turnId}`);
             return;
@@ -927,7 +1014,7 @@ export class WsServer {
         }
         if (kind === "file") {
           const { filePath } = msg.payload;
-          const diff = ((sessionState.stats as any)?.files || sessionState.stats?.diffs || []).find((d: any) => d.filePath === filePath);
+          const diff = (sessionState.stats?.diffs ?? []).find((d) => d.filePath === filePath);
           if (!diff) {
             this.sendError(ws, msg.id, ProtocolErrors.ERR_NOT_FOUND, `Diff for ${filePath} not found`);
             return;
@@ -935,17 +1022,13 @@ export class WsServer {
           this.sendAck(ws, msg.id, { diff });
           return;
         }
-        if (kind === "subagent") {
-          const { subagentId } = msg.payload;
-          const result = subagentId ? this.agentAdapters.getSubagent(sessionState.agent, sessionState.sessionId, subagentId) : null;
-          if (!result) {
-            this.sendError(ws, msg.id, ProtocolErrors.ERR_NOT_FOUND, `Sub-agent ${subagentId} not found`);
-            return;
-          }
-          this.sendAck(ws, msg.id, { subagent: result.subagent, turns: result.turns.map(toLightTurn) });
+        const { subagentId } = msg.payload;
+        const result = subagentId ? this.agentAdapters.getSubagent(sessionState.agent, sessionState.sessionId, subagentId) : null;
+        if (!result) {
+          this.sendError(ws, msg.id, ProtocolErrors.ERR_NOT_FOUND, `Sub-agent ${subagentId} not found`);
           return;
         }
-        this.sendError(ws, msg.id, ProtocolErrors.ERR_INVALID_PAYLOAD, `Unknown detail kind ${kind}`);
+        this.sendAck(ws, msg.id, { subagent: result.subagent, turns: result.turns.map(toLightTurn) });
         return;
       }
 
@@ -1158,6 +1241,7 @@ export class WsServer {
   }
 
   private wireQuotaService(service: QuotaService): void {
+    service.setDebugLogger(this.debug ? this.logger : undefined);
     service.setOnUpdated((payload) => {
       if (this.clients.size > 0 && this.configManager.getClientConfig().quotaEnabled === true) {
         this.broadcast({ type: "quota_updated", payload });
@@ -1166,6 +1250,7 @@ export class WsServer {
   }
 
   private wireUsageService(service: UsageService): void {
+    service.setDebugLogger(this.debug ? this.logger : undefined);
     service.setOnUpdated((payload) => {
       if (this.clients.size > 0 && this.configManager.getClientConfig().usageEnabled !== false) {
         this.broadcast({ type: "usage_updated", payload });
@@ -1442,19 +1527,23 @@ export class WsServer {
         ...(keysChecked ? { allowsOther: true } : {}),
       };
     } else if (lastTurn?.pendingPlan) {
-      const hash = createHash("sha256").update(lastTurn.pendingPlan.markdown).digest("hex").slice(0, 10);
-      interaction = {
-        id: `card_interaction_${hash}`,
-        kind: "interaction",
-        source: "transcript",
-        interactionId: `int_${hash}`,
-        title: "",
-        question: "",
-        payload: lastTurn.pendingPlan.markdown,
-        fingerprint: computeInteractionFingerprint("", lastTurn.pendingPlan.markdown, []),
-        options: [],
-        fallbackKeys: ["enter", "esc", "up", "down"],
-      };
+      if (!lastTurn.pendingPlan.artifact || this.herdrClient.getPaneHerdrStatus(paneId) === "blocked") {
+        const title = lastTurn.pendingPlan.title ?? "";
+        const hashInput = title ? `${title}\n${lastTurn.pendingPlan.markdown}` : lastTurn.pendingPlan.markdown;
+        const hash = createHash("sha256").update(hashInput).digest("hex").slice(0, 10);
+        interaction = {
+          id: `card_interaction_${hash}`,
+          kind: "interaction",
+          source: "transcript",
+          interactionId: `int_${hash}`,
+          title: "",
+          question: title,
+          payload: lastTurn.pendingPlan.markdown,
+          fingerprint: computeInteractionFingerprint(title, lastTurn.pendingPlan.markdown, []),
+          options: [],
+          fallbackKeys: ["enter", "esc", "up", "down"],
+        };
+      }
     }
     this.herdrClient.setTranscriptInteraction(paneId, interaction, !!lastTurn?.pendingQuestion && keysChecked);
   }
@@ -1505,7 +1594,12 @@ export class WsServer {
     const entry = { hash, at: Date.now() };
     this.lastPromptByPane.set(paneId, entry);
     try {
-      await this.herdrClient.sendPrompt(paneId, send, shown.attachments.length > 0);
+      let force = false;
+      if (herdrStatus === "blocked") {
+        await this.herdrClient.readAndClassifyPane(paneId);
+        force = !this.herdrClient.hasStructuredOptions(paneId);
+      }
+      await this.herdrClient.sendPrompt(paneId, send, shown.attachments.length > 0, force);
     } catch (err) {
       if (this.lastPromptByPane.get(paneId) === entry) {
         this.lastPromptByPane.delete(paneId);
@@ -1513,11 +1607,6 @@ export class WsServer {
       throw err;
     }
     if (replyTo) this.sendAck(ws, replyTo, { queued: false });
-  }
-
-  public clearSendingPrompt(paneId: string, queueId?: string): void {
-    const qId = queueId ?? this.queueStates.get(paneId)?.batch[0] ?? "";
-    this.transitionQueue(paneId, { type: "timeout", queueId: qId });
   }
 
   public getQueueStatus(): Record<string, { length: number; state: "idle" | "sending" }> {
@@ -1785,7 +1874,16 @@ export class WsServer {
   }
 
   private send(ws: Ws, msg: ServerMessage): void {
-    ws.send(JSON.stringify(msg));
+    const json = JSON.stringify(msg);
+    ws.send(json);
+    if (this.debug && "replyTo" in msg && typeof msg.replyTo === "string" && msg.replyTo) {
+      const key = `${ws.data?.connectionId ?? ""}:${msg.replyTo}`;
+      const trace = this.rpcTrace.get(key);
+      if (trace) {
+        trace.bytes += Buffer.byteLength(json);
+        if (msg.type === "error") trace.errorCode = msg.error.code;
+      }
+    }
   }
 
   private sendAck(ws: Ws, replyTo: string, payload?: Record<string, any>): void {

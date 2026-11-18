@@ -1,4 +1,4 @@
-import { createEffect, createMemo, createSignal, For, on, onCleanup, onMount, Show } from "solid-js";
+import { createEffect, createMemo, createSignal, For, on, onCleanup, onMount, Show, type JSX } from "solid-js";
 import { navigate, state } from "../state/store";
 import { request } from "../state/ws";
 import { scanIntervalToMs, USAGE_AGENT_KINDS as AGENT_KEYS } from "../../../shared/defaults";
@@ -71,6 +71,79 @@ function todayYMD(): string {
   return formatYMD(new Date());
 }
 
+function SheetStatus(props: { error: string | null; onRetry: () => void }) {
+  return (
+    <Show when={props.error} fallback={<div style={{ padding: "20px 0", color: "var(--muted)" }}>{t("common.loading")}</div>}>
+      <div
+        style={{
+          padding: "20px 0",
+          display: "flex",
+          "flex-direction": "column",
+          "align-items": "flex-start",
+          gap: "10px",
+          color: "var(--muted)",
+          "font-size": "13.5px",
+        }}
+      >
+        <span>{props.error}</span>
+        <button
+          onClick={props.onRetry}
+          style={{
+            height: "34px",
+            padding: "0 16px",
+            "border-radius": "10px",
+            border: 0,
+            background: "var(--accent)",
+            color: "var(--onaccent)",
+            font: "inherit",
+            "font-size": "13px",
+            "font-weight": 600,
+          }}
+        >
+          {t("usage.retry")}
+        </button>
+      </div>
+    </Show>
+  );
+}
+
+function UsageOverlay(props: { onClose: () => void; children: JSX.Element }) {
+  return (
+    <div data-overlay="" style={{ position: "fixed", inset: 0, "z-index": 50, background: "rgba(0,0,0,.5)" }}>
+      <button
+        onClick={props.onClose}
+        aria-label={t("common.close")}
+        style={{ position: "absolute", inset: 0, background: "none", border: 0 }}
+      />
+      {props.children}
+    </div>
+  );
+}
+
+function UsageBottomSheet(props: { onClose: () => void; maxHeight?: string; scrollable?: boolean; children: JSX.Element }) {
+  return (
+    <UsageOverlay onClose={props.onClose}>
+      <div
+        style={{
+          position: "absolute",
+          left: 0,
+          right: 0,
+          bottom: 0,
+          background: "var(--surface)",
+          "border-top": "1px solid var(--line2)",
+          "border-radius": "24px 24px 0 0",
+          padding: "10px 18px 40px",
+          ...(props.maxHeight ? { "max-height": props.maxHeight } : {}),
+          ...(props.scrollable ? { "overflow-y": "auto" } : {}),
+        }}
+      >
+        <div style={{ width: "40px", height: "5px", "border-radius": "3px", background: "var(--line2)", margin: "0 auto 10px" }} />
+        {props.children}
+      </div>
+    </UsageOverlay>
+  );
+}
+
 export function UsagePage() {
   const [range, setRange] = createSignal<UsagePreset>(
     state.route.name === "usage" && state.route.initialPreset ? state.route.initialPreset : "today"
@@ -87,14 +160,21 @@ export function UsagePage() {
 
   const [usageReport, setUsageReport] = createSignal<UsageGetPayload | null>(null);
   const [loading, setLoading] = createSignal(false);
+  const [reportError, setReportError] = createSignal<string | null>(null);
   const isLoading = () => !state.configReady || loading();
 
   // Sheets
   const [sheet, setSheet] = createSignal<"none" | "day" | "model" | "custom" | "filter">("none");
   const [selectedDay, setSelectedDay] = createSignal<string | null>(null);
   const [dayData, setDayData] = createSignal<UsageDayPayload | null>(null);
+  const [dayError, setDayError] = createSignal<string | null>(null);
   const [selectedModel, setSelectedModel] = createSignal<string | null>(null);
   const [modelData, setModelData] = createSignal<UsageModelPayload | null>(null);
+  const [modelError, setModelError] = createSignal<string | null>(null);
+
+  let usageReqSeq = 0;
+  let dayReqSeq = 0;
+  let modelReqSeq = 0;
 
   const HEAT_CELL = 24;
   const [selectedLegendBucket, setSelectedLegendBucket] = createSignal<number | null>(null);
@@ -109,7 +189,9 @@ export function UsagePage() {
 
   const loadUsage = async (force = false) => {
     if (!state.usageEnabled) return;
+    const seq = ++usageReqSeq;
     setLoading(true);
+    setReportError(null);
     try {
       const res: UsageGetPayload = await request({
         type: "usage_get",
@@ -121,6 +203,7 @@ export function UsagePage() {
           force,
         },
       });
+      if (seq !== usageReqSeq) return;
       setUsageReport(res);
       if (!customFrom() && res.firstDay) {
         setCustomFrom(res.firstDay);
@@ -128,10 +211,15 @@ export function UsagePage() {
         setDraftFrom(res.firstDay);
         setDraftTo(todayYMD());
       }
-    } catch (err) {
+    } catch (err: any) {
       console.error("[Pigeon] usage_get error", err);
+      if (seq === usageReqSeq) {
+        setReportError(err?.message || t("usage.loadFailed"));
+      }
     } finally {
-      setLoading(false);
+      if (seq === usageReqSeq) {
+        setLoading(false);
+      }
     }
   };
 
@@ -190,17 +278,23 @@ export function UsagePage() {
   });
 
   const openDaySheet = async (date: string) => {
+    const seq = ++dayReqSeq;
     setSelectedDay(date);
     setSheet("day");
     setDayData(null);
+    setDayError(null);
     try {
       const res: UsageDayPayload = await request({
         type: "usage_day",
         payload: { date, agents: Array.from(activeAgents()) },
       });
+      if (seq !== dayReqSeq) return;
       setDayData(res);
-    } catch (err) {
+    } catch (err: any) {
       console.error("[Pigeon] usage_day error", err);
+      if (seq === dayReqSeq) {
+        setDayError(err?.message || t("usage.loadFailed"));
+      }
     }
   };
 
@@ -212,9 +306,11 @@ export function UsagePage() {
   });
 
   const openModelSheet = async (model: string) => {
+    const seq = ++modelReqSeq;
     setSelectedModel(model);
     setSheet("model");
     setModelData(null);
+    setModelError(null);
     try {
       const res: UsageModelPayload = await request({
         type: "usage_model",
@@ -225,11 +321,30 @@ export function UsagePage() {
           agents: Array.from(activeAgents()),
         },
       });
+      if (seq !== modelReqSeq) return;
       setModelData(res);
-    } catch (err) {
+    } catch (err: any) {
       console.error("[Pigeon] usage_model error", err);
+      if (seq === modelReqSeq) {
+        setModelError(err?.message || t("usage.loadFailed"));
+      }
     }
   };
+
+  createEffect(
+    on(
+      () => state.configReady,
+      (ready) => {
+        if (!ready || !state.usageEnabled) return;
+        if (sheet() === "model" && selectedModel() && !modelData()) {
+          void openModelSheet(selectedModel()!);
+        } else if (sheet() === "day" && selectedDay() && !dayData()) {
+          void openDaySheet(selectedDay()!);
+        }
+      },
+      { defer: true }
+    )
+  );
 
   const isSingleDay = () => rangeSpan().len === 1;
 
@@ -396,55 +511,7 @@ export function UsagePage() {
       return { layout, cells, activeDays, currentStreak, longestStreak, vmax };
     }
 
-    // Week rows (<= 42 days, Monday-to-Sunday rows)
-    if (layout === "week-rows") {
-      // Find Monday of the first week
-      const dow1 = (startDt.getDay() + 6) % 7;
-      const firstMonday = new Date(y1, m1 - 1, d1 - dow1);
-      const dow2 = (endDt.getDay() + 6) % 7;
-      const lastSunday = new Date(y2, m2 - 1, d2 + (6 - dow2));
-
-      const weeks = [];
-      let currentWeekCells = [];
-      let currentWeekDays: Date[] = [];
-
-      for (let cur = new Date(firstMonday); cur <= lastSunday; cur.setDate(cur.getDate() + 1)) {
-        const ymd = formatYMD(cur);
-        const inRange = cur >= startDt && cur <= endDt;
-        const sum = inRange ? dayMap.get(ymd) : undefined;
-        const val = sum ? (m === "tokens" ? sum.tokens : sum.cost) : 0;
-
-        currentWeekCells.push({
-          date: ymd,
-          dayNum: cur.getDate(),
-          inRange,
-          color: inRange ? getCellColor(val) : "transparent",
-          textColor: getCellTextColor(val),
-          val,
-        });
-        currentWeekDays.push(new Date(cur));
-
-        if (currentWeekCells.length === 7) {
-          let monthLabel = "";
-          for (const d of currentWeekDays) {
-            if (d >= startDt && d <= endDt && d.getDate() === 1) {
-              monthLabel = formatMonthName(d.getMonth());
-              break;
-            }
-          }
-          if (!monthLabel && weeks.length === 0) {
-            const ref = currentWeekDays.find((d) => d >= startDt && d <= endDt) ?? currentWeekDays[0];
-            monthLabel = formatMonthName(ref.getMonth());
-          }
-          weeks.push({ month: monthLabel, cells: currentWeekCells });
-          currentWeekCells = [];
-          currentWeekDays = [];
-        }
-      }
-      return { layout, weeks, activeDays, currentStreak, longestStreak, vmax };
-    }
-
-    // Week columns (longer periods, weeks as vertical columns, reverse scroll)
+    // Week rows (<= 42 days, Monday-to-Sunday rows) & Week columns (longer periods)
     const dow1 = (startDt.getDay() + 6) % 7;
     const firstMonday = new Date(y1, m1 - 1, d1 - dow1);
     const dow2 = (endDt.getDay() + 6) % 7;
@@ -613,7 +680,7 @@ export function UsagePage() {
                 display: "inline-flex",
                 "align-items": "center",
                 "justify-content": "center",
-                animation: isLoading() ? "spin .8s linear infinite" : "none",
+                animation: isLoading() ? "sp .8s linear infinite" : "none",
               }}
             >
               <Icon name="refresh" />
@@ -1047,7 +1114,7 @@ export function UsagePage() {
                                       {w.month}
                                     </span>
                                     <For each={w.cells}>
-                                      {(c) => (
+                                      {(c, rowIdx) => (
                                         <button
                                           onClick={() => {
                                             if (c.val > 0) void openDaySheet(c.date);
@@ -1070,7 +1137,7 @@ export function UsagePage() {
                                             "box-sizing": "border-box",
                                           }}
                                         >
-                                          {c.inRange ? c.dayNum : ""}
+                                          {rowIdx() === 0 && c.inRange ? c.dayNum : ""}
                                         </button>
                                       )}
                                     </For>
@@ -1245,8 +1312,44 @@ export function UsagePage() {
               </div>
             </Show>
 
-            {/* Empty state (only when loading finished and no rows) */}
-            <Show when={!isLoading() && tableRows().length === 0}>
+            {/* Error state when report failed to load */}
+            <Show when={!isLoading() && !usageReport() && reportError()}>
+              <div
+                style={{
+                  "border-top": "1px solid var(--line)",
+                  "margin-top": "8px",
+                  padding: "22px 14px",
+                  display: "flex",
+                  "flex-direction": "column",
+                  "align-items": "center",
+                  gap: "10px",
+                  "text-align": "center",
+                  color: "var(--muted)",
+                  "font-size": "13.5px",
+                }}
+              >
+                <span>{reportError()}</span>
+                <button
+                  onClick={() => void loadUsage()}
+                  style={{
+                    height: "34px",
+                    padding: "0 16px",
+                    "border-radius": "10px",
+                    border: 0,
+                    background: "var(--accent)",
+                    color: "var(--onaccent)",
+                    font: "inherit",
+                    "font-size": "13px",
+                    "font-weight": 600,
+                  }}
+                >
+                  {t("usage.retry")}
+                </button>
+              </div>
+            </Show>
+
+            {/* Empty state (only when loading finished with a report and no rows) */}
+            <Show when={!isLoading() && !!usageReport() && tableRows().length === 0}>
               <div
                 style={{
                   "border-top": "1px solid var(--line)",
@@ -1383,41 +1486,21 @@ export function UsagePage() {
 
       {/* Day Sheet */}
       <Show when={sheet() === "day" && selectedDay()}>
-        <div style={{ position: "fixed", inset: 0, "z-index": 50, background: "rgba(0,0,0,.5)" }}>
-          <button
-            onClick={() => setSheet("none")}
-            aria-label={t("common.close")}
-            style={{ position: "absolute", inset: 0, background: "none", border: 0 }}
-          />
-          <div
-            style={{
-              position: "absolute",
-              left: 0,
-              right: 0,
-              bottom: 0,
-              background: "var(--surface)",
-              "border-top": "1px solid var(--line2)",
-              "border-radius": "24px 24px 0 0",
-              padding: "10px 18px 40px",
-              "max-height": "85vh",
-              "overflow-y": "auto",
-            }}
-          >
-            <div style={{ width: "40px", height: "5px", "border-radius": "3px", background: "var(--line2)", margin: "0 auto 10px" }} />
-            <div style={{ display: "flex", "align-items": "center" }}>
-              <span style={{ "font-weight": 650, "font-size": "17px", flex: 1 }}>
-                {selectedDay()}
-              </span>
-              <button
-                class="cbtn"
-                aria-label={t("common.close")}
-                onClick={() => setSheet("none")}
-              >
-                <Icon name="x" />
-              </button>
-            </div>
+        <UsageBottomSheet onClose={() => setSheet("none")} maxHeight="85vh" scrollable>
+          <div style={{ display: "flex", "align-items": "center" }}>
+            <span style={{ "font-weight": 650, "font-size": "17px", flex: 1 }}>
+              {selectedDay()}
+            </span>
+            <button
+              class="cbtn"
+              aria-label={t("common.close")}
+              onClick={() => setSheet("none")}
+            >
+              <Icon name="x" />
+            </button>
+          </div>
 
-            <Show when={dayData()} fallback={<div style={{ padding: "20px 0", color: "var(--muted)" }}>{t("common.loading")}</div>}>
+            <Show when={dayData()} fallback={<SheetStatus error={dayError()} onRetry={() => selectedDay() && void openDaySheet(selectedDay()!)} />}>
               {(() => {
                 const d = dayData()!;
                 return (
@@ -1487,33 +1570,12 @@ export function UsagePage() {
                 );
               })()}
             </Show>
-          </div>
-        </div>
+        </UsageBottomSheet>
       </Show>
 
       {/* Model Sheet */}
       <Show when={sheet() === "model" && selectedModel()}>
-        <div style={{ position: "fixed", inset: 0, "z-index": 50, background: "rgba(0,0,0,.5)" }}>
-          <button
-            onClick={() => setSheet("none")}
-            aria-label={t("common.close")}
-            style={{ position: "absolute", inset: 0, background: "none", border: 0 }}
-          />
-          <div
-            style={{
-              position: "absolute",
-              left: 0,
-              right: 0,
-              bottom: 0,
-              background: "var(--surface)",
-              "border-top": "1px solid var(--line2)",
-              "border-radius": "24px 24px 0 0",
-              padding: "10px 18px 40px",
-              "max-height": "85vh",
-              "overflow-y": "auto",
-            }}
-          >
-            <div style={{ width: "40px", height: "5px", "border-radius": "3px", background: "var(--line2)", margin: "0 auto 10px" }} />
+        <UsageBottomSheet onClose={() => setSheet("none")} maxHeight="85vh" scrollable>
             <div style={{ display: "flex", "align-items": "flex-start", gap: "8px" }}>
               <div style={{ flex: 1, "min-width": 0 }}>
                 <div
@@ -1539,7 +1601,7 @@ export function UsagePage() {
               </button>
             </div>
 
-            <Show when={modelData()} fallback={<div style={{ padding: "20px 0", color: "var(--muted)" }}>{t("common.loading")}</div>}>
+            <Show when={modelData()} fallback={<SheetStatus error={modelError()} onRetry={() => selectedModel() && void openModelSheet(selectedModel()!)} />}>
               {(() => {
                 const mdl = modelData()!;
                 const col = COMPANY_COLORS[mdl.company || "other"] || "var(--co-other)";
@@ -1654,31 +1716,12 @@ export function UsagePage() {
                 );
               })()}
             </Show>
-          </div>
-        </div>
+        </UsageBottomSheet>
       </Show>
 
       {/* Custom Range Sheet */}
       <Show when={sheet() === "custom"}>
-        <div style={{ position: "fixed", inset: 0, "z-index": 50, background: "rgba(0,0,0,.5)" }}>
-          <button
-            onClick={() => setSheet("none")}
-            aria-label={t("common.close")}
-            style={{ position: "absolute", inset: 0, background: "none", border: 0 }}
-          />
-          <div
-            style={{
-              position: "absolute",
-              left: 0,
-              right: 0,
-              bottom: 0,
-              background: "var(--surface)",
-              "border-top": "1px solid var(--line2)",
-              "border-radius": "24px 24px 0 0",
-              padding: "10px 18px 40px",
-            }}
-          >
-            <div style={{ width: "40px", height: "5px", "border-radius": "3px", background: "var(--line2)", margin: "0 auto 10px" }} />
+        <UsageBottomSheet onClose={() => setSheet("none")}>
             <div style={{ display: "flex", "align-items": "center" }}>
               <div style={{ flex: 1 }}>
                 <div style={{ "font-weight": 650, "font-size": "17px" }}>{t("usage.customTitle")}</div>
@@ -1753,18 +1796,12 @@ export function UsagePage() {
             >
               {t("usage.apply")}
             </button>
-          </div>
-        </div>
+        </UsageBottomSheet>
       </Show>
 
       {/* Agent Filter Sheet */}
       <Show when={sheet() === "filter"}>
-        <div style={{ position: "fixed", inset: 0, "z-index": 50, background: "rgba(0,0,0,.5)" }}>
-          <button
-            onClick={() => setSheet("none")}
-            aria-label={t("common.close")}
-            style={{ position: "absolute", inset: 0, background: "none", border: 0 }}
-          />
+        <UsageOverlay onClose={() => setSheet("none")}>
           <div
             style={{
               position: "absolute",
@@ -1864,7 +1901,7 @@ export function UsagePage() {
               {t("common.close")}
             </button>
           </div>
-        </div>
+        </UsageOverlay>
       </Show>
     </div>
   );

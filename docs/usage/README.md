@@ -51,12 +51,13 @@ How to set up Pigeon for daily use, manage paired phones, and ship changes to yo
    ```
 5. Pair your phone: run `pigeon pair` in a terminal and scan the QR code with the phone's browser. To install the PWA: on Android, open Chrome's menu and choose **Add to Home screen**; on iOS (Safari or Chrome), tap the **Share** button and choose **Add to Home Screen**.
 
-## Paired devices
+## Paired devices & CLI commands
 
+- `pigeon start` accepts `--port <n>`, `--public-url <url>`, `--insecure-dev`, and `--debug`.
 - `pigeon devices` lists every paired browser, and `pigeon devices revoke <deviceId>` disconnects one right away. You can also view and remove paired phones from **Settings → Devices and pairing** in the app.
-- `pigeon pair` rotates the pairing link and prints a fresh QR code (`--ephemeral` makes a single-use link that expires in 10 minutes). Phones that are already paired stay connected.
-- `pigeon status` prints Herdr connection state, public URL, active session count, pending queues, last usage scan timestamp, and any adapter or plugin source errors.
-- `pigeon rebuild-cache` rebuilds the token usage database from the agents' files on disk (through the daemon when running, directly otherwise). Non-production ports require `--yes` to confirm rebuilding the usage cache.
+- `pigeon pair [--ephemeral] [--json]` rotates the pairing link and prints a fresh QR code (`--ephemeral` makes a single-use link that expires in 10 minutes; `--json` outputs machine-readable JSON). Phones that are already paired stay connected.
+- `pigeon status [--json]` prints Herdr connection state, public URL, active session count, pending queues, last usage scan timestamp, and any adapter or plugin source errors.
+- `pigeon rebuild-cache [--json] [--yes]` rebuilds the token usage database from the agents' files on disk (through the daemon when running, directly otherwise). Non-production ports require `--yes` to confirm rebuilding the shared production usage cache.
 - These commands talk to the daemon on the configured port. A daemon started on another port (a test instance, e.g. `--port 4101`) is reached with the same `--port`, such as `pigeon pair --port 4101`.
 - Clean up any test sessions left over from development before using Pigeon day to day.
 
@@ -71,9 +72,9 @@ How to set up Pigeon for daily use, manage paired phones, and ship changes to yo
 
 ## Debug mode
 
-When the app is slow to connect, start the daemon with `--debug` (for the service, add it to the `pigeon start` line of the unit and restart). Only that run is in debug mode; nothing is saved, and a restart without the flag turns it off.
+When the app is slow to connect or you want to inspect live RPC behavior, start the daemon with `--debug` (for the service, add it to the `pigeon start` line of the unit and restart). Only that run is in debug mode; nothing is saved, and a restart without the flag turns it off.
 
-In debug mode `pigeon.log` also gets lines marked `debug`: every HTTP request with its status and duration, refused WebSocket upgrades, how long each bootstrap took and how big it was, and the phone's own connection timeline — how the page loaded, how long it was hidden, every connection attempt with its outcome and duration. The phone keeps that timeline even while it cannot connect and hands it over as soon as it reaches a daemon in debug mode, so the slow attempts show up too.
+In debug mode `pigeon.log` also gets lines marked `debug`: every HTTP request with its status and duration, refused WebSocket upgrades, how long each bootstrap took and how big it was, every client RPC command (`debug rpc`: type, safe summary parameters without prompt text, duration, byte size or error code), quota/usage background timings (`debug quota fetch`, `debug usage scan`), and the phone's own connection and RPC timeline — how the page loaded, how long it was hidden, every connection attempt (`ws_close`, etc.), `bootstrap` timings, and `rpc_error` failures. The phone keeps that timeline even while it cannot connect and hands it over as soon as it reaches a daemon in debug mode, so slow attempts show up too.
 
 ## Without Tailscale
 

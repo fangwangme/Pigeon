@@ -42,7 +42,6 @@ export type TurnItem =
   | { kind: "text"; markdown: string }
   | { kind: "tool"; call: NormalizedToolCall }
   | { kind: "todo"; done: number; total: number }
-  | { kind: "reasoning"; text?: string; hasText?: boolean; durationMs?: number; isStreaming?: boolean }
   | { kind: "error"; errorKind: string; text: string; count?: number }
   | { kind: "compact"; summary: string };
 
@@ -59,7 +58,7 @@ export interface NormalizedTurn {
   toolCalls?: NormalizedToolCall[];
   assistantResponse?: { markdown: string; isStreaming?: boolean };
   pendingQuestion?: NormalizedQuestion;
-  pendingPlan?: { markdown: string };
+  pendingPlan?: { markdown: string; title?: string; artifact?: boolean };
 }
 
 export interface TodoItem {

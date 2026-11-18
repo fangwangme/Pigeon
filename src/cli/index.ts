@@ -2,6 +2,7 @@ import { connect } from "node:net";
 import { existsSync } from "node:fs";
 import { PigeonDaemon } from "../server/daemon";
 import { ConfigManager, resolveInstancePaths, resolveProductionPort } from "../server/config-manager";
+import { formatLocalTimestamp } from "../shared/time";
 import qrcode from "qrcode-terminal";
 
 export const ADMIN_TIMEOUT_MS = 5000;
@@ -52,7 +53,7 @@ function printQr(url: string, permanent: boolean): void {
   console.log("=======================================================\n");
   console.log(`Pairing URL: ${url}\n`);
   qrcode.generate(url, { small: true });
-  console.log("\nScan the QR code above with your phone's Chromium browser.");
+  console.log("\nScan the QR code above with your phone's browser.");
   console.log(permanent ? "This pairing link stays valid until you run `pigeon pair` again." : "This pairing link expires in 10 minutes.");
   console.log("=======================================================\n");
 }
@@ -64,7 +65,7 @@ Usage:
   pigeon start [--port <n>] [--insecure-dev] [--debug] [--herdr-app-sock <path>] [--herdr-core-sock <path>] [--public-url <url>] [--admin-sock <path>]
   pigeon pair [--ephemeral] [--json] [--port <n>]
   pigeon devices [revoke <id>] [--port <n>]
-  pigeon status [--port <n>]
+  pigeon status [--json] [--port <n>]
   pigeon rebuild-cache [--json] [--port <n>] [--yes]
 
 The admin commands reach the daemon on the configured port, or on --port.
@@ -190,7 +191,7 @@ async function main() {
         }
       }
       if (status.lastUsageScan) {
-        const timeStr = status.lastUsageScan.time ? new Date(status.lastUsageScan.time).toISOString() : "never";
+        const timeStr = status.lastUsageScan.time ? formatLocalTimestamp(status.lastUsageScan.time) : "never";
         console.log(`  Last usage scan:   ${timeStr} (${status.lastUsageScan.durationMs || 0}ms)`);
       }
       if (status.sourceErrors) {

@@ -21,6 +21,13 @@ export function formatDurationShort(ms: number): string {
   return `${min}m`;
 }
 
+function windowStatusColor(usedPercent: number, pace: ReturnType<typeof quotaPace>): string {
+  const l = quotaLevel(usedPercent);
+  if (l === "exhausted" || pace?.kind === "ahead") return "var(--danger)";
+  if (pace?.kind === "on_track" || l === "warn") return "var(--warn)";
+  return "var(--addfg)";
+}
+
 function formatTime(ts: number): string {
   const d = new Date(ts);
   return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}:${String(d.getSeconds()).padStart(2, "0")}`;
@@ -28,10 +35,9 @@ function formatTime(ts: number): string {
 
 export function QuotaPage() {
   const [refreshing, setRefreshing] = createSignal(false);
-  const [initialLoading, setInitialLoading] = createSignal(false);
   const [now, setNow] = createSignal(Date.now());
 
-  const isLoading = () => !state.configReady || state.quotaLoading || initialLoading() || refreshing();
+  const isLoading = () => !state.configReady || state.quotaLoading || refreshing();
 
   const checkStaleRefresh = () => {
     if (!state.connected || !state.configReady || !state.quotaEnabled) return;
@@ -44,11 +50,8 @@ export function QuotaPage() {
   };
 
   onMount(() => {
-    if (state.quotaEnabled && state.configReady && (!state.quotaSnapshots || state.quotaSnapshots.length === 0)) {
-      setInitialLoading(true);
-      void fetchQuota().finally(() => {
-        setInitialLoading(false);
-      });
+    if (state.quotaEnabled && state.configReady && state.quotaSnapshots.length === 0) {
+      void fetchQuota();
     } else {
       checkStaleRefresh();
     }
@@ -131,7 +134,7 @@ export function QuotaPage() {
                 display: "inline-flex",
                 "align-items": "center",
                 "justify-content": "center",
-                animation: isLoading() ? "spin .8s linear infinite" : "none",
+                animation: isLoading() ? "sp .8s linear infinite" : "none",
               }}
             >
               <Icon name="refresh" />
@@ -243,14 +246,9 @@ export function QuotaPage() {
               {(p) => {
                 const providerDotColor = () => {
                   const windows = p.snapshot?.windows ?? [];
-                  const hasExhausted = windows.some(
-                    (w) => quotaLevel(w.usedPercent) === "exhausted" || quotaPace(w, now())?.kind === "ahead"
-                  );
-                  if (hasExhausted) return "var(--danger)";
-                  const hasWarn = windows.some(
-                    (w) => quotaLevel(w.usedPercent) === "warn" || quotaPace(w, now())?.kind === "on_track"
-                  );
-                  if (hasWarn) return "var(--warn)";
+                  const colors = windows.map((w) => windowStatusColor(w.usedPercent, quotaPace(w, now())));
+                  if (colors.includes("var(--danger)")) return "var(--danger)";
+                  if (colors.includes("var(--warn)")) return "var(--warn)";
                   return "var(--addfg)";
                 };
 
@@ -342,14 +340,7 @@ export function QuotaPage() {
                               return `${Math.min(100, Math.max(0, share))}%`;
                             };
 
-                            const statusColor = () => {
-                              const l = lvl();
-                              if (l === "exhausted") return "var(--danger)";
-                              const pace = pResult();
-                              if (pace?.kind === "ahead") return "var(--danger)";
-                              if (pace?.kind === "on_track" || l === "warn") return "var(--warn)";
-                              return "var(--addfg)";
-                            };
+                            const statusColor = () => windowStatusColor(u(), pResult());
 
                             const barColor = () => statusColor();
 

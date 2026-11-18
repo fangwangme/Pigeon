@@ -17,16 +17,16 @@ Key Protocol Principles:
 ### 2.1 Heartbeat (`client <-> server`)
 - The client sends `{ "type": "ping", "timestamp": 1729650000000 }` every 5 seconds. The server answers `{ "type": "pong", "timestamp": … }`.
 - **Timeout**: If no `pong` has arrived for 15 seconds, the client closes the socket and reconnects. Shorter is not better (user decision, 2026-11-18): on a lossy link TCP retransmits with growing delays, so a live connection's `pong` is often more than 10 seconds late; closing it then forces a full new handshake over the same link, which the debug timeline showed taking 3 to 7.5 seconds. Coming back from the background does not rely on this timeout (Wakeup below).
-- **Wakeup**: When `document.visibilityState` becomes `visible`, the client reconnects at once if the socket is not open. Otherwise it sends a `ping` at once and reconnects when no `pong` arrives within 3 seconds, so a connection that died while the phone slept is replaced without waiting for the 15-second timeout. The wakeup reconnect replaces any reconnect already scheduled; it never adds a second one.
+- **Wakeup**: When `document.visibilityState` becomes `visible`, the client reconnects at once if the socket is not open. Otherwise it sends a `ping` at once and reconnects when no `pong` arrives within 2 seconds (user decision, 2026-11-18), so a connection that died while the phone slept is replaced without waiting for the 15-second timeout. While the wakeup probe waits for its `pong`, the periodic heartbeat check does not time out early against the pre-sleep `lastPongTime`. The wakeup reconnect replaces any reconnect already scheduled; it never adds a second one.
 - With every heartbeat, and whenever visibility or the viewed pane changes, the client sends `{ "type": "presence_update", "isVisible": true, "viewingPaneId": "w1:p2" }`. This message has no `id` and gets no reply.
 
 ### 2.2 Refusals and Closure Codes
 - A WebSocket upgrade without a valid session cookie is refused with HTTP **401**. A wrong `Host` or `Origin` is refused with HTTP **403** (`security-and-pairing.md` §4). In the browser, both show up as a plain close.
 - **Socket first** (issue #31): an attempt opens `/ws` at once; it never waits for an HTTP request first. Only when a socket closes without ever having opened does the client check `GET /api/auth/status`: when it says the browser is not paired, the client shows the pairing guidance and makes no further attempt; when it says paired, or cannot reach the daemon (it is restarting, or the network is down), the next attempt follows the schedule below. The reason: on a phone coming back from sleep, a plain HTTP request can stall on a pooled connection that died while the phone slept, while a new socket opens on a fresh connection.
 - **Retry schedule**: after a close that is not final, or a failed attempt, the next attempts wait 0, 0.5, 1 and 2 seconds, then 3 seconds each. A socket that opens resets the schedule, so its own later close is again followed by an immediate attempt.
-- **Network and wakeup**: when the browser fires `online`, or the page becomes visible (§2.1), while the client waits for its next attempt, the wait is cancelled and an attempt starts at once.
-- **One attempt at a time**: the client never has more than one connection attempt in flight. A call to connect while an attempt is running (a socket still `CONNECTING`, or the pairing check after a failed socket) or while a socket is open does nothing.
-- **Attempt timeouts**: a socket still `CONNECTING` after 10 seconds is closed, and the pairing check is abandoned after 5 seconds. Each counts as a failed attempt, followed by the next attempt per the schedule.
+- **Network and wakeup**: when the browser fires `online` while the client waits for its next attempt or has a socket stuck `CONNECTING`, or when the page returns from `hidden` to `visible` with a stale `CONNECTING` socket (or while waiting for its next attempt), any wait is cancelled, the stale `CONNECTING` socket is closed, and a fresh attempt starts at once.
+- **One attempt at a time**: the client never has more than one connection attempt in flight. Outside an `online` or wake-from-hidden replacement of a stale `CONNECTING` socket, a call to connect while an attempt is running (a socket still `CONNECTING`, or the pairing check after a failed socket) or while a socket is open does nothing.
+- **Attempt timeouts** (user decision, 2026-11-18): a socket still `CONNECTING` after 2 seconds is closed, and the pairing check is abandoned after 2 seconds. Each counts as a failed attempt, followed by the next attempt per the schedule.
 - **Close logging**: the daemon logs every WebSocket close with the device name, connection id, close code, close reason (empty when none), and how long the connection was open. The client logs the code and reason of every close to its console.
 - `4403`: The device was revoked (`pigeon devices revoke`). The client shows the pairing guidance and does not reconnect.
 - `4409`: Incompatible protocol major version. The client does not reconnect and shows that the app is out of date, with a reload button (`mobile-ui-and-themes.md` §8.3).
@@ -35,13 +35,13 @@ Key Protocol Principles:
 ### 2.3 Debug Mode (`client_diag`)
 Debug mode exists so connection delays on the phone can be located from the daemon's log (issue #31).
 - **Switch**: only a daemon started with `pigeon start --debug` is in debug mode (`architecture.md` §4.6). Nothing about it is persisted: the config has no debug key, and the phone stores no debug flag. A restart without the flag ends it. `welcome.debug` (§3.2) tells the client.
-- **Client record**: the client always keeps a small bounded record of connection events in local storage, so it survives a reload or the browser discarding the page. It holds only times, outcomes, durations and close codes — never session content. Events include: page start with navigation timing (how long the page took to arrive, so a cached shell is distinguishable from a network one), visibility changes with how long the page was hidden, `online`/`offline`, each attempt's socket start, open, close (code) or timeout, the pairing check's start and result, the wakeup probe and heartbeat timeouts, `welcome`, and the applied bootstrap with how long Syncing lasted. The oldest events are dropped when the record is full.
+- **Client record**: the client always keeps a small bounded record of connection events in local storage, so it survives a reload or the browser discarding the page. It holds only times, outcomes, durations and close codes — never session content or command payloads. Events include: page start with navigation timing (how long the page took to arrive, so a cached shell is distinguishable from a network one), visibility changes with how long the page was hidden, `online`/`offline`, each attempt's socket start, open, close (code) or timeout, the pairing check's start and result, the wakeup probe and heartbeat timeouts, `welcome`, the applied bootstrap with how long Syncing lasted, and `rpc_error` (`cmd`, `code`, `ms`) whenever `request()` fails offline, is aborted by socket teardown, or receives a server `error` reply. The oldest events are dropped when the record is full.
 - **Upload**: after a `welcome` with `debug: true`, the client sends every event not sent before, in order, then marks them sent; the attempts that failed before this connection opened are therefore included. After a `welcome` with `debug: false` it sends nothing.
   ```json
   { "type": "client_diag", "payload": { "events": [{ "t": 1729650000000, "ev": "ws_close", "code": 1006, "ms": 5021 }] } }
   ```
   `client_diag` has no `id` and gets no reply. It is validated like every frame (`src/server/ws-validate.ts`): `events` is an array of a bounded length; each event has a numeric `t` (epoch ms), a short string `ev`, and otherwise only flat string, number or boolean fields of bounded length. A malformed frame is answered with `ERR_INVALID_PAYLOAD`.
-- **Daemon**: in debug mode the daemon writes each event to its log as one line naming the device, the connection, the event's own time and its fields. Without debug mode it accepts a valid `client_diag` and writes nothing.
+- **Daemon**: in debug mode the daemon writes each event to its log as one line naming the device, the connection, the event's own time (in local ISO 8601 format like `pigeon.log`, `architecture.md` §4.6) and its fields. Without debug mode it accepts a valid `client_diag` and writes nothing.
 
 ## 3. Handshake and Initial Synchronization
 
@@ -49,7 +49,7 @@ Debug mode exists so connection delays on the phone can be located from the daem
 ```json
 { "type": "hello", "id": "cli_1", "payload": { "protocolVersion": "1.0.0", "subscribePaneId": "w1:p2", "have": { "sessionId": "s_1", "turnCount": 5, "anchorHash": "a1b2c3d4" } } }
 ```
-If the major version differs from the server's, the server answers `ERR_INCOMPATIBLE_PROTOCOL` and closes the socket with `4409`. `have` is optional: when the client holds turns for `subscribePaneId`, it supplies their `sessionId`, how many it holds (`turnCount`), and `anchorHash`, the FNV-1a 32-bit hash (lowercase hex) of `JSON.stringify(turn)` of the second-to-last turn it holds (index `turnCount - 2`, in the light form of `agent-session-normalization.md` §3.3), to request an incremental resume (§3.3). The last turn is not the anchor because it is the one that keeps changing while the agent works. `have` is validated with the other frame fields (`src/server/ws-validate.ts`).
+If the major version differs from the server's, the server answers `ERR_INCOMPATIBLE_PROTOCOL` and closes the socket with `4409`. `have` is optional: when the client holds turns for `subscribePaneId`, it supplies their `sessionId`, how many it holds (`turnCount`), and either `anchorHash` (when `turnCount ≥ 2`, the FNV-1a 32-bit hash lowercase hex of `JSON.stringify(turn)` of index `turnCount - 2` in the light form of `agent-session-normalization.md` §3.3) or `lastTurnHash` (when `turnCount === 1`, the hash of turn index `0`) to request an incremental resume (§3.3). The last turn is avoided as an anchor once `turnCount ≥ 2` because it keeps changing while the agent works. A malformed `have` object falls back to a full bootstrap rather than rejecting the frame.
 
 ### 3.2 Handshake Response (`server -> client`)
 ```json
@@ -77,10 +77,13 @@ Then come, in this order, `upstream_status` (§5.5) and `snapshot_update` (§5.3
 ### 3.3 Initial Pane Data (`pane_bootstrap`)
 The server picks a pane. It uses `subscribePaneId` when Herdr knows that pane, otherwise Herdr's focused pane. It subscribes the connection to that pane and sends one message, which the client applies in one step:
 ```json
-{ "type": "pane_bootstrap", "payload": { "paneId": "w1:p2", "turns": null, "resume": { "paneId": "w1:p2", "seq": 41, "sinceTurnIndex": 4, "appendTurns": [] }, "queue": [], "state": null, "serverMs": 9 } }
+{ "type": "pane_bootstrap", "payload": { "paneId": "w1:p2", "turns": null, "resume": { "paneId": "w1:p2", "seq": 41, "sinceTurnIndex": 4, "appendTurns": [] }, "queue": [], "queuePaused": false, "state": null, "serverMs": 9 } }
 ```
-- **Turns**: when `have` is given, `have.turnCount ≥ 2`, the pane's bound session id equals `have.sessionId`, the pane has at least `turnCount` turns, and the hash of its turn `turnCount - 2` equals `have.anchorHash`, then `resume` is a `turns_delta` payload (§5.6) with `sinceTurnIndex: turnCount - 1`, the turns from that index on, and `sessionStats`, `sessionTitle`, `todos` and `session`; `turns` is null. Otherwise `turns` is the full `normalized_turns` payload (§5.6) and `resume` is null. A pane without a structured session gets `turns` with `turns: []` and `session.bound: false`, so the client never keeps the previous pane's conversation. Both carry the pane's current `seq`.
-- **`queue`**: the pane's queued prompts (§5.8), empty when none.
+- **Turns**: when `have` is valid, the pane's bound session id equals `have.sessionId`, and the pane has at least `have.turnCount` turns:
+  - if `have.turnCount ≥ 2`, `have.anchorHash` is a string, and the hash of turn `have.turnCount - 2` equals `have.anchorHash`, `resume` is a `turns_delta` payload (§5.6) with `sinceTurnIndex: have.turnCount - 1`, turns from that index on, and `sessionStats`, `sessionTitle`, `todos`, `subagents` and `session`; `turns` is null;
+  - else if `have.turnCount === 1`, `have.lastTurnHash` is a string, and the hash of turn `0` equals `have.lastTurnHash`, `resume` carries `sinceTurnIndex: 1`, any newer turns from index `1` on (empty array when unchanged), and the session metadata above; `turns` is null.
+  Otherwise `turns` is the full `normalized_turns` payload (§5.6) and `resume` is null. A pane without a structured session gets `turns` with `turns: []` and `session.bound: false`, so the client never keeps the previous pane's conversation. Both carry the pane's current `seq`.
+- **`queue` / `queuePaused`**: the pane's queued prompts (§5.8), empty when none, and whether its queue is currently paused after an agent error (`§4.2`).
 - **`state`**: the pane's cached `pane_state` payload (§5.4) when the pane was read before, else null. A fresh screen read follows as `pane_state` only if it differs. The bootstrap never waits for a screen read.
 - **`serverMs`**: how long the daemon took to build the message, so the client can time a switch.
 - Skills are not part of the bootstrap: the client asks with `skills_get` (§4.7) when the user types `/` at line start or opens the skills sheet.
@@ -126,7 +129,7 @@ When Herdr cannot be reached (its socket is missing or refuses the connection, `
   - `WsServer` takes the send timeout as the option `queueSendTimeoutMs` (default 30 000), so tests drive it with a short one.
 - **Persistence**: the queue is written to `queue.json` in the instance's state directory (`architecture.md` §4.6) only when it changes, atomically (a temporary file, then rename). Each item records the terminal creation time (`created_ms`, `herdr-adapter.md` §3.1) of its pane at enqueue time. A prompt in `sending` is not written. A queue file that cannot be parsed stops startup with an error naming the file, and is left untouched. Closing the pane drops its queue.
 - **Restore** (user decision, 2026-11-11): Herdr reuses terminal addresses, so a restored item is kept only when the first Herdr snapshot after start shows a terminal at its address with the same creation time. Kept items go out as soon as their pane is `idle` or `done`; the others are dropped and logged with their address and `queueId`.
-- **Immediate send**: otherwise the server calls Herdr Core's `terminal.send`, which pastes the text and presses Enter, for agents and plain shells alike, and acks `{ "queued": false }`. Herdr's `blocked` surfaces as `ERR_AGENT_BLOCKED`, `unavailable` as `ERR_AGENT_NOT_READY`, and a timed-out request as `ERR_TIMEOUT` (`herdr-adapter.md` §6).
+- **Immediate send**: otherwise the server calls Herdr Core's `terminal.send`, passing `force: true` when the pane is `blocked` without structured choice options (`pendingInteraction.options` empty and no `pendingQuestion`, issue #35), which pastes the text and presses Enter for agents and plain shells alike, and acks `{ "queued": false }`. When structured options await a pick, `force` is omitted so Herdr's `blocked` surfaces as `ERR_AGENT_BLOCKED`; `unavailable` surfaces as `ERR_AGENT_NOT_READY`, and a timed-out request as `ERR_TIMEOUT` (`herdr-adapter.md` §6).
 - Agent slash commands (`/compact`, a skill's invocation) are ordinary prompt text.
 
 ### 4.3 Dispatch Raw Keys (`agent_send_keys`)
@@ -269,7 +272,7 @@ The terminal view (`mobile-ui-and-themes.md` §5) turns this on while it is open
 ```json
 { "type": "queue_resume", "id": "cli_30", "payload": { "paneId": "w1:p2" } }
 ```
-Releases the pane's paused queue (§4.2): its oldest prompt goes out as in `idle`. A pane the daemon does not know is `ERR_NOT_FOUND`; a queue that is not paused is acked with no effect.
+Releases the pane's paused queue (§4.2): its queued prompts go out together as one batch as in `idle`. A pane the daemon does not know is `ERR_NOT_FOUND`; a queue that is not paused is acked with no effect.
 
 ### 4.23 Launch Defaults (`launch_defaults`)
 ```json
@@ -277,13 +280,19 @@ Releases the pane's paused queue (§4.2): its oldest prompt goes out as in `idle
 ```
 The ack carries `{ "model"?: "<id>", "thinking"?: "<level>" }`: the model and thinking level the agent starts on when it is launched in that workspace's folder without `modelId` or `thinking` (§4.5), read from the agent's own settings as `herdr-adapter.md` §5 describes, the files read at the time of the request. Either field is left out when the settings name none or cannot be read; an agent with no such source (OpenCode, the plain terminal) answers `{}`. An unknown `agentKind` is `ERR_INVALID_PAYLOAD`; an unknown workspace is `ERR_NOT_FOUND`. The phone uses it for the new-session page's preselection (`mobile-ui-and-themes.md` §7.1).
 
+### 4.24 Dismiss Interaction (`interaction_dismiss`)
+```json
+{ "type": "interaction_dismiss", "id": "cli_32", "payload": { "targetPaneId": "w1:p2", "interactionId": "int_4ae721c8e2" } }
+```
+Dismisses (skips) the pane's active interaction (`herdr-adapter.md` §4, issue #35) without sending keys or text to the agent. When `targetPaneId` is not in the latest Herdr snapshot, answers `ERR_NOT_FOUND`; malformed payloads answer `ERR_INVALID_PAYLOAD`. While the pane's current interaction matches `interactionId`, the daemon clears `pendingInteraction`, downgrades the pane's reported status from `blocked` to `idle` across `pane_state` and `snapshot_update`, and acks `{ "dismissed": true, "interactionId" }` (if the interaction already changed or cleared, acks `{ "dismissed": false, "interactionId" }`). The dismissal clears on the pane's next Core status change or when a different `interactionId` appears.
+
 ## 5. Server Events (`server -> client`)
 
 ### 5.1 Command Acknowledgment (`ack`)
 ```json
 { "type": "ack", "replyTo": "cli_7", "payload": { "status": "ok", "approved": true, "interactionId": "int_4ae721c8e2" } }
 ```
-Command-specific fields sit next to `status`.
+Command-specific fields sit next to `status` (for instance `duplicate: true` on a deduplicated `agent_prompt` ack, `§4.2`).
 
 ### 5.2 Command Error (`error`)
 ```json
@@ -351,7 +360,7 @@ Sent to the clients viewing a pane whenever its classified screen or status chan
 - `pendingInteraction.options` is empty when the prompt has no numbered options, or when Herdr reports `blocked` but no prompt was recognized. The client then shows `fallbackKeys` as a raw key pad.
 - `exitCode` on a tool card is present only when the screen shows it.
 - `pendingInteraction.title` is a title the screen showed for the prompt, else empty; `question` is empty when the screen showed no question line. The phone then shows its own label (`mobile-ui-and-themes.md` §10.2).
-- `pendingInteraction.source` is `screen` or `transcript`. When the pane's bound session has a pending question and the agent's question keys are checked (`herdr-adapter.md` §7.2), the interaction comes from the transcript whatever the screen shows, so the question is answered in the card (`mobile-ui-and-themes.md` §4.2). Otherwise a prompt recognized on screen (`herdr-adapter.md` §8.2), or Herdr's `blocked` with nothing recognized, is `screen`. When no prompt is recognized on screen and the pane's bound session has a pending question or plan (`agent-session-normalization.md` §3 `pendingQuestion`, `pendingPlan`), the interaction comes from the transcript and the pane's `agentStatus` is `blocked`, whatever Herdr reports. A transcript interaction's `question` is the first question's text (empty for a plan) and its `options` are every question's options, with ids `q<k>_opt_<n>` (question `k` and option `n`, counted from 1) and the `label` the transcript gives; their `keyShortcut` follows `herdr-adapter.md` §7.2 and is empty for an agent without checked keys. A plan's interaction has no options. `interactionId` is a hash of the tool call id. A question menu recognized on screen carries `multiSelect` and each option's `description` (`herdr-adapter.md` §8.2). `allowsOther: true` marks an interaction whose questions also take the user's own text: a screen menu with a `Type something` entry, or a transcript interaction whose agent has checked keys for it (`herdr-adapter.md` §7.2).
+- `pendingInteraction.source` is `screen` or `transcript`. When the pane's bound session has a pending question and the agent's question keys are checked (`herdr-adapter.md` §7.2), the interaction comes from the transcript whatever the screen shows, so the question is answered in the card (`mobile-ui-and-themes.md` §4.2). Otherwise a prompt recognized on screen (`herdr-adapter.md` §8.2), or Herdr's `blocked` with nothing recognized, is `screen`. When no prompt is recognized on screen and the pane's bound session has a pending question or plan (`agent-session-normalization.md` §3 `pendingQuestion`, `pendingPlan`), the interaction comes from the transcript and the pane's `agentStatus` is `blocked`, whatever Herdr reports — except for a completed Antigravity artifact (`pendingPlan.artifact: true`, issue #35), which produces a transcript interaction only while Herdr reports `blocked` (and has not been dismissed via §4.24), so a finished or desktop-resolved turn never re-enters `blocked`. A transcript interaction's `question` is the first question's text (`pendingPlan.title` or empty for a plan) and its `options` are every question's options, with ids `q<k>_opt_<n>` (question `k` and option `n`, counted from 1) and the `label` the transcript gives; their `keyShortcut` follows `herdr-adapter.md` §7.2 and is empty for an agent without checked keys. A plan's interaction has no options. `interactionId` is `int_` + the first 10 hex digits of the SHA-256 of `pendingQuestion.id` for a question, or `pendingPlan.title` + `"\n"` + `pendingPlan.markdown` (just `pendingPlan.markdown` when `title` is empty) for a plan. A question menu recognized on screen carries `multiSelect` and each option's `description` (`herdr-adapter.md` §8.2). `allowsOther: true` marks an interaction whose questions also take the user's own text: a screen menu with a `Type something` entry, or a transcript interaction whose agent has checked keys for it (`herdr-adapter.md` §7.2).
 
 - `folder` is the Herdr workspace's folder. `branch` (workspace: of its folder; tab: of its first pane's folder) is the checked-out git branch, absent outside a git repository or on a detached HEAD.
 - `program` is the name of the pane's foreground program, absent when the Core does not list the terminal. `summary` is the pane's one-line summary (also in `workingAgents`), and `summaryKind` says how to show it: `text` is shown as is (a prompt's question, the start of the last message, or the terminal title); `run` holds only the running command, which the phone prefixes with its own word for "running"; `thinking` holds the thought's title, or is empty when the agent shows none, and the phone shows its own word for "thinking" in that case. The daemon composes no UI text of its own (`mobile-ui-and-themes.md` §10.2).
@@ -395,6 +404,7 @@ A pane that becomes bound or switches session (for example after the agent's `/c
 ```json
 {
   "type": "skills_sync",
+  "replyTo": "cli_13",
   "payload": {
     "paneId": "w1:p2",
     "skills": [
@@ -405,7 +415,7 @@ A pane that becomes bound or switches session (for example after the agent's `/c
   }
 }
 ```
-Skills are per pane: they depend on the pane's agent kind and project directory (`herdr-adapter.md` §8.3). `source` is `project`, `user`, `plugin` or `builtin`; `kind` is `skill` or `command`. A built-in command also carries `descriptionId` (`herdr-adapter.md` §8.3), and the phone shows its own text for that id, falling back to the English `description`. The client ignores skills for a pane it is no longer viewing. Choosing an entry inserts its `invocation` as prompt text.
+Skills are per pane: they depend on the pane's agent kind and project directory (`herdr-adapter.md` §8.3). `paneId` may be `null` on fallback, and `replyTo` is included when answering `skills_get` (§4.7). `source` is `project`, `user`, `plugin` or `builtin`; `kind` is `skill` or `command`. A built-in command also carries `descriptionId` (`herdr-adapter.md` §8.3), and the phone shows its own text for that id, falling back to the English `description`. The client ignores skills for a pane it is no longer viewing. Choosing an entry inserts its `invocation` as prompt text.
 
 Each recipe summary also carries `resumable` (the recipe can resume a session) and `launchModel` (whether §4.5 can start the agent on a chosen model, `herdr-adapter.md` §5). A recipe without `launchModel` may carry `lastUsed: { "model": "<id>", "thinking"?: "<level>" }`, the model and effort the agent will start on (`herdr-adapter.md` §5; today OpenCode). A recipe's `models` is that agent's list in the model catalog (`herdr-adapter.md` §7.1), complete; the phone searches it.
 
@@ -441,7 +451,7 @@ Broadcast to every connected client when a usage scan completes — a scheduled 
 
 ## 6. Configuration Synchronization Protocol
 
-The client part of `config.json` (appearance) is shared by all paired devices.
+The client part of `config.json` (appearance and quota/usage preferences) is shared by all paired devices.
 
 ### 6.1 Handshake Delivery
 `welcome.payload.clientConfig` carries the current client config.

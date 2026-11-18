@@ -57,15 +57,12 @@ export function findFilesRecursive(dir: string, ext: string | string[]): string[
   return result;
 }
 
+let warnedMissingZstd = false;
+
 // 1. Claude scanner
 export function scanClaudeFile(path: string, stats: ScanStats = { skipped: 0 }): RawUsageRecord[] {
   const records = new Map<string, RawUsageRecord>();
-  let content = "";
-  try {
-    content = readFileSync(path, "utf-8");
-  } catch {
-    return [];
-  }
+  const content = readFileSync(path, "utf-8");
 
   const lines = content.split("\n");
   for (let i = 0; i < lines.length; i++) {
@@ -120,17 +117,24 @@ export function scanClaudeFile(path: string, stats: ScanStats = { skipped: 0 }):
 // 2. Codex scanner
 export function scanCodexFile(path: string, stats: ScanStats = { skipped: 0 }): RawUsageRecord[] {
   const records: RawUsageRecord[] = [];
-  let content = "";
-  try {
-    if (path.endsWith(".zst")) {
-      const proc = Bun.spawnSync(["zstd", "-dc", path]);
-      if (proc.exitCode !== 0) return [];
-      content = proc.stdout.toString();
-    } else {
-      content = readFileSync(path, "utf-8");
+  let content: string;
+  if (path.endsWith(".zst")) {
+    let proc: ReturnType<typeof Bun.spawnSync>;
+    try {
+      proc = Bun.spawnSync(["zstd", "-dc", path], { stdout: "pipe", stderr: "ignore" });
+    } catch (err) {
+      if ((err as any)?.code === "ENOENT" && !warnedMissingZstd) {
+        warnedMissingZstd = true;
+        console.warn("[Pigeon] zstd is not installed; compressed Codex usage logs will be retried later");
+      }
+      throw err;
     }
-  } catch {
-    return [];
+    if (proc.exitCode !== 0) {
+      throw new Error(`zstd exited with code ${proc.exitCode} for ${path}`);
+    }
+    content = (proc.stdout ?? "").toString();
+  } else {
+    content = readFileSync(path, "utf-8");
   }
 
   let currentModel = "gpt-4o";
@@ -511,8 +515,18 @@ export function scanAntigravityCacheDb(path: string): RawUsageRecord[] {
   return records;
 }
 
+export interface OpenCodeScanCursor {
+  lastRowId: number;
+  lastUpdatedMs: number;
+  onProgress?: (maxRowId: number, maxUpdatedMs: number) => void;
+}
+
 // 5. OpenCode scanner
-export function scanOpenCodeDb(path: string, stats: ScanStats = { skipped: 0 }): RawUsageRecord[] {
+export function scanOpenCodeDb(
+  path: string,
+  stats: ScanStats = { skipped: 0 },
+  cursor?: OpenCodeScanCursor
+): RawUsageRecord[] {
   const records: RawUsageRecord[] = [];
   let db: Database | null = null;
   try {
@@ -523,12 +537,52 @@ export function scanOpenCodeDb(path: string, stats: ScanStats = { skipped: 0 }):
     const hasSessionMessage = (db.query("SELECT 1 FROM sqlite_master WHERE type='table' AND name='session_message'").get() as any) !== undefined;
     const hasMessage = (db.query("SELECT 1 FROM sqlite_master WHERE type='table' AND name='message'").get() as any) !== undefined;
     const tableName = hasSessionMessage ? "session_message" : (hasMessage ? "message" : null);
-    if (!tableName) return [];
+    if (!tableName) {
+      cursor?.onProgress?.(cursor.lastRowId, cursor.lastUpdatedMs);
+      return [];
+    }
 
-    const rows: any[] = db
-      .query(`SELECT id, session_id, time_created, data FROM ${tableName} WHERE data IS NOT NULL`)
-      .all();
+    const cols = (db.query(`PRAGMA table_info('${tableName}')`).all() as Array<{ name: string }>).map((c) => c.name);
+    const hasTimeUpdated = cols.includes("time_updated");
+    const maxRowRow = db.query(`SELECT COALESCE(MAX(rowid), 0) as max_rid FROM ${tableName}`).get() as { max_rid: number };
+    const effectiveLastRowId = cursor && cursor.lastRowId > 0 && cursor.lastRowId <= maxRowRow.max_rid ? cursor.lastRowId : 0;
+
+    let rows: any[];
+    if (effectiveLastRowId > 0) {
+      const rowThreshold = Math.max(0, effectiveLastRowId - 50);
+      if (hasTimeUpdated && cursor!.lastUpdatedMs > 0) {
+        const overlap = cursor!.lastUpdatedMs > 1e11 ? 60_000 : 60;
+        const updThreshold = Math.max(0, cursor!.lastUpdatedMs - overlap);
+        rows = db
+          .query(
+            `SELECT rowid as _rid, id, session_id, time_created, time_updated, data
+             FROM ${tableName}
+             WHERE data IS NOT NULL AND rowid IN (
+               SELECT rowid FROM ${tableName} WHERE rowid > ?
+               UNION
+               SELECT rowid FROM ${tableName} WHERE COALESCE(time_updated, time_created, 0) >= ?
+             )`
+          )
+          .all(rowThreshold, updThreshold);
+      } else {
+        rows = db
+          .query(`SELECT rowid as _rid, id, session_id, time_created, data FROM ${tableName} WHERE data IS NOT NULL AND rowid > ?`)
+          .all(rowThreshold);
+      }
+    } else {
+      rows = db
+        .query(`SELECT rowid as _rid, id, session_id, time_created${hasTimeUpdated ? ", time_updated" : ""}, data FROM ${tableName} WHERE data IS NOT NULL`)
+        .all();
+    }
+
+    let maxRowId = effectiveLastRowId;
+    let maxUpdatedMs = effectiveLastRowId > 0 ? (cursor?.lastUpdatedMs ?? 0) : 0;
+
     for (const r of rows) {
+      if (typeof r._rid === "number" && r._rid > maxRowId) maxRowId = r._rid;
+      const rawUpd = hasTimeUpdated ? Number(r.time_updated ?? r.time_created ?? 0) : Number(r.time_created ?? 0);
+      if (Number.isFinite(rawUpd) && rawUpd > maxUpdatedMs) maxUpdatedMs = rawUpd;
+
       if (!r.data) continue;
       let d: any;
       try {
@@ -569,6 +623,7 @@ export function scanOpenCodeDb(path: string, stats: ScanStats = { skipped: 0 }):
         totalTokens: total,
       });
     }
+    cursor?.onProgress?.(maxRowId, maxUpdatedMs);
   } finally {
     if (db) db.close();
   }
@@ -579,12 +634,7 @@ export function scanOpenCodeDb(path: string, stats: ScanStats = { skipped: 0 }):
 // 6. Pi scanner
 export function scanPiFile(path: string, stats: ScanStats = { skipped: 0 }): RawUsageRecord[] {
   const records: RawUsageRecord[] = [];
-  let content = "";
-  try {
-    content = readFileSync(path, "utf-8");
-  } catch {
-    return [];
-  }
+  const content = readFileSync(path, "utf-8");
 
   let currentModel = "pi";
   let sessionId = path.slice(path.lastIndexOf("/") + 1).replace(/\.jsonl$/, "");

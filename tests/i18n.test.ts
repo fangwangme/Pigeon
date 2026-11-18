@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { en } from "../src/client/src/i18n/en";
-import { LOCALES, relativeTime, resolveLocale, translate, withFallback, type MessageId } from "../src/client/src/i18n";
+import { LOCALES, relativeTime, resolveLocale, translate, type MessageId } from "../src/client/src/i18n";
 
 // mobile-ui-and-themes.md §10.
 const placeholders = (v: string | Record<string, string>): string[] =>
@@ -39,8 +39,13 @@ describe("dictionaries (mobile-ui-and-themes.md §10.3)", () => {
   });
 
   test("a message a language lacks shows the English text, not the id", () => {
-    const partial = withFallback({});
-    for (const id of Object.keys(en) as MessageId[]) expect(partial[id]).toEqual(en[id]);
+    const saved = LOCALES.zh.messages["time.justNow"];
+    delete (LOCALES.zh.messages as Partial<Record<MessageId, unknown>>)["time.justNow"];
+    try {
+      expect(translate("zh", "time.justNow")).toBe(en["time.justNow"]);
+    } finally {
+      LOCALES.zh.messages["time.justNow"] = saved;
+    }
   });
 
   test("named placeholders are filled and counts pick the plural form", () => {

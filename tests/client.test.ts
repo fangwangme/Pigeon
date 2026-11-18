@@ -2,9 +2,9 @@ import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { PALETTES } from "../src/client/src/themes";
-import { formatModelNameWithRecipes } from "../src/client/src/utils/model-name";
+import { formatModelNameWithRecipes } from "../src/shared/model-name";
 import { renderMarkdown } from "../src/client/src/utils/markdown";
-import { callCommand, callInputText } from "../src/client/src/utils/tool-call";
+import { activePlanForInteraction, callCommand, callInputText } from "../src/client/src/utils/tool-call";
 import type { NormalizedToolCall } from "../src/types/protocol";
 import { state, setState, quotaButtonShown, quotaUsageTarget } from "../src/client/src/state/store";
 import { applyClientConfigWithTransitions, sendConfigPatch, handleServerMessage, initWebSocket } from "../src/client/src/state/ws";
@@ -139,48 +139,59 @@ describe("quota and usage switches (mobile-ui-and-themes.md §11.1, §11.4)", ()
   });
 
   test("client state transitions clear only the disabled feature and apply push updates (quota-and-usage.md §1.1, protocol.md §5.11–§5.12)", () => {
-    // 1. Turning off quotaEnabled clears quotaSnapshots/quotaUpdated without clearing usageScannedAt
-    setState("quotaEnabled", true);
-    setState("usageEnabled", true);
-    setState("quotaSnapshots", [{ provider: "claude" as const, enabled: true, snapshot: null, error: null }]);
-    setState("quotaUpdated", 1700000000000);
-    setState("usageScannedAt", 1700000005000);
+    const prev = {
+      quotaEnabled: state.quotaEnabled,
+      usageEnabled: state.usageEnabled,
+      quotaSnapshots: state.quotaSnapshots,
+      quotaUpdated: state.quotaUpdated,
+      usageScannedAt: state.usageScannedAt,
+    };
+    try {
+      // 1. Turning off quotaEnabled clears quotaSnapshots/quotaUpdated without clearing usageScannedAt
+      setState("quotaEnabled", true);
+      setState("usageEnabled", true);
+      setState("quotaSnapshots", [{ provider: "claude" as const, enabled: true, snapshot: null, error: null }]);
+      setState("quotaUpdated", 1700000000000);
+      setState("usageScannedAt", 1700000005000);
 
-    applyClientConfigWithTransitions({ quotaEnabled: false });
-    expect(state.quotaEnabled).toBe(false);
-    expect(state.quotaSnapshots).toEqual([]);
-    expect(state.quotaUpdated).toBeNull();
-    expect(state.usageEnabled).toBe(true);
-    expect(state.usageScannedAt).toBe(1700000005000);
+      applyClientConfigWithTransitions({ quotaEnabled: false });
+      expect(state.quotaEnabled).toBe(false);
+      expect(state.quotaSnapshots).toEqual([]);
+      expect(state.quotaUpdated).toBeNull();
+      expect(state.usageEnabled).toBe(true);
+      expect(state.usageScannedAt).toBe(1700000005000);
 
-    // 2. Push events update store silently when enabled
-    applyClientConfigWithTransitions({ quotaEnabled: true });
-    handleServerMessage({
-      type: "quota_updated",
-      payload: {
-        providers: [{ provider: "claude", enabled: true, snapshot: { provider: "claude", windows: [], credits: [], fetchedAt: 1700000020000 }, error: null }],
-        fetchedAt: 1700000020000,
-      },
-    });
-    expect(state.quotaUpdated).toBe(1700000020000);
-    expect(state.quotaSnapshots[0]?.snapshot?.fetchedAt).toBe(1700000020000);
+      // 2. Push events update store silently when enabled
+      applyClientConfigWithTransitions({ quotaEnabled: true });
+      handleServerMessage({
+        type: "quota_updated",
+        payload: {
+          providers: [{ provider: "claude", enabled: true, snapshot: { provider: "claude", windows: [], credits: [], fetchedAt: 1700000020000 }, error: null }],
+          fetchedAt: 1700000020000,
+        },
+      });
+      expect(state.quotaUpdated).toBe(1700000020000);
+      expect(state.quotaSnapshots[0]?.snapshot?.fetchedAt).toBe(1700000020000);
 
-    handleServerMessage({
-      type: "usage_updated",
-      payload: { scannedAt: 1700000030000 },
-    });
-    expect(state.usageScannedAt).toBe(1700000030000);
+      handleServerMessage({
+        type: "usage_updated",
+        payload: { scannedAt: 1700000030000 },
+      });
+      expect(state.usageScannedAt).toBe(1700000030000);
 
-    // 3. sendConfigPatch turning off quotaEnabled clears snapshots immediately; usageEnabled off clears usageScannedAt
-    void sendConfigPatch({ quotaEnabled: false });
-    expect(state.quotaEnabled).toBe(false);
-    expect(state.quotaSnapshots).toEqual([]);
-    expect(state.quotaUpdated).toBeNull();
-    expect(state.usageScannedAt).toBe(1700000030000);
+      // 3. sendConfigPatch turning off quotaEnabled clears snapshots immediately; usageEnabled off clears usageScannedAt
+      void sendConfigPatch({ quotaEnabled: false });
+      expect(state.quotaEnabled).toBe(false);
+      expect(state.quotaSnapshots).toEqual([]);
+      expect(state.quotaUpdated).toBeNull();
+      expect(state.usageScannedAt).toBe(1700000030000);
 
-    void sendConfigPatch({ usageEnabled: false });
-    expect(state.usageEnabled).toBe(false);
-    expect(state.usageScannedAt).toBeNull();
+      void sendConfigPatch({ usageEnabled: false });
+      expect(state.usageEnabled).toBe(false);
+      expect(state.usageScannedAt).toBeNull();
+    } finally {
+      setState(prev);
+    }
   });
 
   test("sendConfigPatch turn-on waits for server ack then reads cached quota on initiating phone (quota-and-usage.md §1.1)", async () => {
@@ -189,6 +200,11 @@ describe("quota and usage switches (mobile-ui-and-themes.md §11.1, §11.4)", ()
     const origWs = globalThis.WebSocket;
     const origFetch = globalThis.fetch;
     const origWindow = globalThis.window;
+    const prev = {
+      quotaEnabled: state.quotaEnabled,
+      quotaSnapshots: state.quotaSnapshots,
+      quotaLoading: state.quotaLoading,
+    };
 
     try {
       globalThis.window = {
@@ -254,11 +270,19 @@ describe("quota and usage switches (mobile-ui-and-themes.md §11.1, §11.4)", ()
       await patchPromise;
 
       // 4. After server ack, quota_get is sent
-      expect(sentFrames.some((f) => f.type === "quota_get")).toBe(true);
+      const quotaFrame = sentFrames.find((f) => f.type === "quota_get");
+      expect(quotaFrame).toBeDefined();
+      handleServerMessage({
+        type: "ack",
+        replyTo: quotaFrame.id,
+        payload: { status: "ok", providers: [], fetchedAt: 0 },
+      });
+      await Promise.resolve();
     } finally {
       if (fakeWsInstance) {
         fakeWsInstance.close();
       }
+      setState(prev);
       globalThis.WebSocket = origWs;
       globalThis.fetch = origFetch;
       globalThis.window = origWindow;
@@ -302,5 +326,19 @@ describe("code blocks and heatmap scales (mobile-ui-and-themes.md §3.2, §9.1)"
     for (const k of keys) expect(PALETTES.dark[k]).toBe(PALETTES.light[k]);
     expect(luminance(PALETTES.light.heatTokens1)).toBeGreaterThan(luminance(PALETTES.light.heatTokens5));
     expect(luminance(PALETTES.light.heatCost1)).toBeGreaterThan(luminance(PALETTES.light.heatCost5));
+  });
+});
+
+describe("plan and artifact card selection (mobile-ui-and-themes.md §4.3, protocol.md §5.4)", () => {
+  test("artifact pendingPlan applies only to transcript interactions while regular plans also wrap screen options", () => {
+    const artifactPlan = { markdown: "# Spec", title: "spec.md", artifact: true };
+    expect(activePlanForInteraction("transcript", artifactPlan)).toEqual(artifactPlan);
+    expect(activePlanForInteraction("screen", artifactPlan)).toBeUndefined();
+    expect(activePlanForInteraction(undefined, artifactPlan)).toBeUndefined();
+
+    const exitPlan = { markdown: "# Plan\n1. Step" };
+    expect(activePlanForInteraction("transcript", exitPlan)).toEqual(exitPlan);
+    expect(activePlanForInteraction("screen", exitPlan)).toEqual(exitPlan);
+    expect(activePlanForInteraction("transcript", { markdown: "" })).toBeUndefined();
   });
 });

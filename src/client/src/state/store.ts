@@ -27,7 +27,7 @@ import {
   type HomePrefs,
 } from "./list-prefs";
 
-export type { SkillEntry, AgentRecipeSummary, AgentsFilter, HomePrefs };
+export type { AgentsFilter };
 
 export type Route =
   | { name: "home" }
@@ -79,7 +79,6 @@ export interface AppState {
   homePrefs: HomePrefs;
   foldedGroupOpen: boolean;
   collapsed: Record<string, boolean>;
-  unread: Record<string, boolean>;
   canInstallPWA: boolean;
   configReady: boolean;
   quotaLoading: boolean;
@@ -166,7 +165,6 @@ const [state, setState] = createStore<AppState>({
   homePrefs: readJson<HomePrefs>("pigeon_home_prefs", DEFAULT_HOME_PREFS),
   foldedGroupOpen: readPref("pigeon_folded_group_open") === "1",
   collapsed: readJson<Record<string, boolean>>("pigeon_collapsed", {}),
-  unread: readJson<Record<string, boolean>>("pigeon_unread", {}),
   canInstallPWA: false,
   configReady: false,
   quotaLoading: false,
@@ -270,13 +268,6 @@ export function toggleCollapsed(workspaceId: string): void {
   writePref("pigeon_collapsed", JSON.stringify(state.collapsed));
 }
 
-export function setUnread(paneId: string, value: boolean): void {
-  if (!!state.unread[paneId] === value) return;
-  // A store merges objects, so a key is removed by setting it to undefined.
-  setState("unread", paneId, value ? true : undefined!);
-  writePref("pigeon_unread", JSON.stringify(state.unread));
-}
-
 export function navigate(route: Route): void {
   setState("route", route);
   writePref("pigeon_route", JSON.stringify(route));
@@ -288,16 +279,20 @@ export function navigate(route: Route): void {
   }
 }
 
-export function goBack(): void {
-  const r = state.route;
-  if (r.name === "home") return;
+export function backRoute(r: Route = state.route): Route | null {
+  if (r.name === "home") return null;
   if (r.name === "session") {
-    navigate({ name: r.from === "agents" ? "agents" : "home" });
-  } else if (r.name === "quota" || r.name === "usage") {
-    navigate({ name: (r as { from?: "home" | "agents" | "settings" }).from || "home" });
-  } else {
-    navigate({ name: "home" });
+    return { name: r.from === "agents" ? "agents" : "home" };
   }
+  if (r.name === "quota" || r.name === "usage") {
+    return { name: (r as { from?: "home" | "agents" | "settings" }).from || "home" };
+  }
+  return { name: "home" };
+}
+
+export function goBack(): void {
+  const next = backRoute();
+  if (next) navigate(next);
 }
 
 export function showToast(message: string): void {

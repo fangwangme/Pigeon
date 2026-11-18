@@ -1,7 +1,7 @@
 import { render } from "solid-js/web";
-import { createEffect, createSignal, Match, on, onMount, Show, Switch } from "solid-js";
+import { batch, createEffect, createSignal, Match, on, onMount, Show, Switch } from "solid-js";
 import "./styles.css";
-import { goBack, navigate, quotaFeatureOn, setState, state, systemReducesTransparency, usageFeatureOn } from "./state/store";
+import { backRoute, goBack, navigate, quotaFeatureOn, setState, state, systemReducesTransparency, usageFeatureOn, type Route } from "./state/store";
 import { applyTheme } from "./themes";
 import { checkPairingFromUrlHash, initWebSocket, reportPresence, selectPane } from "./state/ws";
 import { dropCachedShell } from "./state/shell";
@@ -12,6 +12,7 @@ import { SessionPage } from "./components/SessionPage";
 import { Pairing, Settings } from "./components/Settings";
 import { QuotaPage } from "./components/QuotaPage";
 import { UsagePage } from "./components/UsagePage";
+import { canScrollRightward } from "./components/ui";
 import { t } from "./i18n";
 
 applyTheme(state.themeMode, state.accent);
@@ -82,70 +83,116 @@ if (typeof window !== "undefined") {
 let waitingWorker: ServiceWorker | null = null;
 let updateRequested = false;
 
-function isInsideHorizontalScroller(el: Element | null): boolean {
-  while (el && el !== document.body && el !== document.documentElement) {
-    if (el.matches?.(".chipr, table, pre, code, .cb, .dfb")) return true;
-    try {
-      const style = window.getComputedStyle(el);
-      if (style.overflowX === "auto" || style.overflowX === "scroll") return true;
-    } catch {}
-    el = el.parentElement;
-  }
-  return false;
-}
+const [swipeTarget, setSwipeTarget] = createSignal<Route | null>(null);
+const [swipeDx, setSwipeDx] = createSignal(0);
+const [swipeSettling, setSwipeSettling] = createSignal(false);
 
 let touchStartX = 0;
 let touchStartY = 0;
-let eligibleSwipe = false;
+let lastTouchX = 0;
+let lastTouchT = 0;
+let touchVx = 0;
+let swipeMode: "none" | "pending" | "horiz" = "none";
+
+function finishSwipe(commit: boolean) {
+  swipeMode = "none";
+  const reduced = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+  if (reduced) {
+    batch(() => {
+      if (commit) goBack();
+      setSwipeSettling(false);
+      setSwipeDx(0);
+      setSwipeTarget(null);
+    });
+    return;
+  }
+  const width = window.innerWidth || 390;
+  setSwipeSettling(true);
+  setSwipeDx(commit ? width : 0);
+  setTimeout(() => {
+    batch(() => {
+      if (commit) goBack();
+      setSwipeSettling(false);
+      setSwipeDx(0);
+      setSwipeTarget(null);
+    });
+  }, 200);
+}
 
 if (typeof window !== "undefined") {
   window.addEventListener("touchstart", (e) => {
-    if (e.touches.length !== 1) {
-      eligibleSwipe = false;
+    if (e.touches.length !== 1 || !state.paired || swipeSettling()) {
+      swipeMode = "none";
       return;
     }
-    if (state.route.name === "home") {
-      eligibleSwipe = false;
+    if (!backRoute(state.route)) {
+      swipeMode = "none";
+      return;
+    }
+    if (document.querySelector(".overlay, .img-viewer-overlay, .alert-dialog-overlay, .menuwrap, [data-overlay]")) {
+      swipeMode = "none";
       return;
     }
     const touch = e.touches[0];
-    if (touch.clientX > 24) {
-      eligibleSwipe = false;
-      return;
-    }
-    if (isInsideHorizontalScroller(touch.target as Element | null)) {
-      eligibleSwipe = false;
+    if (touch.clientX > 44 || canScrollRightward(touch.target)) {
+      swipeMode = "none";
       return;
     }
     touchStartX = touch.clientX;
     touchStartY = touch.clientY;
-    eligibleSwipe = true;
+    lastTouchX = touch.clientX;
+    lastTouchT = performance.now();
+    touchVx = 0;
+    swipeMode = "pending";
   }, { passive: true });
 
   window.addEventListener("touchmove", (e) => {
-    if (!eligibleSwipe || e.touches.length !== 1) return;
+    if (swipeMode === "none" || e.touches.length !== 1) return;
     const touch = e.touches[0];
-    const dy = Math.abs(touch.clientY - touchStartY);
     const dx = touch.clientX - touchStartX;
-    if (dy > 30 && dy > dx) {
-      eligibleSwipe = false;
+    const dy = Math.abs(touch.clientY - touchStartY);
+    if (swipeMode === "pending") {
+      if (dy > 12 && dy > dx) {
+        swipeMode = "none";
+        return;
+      }
+      if (dx > 10 && dx > dy * 1.15) {
+        const next = backRoute(state.route);
+        if (!next) {
+          swipeMode = "none";
+          return;
+        }
+        swipeMode = "horiz";
+        setSwipeSettling(false);
+        setSwipeTarget(next);
+      } else {
+        return;
+      }
     }
-  }, { passive: true });
+    if (e.cancelable) e.preventDefault();
+    const now = performance.now();
+    const dt = now - lastTouchT;
+    if (dt > 0) touchVx = 0.6 * ((touch.clientX - lastTouchX) / dt) + 0.4 * touchVx;
+    lastTouchX = touch.clientX;
+    lastTouchT = now;
+    setSwipeDx(Math.max(0, dx));
+  }, { passive: false });
 
   window.addEventListener("touchend", (e) => {
-    if (!eligibleSwipe) return;
-    eligibleSwipe = false;
-    const touch = e.changedTouches[0];
-    if (!touch) return;
-    const dx = touch.clientX - touchStartX;
-    const dy = Math.abs(touch.clientY - touchStartY);
-    if (dx >= 80 && dx > dy) {
-      goBack();
+    if (swipeMode !== "horiz") {
+      swipeMode = "none";
+      return;
     }
+    const touch = e.changedTouches[0];
+    const dx = touch ? touch.clientX - touchStartX : swipeDx();
+    const width = window.innerWidth || 390;
+    const shouldNavigate = dx >= Math.min(120, width * 0.32) || (touchVx >= 0.5 && dx > 32);
+    finishSwipe(shouldNavigate);
   }, { passive: true });
 
   window.addEventListener("touchcancel", () => {
-    eligibleSwipe = false;
+    if (swipeMode === "horiz") finishSwipe(false);
+    else swipeMode = "none";
   }, { passive: true });
 }
 
@@ -252,35 +299,61 @@ function App() {
     }
   });
   const solid = () => state.reduceTransparency ?? systemReduce();
+  const swipeActive = () => swipeTarget() !== null;
+  const swipeProgress = () => {
+    const w = typeof window !== "undefined" ? window.innerWidth || 390 : 390;
+    return Math.min(1, Math.max(0, swipeDx() / w));
+  };
+
+  const renderRouteView = (route: () => Route) => (
+    <Switch>
+      <Match when={!state.paired}>
+        <Pairing />
+      </Match>
+      <Match when={route().name === "home"}>
+        <Home />
+      </Match>
+      <Match when={route().name === "agents"}>
+        <AgentsPage />
+      </Match>
+      <Match when={route().name === "session"}>
+        <SessionPage />
+      </Match>
+      <Match when={route().name === "new" && route()} keyed>
+        {(r) => <NewSession workspaceId={(r as { workspaceId: string | null }).workspaceId} mode={(r as { mode: "new" | "resume" }).mode} />}
+      </Match>
+      <Match when={route().name === "settings"}>
+        <Settings />
+      </Match>
+      <Match when={(quotaFeatureOn() || usageFeatureOn()) && route().name === "quota"}>
+        <QuotaPage />
+      </Match>
+      <Match when={(quotaFeatureOn() || usageFeatureOn()) && route().name === "usage"}>
+        <UsagePage />
+      </Match>
+    </Switch>
+  );
 
   return (
     <div class={solid() ? "solid" : ""} style={{ height: "100%" }}>
-      <Switch>
-        <Match when={!state.paired}>
-          <Pairing />
-        </Match>
-        <Match when={state.route.name === "home"}>
-          <Home />
-        </Match>
-        <Match when={state.route.name === "agents"}>
-          <AgentsPage />
-        </Match>
-        <Match when={state.route.name === "session"}>
-          <SessionPage />
-        </Match>
-        <Match when={state.route.name === "new" && state.route} keyed>
-          {(r) => <NewSession workspaceId={(r as { workspaceId: string | null }).workspaceId} mode={(r as { mode: "new" | "resume" }).mode} />}
-        </Match>
-        <Match when={state.route.name === "settings"}>
-          <Settings />
-        </Match>
-        <Match when={(quotaFeatureOn() || usageFeatureOn()) && state.route.name === "quota"}>
-          <QuotaPage />
-        </Match>
-        <Match when={(quotaFeatureOn() || usageFeatureOn()) && state.route.name === "usage"}>
-          <UsagePage />
-        </Match>
-      </Switch>
+      <Show when={swipeTarget()}>
+        {(target) => (
+          <div
+            class={`swipe-under${swipeSettling() ? " settling" : ""}`}
+            inert
+            style={{ transform: `translate3d(${(-28 * (1 - swipeProgress())).toFixed(2)}%, 0, 0)` }}
+          >
+            {renderRouteView(target)}
+            <div class="swipe-dim" style={{ opacity: (0.28 * (1 - swipeProgress())).toFixed(3) }} />
+          </div>
+        )}
+      </Show>
+      <div
+        class={`swipe-over${swipeActive() ? " dragging" : ""}${swipeSettling() ? " settling" : ""}`}
+        style={swipeActive() ? { transform: `translate3d(${Math.round(swipeDx())}px, 0, 0)` } : undefined}
+      >
+        {renderRouteView(() => state.route)}
+      </div>
       <Overlays />
       <Show when={state.updateAvailable}>
         <button class="toast update" onClick={applyUpdate}>

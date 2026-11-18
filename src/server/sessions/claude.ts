@@ -2,7 +2,7 @@ import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import type { FileDiffSummary, SubagentInfo, TodoItem } from "../../shared/agent-session";
 import type { PastSession } from "../../types/protocol";
-import { claudeSlug, countPatch, fileFallbackTs, isEnoent, isObj, JsonlTail, lineDiff, readHeadJsonLines, readTailJsonLines, str, todoStatus, TurnBuilder, type SessionRead } from "./common";
+import { claudeSlug, countPatch, extractBlocksText, fileFallbackTs, isEnoent, isObj, JsonlTail, lineDiff, readHeadJsonLines, readListingJsonLines, str, todoStatus, TurnBuilder, type SessionRead } from "./common";
 import type { PaneFacts, SessionSource } from "./source";
 
 /** Claude Code (`agent-session-normalization.md` §2.3). */
@@ -148,28 +148,19 @@ export class ClaudeSource implements SessionSource {
     const result: PastSession[] = [];
     for (const s of out) {
       if (result.length >= 50) break;
-      const head = readHeadJsonLines(s.path);
+      const records = readListingJsonLines(s.path, s.size);
       // The slug is lossy (`-` stands for many characters); the records' cwd confirms the folder.
-      const cwd = head.map((r: any) => (isObj(r) ? str(r.cwd) : undefined)).find(Boolean);
+      const cwd = records.map((r: any) => (isObj(r) ? str(r.cwd) : undefined)).find(Boolean);
       if (cwd && cwd !== folder && !cwd.startsWith(folder + "/")) continue;
       let title: string | undefined;
       let firstPrompt: string | undefined;
       let model: string | undefined;
-      for (const r of head) {
+      for (const r of records) {
         if (!isObj(r)) continue;
         if (r.type === "custom-title" || r.type === "ai-title") title = str(r.customTitle) ?? str(r.aiTitle) ?? title;
         if (!firstPrompt && r.type === "user") firstPrompt = promptText(r) ?? undefined;
         if (r.type === "assistant" && isObj(r.message) && typeof r.message.model === "string" && r.message.model && r.message.model !== "<synthetic>") {
           model = r.message.model;
-        }
-      }
-      if (s.size > 262_144) {
-        for (const r of readTailJsonLines(s.path)) {
-          if (!isObj(r)) continue;
-          if (r.type === "custom-title" || r.type === "ai-title") title = str(r.customTitle) ?? str(r.aiTitle) ?? title;
-          if (r.type === "assistant" && isObj(r.message) && typeof r.message.model === "string" && r.message.model && r.message.model !== "<synthetic>") {
-            model = r.message.model;
-          }
         }
       }
       this.paths.set(s.id, s.path);
@@ -197,12 +188,6 @@ function promptText(r: Record<string, any>): string | null {
   const text = content.filter((b) => isObj(b) && b.type === "text").map((b) => b.text).join("\n");
   if (!text || NOT_PROMPT.test(text)) return null;
   return text;
-}
-
-function resultText(content: unknown): string {
-  if (typeof content === "string") return content;
-  if (Array.isArray(content)) return content.filter((b) => isObj(b) && b.type === "text").map((b) => b.text).join("\n");
-  return "";
 }
 
 function editDiffs(name: string, input: Record<string, any>): FileDiffSummary[] | undefined {
@@ -294,12 +279,6 @@ class ClaudeSubagents {
   }
 }
 
-function rawUserText(content: unknown): string {
-  if (typeof content === "string") return content;
-  if (Array.isArray(content)) return content.filter((b) => isObj(b) && b.type === "text").map((b) => b.text).join("\n");
-  return "";
-}
-
 function applyRecord(b: TurnBuilder, r: unknown, allowSidechain = false, subagents?: ClaudeSubagents): void {
   if (!isObj(r) || (!allowSidechain && r.isSidechain === true)) return;
   const ts = b.resolveTs(r.timestamp);
@@ -310,7 +289,7 @@ function applyRecord(b: TurnBuilder, r: unknown, allowSidechain = false, subagen
   if (r.type === "user") {
     const content = r.message?.content;
     if (r.isCompactSummary === true) {
-      b.compact(resultText(content), ts);
+      b.compact(extractBlocksText(content), ts);
       return;
     }
     if (Array.isArray(content)) {
@@ -318,7 +297,7 @@ function applyRecord(b: TurnBuilder, r: unknown, allowSidechain = false, subagen
         if (!isObj(block) || block.type !== "tool_result") continue;
         const id = str(block.tool_use_id);
         if (!id) continue;
-        const output = resultText(block.content);
+        const output = extractBlocksText(block.content);
         const exit = /^Exit code (\d+)/.exec(output);
         const call = b.toolResult(id, output, block.is_error === true, ts, exit ? Number(exit[1]) : undefined);
         subagents?.toolResult(id, block.is_error === true, r.toolUseResult);
@@ -343,7 +322,7 @@ function applyRecord(b: TurnBuilder, r: unknown, allowSidechain = false, subagen
       }
     }
     if (subagents && isObj(r.origin) && r.origin.kind === "task-notification") {
-      subagents.taskNotification(rawUserText(content));
+      subagents.taskNotification(extractBlocksText(content));
     }
     const text = promptText(r);
     if (text !== null) {

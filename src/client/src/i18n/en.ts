@@ -104,6 +104,7 @@ export const en = {
   "home.search": "Search",
 
   "menu.copyBranch": "Copy branch",
+  "menu.copyPaneId": "Copy terminal ID",
   "menu.viewTerminal": "View terminal",
 
   "model.title": "Model and effort",
@@ -178,8 +179,13 @@ export const en = {
   "prompt.submit": "Submit",
   "prompt.nextShort": "Next",
   "prompt.planPending": "Plan awaiting approval",
+  "prompt.artifactPending": "Artifact ready for review",
   "prompt.fullText": "Full text",
   "prompt.plan": "Plan",
+  "prompt.artifact": "Artifact",
+  "prompt.proceed": "Proceed",
+  "prompt.skip": "Skip",
+  "prompt.artifactHint": "Or reply in the box below with feedback or save instructions",
   "prompt.questionsWaiting": { one: "{count} question waiting for you", other: "{count} questions waiting for you" },
 
   "rename.failed": "Couldn't rename",
@@ -380,6 +386,8 @@ export const en = {
   "usage.agentAndModel": "Agents & models",
   "usage.level": "Level {level}",
   "usage.levelEmpty": "0 (Empty)",
+  "usage.retry": "Retry",
+  "usage.loadFailed": "Couldn't load usage details",
 
   "settings.quotaUsage": "Quota & usage",
   "settings.quotaEnabled": "Enable subscription quota",

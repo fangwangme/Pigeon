@@ -1,6 +1,6 @@
 {
   "name": "pigeon",
-  "version": "0.1.16",
+  "version": "0.1.17",
   "description": "Mobile-first voice-driven remote control and mirror client for Herdr",
   "type": "module",
   "private": true,
@@ -11,8 +11,8 @@
     "dev": "vite",
     "dev:server": "bun --watch ./src/cli/index.ts start --port 4101",
     "build:client": "vite build && bun run scripts/embed-html.ts",
-    "build:daemon": "bun build --compile --minify ./src/cli/index.ts --outfile dist/pigeon",
-    "build": "vite build && bun run scripts/embed-html.ts && bun build --compile --minify ./src/cli/index.ts --outfile dist/pigeon",
+    "build:daemon": "bun build --compile --minify ./src/cli/index.ts ./src/server/usage/scan-worker.ts --outfile dist/pigeon",
+    "build": "vite build && bun run scripts/embed-html.ts && bun build --compile --minify ./src/cli/index.ts ./src/server/usage/scan-worker.ts --outfile dist/pigeon",
     "test": "bun test"
   },
   "dependencies": {

@@ -105,6 +105,7 @@ export const zh: Messages = {
   "home.search": "搜索",
 
   "menu.copyBranch": "复制分支",
+  "menu.copyPaneId": "复制终端 ID",
   "menu.viewTerminal": "查看终端",
 
   "model.title": "模型与思考强度",
@@ -179,8 +180,13 @@ export const zh: Messages = {
   "prompt.submit": "提交",
   "prompt.nextShort": "下一题",
   "prompt.planPending": "计划待批准",
+  "prompt.artifactPending": "文档待审阅",
   "prompt.fullText": "全文",
   "prompt.plan": "计划",
+  "prompt.artifact": "文档",
+  "prompt.proceed": "批准继续",
+  "prompt.skip": "跳过",
+  "prompt.artifactHint": "也可在下方输入框直接回复修改意见或保存指令",
   "prompt.questionsWaiting": "{count} 个问题等你回答",
 
   "rename.failed": "重命名失败",
@@ -381,6 +387,8 @@ export const zh: Messages = {
   "usage.agentAndModel": "Agent 与模型",
   "usage.level": "第 {level} 级",
   "usage.levelEmpty": "0（无用量）",
+  "usage.retry": "重试",
+  "usage.loadFailed": "读取用量详情失败",
 
   "settings.quotaUsage": "额度与用量",
   "settings.quotaEnabled": "启用订阅额度查询",

@@ -13,7 +13,7 @@ import { hasAgentPane, orderWorkspaces, splitAgentless, wsActivity, type HomeOrd
 import { selectPane } from "../state/ws";
 import type { PaneSummary, TabSummary, WorkspaceSummary } from "../../../types/protocol";
 import { openOverlay } from "./overlays";
-import { agentLabel, ago, Icon, Logo, modelLabel, paneStatus, paneSummary, primaryPane, StatusIcon, tabStatus, type RowStatus } from "./ui";
+import { agentLabel, ago, formatModelName, Icon, Logo, paneStatus, paneSummary, primaryPane, StatusIcon, tabStatus, type RowStatus } from "./ui";
 import { AgentIcon } from "./AgentIcon";
 import { t, type MessageId } from "../i18n";
 import { quotaDot } from "../../../shared/quota";
@@ -60,7 +60,7 @@ export function ConnectionBanner() {
   );
 }
 
-function TabRow(props: { ws: WorkspaceSummary; tab: TabSummary }) {
+function TabRow(props: { tab: TabSummary }) {
   const [open, setOpen] = createSignal(false);
   let startX = 0;
   let startY = 0;
@@ -69,7 +69,7 @@ function TabRow(props: { ws: WorkspaceSummary; tab: TabSummary }) {
   const status = () => tabStatus(props.tab);
   const sub = () => {
     const p = pane();
-    const parts = [p?.agent ? (modelLabel(p.model, p.agent) || agentLabel(p.agent)) : p?.program || t("agent.terminal")];
+    const parts = [p?.agent ? (formatModelName(p.agent, p.model) || agentLabel(p.agent)) : p?.program || t("agent.terminal")];
     if (props.tab.panes.length > 1) parts.push(t("home.paneCount", { count: props.tab.panes.length }));
     return parts.join(" · ");
   };
@@ -282,7 +282,7 @@ export function Home() {
           </button>
         </div>
         <Show when={!shut()}>
-          <For each={tabs()}>{(tab) => <TabRow ws={ws} tab={tab} />}</For>
+          <For each={tabs()}>{(tab) => <TabRow tab={tab} />}</For>
         </Show>
       </Show>
     );
@@ -484,7 +484,7 @@ export function AgentsPage() {
                                   <Icon name="folder" sm />
                                   {r.ws.label}
                                 </span>
-                                <span class="ag">{modelLabel(r.pane.model, r.pane.agent) || agentLabel(r.pane.agent)}</span>
+                                <span class="ag">{formatModelName(r.pane.agent, r.pane.model) || agentLabel(r.pane.agent)}</span>
                               </div>
                               <Show when={status === "blocked" && paneSummary(r.pane)}>
                                 <div class="p">{paneSummary(r.pane)}</div>
@@ -526,7 +526,7 @@ export function AgentsPage() {
                               <div class="tx">
                                 <div class="t">{r.tab.label}</div>
                                 <div class="s who">
-                                  <span class="ag">{modelLabel(r.pane.model, r.pane.agent) || agentLabel(r.pane.agent)}</span>
+                                  <span class="ag">{formatModelName(r.pane.agent, r.pane.model) || agentLabel(r.pane.agent)}</span>
                                 </div>
                                 <Show when={st() === "blocked" && paneSummary(r.pane)}>
                                   <div class="p">{paneSummary(r.pane)}</div>

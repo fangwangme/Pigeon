@@ -8,7 +8,6 @@ export type CardKind = "thought" | "tool_call" | "diff" | "markdown" | "interact
 export interface BaseCard {
   id: string;
   kind: CardKind;
-  timestamp?: number;
 }
 
 export interface ThoughtCard extends BaseCard {
@@ -310,8 +309,6 @@ export interface AgentRecipeSummary {
   kind: string;
   label: string;
   models: ModelOption[];
-  defaultModel?: string;
-  defaultThinking?: string;
   interruptKeys: string[];
   /** Whether `resumeSessionId` is accepted (`protocol.md` §4.5). */
   resumable: boolean;
@@ -420,13 +417,6 @@ export function toLightTurn(turn: NormalizedTurn): NormalizedTurn {
         },
       };
     }
-    if (item.kind === "reasoning") {
-      const { text, ...restReasoning } = item;
-      return {
-        ...restReasoning,
-        ...(text ? { hasText: true } : {}),
-      };
-    }
     return item;
   });
 
@@ -437,12 +427,9 @@ export function toLightTurn(turn: NormalizedTurn): NormalizedTurn {
   };
 }
 
-export function toLightStats(stats?: any): any {
+export function toLightStats(stats?: SessionStats): SessionStats | undefined {
   if (!stats) return undefined;
-  const files = (stats.files || stats.diffs || []).map((d: any) => {
-    const { patch, ...rest } = d;
-    return rest;
-  });
+  const files = (stats.diffs ?? []).map(({ patch: _patch, ...rest }) => rest);
   return {
     filesModified: stats.filesModified,
     additions: stats.additions,
@@ -494,6 +481,7 @@ export type ClientMessage =
   | { type: "client_diag"; payload: { events: DiagEvent[] } }
   | { type: "select_view"; id: string; payload: { paneId: string | null; have?: HaveInfo } }
   | { type: "interaction_respond"; id: string; payload: { targetPaneId: string; interactionId: string; optionId?: string; optionIds?: string[]; otherTexts?: Record<string, string>; fingerprint: string } }
+  | { type: "interaction_dismiss"; id: string; payload: { targetPaneId: string; interactionId: string } }
   | { type: "agent_prompt"; id: string; payload: { targetPaneId: string; text: string; attachments?: string[] } }
   | { type: "agent_send_keys"; id: string; payload: { targetPaneId: string; keys: string[] } }
   | { type: "create_tab_and_agent"; id: string; payload: { workspaceId: string; agentKind: string; modelId?: string; thinking?: string; cwd?: string; firstMessage?: string; resumeSessionId?: string } }

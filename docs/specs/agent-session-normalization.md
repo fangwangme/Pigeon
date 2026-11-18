@@ -44,7 +44,7 @@ Binding is re-evaluated for every pane on every snapshot (`herdr-adapter.md` §3
   - `GENERIC` is the output of the turn's first tool call without output. `status: "ERROR"` (or a non-zero `Command exited with code N`) is `failed`. `status: "RUNNING"` is a command AGY moved to the background (`Tool is running as a background task with task id: <task>`): the call keeps that output and stays `running` until a later `SYSTEM_MESSAGE` from `sender=<task>` says `Task id "<task>" finished with result:` (`completed`) or `was canceled with result:` (`failed`). Any other status is `completed`.
   - `ERROR_MESSAGE`: an agent error (issue #25). Its `error` text, else its `content`, becomes an `error` item (§3) with `errorKind` its `error_code`, else `unknown`. AGY retries on its own and records each attempt; consecutive ones fold (§3).
   - `CHECKPOINT`: a compaction; its `content` becomes a `compact` item (§3) in the current turn.
-  - A pending `ask_question` call (no output yet) is the turn's `pendingQuestion`: `args.questions` is a JSON text of `[{ question, is_multi_select, options }]` whose `options` are plain strings; each string is an option's `label`, `is_multi_select` is `multiSelect`, and there is no `header`. A pending `exit_plan_mode` call (`args.plan`) is the turn's `pendingPlan`.
+  - A pending `ask_question` call (no output yet) is the turn's `pendingQuestion`: `args.questions` is a JSON text of `[{ question, is_multi_select, options }]` whose `options` are plain strings; each string is an option's `label`, `is_multi_select` is `multiSelect`, and there is no `header`. A pending `exit_plan_mode` call (`args.plan`) is the turn's `pendingPlan`. When the session's latest turn has no pending `exit_plan_mode`, the last completed `write_file` or `edit_file` call in that turn whose `ArtifactMetadata` (object or JSON string) has `RequestFeedback: true` sets `pendingPlan` (`{ markdown, title, artifact: true }`, issue #35): `markdown` is read as UTF-8 from the call's `Path` only after `realpath` confirms the file sits inside `~/.gemini/antigravity-cli/brain/<id>/` (falling back to the call's `Content` when the file is absent), and `title` is the file's basename. Paths outside that session's brain directory are never read. A later user turn clears it.
 - **Sub-agents** (§3.4): the rows of `conversation_summaries` (§2.6, opened the same way) whose `parent_conversation_id` is this session, by `last_user_input_time` (the task it was given; the table's row order is not chronological). Id `conversation_id`; title `title`, else `agent_name`; type `agent_name`. Status: `killed` 1 is `failed`; `status` `CASCADE_RUN_STATUS_IDLE` or empty is `completed`; any other `status` is `running`. Its conversation is that id's transcript, read by this reader. A locked or changed database leaves the list empty (`architecture.md` §5). A conversation that `conversation_summaries` lists with a `parent_conversation_id` is never bound to a pane by §2.0 rules 2 and 6: its transcript is newer than its parent's and would otherwise move the parent's pane to it.
 - **Binding**: exact (§2.0 rule 1) when the AGY process holds `~/.gemini/antigravity-cli/presence/<id>.lock` or the session's transcript open; otherwise the transcript's modification time (no folder).
 - **Model**: the latest of a `USER_INPUT` record whose content reports that the user changed the `Model Selection` setting (a model label resolved through the model catalog, `herdr-adapter.md` §7.1) or a `PLANNER_RESPONSE` record's `model` field (a model id), in record order; source `log` (issue #25, user decision 2026-11-15). Tool outputs and other record types never count. Without either, the launch value, else unknown (`protocol.md` §5.6). The global `settings.json` is not read.
@@ -99,7 +99,7 @@ interface NormalizedTurn {
   turnNumber: number;
   timestamp: number;
   /** Time of the turn's latest record. */
-  updatedAt: number;
+  updatedAt?: number;
   userPrompt?: { text: string; files?: string[] };
   reasoning?: { text: string; durationMs?: number; isStreaming?: boolean };
   /** Text and tool calls in the order the agent produced them. */
@@ -113,7 +113,7 @@ interface NormalizedTurn {
   toolCalls?: NormalizedToolCall[];
   assistantResponse?: { markdown: string; isStreaming?: boolean };
   pendingQuestion?: NormalizedQuestion;
-  pendingPlan?: { markdown: string };
+  pendingPlan?: { markdown: string; title?: string; artifact?: boolean };
 }
 
 interface NormalizedToolCall {

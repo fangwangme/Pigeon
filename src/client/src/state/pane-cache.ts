@@ -1,5 +1,4 @@
-import type { NormalizedTurn, SessionStats, TodoItem, SessionInfo, HaveInfo, QueuedPrompt, AgentStatus, SubagentInfo } from "../../../types/protocol";
-import { hashTurn } from "../../../types/protocol";
+import type { NormalizedTurn, SessionStats, TodoItem, SessionInfo, QueuedPrompt, AgentStatus, SubagentInfo } from "../../../types/protocol";
 
 export const PANE_CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
 export const MAX_CACHED_PANES = 10;
@@ -24,7 +23,6 @@ export const DB_NAME = "pigeon";
 export const DB_VERSION = 2;
 export const STORE_NAME = "paneCache";
 
-const metaIndex = new Map<string, { sessionId: string; turnCount: number; lastTurnHash: string }>();
 const inMemoryViews = new Map<string, PaneCacheEntry>();
 
 export function getMemoryPaneView(paneId: string): PaneCacheEntry | undefined {
@@ -78,9 +76,6 @@ export function applyPaneTail(payload: {
   if (inMemoryViews.size > MAX_CACHED_PANES) {
     const oldestKey = inMemoryViews.keys().next().value;
     if (oldestKey && oldestKey !== payload.paneId) inMemoryViews.delete(oldestKey);
-  }
-  if (existing) {
-    updateMeta(entry);
   }
 }
 
@@ -143,16 +138,6 @@ function openDb(): Promise<IDBDatabase | null> {
   return dbOpenPromise;
 }
 
-function updateMeta(entry: { paneId: string; sessionId: string; turns: NormalizedTurn[] }): void {
-  const turnCount = entry.turns.length;
-  const lastTurnHash = turnCount > 0 ? hashTurn(entry.turns[turnCount - 1]) : "";
-  metaIndex.set(entry.paneId, {
-    sessionId: entry.sessionId,
-    turnCount,
-    lastTurnHash,
-  });
-}
-
 export async function load(paneId: string): Promise<PaneCacheEntry | null> {
   const db = await openDb();
   if (!db) return null;
@@ -163,16 +148,13 @@ export async function load(paneId: string): Promise<PaneCacheEntry | null> {
     req.onsuccess = () => {
       const val = req.result as PaneCacheEntry | undefined;
       if (!val) {
-        metaIndex.delete(paneId);
         inMemoryViews.delete(paneId);
         return resolve(null);
       }
       if (Date.now() - val.savedAt > PANE_CACHE_TTL_MS) {
-        metaIndex.delete(paneId);
         inMemoryViews.delete(paneId);
         return resolve(null);
       }
-      updateMeta(val);
       inMemoryViews.set(paneId, val);
       resolve(val);
     };
@@ -212,7 +194,6 @@ export async function save(
     queue: entry.queue,
   };
   inMemoryViews.set(paneId, fullEntry);
-  updateMeta(fullEntry);
 
   const db = await openDb();
   if (!db) return;
@@ -238,7 +219,6 @@ export async function save(
             const evictId = cursor.primaryKey as string;
             if (evictId !== paneId) {
               store.delete(evictId);
-              metaIndex.delete(evictId);
               inMemoryViews.delete(evictId);
               evicted++;
             }
@@ -260,7 +240,6 @@ export async function save(
 
 export async function remove(paneId: string): Promise<void> {
   inMemoryViews.delete(paneId);
-  metaIndex.delete(paneId);
   const db = await openDb();
   if (!db) return;
   return new Promise<void>((resolve, reject) => {
@@ -277,7 +256,6 @@ export async function remove(paneId: string): Promise<void> {
 
 export async function clearAll(): Promise<void> {
   inMemoryViews.clear();
-  metaIndex.clear();
   const db = await openDb();
   if (!db) return;
   return new Promise<void>((resolve, reject) => {
@@ -312,7 +290,6 @@ export async function sweep(alivePaneIds?: string[]): Promise<void> {
       if (cursor) {
         const id = cursor.primaryKey as string;
         store.delete(id);
-        metaIndex.delete(id);
         inMemoryViews.delete(id);
         cursor.continue();
       }
@@ -328,7 +305,6 @@ export async function sweep(alivePaneIds?: string[]): Promise<void> {
           const id = cursor.primaryKey as string;
           if (!aliveSet.has(id)) {
             store.delete(id);
-            metaIndex.delete(id);
             inMemoryViews.delete(id);
           }
           cursor.continue();
@@ -351,7 +327,6 @@ export async function sweep(alivePaneIds?: string[]): Promise<void> {
           if (cursor && evicted < excess) {
             const evictId = cursor.primaryKey as string;
             store.delete(evictId);
-            metaIndex.delete(evictId);
             inMemoryViews.delete(evictId);
             evicted++;
             cursor.continue();
@@ -368,12 +343,6 @@ export async function sweep(alivePaneIds?: string[]): Promise<void> {
       reject(tx.error);
     };
   });
-}
-
-export function meta(paneId: string): HaveInfo | null {
-  const m = metaIndex.get(paneId);
-  if (!m) return null;
-  return { sessionId: m.sessionId, turnCount: m.turnCount, lastTurnHash: m.lastTurnHash };
 }
 
 /** One-time migration removing localStorage keys starting with pigeon_pane_cache_ */

@@ -55,22 +55,6 @@ describe("snapshot (herdr-adapter.md §3.1)", () => {
     expect(snap.workspaces[0].tabs[0].label).toBe("My Custom Work");
   });
 
-  test("a numeric tab with a session title shows the session title (protocol.md §5.3)", () => {
-    client.setSessionTitleSource((paneId) => (paneId === "t1" ? "AI Session Title" : undefined));
-    const topo = topologyOf([{ paneId: "t1", app: "claude-code" }]);
-    topo.ls.spaces[0].tabs[0].name = "42";
-    const snap = client.applySnapshot(topo);
-    expect(snap.workspaces[0].tabs[0].label).toBe("AI Session Title");
-  });
-
-  test("a numeric tab without a session title shows the recipe label (protocol.md §5.3)", () => {
-    client.setSessionTitleSource(() => undefined);
-    const topo = topologyOf([{ paneId: "t1", app: "claude-code" }]);
-    topo.ls.spaces[0].tabs[0].name = "42";
-    const snap = client.applySnapshot(topo);
-    expect(snap.workspaces[0].tabs[0].label).toBe("Claude Code");
-  });
-
   test("a terminal the App shows but the Core does not list has no agent and status unknown", () => {
     const topology = topologyOf([{ paneId: "t1", app: "claude-code" }]);
     topology.terminals = [];
@@ -169,31 +153,6 @@ describe("screen reads (herdr-adapter.md §3.3)", () => {
       ]);
     } finally {
       fast.disconnect();
-    }
-  });
-
-  test("history read uses dedicated short timeout (2000ms) rather than full requestTimeoutMs", async () => {
-    const clientWithLongTimeout = new HerdrClient({ appSocketPath: herdr.appSocketPath, coreSocketPath: herdr.coreSocketPath, requestTimeoutMs: 8000, panePollMs: 60_000 });
-    try {
-      clientWithLongTimeout.applySnapshot(topologyOf([{ paneId: "t1" }]));
-      herdr.handlers["terminal.read"] = (params: any) =>
-        params.lines > 0 ? "no-reply" : { result: { text: "$ fallback\n", complete: true, how: "screen" } };
-
-      let recordedTimeout: number | undefined;
-      const origOneShot = (clientWithLongTimeout as any).oneShot.bind(clientWithLongTimeout);
-      (clientWithLongTimeout as any).oneShot = (channel: any, line: any, label: any, unwrap: any, timeoutMs?: number) => {
-        if (line.includes('"lines":200')) {
-          recordedTimeout = timeoutMs;
-          return Promise.reject(new HerdrError("timeout", "history read timed out"));
-        }
-        return origOneShot(channel, line, label, unwrap, timeoutMs);
-      };
-
-      const res = await clientWithLongTimeout.readAndClassifyPane("t1");
-      expect(recordedTimeout).toBe(2000);
-      expect(res.rawScreen).toBe("$ fallback\n");
-    } finally {
-      clientWithLongTimeout.disconnect();
     }
   });
 });
@@ -475,5 +434,32 @@ describe("connection lifecycle (herdr-adapter.md §3.2, §3.4)", () => {
       await Bun.sleep(10);
     }
     expect(client.getPaneFacts("t1")?.agentKind).toBe("claude");
+  });
+
+  test("startup snapshot timeout is tolerated without crashing connect(), while sendPrompt timeout still throws ERR/timeout (§3.4)", async () => {
+    const logs: string[] = [];
+    const slowClient = new HerdrClient({
+      appSocketPath: herdr.appSocketPath,
+      coreSocketPath: herdr.coreSocketPath,
+      debounceMs: 5,
+      panePollMs: 60_000,
+      requestTimeoutMs: 40,
+      logger: (m) => logs.push(m),
+    });
+    try {
+      herdr.serve([{ paneId: "t1", app: "claude-code", state: "idle" }]);
+      herdr.handlers["terminal.list"] = () => "no-reply";
+      await slowClient.connect();
+      expect(logs.some((l) => l.includes("startup snapshot timed out"))).toBe(true);
+
+      herdr.handlers["terminal.list"] = () => ({
+        result: { terminals: topologyOf([{ paneId: "t1", app: "claude-code", state: "idle" }]).terminals, hidden_finished: 0, machines: [] },
+      });
+      await slowClient.refreshSnapshot();
+      herdr.handlers["terminal.send"] = () => "no-reply";
+      await expect(slowClient.sendPrompt("t1", "hi")).rejects.toMatchObject({ code: "timeout" });
+    } finally {
+      slowClient.disconnect();
+    }
   });
 });

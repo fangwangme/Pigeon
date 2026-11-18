@@ -1,8 +1,22 @@
-import { describe, expect, jest, test } from "bun:test";
+import { afterEach, describe, expect, jest, test } from "bun:test";
 import { handleServerMessage, handleVisibilityChange, initWebSocket, request, selectPane } from "../src/client/src/state/ws";
-import { setState, setUnread, state } from "../src/client/src/state/store";
+import { setState, state } from "../src/client/src/state/store";
 import { dropCachedShell } from "../src/client/src/state/shell";
 import type { PaneStatePayload } from "../src/types/protocol";
+
+afterEach(() => {
+  setState({
+    updateAvailable: false,
+    accent: "blue",
+    activePaneId: null,
+    rawScreen: "",
+    pendingInteraction: null,
+    paneLoaded: false,
+    session: null,
+    normalizedTurns: [],
+    todos: null,
+  });
+});
 
 // protocol.md §2.2 (reconnecting), §3.2 (buildId), §3.3 (cached state on (re)selection),
 // §5.4 (revision filter), §6.3 (config versions).
@@ -131,21 +145,6 @@ describe("queue and session info (protocol.md §5.6, §5.8)", () => {
     });
     expect(state.todos).toEqual([{ text: "Ship", status: "pending" }]);
     expect(state.session?.model).toEqual({ value: "opus", source: "launch" });
-  });
-});
-
-describe("unread marks (mobile-ui-and-themes.md §2.1, issue #3)", () => {
-  test("viewing a pane clears its unread mark", () => {
-    setUnread("u1", true);
-    expect(state.unread.u1).toBe(true);
-    selectPane("u1");
-    expect("u1" in state.unread).toBe(false);
-  });
-
-  test("a closed pane's unread mark is dropped", () => {
-    setUnread("gone", true);
-    handleServerMessage({ type: "snapshot_update", payload: { workspaces: [], workingAgents: [] } } as any);
-    expect("gone" in state.unread).toBe(false);
   });
 });
 
@@ -317,6 +316,59 @@ describe("heartbeat (protocol.md §2.1)", () => {
       (globalThis as any).document = origDoc;
       (globalThis as any).window = origWindow;
       globalThis.fetch = origFetch;
+    }
+  });
+});
+
+describe("command error localization (protocol.md §8, mobile-ui-and-themes.md §8.3)", () => {
+  test("request() rejects with localized errorText instead of the raw server error string", async () => {
+    const origWs = globalThis.WebSocket;
+    const origDoc = (globalThis as any).document;
+    const origWindow = (globalThis as any).window;
+    const sent: any[] = [];
+    class OpenSocket {
+      static CONNECTING = 0;
+      static OPEN = 1;
+      static CLOSING = 2;
+      static CLOSED = 3;
+      readyState = 0;
+      onopen: ((ev: any) => void) | null = null;
+      onmessage: ((ev: any) => void) | null = null;
+      onclose: ((ev: any) => void) | null = null;
+      constructor(_url: string) {
+        sockets.push(this);
+      }
+      send(raw: string) {
+        sent.push(JSON.parse(raw));
+      }
+      close() {
+        this.readyState = 3;
+      }
+    }
+    const sockets: OpenSocket[] = [];
+    (globalThis as any).document = { visibilityState: "visible", addEventListener() {}, documentElement: { setAttribute() {}, style: { setProperty() {} } } };
+    (globalThis as any).window = { location: { protocol: "http:", host: "localhost", hash: "" }, addEventListener() {}, history: { replaceState() {} } };
+    globalThis.WebSocket = OpenSocket as any;
+    try {
+      await initWebSocket();
+      sockets[0].readyState = 1;
+      sockets[0].onopen?.({});
+      sent.length = 0;
+
+      const p = request({ type: "agent_prompt", payload: { targetPaneId: "p1", text: "hello" } });
+      const reqId = sent[0]?.id;
+      expect(typeof reqId).toBe("string");
+      handleServerMessage({ type: "error", replyTo: reqId, error: { code: "ERR_AGENT_BLOCKED", message: "blocked" } });
+
+      const err = await p.catch((e) => e);
+      expect(err.code).toBe("ERR_AGENT_BLOCKED");
+      expect(err.message).not.toBe("blocked");
+      expect(err.message.length).toBeGreaterThan("blocked".length);
+    } finally {
+      sockets[0]?.onclose?.({ code: 4409, reason: "" });
+      globalThis.WebSocket = origWs;
+      (globalThis as any).document = origDoc;
+      (globalThis as any).window = origWindow;
     }
   });
 });

@@ -14,6 +14,7 @@ export interface QuotaServiceOptions {
   configManager?: ConfigManager;
   now?: () => number;
   onUpdated?: (payload: QuotaGetPayload) => void;
+  debugLogger?: (msg: string) => void;
 }
 
 interface ProviderRecord {
@@ -29,6 +30,7 @@ export class QuotaService {
   private configManager?: ConfigManager;
   private now: () => number;
   private onUpdated?: (payload: QuotaGetPayload) => void;
+  private debugLogger?: (msg: string) => void;
   private lastFetchTime: number | null = null;
   private refreshAllPromise: Promise<void> | null = null;
 
@@ -47,10 +49,15 @@ export class QuotaService {
     this.configManager = options.configManager;
     this.now = options.now ?? (() => Date.now());
     this.onUpdated = options.onUpdated;
+    this.debugLogger = options.debugLogger;
   }
 
   public setOnUpdated(cb?: (payload: QuotaGetPayload) => void): void {
     this.onUpdated = cb;
+  }
+
+  public setDebugLogger(cb?: (msg: string) => void): void {
+    this.debugLogger = cb;
   }
 
   private isProviderEnabled(config: ClientConfig | undefined, key: "claude" | "codex" | "antigravity"): boolean {
@@ -60,8 +67,10 @@ export class QuotaService {
   public async fetchAll(clientConfig?: ClientConfig): Promise<void> {
     if (this.refreshAllPromise) return this.refreshAllPromise;
     this.refreshAllPromise = (async () => {
+      const start = Date.now();
       const config = clientConfig ?? this.configManager?.getClientConfig();
       const enabledKeys = QUOTA_PROVIDER_KEYS.filter((k) => this.isProviderEnabled(config, k));
+      this.debugLogger?.(`debug quota fetch start (providers=${enabledKeys.join(",") || "none"})`);
 
       await Promise.all(
         enabledKeys.map(async (key) => {
@@ -86,6 +95,7 @@ export class QuotaService {
         })
       );
       this.lastFetchTime = this.now();
+      this.debugLogger?.(`debug quota fetch done ${Math.max(0, Date.now() - start)}ms`);
       const currentCfg = clientConfig ?? this.configManager?.getClientConfig();
       if (!currentCfg || currentCfg.quotaEnabled === true) {
         this.onUpdated?.(this.buildPayload(currentCfg));

@@ -5,6 +5,27 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.17] - 2026-11-18
+
+### Added
+- **Antigravity artifact review card & `interaction_dismiss`**: Recognized completed `write_file` / `edit_file` calls with `ArtifactMetadata.RequestFeedback: true` inside the session's Antigravity brain directory as reviewable `pendingPlan` cards (**Full text**, **Proceed**, and **Skip `✕`**), added `interaction_dismiss` to clear the active card across viewers and downgrade reported status from `blocked` to `idle` until the pane's next Core status or interaction change, and restricted artifact interactions to turns where Herdr reports `blocked` (#35).
+- **Copy terminal ID**: Added **Copy terminal ID** (`activePaneId`) with monospace subtitle to the session `⋯` menu (#35).
+- **Interactive finger-tracking edge swipe-back**: Upgraded left-edge (`<= 44px`) back gestures across non-Home routes and full-screen sheets to track the finger in real time, revealing the `inert` parent page underneath with parallax and edge shadow and completing or springing back by drag distance or flick velocity, without false blocks on non-overflowing or left-resting horizontal containers or open overlays (#35).
+
+### Fixed
+- **Composer replies on unstructured `blocked` panes**: Passed `force: true` on `terminal.send` when Herdr reports `blocked` without structured choice options so free-text replies and Antigravity artifact feedback send immediately, while keeping `ERR_AGENT_BLOCKED` protection when numbered options or a pending question await a pick (#35).
+- **Keyboard toast placement & localized command errors**: Positioned `.toast` notices above the open software keyboard (`[data-keyboard="open"]`) and rejected `request()` calls with localized `errorText` messages instead of raw server strings (#35).
+- **Cleaner year & multi-month heatmaps**: Displayed day numbers only on the first row (Monday) in `week-columns` usage heatmaps (`year`, `all`, and ranges over six weeks) while keeping day numbers on all rows in `strip` and `week-rows` (`30d`) (#35).
+- **Port-isolated session cookies for test instances**: Named session cookies `__Host-pigeon_session_<port>` (or `pigeon_session_<port>`) on non-production ports while keeping `__Host-pigeon_session` on production, prevented `resolveProductionPort` from reading `pigeon-<port>/config.json` as the production port, and checked HTTP status before parsing `/api/auth/status` JSON so concurrent instances on the same Tailscale hostname never overwrite each other's login session (#35).
+- **Local-time log timestamps**: Formatted `pigeon.log` entries, `--debug` client connection timelines, and `pigeon status` timestamps in local ISO 8601 time (`YYYY-MM-DDTHH:mm:ss.sss±HH:MM`) instead of UTC (#35).
+- **`--debug` RPC & background refresh diagnostics**: Logged sanitized `debug rpc` timings, payload sizes, and error codes (plus `debug usage scan` / `debug quota fetch` durations and client `rpc_error` events in `client_diag`) without exposing prompt text or credentials (#35).
+- **Off-event-loop usage worker, incremental OpenCode cursor & report cache**: Moved usage scans/rebuilds into a compiled Bun `Worker` (`scan-worker.ts`), added `rowid` + `time_updated` incremental scanning for `opencode.db` and scalar report caching in `UsageService`, and avoided double aggregation in `getUsageReport` so WebSocket traffic and heartbeats never stall (#35).
+- **2 s WebSocket reconnect & wakeup reliability**: Shortened `CONNECTING`, pairing check, and wakeup ping timeouts from 10 s / 5 s / 3 s to 2 s, guarded periodic heartbeat checks while a wakeup probe is in flight, and replaced stale `CONNECTING` sockets immediately on `online` and wake-from-hidden transitions (#35).
+- **Usage error/retry recovery & Herdr startup timeout tolerance**: Rendered localized error + **重试 / Retry** states instead of infinite spinners on failed Usage report/day/model sheets, automatically reloaded open unloaded sheets after WebSocket reconnect, and tolerated `HerdrClient.connect()` startup snapshot timeouts without aborting daemon startup (#35).
+
+### Changed
+- **Codebase audit, deduplication & spec sync**: Removed dead server/client/CSS symbols (`unread`, `metaIndex`, `withFallback`, `TurnBuilder.touch()`, duplicate `pricing.json` fallback, dead `reasoning` turn item branch), removed silent error swallowing in session/usage stores and Codex/Pi/Claude/AGY scanners, consolidated shared helpers (`formatModelNameWithRecipes`, `readListingJsonLines`, `extractBlocksText`, `readTailscaleSelf`, `UsageOverlay`/`UsageBottomSheet`, `windowStatusColor`), pruned redundant tests with proper store reset isolation, and synchronized `docs/specs/` and `README*` with shipped behavior (#35).
+
 ## [0.1.16] - 2026-11-18
 
 ### Fixed

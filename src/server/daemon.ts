@@ -1,5 +1,5 @@
 import { join, dirname } from "node:path";
-import { homedir, networkInterfaces } from "node:os";
+import { networkInterfaces } from "node:os";
 import { createHash } from "node:crypto";
 import { mkdirSync, writeFileSync, appendFileSync, realpathSync, statSync } from "node:fs";
 import { brotliCompressSync, constants as zlibConstants, gzipSync } from "node:zlib";
@@ -14,6 +14,7 @@ import { ModelCatalog } from "./model-catalog";
 import { MAX_UPLOAD_BYTES, UploadStore } from "./uploads";
 import { QuotaService } from "./quota/index";
 import { UsageService } from "./usage/index";
+import { formatLocalTimestamp } from "../shared/time";
 import {
   PWA_MANIFEST,
   PWA_MANIFEST_DARK,
@@ -93,19 +94,22 @@ function detectLocalIp(): string | null {
   return null;
 }
 
-function detectTailscaleHostname(): string | null {
+function readTailscaleSelf(): { hostname: string | null; ipv4: string | null } {
   let proc: ReturnType<typeof Bun.spawnSync>;
   try {
     proc = Bun.spawnSync(["tailscale", "status", "--json"], { timeout: 2000, stderr: "ignore" });
   } catch {
-    return null;
+    return { hostname: null, ipv4: null };
   }
-  if (proc.exitCode !== 0 || !proc.stdout) return null;
+  if (proc.exitCode !== 0 || !proc.stdout) return { hostname: null, ipv4: null };
   try {
-    const dns: string | undefined = JSON.parse(proc.stdout.toString()).Self?.DNSName;
-    return dns ? dns.replace(/\.+$/, "") : null;
+    const self = JSON.parse(proc.stdout.toString()).Self;
+    const dns: string | undefined = self?.DNSName;
+    const ips: unknown = self?.TailscaleIPs;
+    const ipv4 = Array.isArray(ips) ? (ips.find((ip): ip is string => typeof ip === "string" && !ip.includes(":")) ?? null) : null;
+    return { hostname: dns ? dns.replace(/\.+$/, "") : null, ipv4 };
   } catch {
-    return null;
+    return { hostname: null, ipv4: null };
   }
 }
 
@@ -126,8 +130,12 @@ export interface ServeCheckResult {
   conflict?: { httpsPort: number; target: string };
 }
 
-function checkTailscaleServe(port: number, httpsPort: number, enableAutoServe: boolean = true): ServeCheckResult {
-  const dns = detectTailscaleHostname();
+function checkTailscaleServe(
+  port: number,
+  httpsPort: number,
+  enableAutoServe: boolean = true,
+  dns: string | null = readTailscaleSelf().hostname
+): ServeCheckResult {
   if (!dns) return { host: null };
 
   try {
@@ -175,27 +183,6 @@ function checkTailscaleServe(port: number, httpsPort: number, enableAutoServe: b
   }
 }
 
-function detectTailscaleIp(): string | null {
-  let proc: ReturnType<typeof Bun.spawnSync>;
-  try {
-    proc = Bun.spawnSync(["tailscale", "status", "--json"], { timeout: 2000, stderr: "ignore" });
-  } catch {
-    return null;
-  }
-  if (proc.exitCode !== 0 || !proc.stdout) return null;
-  try {
-    const data = JSON.parse(proc.stdout.toString());
-    const ips: string[] | undefined = data.Self?.TailscaleIPs;
-    if (Array.isArray(ips)) {
-      const v4 = ips.find((ip) => typeof ip === "string" && !ip.includes(":"));
-      if (v4) return v4;
-    }
-  } catch {
-    return null;
-  }
-  return null;
-}
-
 export interface AccessProbes {
   tailscaleServeDns?: () => string | null;
   tailscaleIp?: () => string | null;
@@ -218,19 +205,23 @@ export function resolveAccess(
     tailscaleHttpsPort?: number;
     isProduction?: boolean;
     autoServe?: boolean;
+    tailscaleHostname?: string | null;
+    tailscaleIp?: string | null;
   },
   probes: AccessProbes = {}
 ): ResolvedAccess {
   const httpsPort =
     opts.tailscaleHttpsPort ??
-    (opts.port === DEFAULT_PORT ? DEFAULT_TAILSCALE_HTTPS_PORT : DEFAULT_TEST_TAILSCALE_HTTPS_PORT);
+    ((opts.isProduction ?? opts.port === DEFAULT_PORT) ? DEFAULT_TAILSCALE_HTTPS_PORT : DEFAULT_TEST_TAILSCALE_HTTPS_PORT);
+  const ts = !probes.tailscaleServeDns || !probes.tailscaleIp ? readTailscaleSelf() : null;
+  const tsHostname = opts.tailscaleHostname !== undefined ? opts.tailscaleHostname : (ts?.hostname ?? null);
   const serveResult =
     !opts.insecureDev && !opts.configured && !probes.tailscaleServeDns
-      ? checkTailscaleServe(opts.port, httpsPort, opts.autoServe ?? true)
+      ? checkTailscaleServe(opts.port, httpsPort, opts.autoServe ?? true, tsHostname)
       : { host: null };
 
   const tailscaleServeDns = probes.tailscaleServeDns ?? (() => serveResult.host);
-  const tailscaleIp = probes.tailscaleIp ?? detectTailscaleIp;
+  const tailscaleIp = probes.tailscaleIp ?? (() => opts.tailscaleIp !== undefined ? opts.tailscaleIp : (ts?.ipv4 ?? null));
   const lanIp = probes.lanIp ?? detectLocalIp;
 
   const alternatives: Array<{ mode: string; url: string }> = [];
@@ -337,6 +328,7 @@ export class PigeonDaemon {
     const tailscaleHttpsPort =
       serverCfg.tailscaleHttpsPort ??
       (isProduction ? DEFAULT_TAILSCALE_HTTPS_PORT : DEFAULT_TEST_TAILSCALE_HTTPS_PORT);
+    const ts = readTailscaleSelf();
     const access = resolveAccess({
       configured: opts.publicBaseUrl || serverCfg.publicBaseUrl,
       insecureDev,
@@ -344,6 +336,8 @@ export class PigeonDaemon {
       tailscaleHttpsPort,
       isProduction,
       autoServe: opts.autoServe,
+      tailscaleHostname: ts.hostname,
+      tailscaleIp: ts.ipv4,
     });
     this.access = access;
 
@@ -358,13 +352,13 @@ export class PigeonDaemon {
       herdrAppSocketPath: opts.herdrAppSocketPath || serverCfg.herdrAppSocketPath,
       herdrCoreSocketPath: opts.herdrCoreSocketPath || serverCfg.herdrCoreSocketPath,
       adminSocketPath: opts.adminSocketPath || (isProduction ? serverCfg.adminSocketPath : instancePaths.adminSocketPath),
-      devicesFilePath: opts.devicesFilePath || (isProduction ? join(serverCfg.stateDir, "devices.json") : instancePaths.devicesPath),
-      queueFilePath: opts.queueFilePath || (isProduction ? join(serverCfg.stateDir, "queue.json") : instancePaths.queuePath),
-      vapidPath: opts.vapidPath || (isProduction ? join(serverCfg.stateDir, "vapid.json") : instancePaths.vapidPath),
-      pushSubscriptionsPath: opts.pushSubscriptionsPath || (isProduction ? join(serverCfg.stateDir, "push-subscriptions.json") : instancePaths.pushSubscriptionsPath),
-      uploadsDir: opts.uploadsDir || (isProduction ? join(serverCfg.stateDir, "uploads") : instancePaths.uploadsDir),
-      agyBrainDir: opts.agyBrainDir || join(homedir(), ".gemini", "antigravity-cli", "brain"),
-      logPath: opts.logPath || (isProduction ? join(serverCfg.stateDir, "pigeon.log") : instancePaths.logPath),
+      devicesFilePath: opts.devicesFilePath || join(stateDir, "devices.json"),
+      queueFilePath: opts.queueFilePath || join(stateDir, "queue.json"),
+      vapidPath: opts.vapidPath || join(stateDir, "vapid.json"),
+      pushSubscriptionsPath: opts.pushSubscriptionsPath || join(stateDir, "push-subscriptions.json"),
+      uploadsDir: opts.uploadsDir || join(stateDir, "uploads"),
+      agyBrainDir: opts.agyBrainDir || join(this.configManager.home, ".gemini", "antigravity-cli", "brain"),
+      logPath: opts.logPath || join(stateDir, "pigeon.log"),
     };
 
     // Only the HTML compiled into this build is served (never a file found via the cwd).
@@ -388,7 +382,7 @@ export class PigeonDaemon {
       } catch {}
     }
 
-    const tsHost = detectTailscaleHostname();
+    const tsHost = ts.hostname;
     if (tsHost) {
       this.allowedHosts.add(tsHost);
       this.allowedOrigins.add(`http://${tsHost}:${port}`);
@@ -422,6 +416,7 @@ export class PigeonDaemon {
     this.pairingManager = new PairingManager({
       publicBaseUrl: this.config.publicBaseUrl,
       insecureDev,
+      cookieSuffix: isProduction ? undefined : String(this.config.port),
       adminSocketPath: this.config.adminSocketPath,
       devicesFilePath: this.config.devicesFilePath,
       rebuildUsage: () => usageService.rebuild(),
@@ -456,7 +451,7 @@ export class PigeonDaemon {
       configManager: this.configManager,
       uploadStore: this.uploadStore,
       pairingManager: this.pairingManager,
-      modelCatalog: new ModelCatalog({ cachePath: join(stateDir, "models.json") }),
+      modelCatalog: new ModelCatalog({ cachePath: join(stateDir, "models.json"), home: this.configManager.home, env: this.configManager.env }),
       queueFilePath: this.config.queueFilePath,
       port: this.config.port,
       productionPort,
@@ -517,7 +512,7 @@ export class PigeonDaemon {
   }
 
   public log(msg: string): void {
-    const timestamp = new Date().toISOString();
+    const timestamp = formatLocalTimestamp();
     const line = `[${timestamp}] ${msg}`;
     if (this.config.logPath) appendFileSync(this.config.logPath, line + "\n", "utf-8");
   }
@@ -550,7 +545,7 @@ export class PigeonDaemon {
     this.installProcessHandlers();
     if (this.config.logPath) {
       mkdirSync(dirname(this.config.logPath), { recursive: true });
-      writeFileSync(this.config.logPath, `[${new Date().toISOString()}] Pigeon daemon ${SERVER_VERSION} on port ${this.config.port}${this.debug ? " (debug)" : ""}\n`, "utf-8");
+      writeFileSync(this.config.logPath, `[${formatLocalTimestamp()}] Pigeon daemon ${SERVER_VERSION} on port ${this.config.port}${this.debug ? " (debug)" : ""}\n`, "utf-8");
     }
     this.encodedPage("br");
     await this.pairingManager.startAdminSocket();

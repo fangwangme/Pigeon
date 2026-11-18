@@ -1,13 +1,12 @@
 import { reconcile } from "solid-js/store";
-import { state, setState, applySyncedClientConfig, setUnread, showToast, writePref } from "./store";
-import { load, save, remove, clearAll, sweep, meta, migrateLocalStorageCache, getMemoryPaneView, applyPaneTail, type PaneCacheEntry } from "./pane-cache";
+import { state, setState, applySyncedClientConfig, showToast, writePref } from "./store";
+import { load, save, remove, clearAll, sweep, migrateLocalStorageCache, getMemoryPaneView, applyPaneTail, type PaneCacheEntry } from "./pane-cache";
 import type {
   ClientMessage,
   ServerMessage,
   SnapshotPayload,
   PaneStatePayload,
   ClientConfig,
-  AgentStatus,
   HaveInfo,
   QuotaProviderState,
   NormalizedTurn,
@@ -24,9 +23,9 @@ const PROTOCOL_VERSION = "1.0.0";
 // Close codes after which reconnecting cannot help (protocol.md §2.2).
 const TERMINAL_CLOSE_CODES = new Set([4401, 4403, 4409, 1008]);
 const RETRY_DELAYS_MS = [0, 500, 1000, 2000, 3000];
-const PAIRING_CHECK_TIMEOUT_MS = 5000;
-const CONNECTING_TIMEOUT_MS = 10000;
-const WAKEUP_PING_TIMEOUT_MS = 3000;
+const PAIRING_CHECK_TIMEOUT_MS = 2000;
+const CONNECTING_TIMEOUT_MS = 2000;
+const WAKEUP_PING_TIMEOUT_MS = 2000;
 const HEARTBEAT_INTERVAL_MS = 5000;
 const HEARTBEAT_TIMEOUT_MS = 15000;
 
@@ -47,8 +46,10 @@ let configVersion = 0;
 // The client bundle this page was loaded with, as named by its first `welcome` (protocol.md §3.2).
 let loadedBuildId: string | null = null;
 const paneRevisions = new Map<string, number>();
-const lastStatus = new Map<string, AgentStatus>();
-const pending = new Map<string, { resolve: (p: any) => void; reject: (e: { code: string; message: string }) => void }>();
+const pending = new Map<
+  string,
+  { resolve: (p: any) => void; reject: (e: { code: string; message: string }) => void; cmd: string; startedAt: number }
+>();
 let freshDataArrivedPaneId: string | null = null;
 let lastAlivePanesKey = "";
 let pendingSelectViewId: string | null = null;
@@ -190,6 +191,7 @@ async function isAuthenticated(): Promise<boolean> {
       }, PAIRING_CHECK_TIMEOUT_MS);
     });
     const res = await Promise.race([fetchPromise, timeoutPromise]);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = await res.json();
     return !!data.authenticated;
   } finally {
@@ -205,11 +207,13 @@ function teardownSocket(ws: WebSocket | null): void {
   if (wakeupProbeTimer) clearTimeout(wakeupProbeTimer);
   wakeupProbeTimer = null;
   pendingSelectViewId = null;
+  connectionDebug = false;
+  const now = Date.now();
   for (const p of pending.values()) {
+    recordConn("rpc_error", { cmd: p.cmd, code: "ERR_OFFLINE", ms: Math.max(0, now - p.startedAt) });
     p.reject(Object.assign(new Error(t("error.disconnected")), { code: "ERR_OFFLINE" }));
   }
   pending.clear();
-  connectionDebug = false;
   setState({ connected: false, configReady: false, paneSyncing: false });
   if (ws && socket === ws) socket = null;
 }
@@ -261,7 +265,7 @@ function openSocket(): void {
   connectingTimer = setTimeout(() => {
     connectingTimer = null;
     if (socket !== ws || ws.readyState !== WebSocket.CONNECTING) return;
-    console.warn("[Pigeon] WebSocket connect timed out after 10s");
+    console.warn("[Pigeon] WebSocket connect timed out after 2s");
     conn("ws_timeout", { ms: Date.now() - startedAt });
     ws.close();
   }, CONNECTING_TIMEOUT_MS);
@@ -281,14 +285,7 @@ function openSocket(): void {
     lastPongTime = Date.now();
     let have: HaveInfo | undefined;
     if (state.activePaneId && state.session?.bound && state.session.sessionId && state.normalizedTurns.length > 0) {
-      const turnCount = state.normalizedTurns.length;
-      have = {
-        sessionId: state.session.sessionId,
-        turnCount,
-        ...(turnCount >= 2
-          ? { anchorHash: hashTurn(state.normalizedTurns[turnCount - 2]) }
-          : { lastTurnHash: hashTurn(state.normalizedTurns[turnCount - 1]) }),
-      };
+      have = buildHaveInfo(state.session.sessionId, state.normalizedTurns);
       setState("paneSyncing", true);
     }
     bootstrapRequestedAt = Date.now();
@@ -304,6 +301,7 @@ function openSocket(): void {
     if (pingInterval) clearInterval(pingInterval);
     pingInterval = setInterval(() => {
       if (socket !== ws) return;
+      if (wakeupProbeTimer) return;
       if (Date.now() - lastPongTime > HEARTBEAT_TIMEOUT_MS) {
         console.warn("[Pigeon] WebSocket heartbeat timed out; reconnecting");
         const sincePong = Date.now() - lastPongTime;
@@ -380,20 +378,15 @@ function applyPaneState(p: PaneStatePayload): void {
   }
 }
 
-/** mobile-ui-and-themes.md §2.1: a pane that finished while this phone was not looking is unread. */
-function trackUnread(snap: SnapshotPayload): void {
-  const viewing = typeof document === "undefined" || document.visibilityState === "visible" ? state.activePaneId : null;
-  for (const w of snap.workspaces) {
-    for (const t of w.tabs) {
-      for (const p of t.panes) {
-        const prev = lastStatus.get(p.id);
-        lastStatus.set(p.id, p.agentStatus);
-        if (p.agentStatus === "done" && prev && prev !== "done" && p.id !== viewing) setUnread(p.id, true);
-      }
-    }
-  }
-  const alive = new Set(snap.workspaces.flatMap((w) => w.tabs.flatMap((t) => t.panes.map((p) => p.id))));
-  for (const id of Object.keys(state.unread)) if (!alive.has(id)) setUnread(id, false);
+function buildHaveInfo(sessionId: string, turns: NormalizedTurn[]): HaveInfo {
+  const turnCount = turns.length;
+  return {
+    sessionId,
+    turnCount,
+    ...(turnCount >= 2
+      ? { anchorHash: hashTurn(turns[turnCount - 2]) }
+      : { lastTurnHash: hashTurn(turns[turnCount - 1]) }),
+  };
 }
 
 /** Apply a full turn payload (`pane_bootstrap.turns` or `normalized_turns`) and update the pane cache. */
@@ -417,8 +410,8 @@ function applyFullTurns(
     paneSyncing: false,
   });
   setState("normalizedTurns", reconcile(payload.turns));
-  const metaInfo = meta(paneId);
-  if (!payload.session?.bound || (metaInfo && metaInfo.sessionId !== payload.session?.sessionId)) {
+  const cachedView = getMemoryPaneView(paneId);
+  if (!payload.session?.bound || (cachedView && cachedView.sessionId !== payload.session?.sessionId)) {
     void remove(paneId);
   } else if (payload.session?.sessionId && payload.turns?.length) {
     saveActivePaneSnapshot(paneId);
@@ -524,7 +517,6 @@ export function handleServerMessage(msg: ServerMessage): void {
     }
 
     case "snapshot_update":
-      trackUnread(msg.payload);
       setState("workspaces", reconcile(msg.payload.workspaces));
       if (state.herdrConnected) {
         const alive = msg.payload.workspaces.flatMap((w) => w.tabs.flatMap((t) => t.panes.map((p) => p.id)));
@@ -638,17 +630,19 @@ export function handleServerMessage(msg: ServerMessage): void {
     }
 
     case "error": {
+      const message = errorText(msg.error.code, msg.error.message);
       const waiter = msg.replyTo ? pending.get(msg.replyTo) : undefined;
       if (waiter) {
         pending.delete(msg.replyTo!);
-        waiter.reject(msg.error);
+        conn("rpc_error", { cmd: waiter.cmd, code: msg.error.code, ms: Math.max(0, Date.now() - waiter.startedAt) });
+        waiter.reject({ ...msg.error, message });
       }
       if (msg.replyTo && msg.replyTo === pendingSelectViewId) {
         setState("paneSyncing", false);
         pendingSelectViewId = null;
       }
       console.error("[Pigeon] server error", msg.error.code, msg.error.message);
-      setState("lastError", { code: msg.error.code, message: errorText(msg.error.code, msg.error.message), at: Date.now() });
+      setState("lastError", { code: msg.error.code, message, at: Date.now() });
       if (msg.error.code === "ERR_INTERACTION_STALE" && state.activePaneId) {
         sendMessage({ type: "select_view", id: nextId(), payload: { paneId: state.activePaneId } });
       }
@@ -704,12 +698,15 @@ export function refreshModels(agent?: string): Promise<any> {
 
 export function request(msg: WithoutId<Command>): Promise<any> {
   const id = nextId();
+  const cmd = msg.type;
+  const startedAt = Date.now();
   return new Promise((resolve, reject) => {
     if (!sendMessage({ ...msg, id } as ClientMessage)) {
+      conn("rpc_error", { cmd, code: "ERR_OFFLINE", ms: 0 });
       reject({ code: "ERR_OFFLINE", message: t("common.offline") });
       return;
     }
-    pending.set(id, { resolve, reject });
+    pending.set(id, { resolve, reject, cmd, startedAt });
   });
 }
 
@@ -759,6 +756,12 @@ export function respondInteraction(interactionId: string, optionId: string, fing
   return request({ type: "interaction_respond", payload: { targetPaneId: state.activePaneId, interactionId, optionId, fingerprint, ...(otherTexts ? { otherTexts } : {}) } });
 }
 
+/** protocol.md §4.24: clears the active interaction card and downgrades reported status to idle. */
+export function dismissInteraction(interactionId: string): Promise<any> {
+  if (!state.activePaneId) return Promise.reject({ code: "ERR_NOT_FOUND", message: "no pane" });
+  return request({ type: "interaction_dismiss", payload: { targetPaneId: state.activePaneId, interactionId } });
+}
+
 /** The one navigation entry point into a pane: workspace and tab follow from it. */
 /** Makes `paneId` the viewed pane, showing `memoryView` (or an empty view) until its data arrives. */
 function showPane(paneId: string, memoryView: PaneCacheEntry | null | undefined): void {
@@ -790,7 +793,6 @@ function showPane(paneId: string, memoryView: PaneCacheEntry | null | undefined)
       break;
     }
   }
-  setUnread(paneId, false);
 }
 
 export async function selectPane(paneId: string): Promise<void> {
@@ -826,14 +828,7 @@ export async function selectPane(paneId: string): Promise<void> {
       paneSyncing: true,
     });
     if (cached.sessionId && cached.turns.length > 0) {
-      const turnCount = cached.turns.length;
-      have = {
-        sessionId: cached.sessionId,
-        turnCount,
-        ...(turnCount >= 2
-          ? { anchorHash: hashTurn(cached.turns[turnCount - 2]) }
-          : { lastTurnHash: hashTurn(cached.turns[turnCount - 1]) }),
-      };
+      have = buildHaveInfo(cached.sessionId, cached.turns);
     }
   }
 
@@ -970,10 +965,18 @@ export function handleVisibilityChange(): void {
     if (state.activePaneId) flushActivePaneSnapshot();
   }
   if (document.visibilityState === "visible") {
+    const cameFromHidden = hiddenAt !== null;
     const hiddenFor: Record<string, number> = hiddenAt === null ? {} : { hidden_ms: Date.now() - hiddenAt };
     hiddenAt = null;
     if (!socket || socket.readyState !== WebSocket.OPEN) {
       conn("visible", hiddenFor);
+      if (cameFromHidden && socket && socket.readyState === WebSocket.CONNECTING) {
+        const stale = socket;
+        teardownSocket(stale);
+        try {
+          stale.close();
+        } catch {}
+      }
       if (!pairingCheck && (!socket || socket.readyState !== WebSocket.CONNECTING)) {
         if (reconnectTimer) {
           clearTimeout(reconnectTimer);
@@ -989,7 +992,7 @@ export function handleVisibilityChange(): void {
       wakeupProbeTimer = setTimeout(() => {
         wakeupProbeTimer = null;
         if (socket !== probedWs || probedWs.readyState !== WebSocket.OPEN) return;
-        console.warn("[Pigeon] wakeup ping timed out after 3s; reconnecting");
+        console.warn("[Pigeon] wakeup ping timed out after 2s; reconnecting");
         if (reconnectTimer) {
           clearTimeout(reconnectTimer);
           reconnectTimer = null;
@@ -1008,9 +1011,18 @@ export function handleVisibilityChange(): void {
   reportPresence();
 }
 
-/** protocol.md §2.2: the network came back while a retry waits; try at once. */
+/** protocol.md §2.2: the network came back while a retry waits or a socket hangs connecting; try at once. */
 export function handleOnline(): void {
   conn("online");
+  if (socket && socket.readyState === WebSocket.CONNECTING) {
+    const stale = socket;
+    teardownSocket(stale);
+    try {
+      stale.close();
+    } catch {}
+    if (!pairingCheck) void initWebSocket();
+    return;
+  }
   if (!reconnectTimer) return;
   clearTimeout(reconnectTimer);
   reconnectTimer = null;

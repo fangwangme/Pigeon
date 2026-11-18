@@ -483,7 +483,7 @@ export function SessionPage() {
                     >
                       <div class="newempty">
                         <div style={{ "margin-bottom": "8px" }}>{t("session.noStructuredSession")}</div>
-                        <button class="btn primary" onClick={() => openTerminal()}>
+                        <button class="btn pri" onClick={() => openTerminal()}>
                           {t("session.openTerminal")}
                         </button>
                       </div>
@@ -614,6 +614,22 @@ export function SessionPage() {
                 <div>
                   {t("menu.copyBranch")}
                   <small class="mono">{tab()?.branch || found()?.ws.branch}</small>
+                </div>
+              </button>
+            </Show>
+            <Show when={state.activePaneId}>
+              <button
+                class="mi"
+                onClick={() => {
+                  const id = state.activePaneId!;
+                  setPanel(null);
+                  copyText(id);
+                }}
+              >
+                <Icon name="copy" />
+                <div>
+                  {t("menu.copyPaneId")}
+                  <small class="mono">{state.activePaneId}</small>
                 </div>
               </button>
             </Show>

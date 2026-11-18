@@ -17,7 +17,7 @@ Delivery uses the standard Web Push protocol: RFC 8291 message encryption (`aes1
 1. **VAPID keys**: on first start, the daemon generates a P-256 keypair in `vapid.json` in the instance's state directory (mode `0600`). The public key is the 65-byte uncompressed point in base64url, the form `PushManager.subscribe({ applicationServerKey })` accepts.
 2. **Handshake**:
    - Turning a push switch on fetches `GET /api/push/vapid-public-key`, asks for notification permission, calls `PushManager.subscribe({ userVisibleOnly: true, applicationServerKey })`, and sends the result with `POST /api/push/subscribe` (session cookie required).
-   - The body is `{ "endpoint", "keys": { "p256dh", "auth" }, "events": { "blocked": bool, "done": bool } }`. `endpoint` must be an absolute `https:` or `http:` URL, `keys.p256dh` the base64url of a 65-byte point, `keys.auth` the base64url of 16 bytes, and `events` two booleans, or the request gets HTTP 400 (trust boundary).
+   - The body is `{ "endpoint", "keys": { "p256dh", "auth" }, "events"?: { "blocked": bool, "done": bool } }`. `endpoint` must be an absolute `https:` or `http:` URL, `keys.p256dh` the base64url of a 65-byte point, `keys.auth` the base64url of 16 bytes, and `events` (optional, defaulting to `{ blocked: true, done: true }` when omitted) two booleans, or the request gets HTTP 400 (trust boundary).
    - Turning every switch off sends `POST /api/push/unsubscribe` with the endpoint and calls `PushSubscription.unsubscribe()`.
 3. **Storage**: subscriptions are stored in `push-subscriptions.json` in the instance's state directory (mode `0600`, written atomically), keyed by endpoint, each with the `deviceId` of the session that posted it and its `events`. A device has at most one subscription; a new one replaces it. Revoking a device (`security-and-pairing.md` §5, `protocol.md` §4.12) deletes its subscription. A file that cannot be parsed stops startup with an error naming it.
 
@@ -41,4 +41,4 @@ Delivery uses the standard Web Push protocol: RFC 8291 message encryption (`aes1
 
 ## 6. Settings
 
-The phone's settings (`mobile-ui-and-themes.md` §8.1) show one switch per event: **等你确认** (`blocked`, on by default once push is allowed) and **完成时** (`done`). They belong to this device's subscription. When push cannot work here (plain HTTP mode, iOS outside the home-screen app, permission denied), the switches are disabled with a note saying which.
+The phone's settings (`mobile-ui-and-themes.md` §8.1) show a master **推送通知** (`Push notifications`) switch together with one switch per event: **Agent 等你时** (`blocked`) and **Agent 完成时** (`done`), both enabled by default when turning push on. They belong to this device's subscription. When push cannot work here (plain HTTP mode, iOS outside the home-screen app, permission denied), the switches are disabled with a note saying which.

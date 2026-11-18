@@ -59,6 +59,7 @@ function fromRateRow(row: any): ModelPrice {
 export interface UsageStoreOptions {
   dbPath?: string;
   home?: string;
+  env?: Record<string, string | undefined>;
   now?: () => number;
   discoverLs?: () => Promise<AntigravityLsConnection | null>;
 }
@@ -66,6 +67,7 @@ export interface UsageStoreOptions {
 export class UsageStore {
   private db: Database;
   private home: string;
+  private env: Record<string, string | undefined>;
   private now: () => number;
   private discoverLs: () => Promise<AntigravityLsConnection | null>;
   private agyCacheDbPath: string;
@@ -73,10 +75,11 @@ export class UsageStore {
   private pricedCatalogs = new WeakMap<PricingManager, number>();
 
   constructor(options: UsageStoreOptions = {}) {
-    this.home = options.home ?? process.env.HOME ?? "";
+    this.env = options.env ?? process.env;
+    this.home = options.home ?? this.env.HOME ?? "";
     this.now = options.now ?? (() => Date.now());
     this.discoverLs = options.discoverLs ?? (() => discoverAntigravityLs(this.home));
-    const defaultDataDir = process.env.XDG_DATA_HOME ? join(process.env.XDG_DATA_HOME, "pigeon") : join(this.home, ".local", "share", "pigeon");
+    const defaultDataDir = this.env.XDG_DATA_HOME ? join(this.env.XDG_DATA_HOME, "pigeon") : join(this.home, ".local", "share", "pigeon");
     const dbPath = options.dbPath ?? join(defaultDataDir, "usage.db");
     // quota-and-usage.md §3.1: Pigeon's own Antigravity cache lives next to the usage database.
     this.agyCacheDbPath = join(dirname(dbPath), "antigravity-cache", "cache.db");
@@ -118,10 +121,10 @@ export class UsageStore {
       CREATE TABLE IF NOT EXISTS scan_file_state (
         path TEXT PRIMARY KEY,
         mtime_ms INTEGER NOT NULL,
-        size_bytes INTEGER NOT NULL
+        size_bytes INTEGER NOT NULL,
+        watermark INTEGER NOT NULL DEFAULT 0,
+        updated_watermark INTEGER NOT NULL DEFAULT 0
       );
-
-      DROP TABLE IF EXISTS daily_pricing_snapshots;
 
       CREATE TABLE IF NOT EXISTS model_price_periods (
         model TEXT NOT NULL,
@@ -145,24 +148,33 @@ export class UsageStore {
       );
     `);
 
-    try {
-      const cols = (this.db.query("PRAGMA table_info('usage_records')").all() as any[]).map((c) => c.name);
-      if (!cols.includes("raw_model_id")) {
-        this.db.run("ALTER TABLE usage_records ADD COLUMN raw_model_id TEXT;");
-      }
-    } catch {}
+    const cols = (this.db.query("PRAGMA table_info('usage_records')").all() as any[]).map((c) => c.name);
+    if (!cols.includes("raw_model_id")) {
+      this.db.run("ALTER TABLE usage_records ADD COLUMN raw_model_id TEXT;");
+    }
+    const scanCols = (this.db.query("PRAGMA table_info('scan_file_state')").all() as any[]).map((c) => c.name);
+    if (!scanCols.includes("watermark")) {
+      this.db.run("ALTER TABLE scan_file_state ADD COLUMN watermark INTEGER NOT NULL DEFAULT 0;");
+    }
+    if (!scanCols.includes("updated_watermark")) {
+      this.db.run("ALTER TABLE scan_file_state ADD COLUMN updated_watermark INTEGER NOT NULL DEFAULT 0;");
+    }
   }
 
   public getLastScannedAt(): number {
     if (this.lastScannedAt > 0) return this.lastScannedAt;
-    try {
-      const row: any = this.db.query("SELECT val FROM usage_meta WHERE key = 'last_scanned_at'").get();
-      if (row?.val) {
-        this.lastScannedAt = Number(row.val);
-        return this.lastScannedAt;
-      }
-    } catch {}
+    const row: any = this.db.query("SELECT val FROM usage_meta WHERE key = 'last_scanned_at'").get();
+    if (row?.val) {
+      this.lastScannedAt = Number(row.val);
+      return this.lastScannedAt;
+    }
     return 0;
+  }
+
+  public syncScannedAt(ts: number): void {
+    if (ts > this.lastScannedAt) {
+      this.lastScannedAt = ts;
+    }
   }
 
   public setLastScannedAt(ts: number): void {
@@ -191,7 +203,7 @@ export class UsageStore {
       ...findFilesRecursive(join(this.home, ".claude", "transcripts"), ".jsonl"),
     ];
 
-    const codexHome = process.env.CODEX_HOME;
+    const codexHome = this.env.CODEX_HOME;
     const codexFiles = [
       ...(codexHome ? findFilesRecursive(join(codexHome, "sessions"), [".jsonl", ".zst"]) : []),
       ...(codexHome ? findFilesRecursive(join(codexHome, "archived_sessions"), [".jsonl", ".zst"]) : []),
@@ -212,7 +224,7 @@ export class UsageStore {
 
     const agyCachePath = existsSync(pigeonAgyCacheDb) ? pigeonAgyCacheDb : null;
 
-    const opencodeDataDir = process.env.XDG_DATA_HOME ? join(process.env.XDG_DATA_HOME, "opencode") : join(this.home, ".local", "share", "opencode");
+    const opencodeDataDir = this.env.XDG_DATA_HOME ? join(this.env.XDG_DATA_HOME, "opencode") : join(this.home, ".local", "share", "opencode");
     const opencodeFiles = findFilesRecursive(opencodeDataDir, ".db").filter((f) => !f.endsWith("-wal") && !f.endsWith("-shm") && !f.endsWith("-journal"));
 
     const piFiles = findFilesRecursive(join(this.home, ".pi", "agent", "sessions"), ".jsonl");
@@ -226,8 +238,10 @@ export class UsageStore {
       ...piFiles.map((path) => ({ path, agent: "pi" })),
     ];
 
-    const getFileState = this.db.prepare("SELECT mtime_ms, size_bytes FROM scan_file_state WHERE path = ?");
-    const setFileState = this.db.prepare("INSERT OR REPLACE INTO scan_file_state (path, mtime_ms, size_bytes) VALUES (?, ?, ?)");
+    const getFileState = this.db.prepare("SELECT mtime_ms, size_bytes, watermark, updated_watermark FROM scan_file_state WHERE path = ?");
+    const setFileState = this.db.prepare(
+      "INSERT OR REPLACE INTO scan_file_state (path, mtime_ms, size_bytes, watermark, updated_watermark) VALUES (?, ?, ?, ?, ?)"
+    );
     const insertRecord = this.db.prepare(`
       INSERT OR REPLACE INTO usage_records (
         agent, session_id, message_key, timestamp_ms, date, raw_model_id, model_id, canonical_model_id,
@@ -320,6 +334,8 @@ export class UsageStore {
 
       scannedFiles++;
       let rawRecords: RawUsageRecord[] = [];
+      let nextWatermark = 0;
+      let nextUpdatedWatermark = 0;
       try {
         switch (item.agent) {
           case "claude":
@@ -335,7 +351,14 @@ export class UsageStore {
             rawRecords = scanAntigravityCacheDb(item.path);
             break;
           case "opencode":
-            rawRecords = scanOpenCodeDb(item.path, stats);
+            rawRecords = scanOpenCodeDb(item.path, stats, {
+              lastRowId: Number(existing?.watermark ?? 0),
+              lastUpdatedMs: Number(existing?.updated_watermark ?? 0),
+              onProgress: (maxRowId, maxUpdatedMs) => {
+                nextWatermark = maxRowId;
+                nextUpdatedWatermark = maxUpdatedMs;
+              },
+            });
             break;
           case "pi":
             rawRecords = scanPiFile(item.path, stats);
@@ -351,7 +374,7 @@ export class UsageStore {
         recordsAdded += rawRecords.length;
       }
 
-      setFileState.run(item.path, fingerprintMtime, fingerprintSize);
+      setFileState.run(item.path, fingerprintMtime, fingerprintSize, nextWatermark, nextUpdatedWatermark);
     }
 
     if (pricing.arePricesAvailable()) {
@@ -686,21 +709,23 @@ export class UsageStore {
     req: { preset: string; from?: string; to?: string; agents: string[] },
     resolvedRange: { from: string; to: string },
     today: string,
-    pricesAvailable: boolean
+    pricesAvailable: boolean,
+    knownFirstDay?: string | null
   ): UsageGetPayload {
     const agentsList = req.agents;
     const placeholders = agentsList.map(() => "?").join(",");
 
     // First day
-    const firstDay = this.getFirstDay(agentsList);
+    const firstDay = knownFirstDay !== undefined ? knownFirstDay : this.getFirstDay(agentsList);
     if (req.preset === "all" && firstDay) {
       resolvedRange = resolveRange("all", today, { firstDay });
     }
 
-    // Totals for range
-    const totalsRow: any = this.db
+    // Days summary first so scalar totals reuse its breakdown without a second aggregation scan
+    const dayRows: any[] = this.db
       .query(`
         SELECT
+          date,
           COALESCE(SUM(cost), 0) as cost,
           COALESCE(SUM(total_tokens), 0) as tokens,
           COALESCE(SUM(input_tokens), 0) as input,
@@ -711,18 +736,66 @@ export class UsageStore {
           COUNT(DISTINCT session_id) as sessions
         FROM usage_records
         WHERE agent IN (${placeholders}) AND date >= ? AND date <= ?
+        GROUP BY date
+        ORDER BY date DESC
       `)
-      .get(...agentsList, resolvedRange.from, resolvedRange.to);
+      .all(...agentsList, resolvedRange.from, resolvedRange.to);
+
+    let totCost = 0;
+    let totTokens = 0;
+    let totInput = 0;
+    let totOutput = 0;
+    let totCacheRead = 0;
+    let totCacheWrite = 0;
+    let totMessages = 0;
+    const days: UsageDaySummary[] = dayRows.map((r) => {
+      const c = Number(r.cost);
+      const t = Number(r.tokens);
+      const inp = Number(r.input);
+      const out = Number(r.output);
+      const cr = Number(r.cache_read);
+      const cw = Number(r.cache_write);
+      const msgs = Number(r.messages);
+      totCost += c;
+      totTokens += t;
+      totInput += inp;
+      totOutput += out;
+      totCacheRead += cr;
+      totCacheWrite += cw;
+      totMessages += msgs;
+      return {
+        date: r.date,
+        cost: Number(c.toFixed(4)),
+        tokens: t,
+        input: inp,
+        output: out,
+        cacheRead: cr,
+        cacheWrite: cw,
+        messages: msgs,
+        sessions: Number(r.sessions),
+      };
+    });
+
+    const sessionsRow: any =
+      dayRows.length > 0
+        ? this.db
+            .query(`
+              SELECT COUNT(DISTINCT session_id) as sessions
+              FROM usage_records
+              WHERE agent IN (${placeholders}) AND date >= ? AND date <= ?
+            `)
+            .get(...agentsList, resolvedRange.from, resolvedRange.to)
+        : { sessions: 0 };
 
     const totals: UsageTotals = {
-      cost: Number(totalsRow.cost.toFixed(4)),
-      tokens: Number(totalsRow.tokens),
-      input: Number(totalsRow.input),
-      output: Number(totalsRow.output),
-      cacheRead: Number(totalsRow.cache_read),
-      cacheWrite: Number(totalsRow.cache_write),
-      messages: Number(totalsRow.messages),
-      sessions: Number(totalsRow.sessions),
+      cost: Number(totCost.toFixed(4)),
+      tokens: totTokens,
+      input: totInput,
+      output: totOutput,
+      cacheRead: totCacheRead,
+      cacheWrite: totCacheWrite,
+      messages: totMessages,
+      sessions: Number(sessionsRow?.sessions ?? 0),
     };
 
     // Comparison
@@ -808,38 +881,6 @@ export class UsageStore {
         };
       }
     }
-
-    // Days summary
-    const dayRows: any[] = this.db
-      .query(`
-        SELECT
-          date,
-          COALESCE(SUM(cost), 0) as cost,
-          COALESCE(SUM(total_tokens), 0) as tokens,
-          COALESCE(SUM(input_tokens), 0) as input,
-          COALESCE(SUM(output_tokens), 0) as output,
-          COALESCE(SUM(cache_read_tokens), 0) as cache_read,
-          COALESCE(SUM(cache_write_tokens), 0) as cache_write,
-          COUNT(*) as messages,
-          COUNT(DISTINCT session_id) as sessions
-        FROM usage_records
-        WHERE agent IN (${placeholders}) AND date >= ? AND date <= ?
-        GROUP BY date
-        ORDER BY date DESC
-      `)
-      .all(...agentsList, resolvedRange.from, resolvedRange.to);
-
-    const days: UsageDaySummary[] = dayRows.map((r) => ({
-      date: r.date,
-      cost: Number(r.cost.toFixed(4)),
-      tokens: Number(r.tokens),
-      input: Number(r.input),
-      output: Number(r.output),
-      cacheRead: Number(r.cache_read),
-      cacheWrite: Number(r.cache_write),
-      messages: Number(r.messages),
-      sessions: Number(r.sessions),
-    }));
 
     // Models summary
     const modelRows: any[] = this.db

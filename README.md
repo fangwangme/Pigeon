@@ -97,7 +97,7 @@ Phone (Chrome / Safari PWA) ──HTTPS / WSS over Tailscale──▶ pigeon dae
 
 - **Tailscale HTTPS tunnel.** On startup, `pigeon start` configures `tailscale serve` (`https://<machine>.<tailnet>.ts.net:8443` → `127.0.0.1:4100`) so the phone connects over end-to-end encrypted HTTPS/WSS inside your private tailnet—unlocking PWA installation and Web Push without exposing public ports.
 - **Local sockets to Herdr.** The daemon talks to **Herdr App** (`herdr-app.sock`) to manage workspaces and tabs, and to **Herdr Core** (`herdr-core`) for pane status events, screen reads, and input.
-- **Disk session logs & local RPC.** Tails each agent's session logs (JSONL / SQLite) incrementally as turns arrive, and queries local loopback services (such as the Antigravity Language Server) for live quota data when running.
+- **Disk session logs & local RPC.** Tails each agent's session logs (JSONL / SQLite) incrementally as turns arrive, and queries local loopback services (such as the Antigravity Language Server) for live quota data and Desktop `.pb` usage metadata when running.
 - **Fragment-based QR pairing.** Pairing codes travel in the URL fragment (`#code=...`), so they never appear in HTTP request headers or proxy logs, and exchange for an `HttpOnly` session cookie. Review or revoke paired devices anytime from **Settings** or `pigeon devices`.
 
 Full architecture, protocol, and normalization specs live in [`docs/specs/`](docs/specs/).
@@ -111,15 +111,15 @@ Full architecture, protocol, and normalization specs live in [`docs/specs/`](doc
 
 ## Pairing and CLI
 
-While the daemon is running, you can manage pairing, status, and caches from another terminal (all admin subcommands also accept `--port <n>` for non-default instances):
+While the daemon is running, you can manage pairing, status, and caches from another terminal (`pigeon start` also accepts `--port <n>`, `--debug`, `--insecure-dev`, and `--public-url`; admin subcommands accept `--port <n>` and `--json` where noted):
 
 - Rotate the pairing link and print a new QR code:
   ```bash
-  pigeon pair
+  pigeon pair [--json]
   ```
 - Create a single-use pairing link that expires in 10 minutes:
   ```bash
-  pigeon pair --ephemeral
+  pigeon pair --ephemeral [--json]
   ```
 - List paired browsers:
   ```bash
@@ -131,11 +131,11 @@ While the daemon is running, you can manage pairing, status, and caches from ano
   ```
 - Show Herdr connection state, public URL, active sessions, queues, last usage scan, and source errors:
   ```bash
-  pigeon status
+  pigeon status [--json]
   ```
-- Rebuild the local token usage and cost cache from disk logs:
+- Rebuild the local token usage and cost cache from disk logs (non-production `--port <n>` requires `--yes`):
   ```bash
-  pigeon rebuild-cache
+  pigeon rebuild-cache [--json] [--yes]
   ```
 
 ## Build from source

@@ -1,10 +1,10 @@
 import "fake-indexeddb/auto";
-import { beforeEach, describe, expect, spyOn, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 // @ts-ignore
 import { createStore as createBrowserStore } from "solid-js/store/dist/store.js";
 import * as cache from "../src/client/src/state/pane-cache";
 import { load, save, clearAll, sweep, PANE_CACHE_TTL_MS, DB_VERSION } from "../src/client/src/state/pane-cache";
-import { handleServerMessage, selectPane } from "../src/client/src/state/ws";
+import { handleServerMessage, initWebSocket, selectPane } from "../src/client/src/state/ws";
 import { state, setState } from "../src/client/src/state/store";
 import type { NormalizedTurn } from "../src/types/protocol";
 
@@ -19,6 +19,18 @@ describe("client pane cache (mobile-ui-and-themes.md §3.1)", () => {
 
   beforeEach(async () => {
     await clearAll();
+  });
+
+  afterEach(() => {
+    setState({
+      activePaneId: null,
+      session: null,
+      normalizedTurns: [],
+      queue: [],
+      lastError: null,
+      paneSyncing: false,
+      paneLoaded: false,
+    });
   });
 
   test("LRU keeps at most 10 entries", async () => {
@@ -178,10 +190,42 @@ describe("client pane cache (mobile-ui-and-themes.md §3.1)", () => {
       await save("p_sec1", { sessionId: "s1", turns: [dummyTurn] });
       await save("p_sec2", { sessionId: "s2", turns: [dummyTurn] });
 
-      // Simulate onclose with code 4403
-      await clearAll(); // as triggered by 4403
-      expect(await load("p_sec1")).toBeNull();
-      expect(await load("p_sec2")).toBeNull();
+      const g = globalThis as any;
+      const savedWs = g.WebSocket;
+      const savedWin = g.window;
+      const savedDoc = g.document;
+      const sockets: any[] = [];
+      class Close4403Socket {
+        static OPEN = 1;
+        readyState = 1;
+        onopen: (() => void) | null = null;
+        onclose: ((e: { code: number; reason: string }) => void) | null = null;
+        onmessage: any = null;
+        onerror: any = null;
+        constructor() { sockets.push(this); }
+        send() {}
+        close() { this.readyState = 3; }
+      }
+      g.WebSocket = Close4403Socket;
+      g.window = { location: { protocol: "http:", host: "localhost", hash: "" }, addEventListener() {}, history: { replaceState() {} } };
+      g.document = { visibilityState: "visible", addEventListener() {}, documentElement: { setAttribute() {}, style: { setProperty() {} } } };
+      setState("paired", true);
+      try {
+        await initWebSocket();
+        expect(sockets).toHaveLength(1);
+        sockets[0].readyState = 3;
+        sockets[0].onclose?.({ code: 4403, reason: "revoked" });
+        await Bun.sleep(20);
+        expect(await load("p_sec1")).toBeNull();
+        expect(await load("p_sec2")).toBeNull();
+        expect(state.paired).toBe(false);
+      } finally {
+        sockets[0]?.onclose?.({ code: 4409, reason: "" });
+        g.WebSocket = savedWs;
+        g.window = savedWin;
+        g.document = savedDoc;
+        setState("paired", true);
+      }
     });
 
     test("turns_delta updates IndexedDB pane cache after debounce (mobile-ui-and-themes.md §3.1)", async () => {

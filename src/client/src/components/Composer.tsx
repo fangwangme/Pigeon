@@ -107,7 +107,6 @@ export interface ComposerProps {
   onSend: (text: string, attachmentIds: string[], queueId?: string) => Promise<unknown>;
   working?: boolean;
   onStop?: () => void;
-  allowAttachments?: boolean;
   onPlus?: () => void;
 }
 

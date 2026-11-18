@@ -992,4 +992,115 @@ describe("Antigravity token accounting and contemporaneous model resolution (quo
       store.close();
     }
   });
+
+  test("scanOpenCodeDb advances incrementally by rowid/time_updated and resets on DB recreation, and UsageService scans off-thread in Worker (quota-and-usage.md §3.1, §3.7)", async () => {
+    const d = tempDir("opencode-worker");
+    const fakeHome = join(d, "home");
+    const ocDir = join(fakeHome, ".local", "share", "opencode");
+    mkdirSync(ocDir, { recursive: true });
+    const ocDbPath = join(ocDir, "opencode.db");
+
+    const origData = process.env.XDG_DATA_HOME;
+    const origCodex = process.env.CODEX_HOME;
+    process.env.XDG_DATA_HOME = join(fakeHome, ".local", "share");
+    process.env.CODEX_HOME = join(fakeHome, "codex");
+
+    try {
+      const ocDb = new Database(ocDbPath);
+      ocDb.run(`
+        CREATE TABLE session_message (
+          id TEXT PRIMARY KEY,
+          session_id TEXT NOT NULL,
+          type TEXT NOT NULL,
+          seq INTEGER NOT NULL,
+          time_created INTEGER NOT NULL,
+          time_updated INTEGER NOT NULL,
+          data TEXT NOT NULL
+        );
+      `);
+      const ins = ocDb.prepare(
+        "INSERT INTO session_message (id, session_id, type, seq, time_created, time_updated, data) VALUES (?, ?, 'assistant', ?, ?, ?, ?)"
+      );
+      const t1 = Date.parse("2026-11-18T10:00:00Z");
+      ins.run("m1", "s1", 1, t1, t1, JSON.stringify({ model: "claude-sonnet-4-6", tokens: { input: 100, output: 20, cache: { read: 50, write: 0 } } }));
+      ins.run("m2", "s1", 2, t1 + 1000, t1 + 1000, JSON.stringify({ model: "claude-sonnet-4-6", tokens: { input: 200, output: 30, cache: { read: 0, write: 0 } } }));
+
+      let cursorProgress: [number, number] = [0, 0];
+      const initial = scanOpenCodeDb(ocDbPath, { skipped: 0 }, {
+        lastRowId: 0,
+        lastUpdatedMs: 0,
+        onProgress: (r, u) => (cursorProgress = [r, u]),
+      });
+      expect(initial).toHaveLength(2);
+      expect(cursorProgress).toEqual([2, t1 + 1000]);
+
+      // Append a new message + update an existing message via time_updated
+      const t2 = t1 + 120_000;
+      ins.run("m3", "s1", 3, t2, t2, JSON.stringify({ model: "claude-sonnet-4-6", tokens: { input: 300, output: 40, cache: { read: 100, write: 0 } } }));
+      ocDb.run("UPDATE session_message SET time_updated = ?, data = ? WHERE id = 'm1'", [
+        t2 + 1000,
+        JSON.stringify({ model: "claude-sonnet-4-6", tokens: { input: 150, output: 25, cache: { read: 80, write: 0 } } }),
+      ]);
+
+      const delta = scanOpenCodeDb(ocDbPath, { skipped: 0 }, {
+        lastRowId: cursorProgress[0],
+        lastUpdatedMs: cursorProgress[1],
+        onProgress: (r, u) => (cursorProgress = [r, u]),
+      });
+      expect(delta.map((r) => r.messageKey).sort()).toEqual(["m1", "m2", "m3"]);
+      expect(delta.find((r) => r.messageKey === "m1")?.inputTokens).toBe(150);
+      expect(cursorProgress).toEqual([3, t2 + 1000]);
+
+      // Run UsageService with Worker enabled (scan + rebuild)
+      const cachePath = join(d, "pricing-cache.json");
+      writeFileSync(
+        cachePath,
+        JSON.stringify({
+          fetchedAt: Date.now(),
+          models: { "claude-sonnet-4-6": { input: 3, output: 15, cacheRead: 0.3, cacheWrite: 3.75 } },
+        }),
+        "utf-8"
+      );
+
+      let updatedEvents = 0;
+      const debugLines: string[] = [];
+      const svc = new UsageService({
+        useWorker: true,
+        dbPath: join(d, "usage.db"),
+        pricingCachePath: cachePath,
+        home: fakeHome,
+        onUpdated: () => updatedEvents++,
+        debugLogger: (m) => debugLines.push(m),
+      });
+      try {
+        const res1 = await svc.scan();
+        expect(res1.recordsAdded).toBeGreaterThanOrEqual(3);
+        expect(updatedEvents).toBe(1);
+        expect(debugLines.some((l) => l.includes("debug usage scan start"))).toBe(true);
+        expect(debugLines.some((l) => l.includes("debug usage scan done"))).toBe(true);
+
+        const rep = await svc.getUsage({ preset: "today", agents: ["opencode"] });
+        expect(rep.totals.messages).toBe(3);
+        // After DB recreation (max rowid drops back to 1), scanOpenCodeDb resets and scans full
+        ocDb.run("DELETE FROM session_message");
+        ins.run("m_new", "s2", 1, t2 + 5000, t2 + 5000, JSON.stringify({ model: "claude-sonnet-4-6", tokens: { input: 50, output: 10, cache: { read: 0, write: 0 } } }));
+        const resetScan = scanOpenCodeDb(ocDbPath, { skipped: 0 }, {
+          lastRowId: cursorProgress[0],
+          lastUpdatedMs: cursorProgress[1],
+        });
+        expect(resetScan.map((r) => r.messageKey)).toEqual(["m_new"]);
+
+        const rebuilt = await svc.rebuild();
+        expect(rebuilt.recordCount).toBe(1);
+      } finally {
+        svc.destroy();
+      }
+      ocDb.close();
+    } finally {
+      if (origData === undefined) delete process.env.XDG_DATA_HOME;
+      else process.env.XDG_DATA_HOME = origData;
+      if (origCodex === undefined) delete process.env.CODEX_HOME;
+      else process.env.CODEX_HOME = origCodex;
+    }
+  });
 });
