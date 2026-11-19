@@ -22,7 +22,7 @@ svg.i.sm { width: 16px; height: 16px; }
 
 /* ---------- page frame ---------- */
 /* §1.1 "Keyboard on iOS": while a text field has focus the page follows the visual viewport. */
-.page { position: fixed; left: 0; right: 0; top: var(--vv-top, 0px); height: var(--vv-height, 100%); display: flex; flex-direction: column; background: var(--bg); overscroll-behavior: none; }
+.page { position: fixed; left: 0; right: 0; top: var(--vv-top, 0px); height: var(--vv-height, 100%); display: flex; flex-direction: column; background: var(--bg); overscroll-behavior: none; overflow-x: hidden; }
 .swipe-over { height: 100%; }
 .swipe-under { position: fixed; inset: 0; z-index: 1; pointer-events: none; will-change: transform; }
 .swipe-under.settling { transition: transform .2s cubic-bezier(.2,.85,.3,1); }
@@ -30,7 +30,7 @@ svg.i.sm { width: 16px; height: 16px; }
 .swipe-under.settling .swipe-dim { transition: opacity .2s cubic-bezier(.2,.85,.3,1); }
 .swipe-over.dragging { position: fixed; inset: 0; z-index: 2; will-change: transform; box-shadow: -12px 0 28px rgba(0,0,0,.28); }
 .swipe-over.settling { transition: transform .2s cubic-bezier(.2,.85,.3,1); }
-.scroll { flex: 1; overflow-y: auto; -webkit-overflow-scrolling: touch; overscroll-behavior: contain; }
+.scroll { flex: 1; overflow-y: auto; overflow-x: hidden; -webkit-overflow-scrolling: touch; overscroll-behavior: contain; }
 .hdr { position: relative; z-index: 20; display: flex; align-items: center; gap: 10px; padding: calc(8px + env(safe-area-inset-top)) 12px 10px; flex: none; }
 .hdr.home-hdr { padding-bottom: 6px; }
 .hdr.float { position: absolute; top: 0; left: 0; right: 0; border-bottom: 1px solid var(--line); }
@@ -107,6 +107,7 @@ svg.i.sm { width: 16px; height: 16px; }
 
 /* ---------- home ---------- */
 .home { padding: 0 20px calc(110px + env(safe-area-inset-bottom)); }
+.pull { display: flex; align-items: center; justify-content: center; gap: 8px; overflow: hidden; color: var(--muted); font-size: 13.5px; flex: none; }
 .agsum { margin-top: 8px; background: var(--surface); border: 1px solid var(--line); border-radius: 18px; padding: 12px 12px 12px 16px; display: flex; align-items: center; gap: 10px; width: 100%; text-align: left; min-height: 60px; }
 .agsum .tx { flex: 1; }
 .agsum .t1 { font-size: 13px; color: var(--muted); }
@@ -168,10 +169,12 @@ svg.i.sm { width: 16px; height: 16px; }
 .emptyh .big { font-size: 20px; font-weight: 650; color: var(--fg); margin: 12px 0 6px; }
 
 /* ---------- chat ---------- */
-.chat { padding: calc(70px + env(safe-area-inset-top)) 20px 0; display: flex; flex-direction: column; min-height: 100%; }
+.chat { padding: calc(70px + env(safe-area-inset-top)) 20px 0; display: flex; flex-direction: column; min-height: 100%; min-width: 0; max-width: 100%; }
 .chat .grow { flex: 1; }
 .chat .tail { flex: none; }
-.msg { font-size: 15.5px; line-height: 1.6; overflow-wrap: anywhere; }
+.msg { font-size: 15.5px; line-height: 1.6; overflow-wrap: anywhere; min-width: 0; max-width: 100%; }
+.msg img, .msg iframe, .msg video, .msg canvas, .msg svg, .msg object, .msg embed { max-width: 100%; height: auto; }
+.msg pre { max-width: 100%; overflow-x: auto; }
 .msg p { margin: 8px 0; }
 .msg h1, .msg h2, .msg h3, .msg h4 { font-size: 16.5px; margin: 14px 0 4px; line-height: 1.35; }
 .msg h1 { font-size: 19px; }

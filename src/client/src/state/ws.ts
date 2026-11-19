@@ -225,6 +225,27 @@ export async function initWebSocket(): Promise<void> {
   openSocket();
 }
 
+/** protocol.md §2.2: Home's pull-to-refresh replaces the connection with one fresh attempt at once. */
+export async function forceReconnect(): Promise<void> {
+  retryIndex = 0;
+  if (reconnectTimer) {
+    clearTimeout(reconnectTimer);
+    reconnectTimer = null;
+  }
+  if (socket) {
+    const ws = socket;
+    teardownSocket(ws);
+    try {
+      ws.close();
+    } catch {}
+  }
+  if (pairingCheck) {
+    await pairingCheck.catch(() => undefined);
+    if (!state.paired || socket) return;
+  }
+  await initWebSocket();
+}
+
 /**
  * protocol.md §2.2: after a socket that never opened, ask whether this browser is still paired.
  * The retry is due `due` (counted from the failure), and never opens before the check ends.

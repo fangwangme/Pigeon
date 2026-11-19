@@ -50,6 +50,7 @@ export function renderMarkdown(content: string): string {
     result = DOMPurify.sanitize(rawHtml, {
       USE_PROFILES: { html: true },
       FORBID_TAGS: ["style", "form", "input", "button", "textarea", "select"],
+      FORBID_ATTR: ["style"],
       ADD_ATTR: ["target"],
       ALLOWED_URI_REGEXP: /^(?:(?:https?|mailto):|[^a-z]|[a-z+.\-]+(?:[^a-z+.\-:]|$))/i,
     });
@@ -58,6 +59,7 @@ export function renderMarkdown(content: string): string {
     result = rawHtml
       .replace(/<(script|style|form|textarea|select)[\s\S]*?<\/\1>/gi, "")
       .replace(/<(input|button)\b[^>]*\/?>/gi, "")
+      .replace(/\sstyle\s*=\s*(["'][^"']*["']|[^\s>]+)/gi, "")
       .replace(/on\w+\s*=\s*(["'][^"']*["']|[^\s>]+)/gi, "")
       .replace(/(href|src)\s*=\s*["']\s*(?!https?:|mailto:|\/|#)([a-z][a-z0-9+.\-]*:)[^"']*["']/gi, "");
   }

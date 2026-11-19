@@ -159,9 +159,26 @@ class AgySource implements SessionSource {
 }
 
 /** OpenCode: sessions are rows of `session_v2` or legacy `session` (`agent-session-normalization.md` §2.1). */
+const OPENCODE_SESSION_ID = /^[A-Za-z0-9._-]{1,128}$/;
 class OpenCodeSource implements SessionSource {
   public readonly agent = "opencode";
   constructor(private adapter: OpenCodeAdapter) {}
+  /** §2.0 rule 1: `opencode -s <id>`, `--session <id>` or `--session=<id>`. */
+  public exact(facts: PaneFacts): string | null {
+    const argv = facts.argv;
+    if (!argv) return null;
+    for (let i = 0; i < argv.length; i++) {
+      const arg = argv[i];
+      if (arg === "-s" || arg === "--session") {
+        const id = argv[i + 1];
+        if (id && OPENCODE_SESSION_ID.test(id)) return id;
+      } else if (arg?.startsWith("--session=")) {
+        const id = arg.slice("--session=".length);
+        if (OPENCODE_SESSION_ID.test(id)) return id;
+      }
+    }
+    return null;
+  }
   private topLevelFilter(db: Database, table: string): string {
     return table === "session_v2" && this.adapter.tableColumns(db, table).has("parent_id")
       ? " AND (parent_id IS NULL OR parent_id = '')"

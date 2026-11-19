@@ -79,6 +79,7 @@ interface KnownPane {
   /** Foreground process (`herdr-adapter.md` §3.1), used for session binding. */
   pid: number | null;
   program: string | undefined;
+  argv: string[] | undefined;
   createdMs: number;
   turn: number;
   desktopSeenTurn: number | null;
@@ -96,6 +97,7 @@ export interface PaneProcessFacts {
   pid: number | null;
   cwd: string | null;
   createdMs: number;
+  argv?: string[];
 }
 
 export class HerdrClient extends EventEmitter {
@@ -271,7 +273,7 @@ export class HerdrClient extends EventEmitter {
 
   public getPaneFacts(paneId: string): PaneProcessFacts | null {
     const k = this.knownPanes.get(paneId);
-    return k ? { agentKind: k.agentKind, pid: k.pid, cwd: k.cwd, createdMs: k.createdMs } : null;
+    return k ? { agentKind: k.agentKind, pid: k.pid, cwd: k.cwd, createdMs: k.createdMs, argv: k.argv } : null;
   }
 
   /** Herdr's own status for the pane, without the on-screen prompt override. */
@@ -584,6 +586,7 @@ export class HerdrClient extends EventEmitter {
             title: term?.title,
             pid: term?.foreground?.pid || null,
             program: term?.foreground?.name || undefined,
+            argv: term?.foreground?.argv,
             createdMs: term?.created_ms ?? 0,
             turn: typeof term?.turn === "number" ? term.turn : 0,
             desktopSeenTurn: desktopSeenTurnOf(term),
@@ -696,8 +699,10 @@ export class HerdrClient extends EventEmitter {
 
   /** protocol.md §5.3: a name the user gave the tab, else the bound session's title, else the agent. */
   private resolveTabLabel(rawName: string | undefined, primary: PaneSummary | undefined, tabIdx: number): string {
-    if (rawName && !/^\d+$/.test(rawName.trim())) return rawName;
+    const name = rawName?.trim();
     const recipe = primary?.agent ? getAgentRecipe(primary.agent) : undefined;
+    const isDefault = !name || /^\d+$/.test(name) || name === recipe?.label;
+    if (!isDefault) return name;
     return (primary && this.sessionTitleOf(primary.id)) || recipe?.label || `Tab ${tabIdx + 1}`;
   }
 

@@ -164,6 +164,9 @@ export class PaneStore extends EventEmitter {
   public unbind(paneId: string): void {
     const state = this.paneStates.get(paneId);
     if (!state) return;
+    // The launch record belongs to the run it started. Once that run's binding ends, a fresh
+    // agent in the same pane must not be pulled back to the old resume session.
+    this.launches.delete(paneId);
     this.release(state);
     this.paneStates.delete(paneId);
     this.emit("session_changed", paneId);

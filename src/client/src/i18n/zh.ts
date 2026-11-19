@@ -103,6 +103,9 @@ export const zh: Messages = {
   "home.noWorkspacesHint": "在电脑上的 Herdr 里打开一个工作区，它会出现在这里。",
   "home.newIn": "在 {name} 新建会话",
   "home.search": "搜索",
+  "home.pull": "下拉刷新",
+  "home.release": "松开刷新",
+  "home.refreshing": "刷新中…",
 
   "menu.copyBranch": "复制分支",
   "menu.copyPaneId": "复制终端 ID",

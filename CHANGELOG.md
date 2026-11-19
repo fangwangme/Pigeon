@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.18] - 2026-11-19
+
+### Added
+- **Home pull-to-refresh**: Pulling down at the top of Home now shows a refresh indicator and replaces the WebSocket with one fresh connection at once, including while offline (#37).
+
+### Fixed
+- **Agent-assigned session titles in tab labels**: A Herdr tab named after the agent it launches (`OpenCode`, `Claude Code`, …) now falls back to the bound session's title instead of showing only the agent name; a name the user gave the tab still wins (`protocol.md` §5.3, #37).
+- **Resumed OpenCode panes stay on their session**: The daemon reads `opencode -s/--session` from the foreground argv as an exact binding signal and pins an explicitly resumed pane, so writing another session in the same folder no longer switches the transcript or its title (`agent-session-normalization.md` §2.0, §2.1, #37).
+- **Markdown content stays inside the page**: Wide images fit the message column, raw `<pre>` blocks scroll inside their own box, and inline `style` attributes from agent HTML are dropped, so a session page can no longer be dragged sideways (`mobile-ui-and-themes.md` §3.2, #37).
+
 ## [0.1.17] - 2026-11-18
 
 ### Added

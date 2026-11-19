@@ -59,6 +59,12 @@ describe("Markdown rendering (mobile-ui-and-themes.md §3.1)", () => {
     expect(html).toContain("<code");
   });
 
+  test("agent inline styles are dropped but images are kept (mobile-ui-and-themes.md §3.2)", () => {
+    const html = renderMarkdown('<img src="https://example.com/wide.png" style="width: 3000px" alt="wide">');
+    expect(html).toContain("<img");
+    expect(html).not.toContain("style=");
+  });
+
   test("links open outside the app with noopener (architecture.md §5)", () => {
     const html = renderMarkdown("[docs](https://example.com)");
     expect(html).toContain('target="_blank"');

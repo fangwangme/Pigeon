@@ -1304,7 +1304,7 @@ export class WsServer {
     const claimed = new Set<string>(); // "agent|session"
     const result = new Map<string, string>();
     const keyOf = (agent: string, id: string) => `${agent}|${id}`;
-    const factsOf = (p: (typeof panes)[number]) => ({ agent: p.facts.agentKind!, pid: p.facts.pid, cwd: p.facts.cwd, createdMs: p.facts.createdMs });
+    const factsOf = (p: (typeof panes)[number]) => ({ agent: p.facts.agentKind!, pid: p.facts.pid, cwd: p.facts.cwd, createdMs: p.facts.createdMs, argv: p.facts.argv });
     const take = (p: (typeof panes)[number], id: string | null | undefined): boolean => {
       if (!id || result.has(p.paneId) || claimed.has(keyOf(p.facts.agentKind!, id))) return false;
       claimed.add(keyOf(p.facts.agentKind!, id));
@@ -1313,19 +1313,23 @@ export class WsServer {
     };
     const claimedOf = (agent: string) => new Set([...claimed].filter((k) => k.startsWith(agent + "|")).map((k) => k.slice(agent.length + 1)));
     for (const p of panes) take(p, this.agentAdapters.exactSession(factsOf(p)));
-    const kept: typeof panes = [];
+    const movable: typeof panes = [];
     for (const p of panes) {
       const launch = this.paneStore.getLaunch(p.paneId);
       const bound = this.paneStore.boundSession(p.paneId);
-      // The bound session first: once rule 6 moved the pane past the session it was resumed with, it stays moved.
-      if (bound?.agent === p.facts.agentKind && take(p, bound.sessionId)) kept.push(p);
-      else if (launch?.resumeSessionId && launch.agent === p.facts.agentKind && take(p, launch.resumeSessionId)) kept.push(p);
+      const resumed = !!launch?.resumeSessionId && launch.agent === p.facts.agentKind;
+      // A resumed pane keeps its bound session, even one rule 2 chose after its resume id was claimed.
+      if (bound?.agent === p.facts.agentKind && take(p, bound.sessionId)) {
+        if (!resumed) movable.push(p);
+      } else if (resumed && launch?.resumeSessionId && take(p, launch.resumeSessionId)) {
+        // An explicitly resumed pane is pinned; rule 6 never moves it.
+      }
     }
     for (const p of panes) {
       if (result.has(p.paneId)) continue;
       take(p, this.agentAdapters.newestSession(factsOf(p), claimedOf(p.facts.agentKind!)));
     }
-    for (const p of kept) {
+    for (const p of movable) {
       const agent = p.facts.agentKind!;
       const current = result.get(p.paneId)!;
       const candidate = this.agentAdapters.newestSession(factsOf(p), claimedOf(agent));
@@ -1357,25 +1361,29 @@ export class WsServer {
       const other = this.paneStore.boundSession(id);
       if (other?.agent === agent) claimed.add(other.sessionId);
     }
-    const paneFacts = { agent, pid: facts.pid, cwd: facts.cwd, createdMs: facts.createdMs };
+    const paneFacts = { agent, pid: facts.pid, cwd: facts.cwd, createdMs: facts.createdMs, argv: facts.argv };
     let selectedId = this.agentAdapters.exactSession(paneFacts);
     if (selectedId && claimed.has(selectedId)) selectedId = null;
 
     let isKept = false;
+    let pinned = false;
     if (!selectedId) {
       const bound = this.paneStore.boundSession(paneId);
       const launch = this.paneStore.getLaunch(paneId);
+      const resumed = !!launch?.resumeSessionId && launch.agent === agent;
       if (bound?.agent === agent && !claimed.has(bound.sessionId)) {
         selectedId = bound.sessionId;
         isKept = true;
-      } else if (launch?.resumeSessionId && launch.agent === agent && !claimed.has(launch.resumeSessionId)) {
+        pinned = resumed;
+      } else if (resumed && launch?.resumeSessionId && !claimed.has(launch.resumeSessionId)) {
         selectedId = launch.resumeSessionId;
         isKept = true;
+        pinned = true;
       }
     }
     if (!selectedId) {
       selectedId = this.agentAdapters.newestSession(paneFacts, claimed);
-    } else if (isKept) {
+    } else if (isKept && !pinned) {
       claimed.add(selectedId);
       const candidate = this.agentAdapters.newestSession(paneFacts, claimed);
       if (candidate && this.writtenAfter(agent, candidate, selectedId)) selectedId = candidate;
