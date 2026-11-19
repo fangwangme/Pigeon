@@ -137,16 +137,18 @@ export function findPane(paneId: string | null): { ws: WorkspaceSummary; tab: Ta
 
 export { ago } from "../i18n";
 
-/** Whether `target` sits inside a horizontal scroller that can still scroll rightward (reveal content on its left). */
-export function canScrollRightward(target: EventTarget | null, stopAt?: Element | null): boolean {
+/** Shared walk for horizontal-overflow ancestors; `canScroll` decides whether one blocks the caller. */
+function horizontalOverflow(
+  target: EventTarget | null,
+  stopAt: Element | null | undefined,
+  canScroll: (el: HTMLElement, style: CSSStyleDeclaration) => boolean
+): boolean {
   let el = target as HTMLElement | null;
   while (el && el !== stopAt && el !== document.body && el !== document.documentElement) {
     if (el.scrollWidth > el.clientWidth + 1) {
       try {
         const style = window.getComputedStyle(el);
-        if (style.overflowX === "auto" || style.overflowX === "scroll") {
-          if (style.flexDirection.includes("reverse") || el.scrollLeft > 0) return true;
-        }
+        if ((style.overflowX === "auto" || style.overflowX === "scroll") && canScroll(el, style)) return true;
       } catch {}
     }
     el = el.parentElement;
@@ -154,19 +156,14 @@ export function canScrollRightward(target: EventTarget | null, stopAt?: Element 
   return false;
 }
 
+/** Whether `target` sits inside a horizontal scroller that can still scroll rightward (reveal content on its left). */
+export function canScrollRightward(target: EventTarget | null, stopAt?: Element | null): boolean {
+  return horizontalOverflow(target, stopAt, (el, style) => style.flexDirection.includes("reverse") || el.scrollLeft > 0);
+}
+
 /** Whether `target` sits inside any element that scrolls horizontally, whatever its current position. */
 export function insideHorizontalScroller(target: EventTarget | null): boolean {
-  let el = target as HTMLElement | null;
-  while (el && el !== document.body && el !== document.documentElement) {
-    if (el.scrollWidth > el.clientWidth + 1) {
-      try {
-        const style = window.getComputedStyle(el);
-        if (style.overflowX === "auto" || style.overflowX === "scroll") return true;
-      } catch {}
-    }
-    el = el.parentElement;
-  }
-  return false;
+  return horizontalOverflow(target, undefined, () => true);
 }
 
 /** A bottom sheet over a scrim; a tap on the scrim closes it. */

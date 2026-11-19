@@ -188,12 +188,7 @@ export function Home() {
   };
   onCleanup(() => {
     if (refreshTimer) clearTimeout(refreshTimer);
-    if (scroller) {
-      scroller.removeEventListener("touchstart", onPullStart);
-      scroller.removeEventListener("touchmove", onPullMove);
-      scroller.removeEventListener("touchend", onPullEnd);
-      scroller.removeEventListener("touchcancel", onPullCancel);
-    }
+    detachScroller();
   });
   createEffect(on(() => state.configReady, (ready) => {
     if (ready) stopRefreshing();
@@ -261,14 +256,17 @@ export function Home() {
     pullMode = "none";
     setPullDx(0);
   };
+  const detachScroller = () => {
+    if (!scroller) return;
+    scroller.removeEventListener("touchstart", onPullStart);
+    scroller.removeEventListener("touchmove", onPullMove);
+    scroller.removeEventListener("touchend", onPullEnd);
+    scroller.removeEventListener("touchcancel", onPullCancel);
+    scroller = undefined;
+  };
   const attachScroller = (el: HTMLDivElement) => {
     if (scroller === el) return;
-    if (scroller) {
-      scroller.removeEventListener("touchstart", onPullStart);
-      scroller.removeEventListener("touchmove", onPullMove);
-      scroller.removeEventListener("touchend", onPullEnd);
-      scroller.removeEventListener("touchcancel", onPullCancel);
-    }
+    detachScroller();
     scroller = el;
     el.addEventListener("touchstart", onPullStart, { passive: true });
     el.addEventListener("touchmove", onPullMove, { passive: false });
