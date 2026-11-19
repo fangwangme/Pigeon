@@ -32,10 +32,10 @@ A snapshot joins three answers: App `ls` (spaces, their tabs, and each tab's ter
 | tab `id`, `name`, `active` | tab `id`, `label`, the workspace's `activeTabId` |
 | tab terminal `terminal` (an address such as `t7`) | pane `id` |
 | Core terminal `foreground.cwd` (else `cwd`), `status`, `title` | pane folder, agent kind and status (§4), summary |
-| Core terminal `foreground.name`, `foreground.pid`, `created_ms` | pane `program`; the process id and start time used for session binding |
+| Core terminal `foreground.name`, `foreground.pid`, `foreground.argv`, `created_ms` | pane `program`; the process id, arguments and start time used for session binding |
 
 - **Workspace folder**: the folder of the first pane of the space's first tab (Core `foreground.cwd`, else `cwd`). Herdr starts a new space in the folder of the space focused before it, and the App's space `folder` and a terminal's `cwd` keep that start folder after the user moves into the project, so neither names the project. The App's `folder` is used only for a space with no live terminal.
-- A tab named only by its number is labelled after its primary pane's session title, else its agent recipe, else `Tab <n>`.
+- A tab named only by its number, or by the recipe label of its primary pane's agent, is labelled after that pane's session title, else its agent recipe, else `Tab <n>`.
 - Each snapshot rebuilds the pane facts. State for panes missing from the snapshot is dropped, so a reused address never shows old data.
 - A terminal the App shows but the Core does not list (it finished, or its machine is not connected) is a pane without an agent and with status `unknown`.
 - **Branch**: a workspace's `branch` is read from its folder, a tab's from its first pane's folder: walk up to the nearest `.git` (a directory, or a worktree's `.git` file naming its `gitdir`), read its `HEAD`, and take the name after `ref: refs/heads/`. A detached HEAD or no repository gives no branch. Read failures other than a missing file fail loudly.
@@ -87,7 +87,7 @@ A pane's effective status is that status, with two overrides: a prompt recognize
 
 Prompts are not refused while an agent is `working`: the agents queue typed input. When a pane is `blocked` without structured choice options (no numbered options on screen and no pending question), Pigeon passes `force: true` to Core `terminal.send`, so replies typed in the composer (including after an Antigravity `RequestFeedback` artifact or a closed alert dialog) go through; when structured options await a pick, `force` is omitted and Core refuses `terminal.send` (`blocked`, protecting option menus from an unintended Enter).
 
-The Core reports no agent session id. Pigeon binds a pane to its session from the pane's agent kind, foreground process id, folder and creation time (`agent-session-normalization.md` §2.0).
+The Core reports no agent session id. Pigeon binds a pane to its session from the pane's agent kind, foreground process id and arguments, folder and creation time (`agent-session-normalization.md` §2.0).
 
 ## 5. Tab Creation and Closing
 

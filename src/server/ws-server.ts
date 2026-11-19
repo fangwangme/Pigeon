@@ -1318,7 +1318,7 @@ export class WsServer {
       const launch = this.paneStore.getLaunch(p.paneId);
       const bound = this.paneStore.boundSession(p.paneId);
       const resumed = !!launch?.resumeSessionId && launch.agent === p.facts.agentKind;
-      // The bound session first: a resumed pane stays where it was resumed, even if rule 6 moved it in the past.
+      // A resumed pane keeps its bound session, even one rule 2 chose after its resume id was claimed.
       if (bound?.agent === p.facts.agentKind && take(p, bound.sessionId)) {
         if (!resumed) movable.push(p);
       } else if (resumed && launch?.resumeSessionId && take(p, launch.resumeSessionId)) {

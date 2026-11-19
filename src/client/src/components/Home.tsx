@@ -202,7 +202,7 @@ export function Home() {
     if (refreshing()) return;
     setRefreshing(true);
     if (refreshTimer) clearTimeout(refreshTimer);
-    refreshTimer = setTimeout(stopRefreshing, 5000);
+    refreshTimer = setTimeout(stopRefreshing, 2500);
     void forceReconnect();
   };
   const onPullStart = (e: TouchEvent) => {
@@ -226,7 +226,7 @@ export function Home() {
     const dy = e.touches[0].clientY - pullStartY;
     const dx = Math.abs(e.touches[0].clientX - pullStartX);
     if (pullMode === "pending") {
-      if (dy <= 0) {
+      if (dy < -8) {
         pullMode = "none";
         setPullDx(0);
         return;
@@ -238,6 +238,11 @@ export function Home() {
       }
     }
     if (pullMode !== "pull") return;
+    if (dy <= 0) {
+      pullMode = "none";
+      setPullDx(0);
+      return;
+    }
     if (e.cancelable) e.preventDefault();
     setPullDx(Math.min(110, dy));
   };
