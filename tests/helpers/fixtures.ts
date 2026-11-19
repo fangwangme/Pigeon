@@ -150,9 +150,10 @@ export interface FakePane {
   /** The status record's `state`; defaults to `idle` for an agent. */
   state?: string;
   cwd?: string;
-  /** Foreground process id and name (`herdr-adapter.md` §3.1). */
+  /** Foreground process id, name and argv (`herdr-adapter.md` §3.1). */
   pid?: number;
   program?: string;
+  argv?: string[];
   /** Terminal creation time; defaults to one hour ago. */
   createdMs?: number;
 }
@@ -182,7 +183,7 @@ export function topologyOf(panes: FakePane[], options: TopologyOptions = {}): He
       cwd: "/launch",
       state: "live" as const,
       created_ms: p.createdMs ?? Date.now() - 3_600_000,
-      foreground: { cwd: p.cwd ?? "/work", pid: p.pid ?? 0, name: p.program ?? (p.app ? p.app : "zsh"), argv: [] },
+      foreground: { cwd: p.cwd ?? "/work", pid: p.pid ?? 0, name: p.program ?? (p.app ? p.app : "zsh"), argv: p.argv ?? [] },
       status: p.app ? { state: p.state ?? "idle", app: p.app } : null,
       title: "",
     })),

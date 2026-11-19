@@ -478,3 +478,25 @@ describe("Syncing and substituted panes (protocol.md §3.3)", () => {
     expect(state.rawScreen).toBe("focused screen");
   });
 });
+
+describe("manual refresh (protocol.md §2.2, mobile-ui-and-themes.md §2.1)", () => {
+  test("a manual refresh closes the socket and starts one fresh attempt", async () => {
+    await initWebSocket();
+    const first = last();
+    first.open();
+    welcome(false);
+    await flush();
+    expect(sockets.length).toBe(1);
+
+    const mod = await import("../src/client/src/state/ws");
+    const forceReconnect = (mod as any).forceReconnect as (() => Promise<void>) | undefined;
+    expect(typeof forceReconnect).toBe("function");
+    if (!forceReconnect) return;
+
+    await forceReconnect();
+    await flush();
+    expect(first.closeCalled).toBe(true);
+    expect(sockets.length).toBe(2);
+    expect(last().url).toBe(first.url);
+  });
+});

@@ -139,6 +139,50 @@ describe("binding a pane to its session (agent-session-normalization.md §2.0)",
     expect(turnsOf(await open("p1")).session).toMatchObject({ bound: true, agent: "codex", sessionId: "c1" });
   });
 
+  test("an OpenCode resume stays bound to its session (agent-session-normalization.md §2.0 rule 1, §2.1)", async () => {
+    for (const flag of ["-s", "--session"]) {
+      const tag = flag === "-s" ? "short" : "long";
+      const home = tempDir(`home-${tag}`);
+      const proj = tempDir(`proj-${tag}`);
+      const dbDir = join(home, ".local", "share", "opencode");
+      mkdirSync(dbDir, { recursive: true });
+      const db = new Database(join(dbDir, "opencode.db"));
+      db.run(
+        "CREATE TABLE session_v2 (id text PRIMARY KEY, directory text, title text, parent_id text, time_created integer, time_updated integer, time_archived integer, summary_additions integer, summary_deletions integer, summary_files integer, summary_diffs text)"
+      );
+      db.run(
+        "CREATE TABLE session_message (id text PRIMARY KEY, session_id text NOT NULL, type text NOT NULL, seq integer NOT NULL, time_created integer NOT NULL, time_updated integer NOT NULL, data text NOT NULL)"
+      );
+      const now = Date.now();
+      db.run(
+        "INSERT INTO session_v2 (id, directory, title, parent_id, time_created, time_updated) VALUES ('ses_resumed', ?, 'Resumed session', NULL, ?, ?)",
+        [proj, now - 50_000, now - 40_000]
+      );
+      db.run(
+        "INSERT INTO session_v2 (id, directory, title, parent_id, time_created, time_updated) VALUES ('ses_newer', ?, 'Newer session', NULL, ?, ?)",
+        [proj, now - 30_000, now - 1_000]
+      );
+      db.run(
+        "INSERT INTO session_message (id, session_id, type, seq, time_created, time_updated, data) VALUES ('m_resumed', 'ses_resumed', 'user', 1, ?, ?, ?)",
+        [now - 50_000, now - 50_000, JSON.stringify({ text: "resume me" })]
+      );
+      db.run(
+        "INSERT INTO session_message (id, session_id, type, seq, time_created, time_updated, data) VALUES ('m_newer', 'ses_newer', 'user', 1, ?, ?, ?)",
+        [now - 30_000, now - 30_000, JSON.stringify({ text: "newer" })]
+      );
+      db.close();
+
+      const { server, open } = await setup(home, [
+        { paneId: "p1", app: "opencode", cwd: proj, createdMs: now - 60_000, argv: ["opencode", flag, "ses_resumed"] },
+      ]);
+      expect(server.paneStore.boundSession("p1")?.sessionId).toBe("ses_resumed");
+      const payload = turnsOf(await open("p1"));
+      expect(payload.session).toMatchObject({ bound: true, agent: "opencode", sessionId: "ses_resumed" });
+      expect(payload.sessionTitle).toBe("Resumed session");
+      expect(payload.turns[0].userPrompt?.text).toBe("resume me");
+    }
+  });
+
   test("a session already bound to one pane is not bound to a second pane in the same folder", async () => {
     const home = tempDir("home");
     const proj = tempDir("proj");

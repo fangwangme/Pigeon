@@ -55,6 +55,14 @@ describe("snapshot (herdr-adapter.md §3.1)", () => {
     expect(snap.workspaces[0].tabs[0].label).toBe("My Custom Work");
   });
 
+  test("a tab named after its agent recipe falls back to the session title (protocol.md §5.3)", () => {
+    client.setSessionTitleSource((paneId) => (paneId === "t1" ? "Fix the parser" : undefined));
+    const topo = topologyOf([{ paneId: "t1", app: "opencode" }]);
+    topo.ls.spaces[0].tabs[0].name = "OpenCode";
+    const snap = client.applySnapshot(topo);
+    expect(snap.workspaces[0].tabs[0].label).toBe("Fix the parser");
+  });
+
   test("a terminal the App shows but the Core does not list has no agent and status unknown", () => {
     const topology = topologyOf([{ paneId: "t1", app: "claude-code" }]);
     topology.terminals = [];
