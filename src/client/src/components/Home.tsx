@@ -215,6 +215,11 @@ export function Home() {
   };
   const onPullMove = (e: TouchEvent) => {
     if (pullMode === "none" || e.touches.length !== 1) return;
+    if (!scroller || scroller.scrollTop > 0) {
+      pullMode = "none";
+      setPullDx(0);
+      return;
+    }
     const dy = e.touches[0].clientY - pullStartY;
     const dx = Math.abs(e.touches[0].clientX - pullStartX);
     if (pullMode === "pending") {
