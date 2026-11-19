@@ -1,4 +1,4 @@
-import { createEffect, createMemo, createSignal, For, on, Show } from "solid-js";
+import { createEffect, createMemo, createSignal, For, on, onCleanup, Show } from "solid-js";
 import {
   agentsFilterActive,
   navigate,
@@ -10,10 +10,10 @@ import {
   type AgentsFilter,
 } from "../state/store";
 import { hasAgentPane, orderWorkspaces, splitAgentless, wsActivity, type HomeOrder } from "../state/list-prefs";
-import { selectPane } from "../state/ws";
+import { selectPane, forceReconnect } from "../state/ws";
 import type { PaneSummary, TabSummary, WorkspaceSummary } from "../../../types/protocol";
 import { openOverlay } from "./overlays";
-import { agentLabel, ago, formatModelName, Icon, Logo, paneStatus, paneSummary, primaryPane, StatusIcon, tabStatus, type RowStatus } from "./ui";
+import { agentLabel, ago, formatModelName, Icon, insideHorizontalScroller, Logo, paneStatus, paneSummary, primaryPane, StatusIcon, tabStatus, type RowStatus } from "./ui";
 import { AgentIcon } from "./AgentIcon";
 import { t, type MessageId } from "../i18n";
 import { quotaDot } from "../../../shared/quota";
@@ -173,6 +173,104 @@ export function Home() {
   const waiting = () => agents().filter((a) => a.pane.agentStatus === "blocked").length;
   const working = () => agents().filter((a) => a.pane.agentStatus === "working").length;
 
+  // mobile-ui-and-themes.md §2.1: pulling at the top forces one fresh connection.
+  const [pullDx, setPullDx] = createSignal(0);
+  const [refreshing, setRefreshing] = createSignal(false);
+  let scroller: HTMLDivElement | undefined;
+  let pullStartX = 0;
+  let pullStartY = 0;
+  let pullMode: "none" | "pending" | "pull" = "none";
+  let refreshTimer: ReturnType<typeof setTimeout> | undefined;
+  const stopRefreshing = () => {
+    if (refreshTimer) clearTimeout(refreshTimer);
+    refreshTimer = undefined;
+    setRefreshing(false);
+  };
+  onCleanup(() => {
+    if (refreshTimer) clearTimeout(refreshTimer);
+    if (scroller) {
+      scroller.removeEventListener("touchstart", onPullStart);
+      scroller.removeEventListener("touchmove", onPullMove);
+      scroller.removeEventListener("touchend", onPullEnd);
+      scroller.removeEventListener("touchcancel", onPullCancel);
+    }
+  });
+  createEffect(on(() => state.configReady, (ready) => {
+    if (ready) stopRefreshing();
+  }));
+  const startRefresh = () => {
+    if (refreshing()) return;
+    setRefreshing(true);
+    if (refreshTimer) clearTimeout(refreshTimer);
+    refreshTimer = setTimeout(stopRefreshing, 5000);
+    void forceReconnect();
+  };
+  const onPullStart = (e: TouchEvent) => {
+    if (
+      e.touches.length !== 1 ||
+      refreshing() ||
+      !scroller ||
+      scroller.scrollTop > 0 ||
+      insideHorizontalScroller(e.target) ||
+      (e.target as HTMLElement | null)?.closest("input, textarea")
+    ) {
+      pullMode = "none";
+      return;
+    }
+    pullStartX = e.touches[0].clientX;
+    pullStartY = e.touches[0].clientY;
+    pullMode = "pending";
+  };
+  const onPullMove = (e: TouchEvent) => {
+    if (pullMode === "none" || e.touches.length !== 1) return;
+    const dy = e.touches[0].clientY - pullStartY;
+    const dx = Math.abs(e.touches[0].clientX - pullStartX);
+    if (pullMode === "pending") {
+      if (dy <= 0) {
+        pullMode = "none";
+        setPullDx(0);
+        return;
+      }
+      if (dy > 8 && dy > dx) pullMode = "pull";
+      else if (dx > 8) {
+        pullMode = "none";
+        return;
+      }
+    }
+    if (pullMode !== "pull") return;
+    if (e.cancelable) e.preventDefault();
+    setPullDx(Math.min(110, dy));
+  };
+  const onPullEnd = () => {
+    if (pullMode !== "pull") {
+      pullMode = "none";
+      setPullDx(0);
+      return;
+    }
+    pullMode = "none";
+    const dx = pullDx();
+    setPullDx(0);
+    if (dx >= 70) startRefresh();
+  };
+  const onPullCancel = () => {
+    pullMode = "none";
+    setPullDx(0);
+  };
+  const attachScroller = (el: HTMLDivElement) => {
+    if (scroller === el) return;
+    if (scroller) {
+      scroller.removeEventListener("touchstart", onPullStart);
+      scroller.removeEventListener("touchmove", onPullMove);
+      scroller.removeEventListener("touchend", onPullEnd);
+      scroller.removeEventListener("touchcancel", onPullCancel);
+    }
+    scroller = el;
+    el.addEventListener("touchstart", onPullStart, { passive: true });
+    el.addEventListener("touchmove", onPullMove, { passive: false });
+    el.addEventListener("touchend", onPullEnd, { passive: true });
+    el.addEventListener("touchcancel", onPullCancel, { passive: true });
+  };
+
   const captureMembership = (list: readonly WorkspaceSummary[]) => {
     setHeldEntryIds(new Set(list.map((w) => w.id)));
     setHeldFoldedIds(new Set(splitAgentless(list).folded.map((w) => w.id)));
@@ -297,7 +395,15 @@ export function Home() {
         <FilterButton />
       </div>
       <ConnectionBanner />
-      <div class="scroll">
+      <div class="scroll" ref={attachScroller}>
+        <Show when={pullDx() > 0 || refreshing()}>
+          <div class="pull" style={{ height: `${refreshing() ? 44 : pullDx()}px` }}>
+            <Show when={refreshing()} fallback={<span>{pullDx() >= 70 ? t("home.release") : t("home.pull")}</span>}>
+              <span class="spin" />
+              <span>{t("home.refreshing")}</span>
+            </Show>
+          </div>
+        </Show>
         <div class="home">
           <Show when={query() !== null}>
             <div class="searchbar">

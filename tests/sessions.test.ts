@@ -342,7 +342,7 @@ describe("following the session the agent writes (agent-session-normalization.md
     expect(server.paneStore.boundSession("p1")?.sessionId).toBe("g2");
   });
 
-  test("a resumed pane that rule 6 moved to a newer session keeps it when another pane opens in the folder (rule 6)", async () => {
+  test("a resumed pane stays on its session when a newer session and another pane appear in the folder (rule 5 pin)", async () => {
     const home = tempDir("home");
     const proj = tempDir("proj");
     const dir = join(home, ".codex", "sessions", "2026", "11", "07");
@@ -359,11 +359,11 @@ describe("following the session the agent writes (agent-session-normalization.md
     server.paneStore.setLaunch("p1", { agent: "codex", resumeSessionId: "c1" });
     rollout("c2", 0);
     client.applySnapshot(topologyOf([first], { folder: "/work" }));
-    expect(server.paneStore.boundSession("p1")?.sessionId).toBe("c2");
+    expect(server.paneStore.boundSession("p1")?.sessionId).toBe("c1");
 
     const second = { paneId: "p2", app: "codex", cwd: proj, createdMs: Date.now() - 10_000 };
     client.applySnapshot(topologyOf([first, second], { folder: "/work" }));
-    expect([server.paneStore.boundSession("p1")?.sessionId, server.paneStore.boundSession("p2")?.sessionId]).toEqual(["c2", undefined]);
+    expect([server.paneStore.boundSession("p1")?.sessionId, server.paneStore.boundSession("p2")?.sessionId]).toEqual(["c1", "c2"]);
   });
 });
 

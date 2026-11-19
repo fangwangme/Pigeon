@@ -7,6 +7,8 @@ export interface PaneFacts {
   pid: number | null;
   cwd: string | null;
   createdMs: number;
+  /** The foreground process's arguments (`herdr-adapter.md` §3.1). */
+  argv?: string[];
 }
 
 /** One agent's session store. */

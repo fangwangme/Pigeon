@@ -102,6 +102,9 @@ export const en = {
   "home.noWorkspacesHint": "Open a workspace in Herdr on your computer and it shows up here.",
   "home.newIn": "New session in {name}",
   "home.search": "Search",
+  "home.pull": "Pull to refresh",
+  "home.release": "Release to refresh",
+  "home.refreshing": "Refreshing…",
 
   "menu.copyBranch": "Copy branch",
   "menu.copyPaneId": "Copy terminal ID",

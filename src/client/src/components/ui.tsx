@@ -154,6 +154,21 @@ export function canScrollRightward(target: EventTarget | null, stopAt?: Element 
   return false;
 }
 
+/** Whether `target` sits inside any element that scrolls horizontally, whatever its current position. */
+export function insideHorizontalScroller(target: EventTarget | null): boolean {
+  let el = target as HTMLElement | null;
+  while (el && el !== document.body && el !== document.documentElement) {
+    if (el.scrollWidth > el.clientWidth + 1) {
+      try {
+        const style = window.getComputedStyle(el);
+        if (style.overflowX === "auto" || style.overflowX === "scroll") return true;
+      } catch {}
+    }
+    el = el.parentElement;
+  }
+  return false;
+}
+
 /** A bottom sheet over a scrim; a tap on the scrim closes it. */
 export function Sheet(props: {
   title?: JSX.Element;

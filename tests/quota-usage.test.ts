@@ -1021,7 +1021,11 @@ describe("Antigravity token accounting and contemporaneous model resolution (quo
       const ins = ocDb.prepare(
         "INSERT INTO session_message (id, session_id, type, seq, time_created, time_updated, data) VALUES (?, ?, 'assistant', ?, ?, ?, ?)"
       );
-      const t1 = Date.parse("2026-11-18T10:00:00Z");
+      const t1 = (() => {
+        const day = new Date();
+        day.setHours(10, 0, 0, 0);
+        return day.getTime();
+      })();
       ins.run("m1", "s1", 1, t1, t1, JSON.stringify({ model: "claude-sonnet-4-6", tokens: { input: 100, output: 20, cache: { read: 50, write: 0 } } }));
       ins.run("m2", "s1", 2, t1 + 1000, t1 + 1000, JSON.stringify({ model: "claude-sonnet-4-6", tokens: { input: 200, output: 30, cache: { read: 0, write: 0 } } }));
 
