@@ -186,10 +186,6 @@ export function Home() {
     refreshTimer = undefined;
     setRefreshing(false);
   };
-  onCleanup(() => {
-    if (refreshTimer) clearTimeout(refreshTimer);
-    detachScroller();
-  });
   createEffect(on(() => state.configReady, (ready) => {
     if (ready) stopRefreshing();
   }));
@@ -201,13 +197,14 @@ export function Home() {
     void forceReconnect();
   };
   const onPullStart = (e: TouchEvent) => {
+    const target = e.target instanceof Element ? e.target : null;
     if (
       e.touches.length !== 1 ||
       refreshing() ||
       !scroller ||
       scroller.scrollTop > 0 ||
       insideHorizontalScroller(e.target) ||
-      (e.target as HTMLElement | null)?.closest("input, textarea")
+      target?.closest("input, textarea")
     ) {
       pullMode = "none";
       return;
@@ -264,7 +261,11 @@ export function Home() {
     scroller.removeEventListener("touchcancel", onPullCancel);
     scroller = undefined;
   };
-  const attachScroller = (el: HTMLDivElement) => {
+  const attachScroller = (el: HTMLDivElement | undefined) => {
+    if (!el) {
+      detachScroller();
+      return;
+    }
     if (scroller === el) return;
     detachScroller();
     scroller = el;
@@ -273,6 +274,10 @@ export function Home() {
     el.addEventListener("touchend", onPullEnd, { passive: true });
     el.addEventListener("touchcancel", onPullCancel, { passive: true });
   };
+  onCleanup(() => {
+    if (refreshTimer) clearTimeout(refreshTimer);
+    detachScroller();
+  });
 
   const captureMembership = (list: readonly WorkspaceSummary[]) => {
     setHeldEntryIds(new Set(list.map((w) => w.id)));
