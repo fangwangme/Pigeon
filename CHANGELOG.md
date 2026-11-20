@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.19] - 2026-11-20
+
+### Added
+- **`pigeon reprice`**: Rebuilds every stored price period from the current pricing rules and recomputes each usage record's cost from its unchanged token counts. The default dry run reports per-model deltas and a catalog fingerprint; `--apply --yes --expect <fingerprint>` writes a database backup first and refuses a stale catalog (#39).
+
+### Fixed
+- **Official-first usage pricing**: Costs now prefer the model owner's official global price, then its regional price, then OpenRouter, Vercel and Cloudflare, with a deterministic same-source collision rule. Reseller and hosted prices no longer set the cost, and a failed models.dev refresh leaves the cached prices and periods unchanged (`quota-and-usage.md` §3.3, #39).
+- **Same-day price changes recost existing records**: A changed rate recomputes the affected records from the period's start, including records already ingested today. Cache reads without a published rate now default to 0.1 × input (`quota-and-usage.md` §3.3, #39).
+
 ## [0.1.18] - 2026-11-19
 
 ### Added
