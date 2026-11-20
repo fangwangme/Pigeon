@@ -46,6 +46,8 @@ export interface PairingOptions {
   devicesFilePath: string;
   /** `pigeon rebuild-cache` (`quota-and-usage.md` §3.7): rebuilds the daemon's own usage database. */
   rebuildUsage?: () => Promise<unknown>;
+  /** `pigeon reprice` (`quota-and-usage.md` §3.3): recomputes derived costs from token facts. */
+  repriceUsage?: (opts: { apply: boolean; expectFingerprint?: string }) => Promise<unknown>;
   getStatus?: () => Promise<Record<string, any>> | Record<string, any>;
 }
 
@@ -79,6 +81,7 @@ export class PairingManager extends EventEmitter {
   private adminSocketPath: string;
   private devicesFilePath: string;
   private rebuildUsage?: () => Promise<unknown>;
+  private repriceUsage?: (opts: { apply: boolean; expectFingerprint?: string }) => Promise<unknown>;
   private getStatus?: () => Promise<Record<string, any>> | Record<string, any>;
   private adminServer: NetServer | null = null;
 
@@ -90,6 +93,7 @@ export class PairingManager extends EventEmitter {
     this.adminSocketPath = options.adminSocketPath;
     this.devicesFilePath = options.devicesFilePath;
     this.rebuildUsage = options.rebuildUsage;
+    this.repriceUsage = options.repriceUsage;
     this.getStatus = options.getStatus;
 
     this.loadDevices();
@@ -353,6 +357,15 @@ export class PairingManager extends EventEmitter {
         case "usage.rebuild": {
           if (!this.rebuildUsage) throw new Error("This daemon keeps no usage database");
           const res = await this.rebuildUsage();
+          socket.write(JSON.stringify({ id, result: res }) + "\n");
+          break;
+        }
+        case "usage.reprice": {
+          if (!this.repriceUsage) throw new Error("This daemon keeps no usage database");
+          const res = await this.repriceUsage({
+            apply: msg.params?.apply === true,
+            expectFingerprint: typeof msg.params?.expectFingerprint === "string" ? msg.params.expectFingerprint : undefined,
+          });
           socket.write(JSON.stringify({ id, result: res }) + "\n");
           break;
         }

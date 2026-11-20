@@ -420,6 +420,7 @@ export class PigeonDaemon {
       adminSocketPath: this.config.adminSocketPath,
       devicesFilePath: this.config.devicesFilePath,
       rebuildUsage: () => usageService.rebuild(),
+      repriceUsage: (opts) => usageService.reprice(opts),
       getStatus: () => {
         const scanInfo = usageService.getLastScanInfo();
         return {

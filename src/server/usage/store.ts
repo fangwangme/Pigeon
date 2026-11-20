@@ -1,6 +1,7 @@
 // Issue #13. quota-and-usage.md §3.1–§3.6, protocol.md §4.16–§4.18.
 import { existsSync, statSync, mkdirSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { basename, dirname, join } from "node:path";
+import { createHash } from "node:crypto";
 import { Database } from "bun:sqlite";
 import type {
   UsageDayAgent,
@@ -14,7 +15,7 @@ import type {
 } from "../../types/protocol";
 import { comparisonRange, daysBetween, addDays, formatYMD, resolveRange, type UsagePreset } from "../../shared/usage";
 import { canonical, detectCompany, resolveAntigravityModel } from "./model-id";
-import { PricingManager, type ModelPrice } from "./pricing";
+import { PricingManager, type ModelPrice, type PriceTier } from "./pricing";
 import {
   findFilesRecursive,
   scanAntigravityCacheDb,
@@ -32,12 +33,12 @@ import {
   type AntigravityLsConnection,
 } from "./antigravity-ls";
 
-/** quota-and-usage.md §3.3: cache reads and writes use the model's cache prices, else its input price. */
+/** quota-and-usage.md §3.3: cache reads default to 0.1 × input, cache writes to input. */
 function costAt(p: ModelPrice, input: number, output: number, cacheRead: number, cacheWrite: number): number {
   return (
     input * p.inputCostPerToken +
     output * p.outputCostPerToken +
-    cacheRead * (p.cacheReadCostPerToken ?? p.inputCostPerToken) +
+    cacheRead * (p.cacheReadCostPerToken ?? p.inputCostPerToken * 0.1) +
     cacheWrite * (p.cacheWriteCostPerToken ?? p.inputCostPerToken)
   );
 }
@@ -52,8 +53,58 @@ function fromRateRow(row: any): ModelPrice {
     outputCostPerToken: row.output_rate / 1_000_000,
     cacheReadCostPerToken: row.cache_read_rate != null ? row.cache_read_rate / 1_000_000 : undefined,
     cacheWriteCostPerToken: row.cache_write_rate != null ? row.cache_write_rate / 1_000_000 : undefined,
-    source: "period",
+    tier: row.tier,
+    source: row.source ?? "",
   };
+}
+
+function effectiveRates(p: ModelPrice): { input: number; output: number; cacheRead: number; cacheWrite: number } {
+  return {
+    input: toRatePerMillion(p.inputCostPerToken),
+    output: toRatePerMillion(p.outputCostPerToken),
+    cacheRead: toRatePerMillion(p.cacheReadCostPerToken ?? p.inputCostPerToken * 0.1),
+    cacheWrite: toRatePerMillion(p.cacheWriteCostPerToken ?? p.inputCostPerToken),
+  };
+}
+
+export interface RepriceModelReport {
+  model: string;
+  records: number;
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheWriteTokens: number;
+  currentCost: number;
+  newCost: number;
+  tier: PriceTier | null;
+  source: string | null;
+  rates: { input: number; output: number; cacheRead: number; cacheWrite: number } | null;
+}
+
+export interface RepriceReport {
+  fingerprint: string;
+  applied: boolean;
+  backupPath?: string;
+  models: RepriceModelReport[];
+  currentTotalCost: number;
+  newTotalCost: number;
+  unpricedModels: string[];
+}
+
+/** quota-and-usage.md §3.3 Reprice: a stable hash of every selected rate vector, tier and source. */
+function catalogFingerprint(entries: Array<[string, ModelPrice]>): string {
+  const rows = entries
+    .map(([model, p]) => ({
+      model,
+      input: toRatePerMillion(p.inputCostPerToken),
+      output: toRatePerMillion(p.outputCostPerToken),
+      cacheRead: p.cacheReadCostPerToken != null ? toRatePerMillion(p.cacheReadCostPerToken) : null,
+      cacheWrite: p.cacheWriteCostPerToken != null ? toRatePerMillion(p.cacheWriteCostPerToken) : null,
+      tier: p.tier ?? null,
+      source: p.source ?? null,
+    }))
+    .sort((a, b) => a.model.localeCompare(b.model));
+  return createHash("sha256").update(JSON.stringify(rows)).digest("hex");
 }
 
 export interface UsageStoreOptions {
@@ -66,6 +117,7 @@ export interface UsageStoreOptions {
 
 export class UsageStore {
   private db: Database;
+  private dbPath: string;
   private home: string;
   private env: Record<string, string | undefined>;
   private now: () => number;
@@ -81,6 +133,7 @@ export class UsageStore {
     this.discoverLs = options.discoverLs ?? (() => discoverAntigravityLs(this.home));
     const defaultDataDir = this.env.XDG_DATA_HOME ? join(this.env.XDG_DATA_HOME, "pigeon") : join(this.home, ".local", "share", "pigeon");
     const dbPath = options.dbPath ?? join(defaultDataDir, "usage.db");
+    this.dbPath = dbPath;
     // quota-and-usage.md §3.1: Pigeon's own Antigravity cache lives next to the usage database.
     this.agyCacheDbPath = join(dirname(dbPath), "antigravity-cache", "cache.db");
     mkdirSync(dirname(dbPath), { recursive: true });
@@ -134,6 +187,8 @@ export class UsageStore {
         output_rate REAL NOT NULL,
         cache_read_rate REAL,
         cache_write_rate REAL,
+        tier TEXT,
+        source TEXT,
         PRIMARY KEY (model, effective_from)
       );
 
@@ -158,6 +213,13 @@ export class UsageStore {
     }
     if (!scanCols.includes("updated_watermark")) {
       this.db.run("ALTER TABLE scan_file_state ADD COLUMN updated_watermark INTEGER NOT NULL DEFAULT 0;");
+    }
+    const periodCols = (this.db.query("PRAGMA table_info('model_price_periods')").all() as any[]).map((c) => c.name);
+    if (!periodCols.includes("tier")) {
+      this.db.run("ALTER TABLE model_price_periods ADD COLUMN tier TEXT;");
+    }
+    if (!periodCols.includes("source")) {
+      this.db.run("ALTER TABLE model_price_periods ADD COLUMN source TEXT;");
     }
   }
 
@@ -258,12 +320,11 @@ export class UsageStore {
 
     const resolveFamily = this.createGeminiFamilyResolver(pricing);
     const priceCache = new Map<string, { price: ModelPrice | null }>();
-    const resolvePrice = (date: string, modelId: string): ModelPrice | null => {
-      const canon = canonical(modelId);
+    const resolvePrice = (date: string, canon: string): ModelPrice | null => {
       const cacheKey = `${date}:${canon}`;
       if (priceCache.has(cacheKey)) return priceCache.get(cacheKey)!.price;
 
-      const resolved = this.lookupPeriodPrice(date, canon, pricing);
+      const resolved = this.lookupPeriodPrice(date, canon);
       priceCache.set(cacheKey, { price: resolved });
       return resolved;
     };
@@ -391,37 +452,50 @@ export class UsageStore {
     return { scannedFiles, recordsAdded };
   }
 
-  private lookupPeriodPrice(date: string, canon: string, pricing: PricingManager): ModelPrice | null {
+  /** quota-and-usage.md §3.3: a lookup never writes a period. */
+  private lookupPeriodPrice(date: string, canon: string): ModelPrice | null {
     const row: any = this.db
       .query(
-        `SELECT input_rate, output_rate, cache_read_rate, cache_write_rate
+        `SELECT input_rate, output_rate, cache_read_rate, cache_write_rate, tier, source
          FROM model_price_periods
          WHERE model = ? AND effective_from <= ? AND (effective_to IS NULL OR effective_to >= ?)
          ORDER BY effective_from DESC
          LIMIT 1`
       )
       .get(canon, date, date);
-    if (row) return fromRateRow(row);
+    return row ? fromRateRow(row) : null;
+  }
 
-    const fresh = pricing.getPrice(canon);
-    if (!fresh) return null;
+  /** quota-and-usage.md §3.3: the one cost path for ingest, period changes, repair, backfill and reprice. */
+  private recomputeCosts(model: string, fromDate: string): number {
+    const rows: any[] = this.db
+      .query(
+        `SELECT u.agent, u.message_key, u.input_tokens, u.output_tokens, u.cache_read_tokens, u.cache_write_tokens,
+                u.cost, u.unpriced,
+                p.input_rate, p.output_rate, p.cache_read_rate, p.cache_write_rate, p.tier, p.source
+         FROM usage_records u
+         LEFT JOIN model_price_periods p ON p.rowid = (
+           SELECT p2.rowid FROM model_price_periods p2
+           WHERE p2.model = u.canonical_model_id AND p2.effective_from <= u.date
+             AND (p2.effective_to IS NULL OR p2.effective_to >= u.date)
+           ORDER BY p2.effective_from DESC
+           LIMIT 1
+         )
+         WHERE u.canonical_model_id = ? AND u.date >= ?`
+      )
+      .all(model, fromDate);
 
-    const existing: any = this.db.query("SELECT COUNT(*) as cnt FROM model_price_periods WHERE model = ?").get(canon);
-    if (!existing?.cnt) {
-      this.db
-        .query(
-          `INSERT OR IGNORE INTO model_price_periods (model, effective_from, effective_to, input_rate, output_rate, cache_read_rate, cache_write_rate)
-           VALUES (?, '0000-01-01', NULL, ?, ?, ?, ?)`
-        )
-        .run(
-          canon,
-          toRatePerMillion(fresh.inputCostPerToken),
-          toRatePerMillion(fresh.outputCostPerToken),
-          fresh.cacheReadCostPerToken != null ? toRatePerMillion(fresh.cacheReadCostPerToken) : null,
-          fresh.cacheWriteCostPerToken != null ? toRatePerMillion(fresh.cacheWriteCostPerToken) : null
-        );
+    const update = this.db.prepare("UPDATE usage_records SET cost = ?, unpriced = ? WHERE agent = ? AND message_key = ?");
+    let changed = 0;
+    for (const row of rows) {
+      const price = row.input_rate == null ? null : fromRateRow(row);
+      const cost = price ? costAt(price, row.input_tokens, row.output_tokens, row.cache_read_tokens, row.cache_write_tokens) : 0;
+      const unpriced = price ? 0 : 1;
+      if (cost === row.cost && unpriced === row.unpriced) continue;
+      update.run(cost, unpriced, row.agent, row.message_key);
+      changed++;
     }
-    return fresh;
+    return changed;
   }
 
   private syncPricePeriods(pricing: PricingManager): void {
@@ -430,16 +504,19 @@ export class UsageStore {
     const seen = new Set<string>();
 
     const getOpen = this.db.prepare(
-      "SELECT effective_from, input_rate, output_rate, cache_read_rate, cache_write_rate FROM model_price_periods WHERE model = ? AND effective_to IS NULL ORDER BY effective_from DESC LIMIT 1"
+      "SELECT effective_from, input_rate, output_rate, cache_read_rate, cache_write_rate, tier, source FROM model_price_periods WHERE model = ? AND effective_to IS NULL ORDER BY effective_from DESC LIMIT 1"
     );
     const countPeriods = this.db.prepare("SELECT COUNT(*) as cnt FROM model_price_periods WHERE model = ?");
     const insertPeriod = this.db.prepare(
-      `INSERT OR REPLACE INTO model_price_periods (model, effective_from, effective_to, input_rate, output_rate, cache_read_rate, cache_write_rate)
-       VALUES (?, ?, NULL, ?, ?, ?, ?)`
+      `INSERT OR REPLACE INTO model_price_periods (model, effective_from, effective_to, input_rate, output_rate, cache_read_rate, cache_write_rate, tier, source)
+       VALUES (?, ?, NULL, ?, ?, ?, ?, ?, ?)`
     );
     const updateInPlace = this.db.prepare(
-      `UPDATE model_price_periods SET input_rate = ?, output_rate = ?, cache_read_rate = ?, cache_write_rate = ?
+      `UPDATE model_price_periods SET input_rate = ?, output_rate = ?, cache_read_rate = ?, cache_write_rate = ?, tier = ?, source = ?
        WHERE model = ? AND effective_from = ?`
+    );
+    const updateMeta = this.db.prepare(
+      "UPDATE model_price_periods SET tier = ?, source = ? WHERE model = ? AND effective_from = ?"
     );
     const closePeriod = this.db.prepare(
       "UPDATE model_price_periods SET effective_to = ? WHERE model = ? AND effective_from = ?"
@@ -449,27 +526,26 @@ export class UsageStore {
     );
 
     this.db.transaction(() => {
-      for (const [rawKey, entry] of pricing.getCatalogEntries()) {
-        if (rawKey.includes("/")) continue;
-        const canon = canonical(rawKey);
+      for (const [canon, price] of pricing.getCatalogEntries()) {
         if (!canon || seen.has(canon)) continue;
         seen.add(canon);
 
-        const fresh = pricing.getPrice(canon) ?? entry;
-        if (!fresh) continue;
-        if (fresh.releaseDate) {
-          upsertRelease.run(canon, fresh.releaseDate);
+        if (price.releaseDate) {
+          upsertRelease.run(canon, price.releaseDate);
         }
-        const inRate = toRatePerMillion(fresh.inputCostPerToken);
-        const outRate = toRatePerMillion(fresh.outputCostPerToken);
-        const crRate = fresh.cacheReadCostPerToken != null ? toRatePerMillion(fresh.cacheReadCostPerToken) : null;
-        const cwRate = fresh.cacheWriteCostPerToken != null ? toRatePerMillion(fresh.cacheWriteCostPerToken) : null;
+        const inRate = toRatePerMillion(price.inputCostPerToken);
+        const outRate = toRatePerMillion(price.outputCostPerToken);
+        const crRate = price.cacheReadCostPerToken != null ? toRatePerMillion(price.cacheReadCostPerToken) : null;
+        const cwRate = price.cacheWriteCostPerToken != null ? toRatePerMillion(price.cacheWriteCostPerToken) : null;
+        const tier = price.tier ?? null;
+        const source = price.source ?? null;
 
         const open: any = getOpen.get(canon);
         if (!open) {
           const cntRow: any = countPeriods.get(canon);
           const from = !cntRow?.cnt ? "0000-01-01" : today;
-          insertPeriod.run(canon, from, inRate, outRate, crRate, cwRate);
+          insertPeriod.run(canon, from, inRate, outRate, crRate, cwRate, tier, source);
+          this.recomputeCosts(canon, from);
           continue;
         }
 
@@ -479,15 +555,29 @@ export class UsageStore {
           (open.cache_read_rate ?? null) === crRate &&
           (open.cache_write_rate ?? null) === cwRate
         ) {
+          if (open.tier !== tier || open.source !== source) {
+            updateMeta.run(tier, source, canon, open.effective_from);
+          }
           continue;
         }
 
         if (open.effective_from >= today) {
-          updateInPlace.run(inRate, outRate, crRate, cwRate, canon, open.effective_from);
+          updateInPlace.run(inRate, outRate, crRate, cwRate, tier, source, canon, open.effective_from);
         } else {
           closePeriod.run(yesterday, canon, open.effective_from);
-          insertPeriod.run(canon, today, inRate, outRate, crRate, cwRate);
+          insertPeriod.run(canon, today, inRate, outRate, crRate, cwRate, tier, source);
         }
+        this.recomputeCosts(canon, today);
+      }
+
+      // A model the current catalog no longer prices loses its open period at yesterday.
+      const openRows = this.db
+        .query("SELECT model, effective_from FROM model_price_periods WHERE effective_to IS NULL")
+        .all() as Array<{ model: string; effective_from: string }>;
+      for (const row of openRows) {
+        if (seen.has(row.model)) continue;
+        closePeriod.run(yesterday, row.model, row.effective_from);
+        this.recomputeCosts(row.model, today);
       }
     })();
   }
@@ -495,27 +585,14 @@ export class UsageStore {
   public backfillUnpricedRecords(pricing: PricingManager): number {
     if (!pricing.arePricesAvailable()) return 0;
 
-    const rows: any[] = this.db
-      .query(
-        `SELECT agent, message_key, date, canonical_model_id,
-                input_tokens, output_tokens, cache_read_tokens, cache_write_tokens
-         FROM usage_records
-         WHERE unpriced = 1`
-      )
-      .all();
+    const rows = this.db
+      .query("SELECT DISTINCT canonical_model_id AS model FROM usage_records WHERE unpriced = 1")
+      .all() as Array<{ model: string }>;
 
     let updated = 0;
-    const update = this.db.prepare(
-      "UPDATE usage_records SET cost = ?, unpriced = 0 WHERE agent = ? AND message_key = ?"
-    );
-
     this.db.transaction(() => {
       for (const row of rows) {
-        const p = this.lookupPeriodPrice(row.date, row.canonical_model_id, pricing);
-        if (!p) continue;
-        const cost = costAt(p, row.input_tokens, row.output_tokens, row.cache_read_tokens, row.cache_write_tokens);
-        update.run(cost, row.agent, row.message_key);
-        updated++;
+        updated += this.recomputeCosts(row.model, "0000-01-01");
       }
     })();
 
@@ -657,7 +734,7 @@ export class UsageStore {
           }
         }
         const company = detectCompany(canon, "agy");
-        const p = this.lookupPeriodPrice(row.date, canon, pricing);
+        const p = this.lookupPeriodPrice(row.date, canon);
         const cost = p ? costAt(p, row.input_tokens, row.output_tokens, row.cache_read_tokens, row.cache_write_tokens) : 0;
         const unpriced = p ? 0 : 1;
         if (
@@ -683,6 +760,102 @@ export class UsageStore {
     this.db.run("DELETE FROM scan_file_state;");
     this.db.run("VACUUM;");
     return this.scanIncremental(pricing);
+  }
+
+  /** quota-and-usage.md §3.3 Reprice: recompute derived costs from unchanged token facts. */
+  public reprice(pricing: PricingManager, opts: { apply: boolean; expectFingerprint?: string }): RepriceReport {
+    const entries = pricing.getCatalogEntries();
+    const fingerprint = catalogFingerprint(entries);
+    const priceByModel = new Map(entries);
+
+    const rows: any[] = this.db
+      .query(
+        `SELECT canonical_model_id AS model,
+                COUNT(*) AS records,
+                COALESCE(SUM(input_tokens), 0) AS input_tokens,
+                COALESCE(SUM(output_tokens), 0) AS output_tokens,
+                COALESCE(SUM(cache_read_tokens), 0) AS cache_read_tokens,
+                COALESCE(SUM(cache_write_tokens), 0) AS cache_write_tokens,
+                COALESCE(SUM(cost), 0) AS current_cost
+         FROM usage_records
+         GROUP BY canonical_model_id
+         ORDER BY canonical_model_id`
+      )
+      .all();
+
+    const models: RepriceModelReport[] = rows.map((row) => {
+      const price = priceByModel.get(row.model) ?? null;
+      return {
+        model: row.model,
+        records: Number(row.records),
+        inputTokens: Number(row.input_tokens),
+        outputTokens: Number(row.output_tokens),
+        cacheReadTokens: Number(row.cache_read_tokens),
+        cacheWriteTokens: Number(row.cache_write_tokens),
+        currentCost: Number(row.current_cost),
+        newCost: price ? costAt(price, row.input_tokens, row.output_tokens, row.cache_read_tokens, row.cache_write_tokens) : 0,
+        tier: price?.tier ?? null,
+        source: price?.source ?? null,
+        rates: price ? effectiveRates(price) : null,
+      };
+    });
+
+    const report: RepriceReport = {
+      fingerprint,
+      applied: false,
+      models,
+      currentTotalCost: models.reduce((sum, m) => sum + m.currentCost, 0),
+      newTotalCost: models.reduce((sum, m) => sum + m.newCost, 0),
+      unpricedModels: models.filter((m) => !priceByModel.has(m.model)).map((m) => m.model),
+    };
+    if (!opts.apply) return report;
+    if (opts.expectFingerprint !== fingerprint) {
+      throw new Error(`Pricing catalog fingerprint mismatch: expected ${opts.expectFingerprint}, current ${fingerprint}. Run the dry run again.`);
+    }
+
+    const backupPath = this.backupDatabase();
+    this.db.transaction(() => {
+      this.db.run("DELETE FROM model_price_periods;");
+      const insert = this.db.prepare(
+        `INSERT INTO model_price_periods (model, effective_from, effective_to, input_rate, output_rate, cache_read_rate, cache_write_rate, tier, source)
+         VALUES (?, '0000-01-01', NULL, ?, ?, ?, ?, ?, ?)`
+      );
+      for (const [model, price] of entries) {
+        insert.run(
+          model,
+          toRatePerMillion(price.inputCostPerToken),
+          toRatePerMillion(price.outputCostPerToken),
+          price.cacheReadCostPerToken != null ? toRatePerMillion(price.cacheReadCostPerToken) : null,
+          price.cacheWriteCostPerToken != null ? toRatePerMillion(price.cacheWriteCostPerToken) : null,
+          price.tier ?? null,
+          price.source ?? null
+        );
+      }
+      const recordModels = this.db
+        .query("SELECT DISTINCT canonical_model_id AS model FROM usage_records")
+        .all() as Array<{ model: string }>;
+      for (const row of recordModels) {
+        this.recomputeCosts(row.model, "0000-01-01");
+      }
+      this.db.run(
+        "INSERT INTO usage_meta (key, val) VALUES ('pricing_rebuilt_at', ?) ON CONFLICT(key) DO UPDATE SET val = excluded.val",
+        [new Date(this.now()).toISOString()]
+      );
+    })();
+
+    return { ...report, applied: true, backupPath };
+  }
+
+  private backupDatabase(): string {
+    const dir = dirname(this.dbPath);
+    const base = basename(this.dbPath, ".db");
+    const stamp = new Date(this.now()).toISOString().replace(/[:.]/g, "-");
+    let path = join(dir, `${base}.reprice-${stamp}.db`);
+    for (let i = 1; existsSync(path); i++) {
+      path = join(dir, `${base}.reprice-${stamp}-${i}.db`);
+    }
+    this.db.run("VACUUM INTO ?", [path]);
+    return path;
   }
 
   public getTotalsSummary(): { totalTokens: number; totalCost: number; recordCount: number } {

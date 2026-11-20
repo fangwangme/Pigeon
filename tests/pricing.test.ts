@@ -56,7 +56,7 @@ describe("PricingManager fallback and retry (quota-and-usage.md §3.3)", () => {
         ok: true,
         json: () =>
           Promise.resolve({
-            "claude-3-5-sonnet": { input_cost_per_token: 0.000003, output_cost_per_token: 0.000015 },
+            "claude-3-5-sonnet": { litellm_provider: "anthropic", input_cost_per_token: 0.000003, output_cost_per_token: 0.000015 },
           }),
       } as any);
     };
@@ -87,16 +87,16 @@ describe("PricingManager fallback and retry (quota-and-usage.md §3.3)", () => {
     let fakeNow = 1_000_000;
     const pm = new PricingManager({ cachePath, fetch: mockFetch as any, now: () => fakeNow });
     await pm.initialize();
-    expect(networkAttempts).toBe(3); // attempted 3 sources once
+    expect(networkAttempts).toBe(2); // attempted both sources once
 
     // Call initialize again immediately: should be throttled by nextRetryAt
     await pm.initialize();
-    expect(networkAttempts).toBe(3); // did not retry within cooldown
+    expect(networkAttempts).toBe(2); // did not retry within cooldown
 
     // After retry interval:
     fakeNow += 10 * 60 * 1000 + 1;
     await pm.initialize();
-    expect(networkAttempts).toBe(6); // retried after cooldown
+    expect(networkAttempts).toBe(4); // retried after cooldown
   });
 
   test("refreshes stale catalog after 24h TTL and prefers first-party models.dev providers", async () => {

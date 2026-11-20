@@ -2,7 +2,7 @@
 import { formatYMD, resolveRange, type UsagePreset } from "../../shared/usage";
 import type { UsageDayPayload, UsageGetPayload, UsageModelPayload } from "../../types/protocol";
 import { PricingManager } from "./pricing";
-import { UsageStore } from "./store";
+import { UsageStore, type RepriceReport } from "./store";
 import type { ConfigManager } from "../config-manager";
 import type { ScanWorkerResponse } from "./scan-worker";
 import { join } from "node:path";
@@ -227,6 +227,19 @@ export class UsageService {
       this.scanPromise = null;
       resolveRebuild();
     }
+  }
+
+  /** quota-and-usage.md §3.3 Reprice: wait for an in-flight scan, then recompute derived costs. */
+  public async reprice(opts: { apply: boolean; expectFingerprint?: string }): Promise<RepriceReport> {
+    if (this.scanPromise) await this.scanPromise;
+    await this.pricing.initialize();
+    const report = this.store.reprice(this.pricing, opts);
+    if (report.applied) {
+      this.reportCache.clear();
+      const scannedAt = this.store.getLastScannedAt() || this.now();
+      if (this.isEnabled()) this.onUpdated?.({ scannedAt });
+    }
+    return report;
   }
 
   public async getUsage(req: { preset: string; from?: string; to?: string; agents: string[]; force?: boolean }): Promise<UsageGetPayload> {

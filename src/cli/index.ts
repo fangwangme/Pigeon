@@ -67,6 +67,7 @@ Usage:
   pigeon devices [revoke <id>] [--port <n>]
   pigeon status [--json] [--port <n>]
   pigeon rebuild-cache [--json] [--port <n>] [--yes]
+  pigeon reprice [--apply --yes --expect <fingerprint>] [--json] [--port <n>]
 
 The admin commands reach the daemon on the configured port, or on --port.
 `;
@@ -74,6 +75,34 @@ The admin commands reach the daemon on the configured port, or on --port.
 function fail(message: string): never {
   console.error(message);
   process.exit(1);
+}
+
+function printRepriceReport(report: any): void {
+  const header = ["model", "records", "input", "output", "cache-read", "cache-write", "current", "new", "tier", "source", "rates (in/out/cr/cw)"];
+  const rows: string[][] = report.models.map((m: any) => [
+    m.model,
+    Number(m.records).toLocaleString(),
+    Number(m.inputTokens).toLocaleString(),
+    Number(m.outputTokens).toLocaleString(),
+    Number(m.cacheReadTokens).toLocaleString(),
+    Number(m.cacheWriteTokens).toLocaleString(),
+    `$${Number(m.currentCost).toFixed(2)}`,
+    `$${Number(m.newCost).toFixed(2)}`,
+    m.tier ?? "unpriced",
+    m.source ?? "—",
+    m.rates ? `${m.rates.input}/${m.rates.output}/${m.rates.cacheRead}/${m.rates.cacheWrite}` : "—",
+  ]);
+  const widths = header.map((h, i) => Math.max(h.length, ...rows.map((r) => r[i].length)));
+  const line = (cells: string[]) => cells.map((c, i) => (i === 0 ? c.padEnd(widths[i]) : c.padStart(widths[i]))).join("  ");
+
+  console.log(report.applied ? "Reprice applied." : "Reprice dry run (no changes written).");
+  console.log(line(header));
+  for (const row of rows) console.log(line(row));
+  console.log(`\nCurrent total: $${Number(report.currentTotalCost).toFixed(2)}`);
+  console.log(`New total:     $${Number(report.newTotalCost).toFixed(2)}`);
+  console.log(`Unpriced:      ${report.unpricedModels.length ? report.unpricedModels.join(", ") : "none"}`);
+  console.log(`Fingerprint:   ${report.fingerprint}`);
+  if (report.backupPath) console.log(`Backup:        ${report.backupPath}`);
 }
 
 async function main() {
@@ -229,6 +258,28 @@ async function main() {
       console.log(`  Total tokens:  ${res.totalTokens?.toLocaleString() ?? 0}`);
       console.log(`  Total cost:    $${Number(res.totalCost || 0).toFixed(2)}`);
     }
+  } else if (command === "reprice") {
+    const apply = args.includes("--apply");
+    const expectIdx = args.indexOf("--expect");
+    const expectFingerprint = expectIdx !== -1 ? args[expectIdx + 1] : undefined;
+    if (apply && (!args.includes("--yes") || !expectFingerprint)) {
+      fail("`--apply` requires `--yes` and `--expect <fingerprint>`.");
+    }
+    let res: any;
+    try {
+      res = await sendAdminCommand(adminSocketPath, "usage.reprice", { apply, expectFingerprint }, 120_000);
+    } catch (err) {
+      if (!(err instanceof DaemonNotRunningError)) throw err;
+      const { UsageService } = await import("../server/usage/index");
+      const service = new UsageService({ configManager });
+      try {
+        res = await service.reprice({ apply, expectFingerprint });
+      } finally {
+        service.destroy();
+      }
+    }
+    if (args.includes("--json")) console.log(JSON.stringify(res, null, 2));
+    else printRepriceReport(res);
   } else {
     console.log(USAGE);
   }
