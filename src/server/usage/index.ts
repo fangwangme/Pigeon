@@ -2,7 +2,7 @@
 import { formatYMD, resolveRange, type UsagePreset } from "../../shared/usage";
 import type { UsageDayPayload, UsageGetPayload, UsageModelPayload } from "../../types/protocol";
 import { PricingManager } from "./pricing";
-import { UsageStore } from "./store";
+import { UsageStore, type RepriceReport } from "./store";
 import type { ConfigManager } from "../config-manager";
 import type { ScanWorkerResponse } from "./scan-worker";
 import { join } from "node:path";
@@ -226,6 +226,34 @@ export class UsageService {
     } finally {
       this.scanPromise = null;
       resolveRebuild();
+    }
+  }
+
+  /** quota-and-usage.md §3.3 Reprice: hold the scan slot so no scan starts mid-reprice. */
+  public async reprice(opts: { apply: boolean; expectFingerprint?: string }): Promise<RepriceReport> {
+    while (this.scanPromise) {
+      try {
+        await this.scanPromise;
+      } catch {}
+    }
+
+    let resolveReprice: () => void = () => {};
+    const repricePromise = new Promise<{ scannedFiles: number; recordsAdded: number }>((resolve) => {
+      resolveReprice = () => resolve({ scannedFiles: 0, recordsAdded: 0 });
+    });
+    this.scanPromise = repricePromise;
+
+    try {
+      await this.pricing.initialize();
+      const report = this.store.reprice(this.pricing, opts);
+      if (report.applied) {
+        this.reportCache.clear();
+        if (this.isEnabled()) this.onUpdated?.({ scannedAt: this.now() });
+      }
+      return report;
+    } finally {
+      this.scanPromise = null;
+      resolveReprice();
     }
   }
 

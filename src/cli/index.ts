@@ -67,6 +67,7 @@ Usage:
   pigeon devices [revoke <id>] [--port <n>]
   pigeon status [--json] [--port <n>]
   pigeon rebuild-cache [--json] [--port <n>] [--yes]
+  pigeon reprice [--apply --yes --expect <fingerprint>] [--json] [--port <n>]
 
 The admin commands reach the daemon on the configured port, or on --port.
 `;
@@ -76,19 +77,106 @@ function fail(message: string): never {
   process.exit(1);
 }
 
+export function parsePortArg(args: string[]): number | undefined {
+  let found = false;
+  let value: string | undefined;
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i];
+    if (arg === "--port") {
+      found = true;
+      value = args[i + 1];
+      break;
+    }
+    if (arg.startsWith("--port=")) {
+      found = true;
+      value = arg.slice("--port=".length);
+      break;
+    }
+  }
+  if (!found) return undefined;
+  if (value === undefined || value === "") throw new Error(`Invalid --port '${value ?? ""}'`);
+  const port = Number(value);
+  if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error(`Invalid --port '${value}'`);
+  return port;
+}
+
+export interface RepriceArgs {
+  apply: boolean;
+  yes: boolean;
+  json: boolean;
+  expectFingerprint?: string;
+}
+
+function optionValue(args: string[], index: number, flag: string): { value: string; next: number } {
+  const arg = args[index];
+  if (arg.startsWith(`${flag}=`)) {
+    const value = arg.slice(flag.length + 1);
+    if (!value) throw new Error(`\`${flag}\` requires a value.`);
+    return { value, next: index };
+  }
+  const value = args[index + 1];
+  if (value === undefined || value.startsWith("--")) throw new Error(`\`${flag}\` requires a value.`);
+  return { value, next: index + 1 };
+}
+
+export function parseRepriceArgs(args: string[]): RepriceArgs {
+  const parsed: RepriceArgs = { apply: false, yes: false, json: false };
+  for (let i = 1; i < args.length; i++) {
+    const arg = args[i];
+    if (arg === "--apply") parsed.apply = true;
+    else if (arg === "--yes") parsed.yes = true;
+    else if (arg === "--json") parsed.json = true;
+    else if (arg === "--expect" || arg.startsWith("--expect=")) {
+      const { value, next } = optionValue(args, i, "--expect");
+      parsed.expectFingerprint = value;
+      i = next;
+    } else if (arg === "--port") {
+      i++;
+    } else if (arg.startsWith("--port=")) {
+      // Parsed once by parsePortArg().
+    } else {
+      throw new Error(`Unknown option for reprice: '${arg}'`);
+    }
+  }
+  if (parsed.apply && (!parsed.yes || !parsed.expectFingerprint)) {
+    throw new Error("`--apply` requires `--yes` and `--expect <fingerprint>`.");
+  }
+  return parsed;
+}
+
+function printRepriceReport(report: any): void {
+  const header = ["model", "records", "input", "output", "cache-read", "cache-write", "current", "new", "tier", "source", "rates (in/out/cr/cw)"];
+  const rows: string[][] = report.models.map((m: any) => [
+    m.model,
+    Number(m.records).toLocaleString(),
+    Number(m.inputTokens).toLocaleString(),
+    Number(m.outputTokens).toLocaleString(),
+    Number(m.cacheReadTokens).toLocaleString(),
+    Number(m.cacheWriteTokens).toLocaleString(),
+    `$${Number(m.currentCost).toFixed(2)}`,
+    `$${Number(m.newCost).toFixed(2)}`,
+    m.tier ?? "unpriced",
+    m.source ?? "—",
+    m.rates ? `${m.rates.input}/${m.rates.output}/${m.rates.cacheRead}/${m.rates.cacheWrite}` : "—",
+  ]);
+  const widths = header.map((h, i) => Math.max(h.length, ...rows.map((r) => r[i].length)));
+  const line = (cells: string[]) => cells.map((c, i) => (i === 0 ? c.padEnd(widths[i]) : c.padStart(widths[i]))).join("  ");
+
+  console.log(report.applied ? "Reprice applied." : "Reprice dry run (no changes written).");
+  console.log(line(header));
+  for (const row of rows) console.log(line(row));
+  console.log(`\nCurrent total: $${Number(report.currentTotalCost).toFixed(2)}`);
+  console.log(`New total:     $${Number(report.newTotalCost).toFixed(2)}`);
+  console.log(`Unpriced:      ${report.unpricedModels.length ? report.unpricedModels.join(", ") : "none"}`);
+  console.log(`Fingerprint:   ${report.fingerprint}`);
+  if (report.backupPath) console.log(`Backup:        ${report.backupPath}`);
+}
+
 async function main() {
   const args = process.argv.slice(2);
   const command = args[0] || "start";
 
-  const portIdx = args.indexOf("--port");
-  let cliPort: number | undefined;
-  if (portIdx !== -1) {
-    const val = args[portIdx + 1];
-    cliPort = Number(val);
-    if (!Number.isInteger(cliPort) || cliPort < 1 || cliPort > 65535) {
-      fail(`Invalid --port '${val}'`);
-    }
-  }
+  const cliPort = parsePortArg(args);
 
   const productionPort = resolveProductionPort();
   const isProduction = cliPort === undefined || cliPort === productionPort;
@@ -112,6 +200,8 @@ async function main() {
       if (args[i] === "--port" && value) {
         port = cliPort;
         i++;
+      } else if (args[i].startsWith("--port=")) {
+        // Parsed once by parsePortArg().
       } else if (args[i] === "--insecure-dev") {
         insecureDev = true;
       } else if (args[i] === "--debug") {
@@ -229,6 +319,23 @@ async function main() {
       console.log(`  Total tokens:  ${res.totalTokens?.toLocaleString() ?? 0}`);
       console.log(`  Total cost:    $${Number(res.totalCost || 0).toFixed(2)}`);
     }
+  } else if (command === "reprice") {
+    const { apply, json, expectFingerprint } = parseRepriceArgs(args);
+    let res: any;
+    try {
+      res = await sendAdminCommand(adminSocketPath, "usage.reprice", { apply, expectFingerprint }, 120_000);
+    } catch (err) {
+      if (!(err instanceof DaemonNotRunningError)) throw err;
+      const { UsageService } = await import("../server/usage/index");
+      const service = new UsageService({ configManager });
+      try {
+        res = await service.reprice({ apply, expectFingerprint });
+      } finally {
+        service.destroy();
+      }
+    }
+    if (json) console.log(JSON.stringify(res, null, 2));
+    else printRepriceReport(res);
   } else {
     console.log(USAGE);
   }

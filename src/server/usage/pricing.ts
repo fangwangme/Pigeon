@@ -1,7 +1,14 @@
-// Issue #13. quota-and-usage.md §3.3. Pricing manager.
+// Issue #13, #39. quota-and-usage.md §3.3. Pricing manager.
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { canonical, pricingKey } from "./model-id";
+import { canonical, formatModelId } from "./model-id";
+
+export type PriceTier =
+  | "official-global"
+  | "official-regional"
+  | "fallback-openrouter"
+  | "fallback-vercel"
+  | "fallback-cloudflare";
 
 export interface ModelPrice {
   inputCostPerToken: number;
@@ -9,6 +16,7 @@ export interface ModelPrice {
   cacheReadCostPerToken?: number;
   cacheWriteCostPerToken?: number;
   releaseDate?: string;
+  tier: PriceTier;
   source: string;
 }
 
@@ -21,27 +29,122 @@ export interface PricingManagerOptions {
 
 const MODELSDEV_URL = "https://models.dev/api.json";
 const LITELLM_URL = "https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json";
-const OPENROUTER_URL = "https://openrouter.ai/api/v1/models";
 const DAY_MS = 24 * 60 * 60 * 1000;
-const CACHE_SCHEMA_VERSION = 2;
-const FIRST_PARTY_PROVIDERS = [
-  "anthropic",
-  "openai",
-  "google",
-  "google-vertex",
-  "deepseek",
-  "zhipuai",
-  "zai",
-  "minimax",
-  "moonshotai",
-  "xai",
-  "mistral",
-  "cohere",
+const CACHE_SCHEMA_VERSION = 3;
+
+interface Owner {
+  global: string[];
+  regional: string[];
+  litellm: string[];
+}
+
+const OWNERS: Record<string, Owner> = {
+  anthropic: { global: ["anthropic"], regional: [], litellm: ["anthropic"] },
+  openai: { global: ["openai"], regional: [], litellm: ["openai"] },
+  google: { global: ["google", "google-vertex"], regional: [], litellm: ["gemini", "vertex_ai", "vertex_ai-language-models"] },
+  deepseek: { global: ["deepseek"], regional: [], litellm: [] },
+  zai: { global: ["zai"], regional: ["zhipuai"], litellm: ["zai"] },
+  minimax: { global: ["minimax"], regional: ["minimax-cn"], litellm: ["minimax"] },
+  moonshotai: { global: ["moonshotai"], regional: ["moonshotai-cn"], litellm: ["moonshot"] },
+  meta: { global: ["meta"], regional: [], litellm: [] },
+  nvidia: { global: ["nvidia"], regional: [], litellm: [] },
+  thinkingmachines: { global: ["thinkingmachines"], regional: [], litellm: [] },
+};
+
+const LITELLM_OFFICIAL_PROVIDERS = new Set(["anthropic", "openai", "gemini", "vertex_ai", "vertex_ai-language-models", "zai", "moonshot", "minimax"]);
+
+const FALLBACK_PROVIDERS: Array<[string, PriceTier]> = [
+  ["openrouter", "fallback-openrouter"],
+  ["vercel", "fallback-vercel"],
+  ["cloudflare-workers-ai", "fallback-cloudflare"],
+  ["cloudflare-ai-gateway", "fallback-cloudflare"],
 ];
 
-function providerPriority(provider: string): number {
-  const idx = FIRST_PARTY_PROVIDERS.indexOf(provider.toLowerCase());
-  return idx >= 0 ? idx : FIRST_PARTY_PROVIDERS.length;
+/** Selection never reads any other provider, so their entries are not parsed or collision-checked. */
+const SELECTABLE_MODELSDEV_PROVIDERS = new Set([
+  ...Object.values(OWNERS).flatMap((owner) => [...owner.global, ...owner.regional]),
+  ...FALLBACK_PROVIDERS.map(([provider]) => provider),
+]);
+
+/** quota-and-usage.md §3.3 Selection: the model owner decides which providers may be official. */
+function startsFamily(key: string, family: string): boolean {
+  return key === family || key.startsWith(`${family}-`);
+}
+
+function ownerFor(key: string): Owner | null {
+  if (startsFamily(key, "claude")) return OWNERS.anthropic;
+  if (startsFamily(key, "gpt") || startsFamily(key, "codex") || startsFamily(key, "chatgpt")) return OWNERS.openai;
+  if (startsFamily(key, "gemini")) return OWNERS.google;
+  if (startsFamily(key, "deepseek")) return OWNERS.deepseek;
+  if (startsFamily(key, "glm")) return OWNERS.zai;
+  if (startsFamily(key, "minimax")) return OWNERS.minimax;
+  if (startsFamily(key, "kimi") || startsFamily(key, "moonshot")) return OWNERS.moonshotai;
+  if (startsFamily(key, "muse")) return OWNERS.meta;
+  if (startsFamily(key, "nemotron")) return OWNERS.nvidia;
+  if (startsFamily(key, "inkling")) return OWNERS.thinkingmachines;
+  return null;
+}
+
+interface CatalogEntry {
+  id: string;
+  key: string;
+  price: ModelPrice;
+}
+
+type RawProviderCatalog = Map<string, Map<string, CatalogEntry[]>>;
+type ProviderCatalog = Map<string, Map<string, CatalogEntry>>;
+
+function rawModelId(id: string): string {
+  return formatModelId(id.slice(id.lastIndexOf("/") + 1));
+}
+
+function sameRates(a: ModelPrice, b: ModelPrice): boolean {
+  return (
+    a.inputCostPerToken === b.inputCostPerToken &&
+    a.outputCostPerToken === b.outputCostPerToken &&
+    (a.cacheReadCostPerToken ?? null) === (b.cacheReadCostPerToken ?? null) &&
+    (a.cacheWriteCostPerToken ?? null) === (b.cacheWriteCostPerToken ?? null)
+  );
+}
+
+/**
+ * quota-and-usage.md §3.3 Identity: the exact raw ID wins a same-source collision; otherwise
+ * entries that disagree on price make that provider unusable for the model.
+ */
+function resolveCollision(provider: string, key: string, entries: CatalogEntry[]): CatalogEntry | null {
+  if (entries.length === 1) return entries[0];
+  const exact = entries.filter((e) => rawModelId(e.id) === key);
+  if (exact.length === 1) return exact[0];
+  const first = entries[0];
+  if (entries.every((e) => sameRates(e.price, first.price))) return first;
+  console.warn(`[Pigeon] pricing collision for ${key} in ${provider}: ${entries.map((e) => e.id).join(", ")}`);
+  return null;
+}
+
+function indexProviderEntries(provider: string, rawEntries: CatalogEntry[], into: RawProviderCatalog): void {
+  let byKey = into.get(provider);
+  if (!byKey) {
+    byKey = new Map();
+    into.set(provider, byKey);
+  }
+  for (const entry of rawEntries) {
+    const list = byKey.get(entry.key);
+    if (list) list.push(entry);
+    else byKey.set(entry.key, [entry]);
+  }
+}
+
+function finalizeCatalog(raw: RawProviderCatalog): ProviderCatalog {
+  const catalog: ProviderCatalog = new Map();
+  for (const [provider, byKey] of raw) {
+    const resolvedByKey = new Map<string, CatalogEntry>();
+    for (const [key, entries] of byKey) {
+      const resolved = resolveCollision(provider, key, entries);
+      if (resolved) resolvedByKey.set(key, resolved);
+    }
+    catalog.set(provider, resolvedByKey);
+  }
+  return catalog;
 }
 
 export class PricingManager {
@@ -55,6 +158,7 @@ export class PricingManager {
   private pricesAvailable = false;
   private nextRetryAt = 0;
   private retryIntervalMs: number;
+  private loggedOwnerless = new Set<string>();
 
   constructor(options: PricingManagerOptions = {}) {
     const defaultDataDir = process.env.XDG_DATA_HOME ? join(process.env.XDG_DATA_HOME, "pigeon") : join(process.env.HOME || "", ".local", "share", "pigeon");
@@ -69,24 +173,27 @@ export class PricingManager {
   }
 
   public getCatalogEntries(): Array<[string, ModelPrice]> {
-    return Array.from(this.catalog.entries());
+    return Array.from(this.catalog.entries()).sort(([a], [b]) => a.localeCompare(b));
   }
 
   public getCatalogVersion(): number {
     return this.catalogVersion;
   }
 
+  private catalogSignature(): string {
+    return JSON.stringify(this.getCatalogEntries());
+  }
+
   public async initialize(): Promise<void> {
     const now = this.now();
     if (this.loaded && now - this.lastFetchAt <= DAY_MS) return;
     if (now < this.nextRetryAt) return;
-    const before = JSON.stringify([...this.catalog]);
+    const before = this.catalogSignature();
     await this.load(now);
-    if (JSON.stringify([...this.catalog]) !== before) this.catalogVersion++;
+    if (this.catalogSignature() !== before) this.catalogVersion++;
   }
 
   private async load(now: number): Promise<void> {
-    // 1. Try disk cache
     const cacheResult = this.loadFromCache(this.cachePath);
     if (cacheResult.fresh && cacheResult.hasEntries) {
       this.loaded = true;
@@ -95,7 +202,6 @@ export class PricingManager {
       return;
     }
 
-    // 2. Try fetching from network
     let networkOk = false;
     try {
       networkOk = await this.refreshFromNetwork();
@@ -107,9 +213,7 @@ export class PricingManager {
       this.lastFetchAt = now;
       this.nextRetryAt = 0;
     } else {
-      // Network failed: if we loaded stale or seed cache, use it as offline fallback
       this.pricesAvailable = this.catalog.size > 0;
-      // Do not mark loaded = true permanently so future scans retry, but throttle retries to avoid hanging scans
       this.loaded = false;
       this.nextRetryAt = now + this.retryIntervalMs;
     }
@@ -120,11 +224,12 @@ export class PricingManager {
     try {
       const raw = readFileSync(path, "utf-8");
       const data = JSON.parse(raw);
+      // quota-and-usage.md §3.3 Unpriced/offline: an old selection is not a fallback.
+      if (data.schemaVersion !== CACHE_SCHEMA_VERSION) return { fresh: false, hasEntries: false, fetchedAt: 0 };
       const fetchedAt = data.fetchedAt || 0;
-      const fresh = data.schemaVersion === CACHE_SCHEMA_VERSION && this.now() - fetchedAt <= DAY_MS;
+      const fresh = this.now() - fetchedAt <= DAY_MS;
       if (data.entries) {
         for (const [k, v] of Object.entries(data.entries)) {
-          if (k.includes("/")) continue;
           this.catalog.set(k, v as ModelPrice);
         }
         return { fresh, hasEntries: this.catalog.size > 0, fetchedAt };
@@ -135,130 +240,165 @@ export class PricingManager {
     return { fresh: false, hasEntries: false, fetchedAt: 0 };
   }
 
+  private indexModelsDev(providers: any): ProviderCatalog {
+    const catalog: RawProviderCatalog = new Map();
+    for (const [provider, providerData] of Object.entries<any>(providers || {})) {
+      if (!SELECTABLE_MODELSDEV_PROVIDERS.has(provider)) continue;
+      const models = providerData?.models || {};
+      const entries: CatalogEntry[] = [];
+      for (const [fallbackId, model] of Object.entries<any>(models)) {
+        const cost = model?.cost;
+        if (!cost || typeof cost.input !== "number" || typeof cost.output !== "number") continue;
+        if (cost.input === 0 && cost.output === 0) continue;
+        const id = typeof model.id === "string" && model.id ? model.id : fallbackId;
+        const key = canonical(id);
+        if (!key) continue;
+        const owner = ownerFor(key);
+        const official = owner !== null && (owner.global.includes(provider) || owner.regional.includes(provider));
+        const rawRelease = official ? model.release_date : undefined;
+        const releaseDate = typeof rawRelease === "string" && /^\d{4}-\d{2}-\d{2}$/.test(rawRelease) ? rawRelease : undefined;
+        entries.push({
+          id,
+          key,
+          price: {
+            inputCostPerToken: cost.input / 1_000_000,
+            outputCostPerToken: cost.output / 1_000_000,
+            cacheReadCostPerToken: typeof cost.cache_read === "number" ? cost.cache_read / 1_000_000 : undefined,
+            cacheWriteCostPerToken: typeof cost.cache_write === "number" ? cost.cache_write / 1_000_000 : undefined,
+            ...(releaseDate ? { releaseDate } : {}),
+            tier: "official-global",
+            source: provider,
+          },
+        });
+      }
+      indexProviderEntries(provider, entries, catalog);
+    }
+    return finalizeCatalog(catalog);
+  }
+
+  private indexLitellm(entries: any): ProviderCatalog {
+    const catalog: RawProviderCatalog = new Map();
+    for (const [id, model] of Object.entries<any>(entries || {})) {
+      const provider = model?.litellm_provider;
+      if (!LITELLM_OFFICIAL_PROVIDERS.has(provider)) continue;
+      if (typeof model.input_cost_per_token !== "number") continue;
+      const output = typeof model.output_cost_per_token === "number" ? model.output_cost_per_token : 0;
+      if (model.input_cost_per_token === 0 && output === 0) continue;
+      const key = canonical(id);
+      if (!key) continue;
+      indexProviderEntries(
+        provider,
+        [
+          {
+            id,
+            key,
+            price: {
+              inputCostPerToken: model.input_cost_per_token,
+              outputCostPerToken: output,
+              cacheReadCostPerToken: typeof model.cache_read_input_token_cost === "number" ? model.cache_read_input_token_cost : undefined,
+              cacheWriteCostPerToken: typeof model.cache_creation_input_token_cost === "number" ? model.cache_creation_input_token_cost : undefined,
+              tier: "official-global",
+              source: provider,
+            },
+          },
+        ],
+        catalog
+      );
+    }
+    return finalizeCatalog(catalog);
+  }
+
+  private selectPrice(key: string, modelsDev: ProviderCatalog, litellm: ProviderCatalog): ModelPrice | null {
+    const owner = ownerFor(key);
+    if (owner) {
+      // Stage 1 is every global official source: models.dev first, then the allowlisted LiteLLM owner.
+      for (const provider of owner.global) {
+        const entry = modelsDev.get(provider)?.get(key);
+        if (entry) return { ...entry.price, tier: "official-global", source: provider };
+      }
+      for (const provider of owner.litellm) {
+        const entry = litellm.get(provider)?.get(key);
+        if (entry) return { ...entry.price, tier: "official-global", source: provider };
+      }
+      // Stage 2 is the owner's regional entity.
+      for (const provider of owner.regional) {
+        const entry = modelsDev.get(provider)?.get(key);
+        if (entry) return { ...entry.price, tier: "official-regional", source: provider };
+      }
+    }
+    for (const [provider, tier] of FALLBACK_PROVIDERS) {
+      const entry = modelsDev.get(provider)?.get(key);
+      if (entry) return { ...entry.price, tier, source: provider };
+    }
+    return null;
+  }
+
+  private selectCatalog(modelsDev: ProviderCatalog, litellm: ProviderCatalog): Map<string, ModelPrice> {
+    const keys = new Set<string>();
+    for (const byKey of modelsDev.values()) for (const key of byKey.keys()) keys.add(key);
+    for (const byKey of litellm.values()) for (const key of byKey.keys()) keys.add(key);
+
+    const selected = new Map<string, ModelPrice>();
+    for (const key of keys) {
+      const price = this.selectPrice(key, modelsDev, litellm);
+      if (price) selected.set(key, price);
+    }
+    return selected;
+  }
+
   private async refreshFromNetwork(): Promise<boolean> {
-    const newCatalog = new Map<string, ModelPrice>();
-    const modelsDevCatalog = new Map<string, ModelPrice>();
-    const litellmCatalog = new Map<string, ModelPrice>();
-    const openrouterCatalog = new Map<string, ModelPrice>();
     const TIMEOUT_MS = 30_000;
-
-    // Fetch sources concurrently with bounded timeout so slow network endpoints do not stall scans
-    await Promise.allSettled([
-      // Source 1: models.dev
-      (async () => {
-        try {
-          const res = await this.fetchFn(MODELSDEV_URL, { signal: AbortSignal.timeout(TIMEOUT_MS) });
-          if (res.ok) {
-            const providers = (await res.json()) as any;
-            const orderedProviders = Object.entries(providers).sort(
-              ([a], [b]) => providerPriority(a) - providerPriority(b)
-            );
-            for (const [_provider, providerData] of orderedProviders) {
-              const models = (providerData as any)?.models || {};
-              for (const m of Object.values(models)) {
-                const cost = (m as any)?.cost;
-                if (!cost || typeof cost.input !== "number" || typeof cost.output !== "number") continue;
-                const isFirstParty = providerPriority(_provider) < FIRST_PARTY_PROVIDERS.length;
-                const rawRelease = isFirstParty ? (m as any).release_date : undefined;
-                const releaseDate =
-                  typeof rawRelease === "string" && /^\d{4}-\d{2}-\d{2}$/.test(rawRelease) ? rawRelease : undefined;
-                const price: ModelPrice = {
-                  inputCostPerToken: cost.input / 1_000_000,
-                  outputCostPerToken: cost.output / 1_000_000,
-                  cacheReadCostPerToken: typeof cost.cache_read === "number" ? cost.cache_read / 1_000_000 : undefined,
-                  cacheWriteCostPerToken: typeof cost.cache_write === "number" ? cost.cache_write / 1_000_000 : undefined,
-                  ...(releaseDate ? { releaseDate } : {}),
-                  source: "models.dev",
-                };
-                const id = (m as any).id || "";
-                const key = canonical(id);
-                if (key && !modelsDevCatalog.has(key)) modelsDevCatalog.set(key, price);
-              }
-            }
-          }
-        } catch {}
-      })(),
-
-      // Source 2: litellm
-      (async () => {
-        try {
-          const res = await this.fetchFn(LITELLM_URL, { signal: AbortSignal.timeout(TIMEOUT_MS) });
-          if (res.ok) {
-            const data = (await res.json()) as any;
-            for (const [id, m] of Object.entries(data)) {
-              const cost = m as any;
-              if (!cost || typeof cost.input_cost_per_token !== "number") continue;
-              const price: ModelPrice = {
-                inputCostPerToken: cost.input_cost_per_token,
-                outputCostPerToken: cost.output_cost_per_token || 0,
-                cacheReadCostPerToken: cost.cache_read_input_token_cost,
-                cacheWriteCostPerToken: cost.cache_creation_input_token_cost,
-                source: "litellm",
-              };
-              const key = canonical(id);
-              if (!litellmCatalog.has(key)) litellmCatalog.set(key, price);
-            }
-          }
-        } catch {}
-      })(),
-
-      // Source 3: openrouter
-      (async () => {
-        try {
-          const res = await this.fetchFn(OPENROUTER_URL, { signal: AbortSignal.timeout(TIMEOUT_MS) });
-          if (res.ok) {
-            const data = (await res.json()) as any;
-            const models = data?.data || [];
-            for (const m of models) {
-              const p = m.pricing;
-              if (!p) continue;
-              const inp = typeof p.prompt === "string" ? parseFloat(p.prompt) : Number(p.prompt);
-              const out = typeof p.completion === "string" ? parseFloat(p.completion) : Number(p.completion);
-              if (isNaN(inp) || isNaN(out)) continue;
-              const price: ModelPrice = {
-                inputCostPerToken: inp,
-                outputCostPerToken: out,
-                source: "openrouter",
-              };
-              const key = canonical(m.id);
-              if (!openrouterCatalog.has(key)) openrouterCatalog.set(key, price);
-            }
-          }
-        } catch {}
-      })(),
+    const [modelsDevResult, litellmResult] = await Promise.allSettled([
+      this.fetchFn(MODELSDEV_URL, { signal: AbortSignal.timeout(TIMEOUT_MS) }),
+      this.fetchFn(LITELLM_URL, { signal: AbortSignal.timeout(TIMEOUT_MS) }),
     ]);
 
-    // Merge in strict deterministic priority order: models.dev -> litellm -> openrouter
-    for (const [k, v] of modelsDevCatalog) {
-      newCatalog.set(k, v);
-    }
-    for (const [k, v] of litellmCatalog) {
-      if (!newCatalog.has(k)) newCatalog.set(k, v);
-    }
-    for (const [k, v] of openrouterCatalog) {
-      if (!newCatalog.has(k)) newCatalog.set(k, v);
+    // quota-and-usage.md §3.3 Sources: a failed models.dev fetch changes nothing.
+    if (modelsDevResult.status !== "fulfilled" || !modelsDevResult.value.ok) return false;
+    let modelsDevData: any;
+    try {
+      modelsDevData = await modelsDevResult.value.json();
+    } catch {
+      return false;
     }
 
-    if (newCatalog.size > 0) {
-      this.catalog = newCatalog;
+    const modelsDev = this.indexModelsDev(modelsDevData);
+    let litellm: ProviderCatalog = new Map();
+    if (litellmResult.status === "fulfilled" && litellmResult.value.ok) {
       try {
-        mkdirSync(dirname(this.cachePath), { recursive: true });
-        const obj: Record<string, any> = {
-          schemaVersion: CACHE_SCHEMA_VERSION,
-          fetchedAt: this.now(),
-          entries: Object.fromEntries(this.catalog.entries()),
-        };
-        writeFileSync(this.cachePath, JSON.stringify(obj), "utf-8");
-      } catch {}
+        litellm = this.indexLitellm(await litellmResult.value.json());
+      } catch {
+        litellm = new Map();
+      }
     }
-    return newCatalog.size > 0;
+
+    const selected = this.selectCatalog(modelsDev, litellm);
+    if (selected.size === 0) return false;
+    this.catalog = selected;
+
+    mkdirSync(dirname(this.cachePath), { recursive: true });
+    const cache = {
+      schemaVersion: CACHE_SCHEMA_VERSION,
+      fetchedAt: this.now(),
+      entries: Object.fromEntries(this.catalog.entries()),
+    };
+    writeFileSync(this.cachePath, JSON.stringify(cache), "utf-8");
+    return true;
+  }
+
+  /** quota-and-usage.md §3.3 Selection: log an ownerless model once, when usage actually names it. */
+  public noteModelSeen(modelId: string): void {
+    const key = canonical(modelId);
+    if (!key || ownerFor(key) || this.loggedOwnerless.has(key)) return;
+    this.loggedOwnerless.add(key);
+    console.warn(`[Pigeon] pricing has no owner for ${key}; official stages skipped`);
   }
 
   public getPrice(modelId: string): ModelPrice | null {
-    const k1 = canonical(modelId);
-    if (this.catalog.has(k1)) return this.catalog.get(k1)!;
-    const k2 = pricingKey(modelId);
-    if (this.catalog.has(k2)) return this.catalog.get(k2)!;
-    return null;
+    const key = canonical(modelId);
+    const price = this.catalog.get(key);
+    if (!price) return null;
+    this.noteModelSeen(key);
+    return price;
   }
 }
