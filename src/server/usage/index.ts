@@ -229,17 +229,32 @@ export class UsageService {
     }
   }
 
-  /** quota-and-usage.md §3.3 Reprice: wait for an in-flight scan, then recompute derived costs. */
+  /** quota-and-usage.md §3.3 Reprice: hold the scan slot so no scan starts mid-reprice. */
   public async reprice(opts: { apply: boolean; expectFingerprint?: string }): Promise<RepriceReport> {
-    if (this.scanPromise) await this.scanPromise;
-    await this.pricing.initialize();
-    const report = this.store.reprice(this.pricing, opts);
-    if (report.applied) {
-      this.reportCache.clear();
-      const scannedAt = this.store.getLastScannedAt() || this.now();
-      if (this.isEnabled()) this.onUpdated?.({ scannedAt });
+    while (this.scanPromise) {
+      try {
+        await this.scanPromise;
+      } catch {}
     }
-    return report;
+
+    let resolveReprice: () => void = () => {};
+    const repricePromise = new Promise<{ scannedFiles: number; recordsAdded: number }>((resolve) => {
+      resolveReprice = () => resolve({ scannedFiles: 0, recordsAdded: 0 });
+    });
+    this.scanPromise = repricePromise;
+
+    try {
+      await this.pricing.initialize();
+      const report = this.store.reprice(this.pricing, opts);
+      if (report.applied) {
+        this.reportCache.clear();
+        if (this.isEnabled()) this.onUpdated?.({ scannedAt: this.now() });
+      }
+      return report;
+    } finally {
+      this.scanPromise = null;
+      resolveReprice();
+    }
   }
 
   public async getUsage(req: { preset: string; from?: string; to?: string; agents: string[]; force?: boolean }): Promise<UsageGetPayload> {

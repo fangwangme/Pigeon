@@ -67,17 +67,21 @@ const SELECTABLE_MODELSDEV_PROVIDERS = new Set([
 ]);
 
 /** quota-and-usage.md §3.3 Selection: the model owner decides which providers may be official. */
+function startsFamily(key: string, family: string): boolean {
+  return key === family || key.startsWith(`${family}-`);
+}
+
 function ownerFor(key: string): Owner | null {
-  if (key.startsWith("claude-")) return OWNERS.anthropic;
-  if (key.startsWith("gpt-") || key.startsWith("codex-") || key.startsWith("chatgpt-")) return OWNERS.openai;
-  if (key.startsWith("gemini-")) return OWNERS.google;
-  if (key.startsWith("deepseek-")) return OWNERS.deepseek;
-  if (key.startsWith("glm-")) return OWNERS.zai;
-  if (key.startsWith("minimax-")) return OWNERS.minimax;
-  if (key.startsWith("kimi-") || key.startsWith("moonshot-")) return OWNERS.moonshotai;
-  if (key.startsWith("muse-")) return OWNERS.meta;
-  if (key.startsWith("nemotron-")) return OWNERS.nvidia;
-  if (key.startsWith("inkling-")) return OWNERS.thinkingmachines;
+  if (startsFamily(key, "claude")) return OWNERS.anthropic;
+  if (startsFamily(key, "gpt") || startsFamily(key, "codex") || startsFamily(key, "chatgpt")) return OWNERS.openai;
+  if (startsFamily(key, "gemini")) return OWNERS.google;
+  if (startsFamily(key, "deepseek")) return OWNERS.deepseek;
+  if (startsFamily(key, "glm")) return OWNERS.zai;
+  if (startsFamily(key, "minimax")) return OWNERS.minimax;
+  if (startsFamily(key, "kimi") || startsFamily(key, "moonshot")) return OWNERS.moonshotai;
+  if (startsFamily(key, "muse")) return OWNERS.meta;
+  if (startsFamily(key, "nemotron")) return OWNERS.nvidia;
+  if (startsFamily(key, "inkling")) return OWNERS.thinkingmachines;
   return null;
 }
 
@@ -154,7 +158,7 @@ export class PricingManager {
   private pricesAvailable = false;
   private nextRetryAt = 0;
   private retryIntervalMs: number;
-  private loggedOwners = new Set<string>();
+  private loggedOwnerless = new Set<string>();
 
   constructor(options: PricingManagerOptions = {}) {
     const defaultDataDir = process.env.XDG_DATA_HOME ? join(process.env.XDG_DATA_HOME, "pigeon") : join(process.env.HOME || "", ".local", "share", "pigeon");
@@ -220,8 +224,10 @@ export class PricingManager {
     try {
       const raw = readFileSync(path, "utf-8");
       const data = JSON.parse(raw);
+      // quota-and-usage.md §3.3 Unpriced/offline: an old selection is not a fallback.
+      if (data.schemaVersion !== CACHE_SCHEMA_VERSION) return { fresh: false, hasEntries: false, fetchedAt: 0 };
       const fetchedAt = data.fetchedAt || 0;
-      const fresh = data.schemaVersion === CACHE_SCHEMA_VERSION && this.now() - fetchedAt <= DAY_MS;
+      const fresh = this.now() - fetchedAt <= DAY_MS;
       if (data.entries) {
         for (const [k, v] of Object.entries(data.entries)) {
           this.catalog.set(k, v as ModelPrice);
@@ -305,17 +311,19 @@ export class PricingManager {
   private selectPrice(key: string, modelsDev: ProviderCatalog, litellm: ProviderCatalog): ModelPrice | null {
     const owner = ownerFor(key);
     if (owner) {
+      // Stage 1 is every global official source: models.dev first, then the allowlisted LiteLLM owner.
       for (const provider of owner.global) {
         const entry = modelsDev.get(provider)?.get(key);
         if (entry) return { ...entry.price, tier: "official-global", source: provider };
       }
-      for (const provider of owner.regional) {
-        const entry = modelsDev.get(provider)?.get(key);
-        if (entry) return { ...entry.price, tier: "official-regional", source: provider };
-      }
       for (const provider of owner.litellm) {
         const entry = litellm.get(provider)?.get(key);
         if (entry) return { ...entry.price, tier: "official-global", source: provider };
+      }
+      // Stage 2 is the owner's regional entity.
+      for (const provider of owner.regional) {
+        const entry = modelsDev.get(provider)?.get(key);
+        if (entry) return { ...entry.price, tier: "official-regional", source: provider };
       }
     }
     for (const [provider, tier] of FALLBACK_PROVIDERS) {
@@ -378,14 +386,19 @@ export class PricingManager {
     return true;
   }
 
+  /** quota-and-usage.md §3.3 Selection: log an ownerless model once, when usage actually names it. */
+  public noteModelSeen(modelId: string): void {
+    const key = canonical(modelId);
+    if (!key || ownerFor(key) || this.loggedOwnerless.has(key)) return;
+    this.loggedOwnerless.add(key);
+    console.warn(`[Pigeon] pricing has no owner for ${key}; official stages skipped`);
+  }
+
   public getPrice(modelId: string): ModelPrice | null {
     const key = canonical(modelId);
     const price = this.catalog.get(key);
     if (!price) return null;
-    if (!ownerFor(key) && !this.loggedOwners.has(key)) {
-      this.loggedOwners.add(key);
-      console.warn(`[Pigeon] pricing has no owner for ${key}; official stages skipped`);
-    }
+    this.noteModelSeen(key);
     return price;
   }
 }

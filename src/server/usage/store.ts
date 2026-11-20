@@ -343,6 +343,7 @@ export class UsageStore {
           }
         }
         const p = resolvePrice(r.date, canon);
+        pricing.noteModelSeen(canon);
         const cost = p ? costAt(p, r.inputTokens, r.outputTokens, r.cacheReadTokens, r.cacheWriteTokens) : 0;
         const unpriced = p ? 0 : 1;
 
@@ -499,6 +500,9 @@ export class UsageStore {
   }
 
   private syncPricePeriods(pricing: PricingManager): void {
+    const entries = pricing.getCatalogEntries();
+    // quota-and-usage.md §3.3: an unavailable or ignored cache must never close every period.
+    if (!pricing.arePricesAvailable() || entries.length === 0) return;
     const today = formatYMD(new Date(this.now()));
     const yesterday = addDays(today, -1);
     const seen = new Set<string>();
@@ -526,7 +530,7 @@ export class UsageStore {
     );
 
     this.db.transaction(() => {
-      for (const [canon, price] of pricing.getCatalogEntries()) {
+      for (const [canon, price] of entries) {
         if (!canon || seen.has(canon)) continue;
         seen.add(canon);
 

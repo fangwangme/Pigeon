@@ -77,6 +77,73 @@ function fail(message: string): never {
   process.exit(1);
 }
 
+export function parsePortArg(args: string[]): number | undefined {
+  let found = false;
+  let value: string | undefined;
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i];
+    if (arg === "--port") {
+      found = true;
+      value = args[i + 1];
+      break;
+    }
+    if (arg.startsWith("--port=")) {
+      found = true;
+      value = arg.slice("--port=".length);
+      break;
+    }
+  }
+  if (!found) return undefined;
+  if (value === undefined || value === "") throw new Error(`Invalid --port '${value ?? ""}'`);
+  const port = Number(value);
+  if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error(`Invalid --port '${value}'`);
+  return port;
+}
+
+export interface RepriceArgs {
+  apply: boolean;
+  yes: boolean;
+  json: boolean;
+  expectFingerprint?: string;
+}
+
+function optionValue(args: string[], index: number, flag: string): { value: string; next: number } {
+  const arg = args[index];
+  if (arg.startsWith(`${flag}=`)) {
+    const value = arg.slice(flag.length + 1);
+    if (!value) throw new Error(`\`${flag}\` requires a value.`);
+    return { value, next: index };
+  }
+  const value = args[index + 1];
+  if (value === undefined || value.startsWith("--")) throw new Error(`\`${flag}\` requires a value.`);
+  return { value, next: index + 1 };
+}
+
+export function parseRepriceArgs(args: string[]): RepriceArgs {
+  const parsed: RepriceArgs = { apply: false, yes: false, json: false };
+  for (let i = 1; i < args.length; i++) {
+    const arg = args[i];
+    if (arg === "--apply") parsed.apply = true;
+    else if (arg === "--yes") parsed.yes = true;
+    else if (arg === "--json") parsed.json = true;
+    else if (arg === "--expect" || arg.startsWith("--expect=")) {
+      const { value, next } = optionValue(args, i, "--expect");
+      parsed.expectFingerprint = value;
+      i = next;
+    } else if (arg === "--port") {
+      i++;
+    } else if (arg.startsWith("--port=")) {
+      // Parsed once by parsePortArg().
+    } else {
+      throw new Error(`Unknown option for reprice: '${arg}'`);
+    }
+  }
+  if (parsed.apply && (!parsed.yes || !parsed.expectFingerprint)) {
+    throw new Error("`--apply` requires `--yes` and `--expect <fingerprint>`.");
+  }
+  return parsed;
+}
+
 function printRepriceReport(report: any): void {
   const header = ["model", "records", "input", "output", "cache-read", "cache-write", "current", "new", "tier", "source", "rates (in/out/cr/cw)"];
   const rows: string[][] = report.models.map((m: any) => [
@@ -109,15 +176,7 @@ async function main() {
   const args = process.argv.slice(2);
   const command = args[0] || "start";
 
-  const portIdx = args.indexOf("--port");
-  let cliPort: number | undefined;
-  if (portIdx !== -1) {
-    const val = args[portIdx + 1];
-    cliPort = Number(val);
-    if (!Number.isInteger(cliPort) || cliPort < 1 || cliPort > 65535) {
-      fail(`Invalid --port '${val}'`);
-    }
-  }
+  const cliPort = parsePortArg(args);
 
   const productionPort = resolveProductionPort();
   const isProduction = cliPort === undefined || cliPort === productionPort;
@@ -141,6 +200,8 @@ async function main() {
       if (args[i] === "--port" && value) {
         port = cliPort;
         i++;
+      } else if (args[i].startsWith("--port=")) {
+        // Parsed once by parsePortArg().
       } else if (args[i] === "--insecure-dev") {
         insecureDev = true;
       } else if (args[i] === "--debug") {
@@ -259,12 +320,7 @@ async function main() {
       console.log(`  Total cost:    $${Number(res.totalCost || 0).toFixed(2)}`);
     }
   } else if (command === "reprice") {
-    const apply = args.includes("--apply");
-    const expectIdx = args.indexOf("--expect");
-    const expectFingerprint = expectIdx !== -1 ? args[expectIdx + 1] : undefined;
-    if (apply && (!args.includes("--yes") || !expectFingerprint)) {
-      fail("`--apply` requires `--yes` and `--expect <fingerprint>`.");
-    }
+    const { apply, json, expectFingerprint } = parseRepriceArgs(args);
     let res: any;
     try {
       res = await sendAdminCommand(adminSocketPath, "usage.reprice", { apply, expectFingerprint }, 120_000);
@@ -278,7 +334,7 @@ async function main() {
         service.destroy();
       }
     }
-    if (args.includes("--json")) console.log(JSON.stringify(res, null, 2));
+    if (json) console.log(JSON.stringify(res, null, 2));
     else printRepriceReport(res);
   } else {
     console.log(USAGE);

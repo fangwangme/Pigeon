@@ -146,7 +146,7 @@ Each model is priced from the first stage that has an exact entry:
 3. **Fallback** — `openrouter`, then `vercel`, then `cloudflare-workers-ai`, then `cloudflare-ai-gateway`.
 4. Otherwise the model is **unpriced**.
 
-- Within the official stages, `models.dev` is read first; LiteLLM is read only when `models.dev` lacks the exact official entry, and only entries whose `litellm_provider` is exactly one of `anthropic`, `openai`, `gemini` (Google), `vertex_ai` or `vertex_ai-language-models` (Google Vertex), `zai`, `moonshot`, `minimax`. No prefix matching (`vertex_ai-anthropic_models` and other `vertex_ai-*` hosts are not Google's own models).
+- Official stage 1 checks the owner's `models.dev` global providers in order, then the allowlisted LiteLLM owner entries; LiteLLM is read only when none of those `models.dev` global providers has the exact entry. Official stage 2 (regional) follows. LiteLLM entries are usable only when their `litellm_provider` is exactly one of `anthropic`, `openai`, `gemini` (Google), `vertex_ai` or `vertex_ai-language-models` (Google Vertex), `zai`, `moonshot`, `minimax`. No prefix matching (`vertex_ai-anthropic_models` and other `vertex_ai-*` hosts are not Google's own models).
 - A model whose owner is not listed skips the official stages and is logged once.
 - The selected price carries its `tier` (`official-global`, `official-regional`, `fallback-openrouter`, `fallback-vercel`, `fallback-cloudflare`) and `source` (the provider key; for a LiteLLM entry, its `litellm_provider`); they are metadata and do not affect selection.
 - Cache reads use the model's cache-read price, else 0.1 × its input price; cache writes use its cache-write price, else its input price. A published `0` is a real price, not missing. Only the base context tier is priced; higher context tiers (`context_over_200k`) are ignored.
@@ -174,6 +174,7 @@ Token counts are facts read from agent files, some of which no longer exist on d
 #### Unpriced and offline
 
 - A model no source knows is **unpriced**: its tokens count, its cost is 0, and the reply marks it. When network sources cannot be reached, previously cached prices on disk (even if older than 24 hours) serve as an offline fallback; when no cache exists, every model is unpriced and the reply says prices are unavailable. A failed price initialization does not permanently mark pricing loaded; subsequent background scans continue to retry after `retryIntervalMs`.
+- A disk cache written by an older schema is ignored: its entries are not loaded, so an upgrade cannot price from the retired selection. Prices stay unavailable until the first successful `models.dev` fetch. A price-period sync never runs from an unavailable or empty catalog, so it cannot close every open period.
 
 ### 3.4 Ranges
 

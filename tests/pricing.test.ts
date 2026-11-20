@@ -13,9 +13,10 @@ describe("PricingManager fallback and retry (quota-and-usage.md §3.3)", () => {
     writeFileSync(
       cachePath,
       JSON.stringify({
+        schemaVersion: 3,
         fetchedAt: twoDaysAgo,
         entries: {
-          "claude-3-5-sonnet": { inputCostPerToken: 0.000003, outputCostPerToken: 0.000015 },
+          "claude-3-5-sonnet": { inputCostPerToken: 0.000003, outputCostPerToken: 0.000015, tier: "official-global", source: "anthropic" },
         },
       })
     );
@@ -34,7 +35,7 @@ describe("PricingManager fallback and retry (quota-and-usage.md §3.3)", () => {
 
   test("an offline retry that reloads the same stale catalog is not a catalog change", async () => {
     const cachePath = join(testDir, "stale-retry.json");
-    writeFileSync(cachePath, JSON.stringify({ fetchedAt: Date.now() - 48 * 3600 * 1000, entries: { "claude-3-5-sonnet": { inputCostPerToken: 0.000003, outputCostPerToken: 0.000015 } } }));
+    writeFileSync(cachePath, JSON.stringify({ schemaVersion: 3, fetchedAt: Date.now() - 48 * 3600 * 1000, entries: { "claude-3-5-sonnet": { inputCostPerToken: 0.000003, outputCostPerToken: 0.000015, tier: "official-global", source: "anthropic" } } }));
     let clock = Date.now();
     const pm = new PricingManager({ cachePath, fetch: (() => Promise.reject(new Error("offline"))) as any, now: () => clock, retryIntervalMs: 1000 });
     await pm.initialize();
@@ -167,4 +168,60 @@ describe("PricingManager fallback and retry (quota-and-usage.md §3.3)", () => {
       outputCostPerToken: 15 / 1_000_000,
     });
   }, 10_000);
+
+  test("LiteLLM official-global owner entries outrank models.dev regional entries", async () => {
+    const cachePath = join(testDir, "global-before-regional.json");
+    const mockFetch = (async (input: RequestInfo | URL) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.href : (input as Request).url;
+      if (!url.includes("models.dev")) return new Response("Not Found", { status: 404 });
+      return Response.json({
+        zhipuai: { models: { "glm-5.3": { id: "glm-5.3", cost: { input: 5, output: 20 } } } },
+        "minimax-cn": { models: { "minimax-m3.1-flash": { id: "minimax-m3.1-flash", cost: { input: 5, output: 20 } } } },
+        "moonshotai-cn": { models: { "kimi-k3": { id: "kimi-k3", cost: { input: 5, output: 20 } } } },
+      });
+    }) as unknown as typeof fetch;
+    const litellmFetch = (async (input: RequestInfo | URL) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.href : (input as Request).url;
+      if (url.includes("models.dev")) return mockFetch(input);
+      return Response.json({
+        "glm-5.3": { litellm_provider: "zai", input_cost_per_token: 1.4e-6, output_cost_per_token: 4.4e-6 },
+        "minimax-m3.1-flash": { litellm_provider: "minimax", input_cost_per_token: 0.15e-6, output_cost_per_token: 0.6e-6 },
+        "kimi-k3": { litellm_provider: "moonshot", input_cost_per_token: 3e-6, output_cost_per_token: 15e-6 },
+      });
+    }) as unknown as typeof fetch;
+
+    const pm = new PricingManager({ cachePath, fetch: litellmFetch });
+    await pm.initialize();
+
+    expect(pm.getPrice("glm-5-3")).toMatchObject({ inputCostPerToken: 1.4 / 1_000_000, tier: "official-global", source: "zai" });
+    expect(pm.getPrice("minimax-m3-1-flash")).toMatchObject({ inputCostPerToken: 0.15 / 1_000_000, tier: "official-global", source: "minimax" });
+    expect(pm.getPrice("kimi-k3")).toMatchObject({ inputCostPerToken: 3 / 1_000_000, tier: "official-global", source: "moonshot" });
+  });
+
+  test("bare owner names are official for their owner, not fallback", async () => {
+    const cachePath = join(testDir, "bare-owners.json");
+    const mockFetch = (async (input: RequestInfo | URL) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.href : (input as Request).url;
+      if (!url.includes("models.dev")) return new Response("Not Found", { status: 404 });
+      return Response.json({
+        thinkingmachines: { models: { "thinkingmachines/Inkling": { id: "thinkingmachines/Inkling", cost: { input: 1, output: 2 } } } },
+        meta: { models: { muse: { id: "muse", cost: { input: 1, output: 2 } } } },
+        nvidia: { models: { nemotron: { id: "nemotron", cost: { input: 1, output: 2 } } } },
+        openrouter: {
+          models: {
+            "thinkingmachines/inkling": { id: "thinkingmachines/inkling", cost: { input: 0.1, output: 0.2 } },
+            "meta/muse": { id: "meta/muse", cost: { input: 0.1, output: 0.2 } },
+            "nvidia/nemotron": { id: "nvidia/nemotron", cost: { input: 0.1, output: 0.2 } },
+          },
+        },
+      });
+    }) as unknown as typeof fetch;
+
+    const pm = new PricingManager({ cachePath, fetch: mockFetch });
+    await pm.initialize();
+
+    expect(pm.getPrice("inkling")).toMatchObject({ inputCostPerToken: 1 / 1_000_000, tier: "official-global", source: "thinkingmachines" });
+    expect(pm.getPrice("muse")).toMatchObject({ inputCostPerToken: 1 / 1_000_000, tier: "official-global", source: "meta" });
+    expect(pm.getPrice("nemotron")).toMatchObject({ inputCostPerToken: 1 / 1_000_000, tier: "official-global", source: "nvidia" });
+  });
 });

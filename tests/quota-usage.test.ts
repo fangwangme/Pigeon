@@ -357,6 +357,67 @@ describe("quota config and usage request validation (quota-and-usage.md §2.5, p
     }
   });
 
+  test("UsageService reprice() notifies with a fresh timestamp so phones refetch", async () => {
+    const d = tempDir("reprice-notify");
+    const clock = Date.parse("2026-11-20T10:00:00Z");
+    const store = new UsageStore({ dbPath: join(d, "usage.db"), home: join(d, "home"), now: () => clock, discoverLs: async () => null });
+    const pricing = new PricingManager({
+      cachePath: join(d, "pricing.json"),
+      now: () => clock,
+      fetch: (async () =>
+        Response.json({
+          anthropic: { models: { "claude-sonnet-4-6": { id: "claude-sonnet-4-6", cost: { input: 3, output: 15 } } } },
+        })) as unknown as typeof fetch,
+    });
+    await pricing.initialize();
+    store.setLastScannedAt(clock - 60_000);
+    const events: Array<{ scannedAt: number }> = [];
+    const service = new UsageService({ store, pricing, now: () => clock, onUpdated: (payload) => events.push(payload) });
+    const dry = await service.reprice({ apply: false });
+    await service.reprice({ apply: true, expectFingerprint: dry.fingerprint });
+    expect(events).toEqual([{ scannedAt: clock }]);
+    expect(events[0].scannedAt).toBeGreaterThan(store.getLastScannedAt());
+    service.destroy();
+  });
+
+  test("UsageService reprice() holds the scan slot during pricing initialization", async () => {
+    const d = tempDir("reprice-lock");
+    let release: () => void = () => {};
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let initializeCalls = 0;
+    const pricing = {
+      initialize: async () => {
+        initializeCalls++;
+        if (initializeCalls === 1) await gate;
+      },
+      arePricesAvailable: () => false,
+    } as any;
+    let scans = 0;
+    const store = {
+      reprice: () => ({ fingerprint: "fp", applied: false, models: [], currentTotalCost: 0, newTotalCost: 0, unpricedModels: [] }),
+      getLastScannedAt: () => 0,
+      scanIncremental: async () => {
+        scans++;
+        return { scannedFiles: 0, recordsAdded: 0 };
+      },
+      close: () => {},
+    } as any;
+    const service = new UsageService({ store, pricing, now: () => 1 });
+    const repricePromise = service.reprice({ apply: false });
+    while (initializeCalls === 0) await new Promise((resolve) => setTimeout(resolve, 2));
+    const scanPromise = service.scan();
+    await new Promise((resolve) => setTimeout(resolve, 15));
+    expect(scans).toBe(0);
+    release();
+    const [report, scanRes] = await Promise.all([repricePromise, scanPromise]);
+    expect(report.fingerprint).toBe("fp");
+    expect(scanRes).toEqual({ scannedFiles: 0, recordsAdded: 0 });
+    expect(scans).toBe(0);
+    service.destroy();
+  });
+
   test("split quotaEnabled & usageEnabled: defaults, legacy config drop, validation, and independent command gating (quota-and-usage.md §1.1, protocol.md §4.16–§4.19, §6.3)", async () => {
     // 1. Fresh config has quotaEnabled: false, usageEnabled: true, usageScanInterval: "15m"
     const freshCfg = new ConfigManager(join(dir, "fresh-config.json"), { HOME: dir }).getClientConfig();
@@ -690,6 +751,81 @@ describe("quota config and usage request validation (quota-and-usage.md §2.5, p
 
     db.close();
     store.close();
+  });
+
+  test("an older-schema pricing cache is ignored and cannot overwrite existing periods", async () => {
+    const dir = tempDir("pricing-v2-offline");
+    const dbPath = join(dir, "usage.db");
+    const home = join(dir, "home");
+    const clock = Date.parse("2026-11-20T10:00:00Z");
+    const current = new PricingManager({
+      cachePath: join(dir, "current.json"),
+      now: () => clock,
+      fetch: (async () =>
+        Response.json({
+          anthropic: { models: { "claude-sonnet-4-6": { id: "claude-sonnet-4-6", cost: { input: 3, output: 15 } } } },
+        })) as unknown as typeof fetch,
+    });
+    await current.initialize();
+    const store = new UsageStore({ dbPath, home, now: () => clock, discoverLs: async () => null });
+    await store.scanIncremental(current);
+
+    const v2Path = join(dir, "v2.json");
+    const v2 = JSON.stringify({
+      schemaVersion: 2,
+      fetchedAt: clock,
+      entries: { "claude-sonnet-4-6": { inputCostPerToken: 9e-6, outputCostPerToken: 45e-6, source: "openrouter" } },
+    });
+    writeFileSync(v2Path, v2);
+    const offline = new PricingManager({
+      cachePath: v2Path,
+      now: () => clock,
+      fetch: (async () => new Response("err", { status: 500 })) as unknown as typeof fetch,
+    });
+    await offline.initialize();
+    expect(offline.arePricesAvailable()).toBe(false);
+    expect(offline.getPrice("claude-sonnet-4-6")).toBeNull();
+
+    await store.scanIncremental(offline);
+    const db = new Database(dbPath, { readonly: true });
+    expect(db.query("SELECT input_rate, output_rate, effective_to FROM model_price_periods WHERE model = 'claude-sonnet-4-6'").get()).toEqual({
+      input_rate: 3,
+      output_rate: 15,
+      effective_to: null,
+    });
+    expect(readFileSync(v2Path, "utf-8")).toBe(v2);
+    db.close();
+    store.close();
+  });
+
+  test("an ownerless model is logged once when a usage record is ingested", async () => {
+    const dir = tempDir("ownerless-log");
+    const dbPath = join(dir, "usage.db");
+    const home = join(dir, "home");
+    const projDir = join(home, ".claude", "projects", "-tmp-proj");
+    mkdirSync(projDir, { recursive: true });
+    writeFileSync(
+      join(projDir, "s1.jsonl"),
+      JSON.stringify({ type: "assistant", timestamp: "2026-11-10T10:00:00Z", message: { model: "acme-1", usage: { input_tokens: 1, output_tokens: 1 } } }) + "\n"
+    );
+    const pricing = new PricingManager({
+      cachePath: join(dir, "pricing.json"),
+      fetch: (async () =>
+        Response.json({ openrouter: { models: { "acme/acme-1": { id: "acme/acme-1", cost: { input: 1, output: 2 } } } } })) as unknown as typeof fetch,
+    });
+    await pricing.initialize();
+    const store = new UsageStore({ dbPath, home, discoverLs: async () => null });
+    const warn = spyOn(console, "warn");
+    try {
+      await store.scanIncremental(pricing);
+      const warnings = () => warn.mock.calls.map((call) => String(call[0])).filter((message) => message.includes("acme-1"));
+      expect(warnings()).toHaveLength(1);
+      await store.scanIncremental(pricing);
+      expect(warnings()).toHaveLength(1);
+    } finally {
+      warn.mockRestore();
+      store.close();
+    }
   });
 });
 
