@@ -58,6 +58,7 @@ How to set up Pigeon for daily use, manage paired phones, and ship changes to yo
 - `pigeon pair [--ephemeral] [--json]` rotates the pairing link and prints a fresh QR code (`--ephemeral` makes a single-use link that expires in 10 minutes; `--json` outputs machine-readable JSON). Phones that are already paired stay connected.
 - `pigeon status [--json]` prints Herdr connection state, public URL, active session count, pending queues, last usage scan timestamp, and any adapter or plugin source errors.
 - `pigeon rebuild-cache [--json] [--yes]` rebuilds the token usage database from the agents' files on disk (through the daemon when running, directly otherwise). Non-production ports require `--yes` to confirm rebuilding the shared production usage cache.
+- `pigeon reprice [--json]` shows what re-pricing all stored usage under the current price rules would change, per model, plus a catalog fingerprint; nothing is written. `pigeon reprice --apply --yes --expect <fingerprint>` then backs up the database and applies it. Token counts are never changed or rescanned.
 - These commands talk to the daemon on the configured port. A daemon started on another port (a test instance, e.g. `--port 4101`) is reached with the same `--port`, such as `pigeon pair --port 4101`.
 - Clean up any test sessions left over from development before using Pigeon day to day.
 
