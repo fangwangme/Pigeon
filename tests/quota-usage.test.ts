@@ -827,6 +827,42 @@ describe("quota config and usage request validation (quota-and-usage.md §2.5, p
       store.close();
     }
   });
+
+  test("reprice refuses an unavailable or empty catalog for both dry run and apply", async () => {
+    const dir = tempDir("reprice-unavailable");
+    const dbPath = join(dir, "usage.db");
+    const home = join(dir, "home");
+    const store = new UsageStore({ dbPath, home, discoverLs: async () => null });
+    const seed = new Database(dbPath);
+    seed.run(
+      `INSERT INTO model_price_periods (model, effective_from, effective_to, input_rate, output_rate, cache_read_rate, cache_write_rate, tier, source)
+       VALUES ('claude-sonnet-4-6', '0000-01-01', NULL, 3, 15, NULL, NULL, 'official-global', 'anthropic')`
+    );
+    seed.close();
+
+    const offline = new PricingManager({
+      cachePath: join(dir, "offline.json"),
+      fetch: (async () => new Response("err", { status: 500 })) as unknown as typeof fetch,
+    });
+    await offline.initialize();
+    expect(offline.arePricesAvailable()).toBe(false);
+    expect(offline.getCatalogEntries()).toHaveLength(0);
+
+    const readPeriods = () => {
+      const db = new Database(dbPath, { readonly: true });
+      const rows = db.query("SELECT model, effective_from, effective_to, input_rate, output_rate, tier, source FROM model_price_periods ORDER BY model").all();
+      db.close();
+      return rows;
+    };
+    const before = readPeriods();
+
+    expect(() => store.reprice(offline, { apply: false })).toThrow("prices unavailable: models.dev has not been fetched successfully");
+    expect(() => store.reprice(offline, { apply: true, expectFingerprint: "empty" })).toThrow(
+      "prices unavailable: models.dev has not been fetched successfully"
+    );
+    expect(readPeriods()).toEqual(before);
+    store.close();
+  });
 });
 
 function pbVarint(n: number): number[] {

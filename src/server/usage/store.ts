@@ -769,6 +769,9 @@ export class UsageStore {
   /** quota-and-usage.md §3.3 Reprice: recompute derived costs from unchanged token facts. */
   public reprice(pricing: PricingManager, opts: { apply: boolean; expectFingerprint?: string }): RepriceReport {
     const entries = pricing.getCatalogEntries();
+    if (!pricing.arePricesAvailable() || entries.length === 0) {
+      throw new Error("prices unavailable: models.dev has not been fetched successfully");
+    }
     const fingerprint = catalogFingerprint(entries);
     const priceByModel = new Map(entries);
 
